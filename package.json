@@ -1,0 +1,11 @@
+{
+  "name": "nsfintech",
+  "private": true,
+  "packageManager": "pnpm@10.8.0",
+  "scripts": {
+    "mobile:start": "pnpm --filter @nsfintech/mobile start",
+    "mobile:android": "pnpm --filter @nsfintech/mobile android",
+    "mobile:ios": "pnpm --filter @nsfintech/mobile ios",
+    "mobile:web": "pnpm --filter @nsfintech/mobile web"
+  }
+}

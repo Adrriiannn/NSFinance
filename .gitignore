@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+bin/
+obj/
+dist/
+coverage/
+.vscode/
+.next/
+.expo/
+.expo-shared/
+*.tsbuildinfo
+*.log
