@@ -2,81 +2,104 @@
 
 ## Monorepo overview
 
-NSFinTech is organized as a monorepo to keep product delivery fast while sharing contracts and conventions across runtime apps.
-
 ```text
 apps/
   api/      ASP.NET Core modular monolith API
-  mobile/   Expo React Native end-user client
-  worker/   .NET worker for future background processing
+  mobile/   Expo React Native app (primary client)
+  worker/   .NET worker for future async jobs
 libs/
-  shared/         shared constants and cross-cutting primitives
-  domain/         future domain abstractions
-  infrastructure/ future infra implementations
-  connectors/     future provider adapters
+  shared/         cross-cutting constants/primitives
+  domain/         reserved for reusable domain abstractions
+  infrastructure/ reserved for shared infra abstractions
+  connectors/     reserved for external provider connectors
 ```
 
-## Modular monolith backend approach
+## Mobile-first architecture
 
-The backend is intentionally a modular monolith:
+The mobile app is the first-class client and drives API contract design:
 
-- Single deployable API process
-- Internal module boundaries by feature area
-- Shared persistence/runtime infrastructure
-- Low operational complexity in the startup phase
+- dashboard provides quick-glance finance summary
+- accounts and activity are drill-down flows
+- planner provides category/baseline/suggestion structure
+- create actions are mobile-first modal flows
+- data fetching favors stale-while-revalidate responsiveness
 
-Each module is scaffolded with its own placeholders for:
+## Backend modular monolith
 
-- endpoints/controllers
-- DTOs
-- services
-- validators
-
-Current module list:
+Single deployable API with internal modules:
 
 - Auth
 - Users
 - Accounts
 - Transactions
-- Imports
 - Categories
-- Goals
-- Insights
-- Admin
+- Insights (dashboard summary)
 
-Only `Users` has a sample endpoint (`GET /api/users`) to verify modular routing.
+Module conventions:
 
-## Mobile-first architecture
+- endpoints
+- DTOs
+- services
+- validators
 
-The mobile app is the primary user client from day one:
+## Auth foundation
 
-- Expo + TypeScript foundation optimized for startup speed
-- API base URL configurable through environment variables
-- Dedicated health screen for quick backend connectivity checks
+Current implementation:
 
-The backend and worker are structured to support mobile use cases first, while leaving room for future connectors and async processing.
+- email/password register + login
+- PBKDF2 password hashing
+- JWT access token issuance
+- `/api/auth/me` current-user endpoint
+- authorization required on finance routes
 
-## Persistence baseline
+Local development:
 
-PostgreSQL is the primary store with EF Core + Npgsql.
+- deterministic seeded demo user (`demo@nsfintech.local`)
+- easy path to replace/extend with production auth providers later
 
-Configured starter entities:
+## Data layer and behavior
 
-- User
-- FinancialAccount
-- Transaction
-- TransactionCategory
-- ImportJob
-- AuditEvent
+- PostgreSQL + EF Core + Npgsql
+- UTC storage for date/timestamps
+- signed transaction amounts:
+  - income: positive
+  - expense: negative
+- account balance = opening balance transaction + transaction sum
 
-Connection defaults (local):
+Development startup:
 
-- Host: `localhost`
-- Port: `5432`
-- Database: `nsfintech`
-- Username: `nsfintech`
-- Password: `nsfintech_dev_password`
+- ensures schema exists
+- applies auth-column compatibility SQL for existing local DBs
+- seeds categories, accounts, and sample transactions
 
-Environment variable override:
+## Mobile data architecture
 
-- `NSFINTECH_DB_CONNECTION_STRING`
+- centralized API client in `src/lib/api`
+  - single base URL source
+  - timeout handling
+  - structured error parsing
+- TanStack Query for query/mutation lifecycle
+- explicit query keys + mutation invalidation strategy
+- optimistic cache updates after account/transaction mutations
+- secure auth session persistence via Expo SecureStore
+- inactivity timeout and lifecycle-aware session expiry
+- planner state provider for necessities, notes, and transaction context annotations
+
+## UX system foundation
+
+- premium blue-glass visual language with tokens
+- reusable primitives (`GlassCard`, `PrimaryButton`, `TransactionRow`, etc.)
+- floating tab bar
+- persistent tab experience on account drill-down
+- planner and AI companion shell surfaces
+- loading/error/empty/success states on every core screen
+- tasteful motion for section/list entry and touch feedback
+
+## Deliberately postponed
+
+- real Google OAuth
+- bank integrations (Plaid/TrueLayer/Tink)
+- autonomous AI reasoning
+- full budgeting/goals automation
+- push notifications
+- microservices/message broker split

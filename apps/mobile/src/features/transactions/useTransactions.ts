@@ -1,0 +1,112 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "../../lib/api/queryKeys";
+import type { AccountDto, CreateTransactionRequest, DashboardSummaryDto, TransactionDto } from "../../types/api";
+import {
+  createTransaction,
+  getTransactionById,
+  getTransactions,
+  getTransactionsForAccount
+} from "./transactionsApi";
+
+export function useTransactionsQuery(accountId?: string) {
+  return useQuery({
+    queryKey: queryKeys.transactions.list(accountId),
+    queryFn: () => getTransactions(accountId)
+  });
+}
+
+export function useAccountTransactionsQuery(accountId: string) {
+  return useQuery({
+    queryKey: queryKeys.accounts.transactions(accountId),
+    queryFn: () => getTransactionsForAccount(accountId),
+    enabled: Boolean(accountId)
+  });
+}
+
+export function useTransactionDetailQuery(transactionId: string) {
+  return useQuery({
+    queryKey: ["transactions", "detail", transactionId],
+    queryFn: () => getTransactionById(transactionId),
+    enabled: Boolean(transactionId)
+  });
+}
+
+function prependTransaction(list: TransactionDto[] | undefined, transaction: TransactionDto) {
+  const existing = list ?? [];
+  if (existing.some((item) => item.id === transaction.id)) {
+    return existing;
+  }
+
+  return [transaction, ...existing];
+}
+
+export function useCreateTransactionMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: CreateTransactionRequest) => createTransaction(payload),
+    onSuccess: async (transaction) => {
+      queryClient.setQueryData<TransactionDto[]>(
+        queryKeys.transactions.list(),
+        (current) => prependTransaction(current, transaction)
+      );
+      queryClient.setQueryData<TransactionDto[]>(
+        queryKeys.accounts.transactions(transaction.accountId),
+        (current) => prependTransaction(current, transaction)
+      );
+      queryClient.setQueryData<TransactionDto[]>(
+        queryKeys.transactions.list(transaction.accountId),
+        (current) => prependTransaction(current, transaction)
+      );
+
+      queryClient.setQueryData<AccountDto | undefined>(
+        queryKeys.accounts.detail(transaction.accountId),
+        (current) =>
+          current
+            ? {
+                ...current,
+                currentBalance: Number((current.currentBalance + transaction.amount).toFixed(2)),
+                transactionCount: current.transactionCount + 1
+              }
+            : current
+      );
+
+      queryClient.setQueryData<AccountDto[] | undefined>(queryKeys.accounts.all, (current) =>
+        (current ?? []).map((account) =>
+          account.id === transaction.accountId
+            ? {
+                ...account,
+                currentBalance: Number((account.currentBalance + transaction.amount).toFixed(2)),
+                transactionCount: account.transactionCount + 1
+              }
+            : account
+        )
+      );
+
+      queryClient.setQueryData<DashboardSummaryDto | undefined>(
+        queryKeys.dashboard.summary,
+        (current) =>
+          current
+            ? {
+                ...current,
+                totalBalance: Number((current.totalBalance + transaction.amount).toFixed(2)),
+                transactionCount: current.transactionCount + 1,
+                recentOutflow:
+                  transaction.amount < 0
+                    ? Number((current.recentOutflow + Math.abs(transaction.amount)).toFixed(2))
+                    : current.recentOutflow,
+                recentTransactions: prependTransaction(current.recentTransactions, transaction).slice(0, 5)
+              }
+            : current
+      );
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.transactions(transaction.accountId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.detail(transaction.accountId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all })
+      ]);
+    }
+  });
+}

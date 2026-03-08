@@ -5,15 +5,14 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "nsfintech",
+    "backgroundColor": "#07111F",
     "userInterfaceStyle": "automatic",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "apiBaseUrl": "http://192.168.0.11:5080"
     }
   }
 }

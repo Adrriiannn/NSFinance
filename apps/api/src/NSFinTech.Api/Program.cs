@@ -1,5 +1,6 @@
 using NSFinTech.Api.Common.Contracts;
 using NSFinTech.Api.Infrastructure.DependencyInjection;
+using NSFinTech.Api.Infrastructure.Startup;
 using NSFinTech.Api.Modules;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,17 +20,26 @@ app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
+    app.UseCors("DevCors");
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseRouting();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new HealthResponse("Healthy", DateTime.UtcNow)))
     .WithName("HealthCheck")
     .WithTags("System");
 
 app.MapModules();
+
+await app.InitializeDatabaseAsync();
 
 app.Run();
