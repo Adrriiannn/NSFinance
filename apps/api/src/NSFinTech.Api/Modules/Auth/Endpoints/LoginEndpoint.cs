@@ -19,11 +19,11 @@ public static class LoginEndpoint
         }
 
         var result = await authService.LoginAsync(request, cancellationToken);
-        if (result.Error is not null)
+        if (!result.Succeeded)
         {
-            return Results.Json(new ApiErrorResponse(result.Error, "invalid_credentials"), statusCode: StatusCodes.Status401Unauthorized);
+            return result.Error!.ToApiError();
         }
 
-        return Results.Ok(result.Response);
+        return Results.Ok(result.Value);
     }
 }

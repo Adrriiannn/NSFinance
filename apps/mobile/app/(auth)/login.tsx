@@ -1,27 +1,23 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { NsfLogo } from "../../src/components/branding/NsfLogo";
 import { CaptchaGate } from "../../src/components/forms/CaptchaGate";
-import { SaveCredentialsPrompt } from "../../src/components/forms/SaveCredentialsPrompt";
+import { AuthDivider } from "../../src/components/ui/AuthDivider";
+import { AuthLegalLinks } from "../../src/components/ui/AuthLegalLinks";
+import { PasswordField } from "../../src/components/ui/PasswordField";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { TextField } from "../../src/components/ui/TextField";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { formatUnknownError } from "../../src/lib/api/errors";
-import {
-  clearSavedCredentials,
-  getSavedCredentials,
-  getSavedCredentialsDecision,
-  setSavedCredentials,
-  setSavedCredentialsDecision
-} from "../../src/lib/auth/savedCredentials";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { palette, spacing, typography } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"email" | "password", string>>;
+type FocusField = "email" | "password" | null;
 
 export default function LoginScreen() {
   const loginMutation = useLoginMutation();
@@ -30,25 +26,43 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const [captchaVerified, setCaptchaVerified] = useState(false);
-  const [saveDecision, setSaveDecision] = useState<boolean | null>(null);
-  const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [focusedField, setFocusedField] = useState<FocusField>(null);
+  const [passwordVisible, setPasswordVisible] = useState(false);
 
   useEffect(() => {
-    const load = async () => {
-      const decision = await getSavedCredentialsDecision();
-      setSaveDecision(decision);
+    if (focusedField !== "password") {
+      setPasswordVisible(false);
+    }
+  }, [focusedField]);
 
-      if (decision) {
-        const saved = await getSavedCredentials();
-        if (saved) {
-          setEmail(saved.email);
-          setPassword(saved.password);
-        }
-      }
-    };
+  const keyboardMirrorField = useMemo(() => {
+    if (focusedField === "email") {
+      return {
+        key: "email",
+        label: "Email",
+        value: email,
+        onChangeText: setEmail,
+        placeholder: "you@example.com",
+        keyboardType: "email-address" as const,
+        autoCapitalize: "none" as const
+      };
+    }
 
-    void load();
-  }, []);
+    if (focusedField === "password") {
+      return {
+        key: "password",
+        label: "Password",
+        value: password,
+        onChangeText: setPassword,
+        placeholder: "Password",
+        secureTextEntry: true,
+        passwordVisible,
+        onPasswordVisibilityChange: setPasswordVisible
+      };
+    }
+
+    return null;
+  }, [email, focusedField, password, passwordVisible]);
 
   const canSubmit = useMemo(
     () => email.trim().length > 0 && password.length > 0 && captchaVerified,
@@ -70,11 +84,6 @@ export default function LoginScreen() {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const finishLogin = async () => {
-    playSuccess();
-    router.replace("/(tabs)");
-  };
-
   const handleLogin = async () => {
     if (!validate()) {
       return;
@@ -82,26 +91,18 @@ export default function LoginScreen() {
 
     await loginMutation.mutateAsync({
       email: email.trim().toLowerCase(),
-      password
+      password,
+      deviceContext: {
+        platform: Platform.OS
+      }
     });
 
-    if (saveDecision === null) {
-      setShowSavePrompt(true);
-      return;
-    }
-
-    if (saveDecision) {
-      await setSavedCredentials({
-        email: email.trim().toLowerCase(),
-        password
-      });
-    }
-
-    await finishLogin();
+    playSuccess();
+    router.replace("/(tabs)");
   };
 
   return (
-    <AuthScreen>
+    <AuthScreen keyboardMirrorField={keyboardMirrorField}>
       <View style={styles.topRow}>
         <View style={styles.headerTextWrap}>
           <Text style={styles.title}>Welcome back</Text>
@@ -129,18 +130,25 @@ export default function LoginScreen() {
             keyboardType="email-address"
             placeholder="you@example.com"
             error={errors.email}
+            onFocus={() => setFocusedField("email")}
+            forceFocused={focusedField === "email"}
           />
-          <TextField
+          <PasswordField
             label="Password"
             value={password}
             onChangeText={setPassword}
             placeholder="Password"
-            secureTextEntry
             error={errors.password}
+            onFocus={() => setFocusedField("password")}
+            forceFocused={focusedField === "password"}
+            isPasswordVisible={passwordVisible}
+            onPasswordVisibilityChange={setPasswordVisible}
+            autoHideOnBlur={false}
           />
           <CaptchaGate
             isVerified={captchaVerified}
             onVerify={() => setCaptchaVerified((current) => !current)}
+            showLabel={false}
           />
         </View>
 
@@ -152,37 +160,26 @@ export default function LoginScreen() {
             disabled={!canSubmit}
           />
 
-          <View style={styles.googleWrap}>
-            <SecondaryButton label="Sign in with Google" onPress={() => undefined} disabled />
+          <SecondaryButton label="Sign in with Google" onPress={() => undefined} />
+
+          <View style={styles.forgotWrap}>
+            <Pressable
+              onPress={() => router.push("/forgot-password" as never)}
+              style={({ pressed }) => [pressed ? styles.linkPressed : null]}
+            >
+              <Text style={styles.forgotLink}>Forgot Password</Text>
+            </Pressable>
           </View>
+
+          <AuthDivider widthPercent={70} />
 
           <SecondaryButton label="Create account" onPress={() => router.push("/register" as never)} />
         </View>
       </View>
 
-      <SaveCredentialsPrompt
-        visible={showSavePrompt}
-        onConfirm={() => {
-          void (async () => {
-            setShowSavePrompt(false);
-            await setSavedCredentialsDecision(true);
-            await setSavedCredentials({
-              email: email.trim().toLowerCase(),
-              password
-            });
-            setSaveDecision(true);
-            await finishLogin();
-          })();
-        }}
-        onDecline={() => {
-          void (async () => {
-            setShowSavePrompt(false);
-            await setSavedCredentialsDecision(false);
-            await clearSavedCredentials();
-            setSaveDecision(false);
-            await finishLogin();
-          })();
-        }}
+      <AuthLegalLinks
+        onPressTerms={() => router.push("/legal/terms" as never)}
+        onPressPrivacy={() => router.push("/legal/privacy" as never)}
       />
     </AuthScreen>
   );
@@ -217,10 +214,16 @@ const styles = StyleSheet.create({
     gap: spacing[16]
   },
   ctaGroup: {
-    gap: spacing[16]
+    gap: spacing[12]
   },
-  googleWrap: {
-    marginTop: spacing[8],
-    marginBottom: spacing[8]
+  forgotWrap: {
+    alignItems: "flex-end"
+  },
+  forgotLink: {
+    color: palette.primaryGlow,
+    ...typography.body2
+  },
+  linkPressed: {
+    opacity: 0.75
   }
 });

@@ -2,11 +2,17 @@ import { apiConfig } from "./config";
 import { ApiClientError, parseApiErrorBody } from "./errors";
 
 type TokenResolver = () => string | null;
+type UnauthorizedHandler = () => Promise<string | null>;
 
 let tokenResolver: TokenResolver = () => null;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 export function setApiTokenResolver(nextResolver: TokenResolver) {
   tokenResolver = nextResolver;
+}
+
+export function setApiUnauthorizedHandler(nextHandler: UnauthorizedHandler | null) {
+  unauthorizedHandler = nextHandler;
 }
 
 function createAbortController(timeoutMs: number): {
@@ -44,31 +50,40 @@ function withBaseUrl(path: string): string {
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const requestUrl = withBaseUrl(path);
-  const token = tokenResolver();
+  const makeRequest = async (overrideToken: string | null): Promise<Response> => {
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+      ...(overrideToken ? { Authorization: `Bearer ${overrideToken}` } : {}),
+      ...(init?.headers ?? {})
+    };
 
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(init?.headers ?? {})
+    const timeoutController = createAbortController(apiConfig.timeoutMs);
+    try {
+      return await fetch(requestUrl, {
+        ...init,
+        headers,
+        signal: init?.signal ?? timeoutController.signal
+      });
+    } catch (error) {
+      const message =
+        error instanceof DOMException && error.name === "AbortError"
+          ? "Request timed out. Please retry."
+          : "Network request failed. Check API URL and local network connectivity.";
+
+      throw new ApiClientError(message, 0, { details: error });
+    } finally {
+      timeoutController.clear();
+    }
   };
 
-  let response: Response;
-  const timeoutController = createAbortController(apiConfig.timeoutMs);
-  try {
-    response = await fetch(requestUrl, {
-      ...init,
-      headers,
-      signal: init?.signal ?? timeoutController.signal
-    });
-  } catch (error) {
-    const message =
-      error instanceof DOMException && error.name === "AbortError"
-        ? "Request timed out. Please retry."
-        : "Network request failed. Check API URL and local network connectivity.";
-
-    throw new ApiClientError(message, 0, { details: error });
-  } finally {
-    timeoutController.clear();
+  let token = tokenResolver();
+  let response = await makeRequest(token);
+  if (response.status === 401 && unauthorizedHandler && !requestUrl.endsWith("/api/auth/refresh")) {
+    const refreshedToken = await unauthorizedHandler();
+    if (refreshedToken) {
+      token = refreshedToken;
+      response = await makeRequest(token);
+    }
   }
 
   if (!response.ok) {

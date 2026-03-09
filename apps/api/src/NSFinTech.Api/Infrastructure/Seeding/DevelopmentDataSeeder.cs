@@ -10,6 +10,7 @@ public sealed class DevelopmentDataSeeder(
     ILogger<DevelopmentDataSeeder> logger,
     IPasswordHasher passwordHasher)
 {
+    private const string ProviderTypeLocalPassword = "local_password";
     public const string DemoUserPassword = "Password123!";
 
     public async Task SeedAsync(AppDbContext dbContext, CancellationToken cancellationToken)
@@ -22,6 +23,61 @@ public sealed class DevelopmentDataSeeder(
         await EnsureAccountsAndTransactionsAsync(dbContext, demoUserId, utcNow, cancellationToken);
     }
 
+    public async Task SeedPolicyDataAsync(AppDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var policies = new (string PolicyType, string Name, string Version, string ContentRef)[]
+        {
+            ("terms_of_service", "Terms of Service", "1.0.0", "legal/terms/v1"),
+            ("privacy_policy", "Privacy Policy", "1.0.0", "legal/privacy/v1"),
+            ("ai_limitations_notice", "AI Limitations Notice", "1.0.0", "legal/ai-limitations/v1"),
+            ("open_banking_consent_placeholder", "Open Banking Consent (Placeholder)", "0.1.0", "legal/open-banking-consent/placeholder"),
+            ("marketing_communications", "Marketing Communications Consent", "1.0.0", "legal/marketing-consent/v1")
+        };
+
+        foreach (var (policyType, name, version, contentRef) in policies)
+        {
+            var document = await dbContext.PolicyDocuments
+                .SingleOrDefaultAsync(x => x.PolicyType == policyType, cancellationToken);
+
+            if (document is null)
+            {
+                document = new PolicyDocument
+                {
+                    Id = Guid.NewGuid(),
+                    PolicyType = policyType,
+                    Name = name,
+                    CreatedUtc = now
+                };
+                dbContext.PolicyDocuments.Add(document);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            var existingVersion = await dbContext.PolicyVersions
+                .SingleOrDefaultAsync(
+                    x => x.PolicyDocumentId == document.Id && x.Version == version,
+                    cancellationToken);
+
+            if (existingVersion is not null)
+            {
+                continue;
+            }
+
+            dbContext.PolicyVersions.Add(new PolicyVersion
+            {
+                Id = Guid.NewGuid(),
+                PolicyDocumentId = document.Id,
+                Version = version,
+                EffectiveUtc = now,
+                ContentReference = contentRef,
+                IsActive = true,
+                CreatedUtc = now
+            });
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task EnsureDemoUserAsync(
         AppDbContext dbContext,
         Guid demoUserId,
@@ -29,28 +85,76 @@ public sealed class DevelopmentDataSeeder(
         CancellationToken cancellationToken)
     {
         var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == demoUserId, cancellationToken);
-        if (user is not null)
+        if (user is null)
         {
-            if (string.IsNullOrWhiteSpace(user.PasswordHash))
+            user = new User
             {
-                user.PasswordHash = passwordHasher.HashPassword(DemoUserPassword);
-                user.LastLoginUtc = utcNow;
-                await dbContext.SaveChangesAsync(cancellationToken);
-            }
+                Id = demoUserId,
+                PrimaryEmail = "demo@nsfintech.local",
+                NormalizedEmail = "demo@nsfintech.local",
+                DisplayName = "Aoife Murphy",
+                Status = "active",
+                OnboardingStatus = "completed",
+                Role = "user",
+                CreatedUtc = utcNow,
+                UpdatedUtc = utcNow,
+                LastLoginUtc = utcNow,
+                EmailVerified = true,
+                Timezone = "Europe/Dublin",
+                Locale = "en-IE",
+                PreferredCurrency = "EUR",
+                PlanTier = "standard",
+                BiometricUnlockEnabled = false
+            };
 
-            return;
+            dbContext.Users.Add(user);
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        dbContext.Users.Add(new User
+        var passwordCredential = await dbContext.PasswordCredentials
+            .SingleOrDefaultAsync(x => x.UserId == demoUserId, cancellationToken);
+
+        if (passwordCredential is null)
         {
-            Id = demoUserId,
-            Email = "demo@nsfintech.local",
-            PasswordHash = passwordHasher.HashPassword(DemoUserPassword),
-            FirstName = "Aoife",
-            LastName = "Murphy",
-            CreatedUtc = utcNow,
-            LastLoginUtc = utcNow
-        });
+            dbContext.PasswordCredentials.Add(new PasswordCredential
+            {
+                Id = Guid.NewGuid(),
+                UserId = demoUserId,
+                PasswordHash = passwordHasher.HashPassword(DemoUserPassword),
+                HashAlgorithm = "pbkdf2-sha256",
+                CreatedUtc = utcNow,
+                UpdatedUtc = utcNow,
+                RequiresRehash = false
+            });
+        }
+
+        var localProvider = await dbContext.UserAuthProviders
+            .SingleOrDefaultAsync(x => x.UserId == demoUserId && x.ProviderType == ProviderTypeLocalPassword, cancellationToken);
+
+        if (localProvider is null)
+        {
+            dbContext.UserAuthProviders.Add(new UserAuthProvider
+            {
+                Id = Guid.NewGuid(),
+                UserId = demoUserId,
+                ProviderType = ProviderTypeLocalPassword,
+                LinkedAtUtc = utcNow,
+                LastUsedAtUtc = utcNow,
+                IsActive = true
+            });
+        }
+
+        var preference = await dbContext.UserPreferences
+            .SingleOrDefaultAsync(x => x.UserId == demoUserId, cancellationToken);
+
+        if (preference is null)
+        {
+            dbContext.UserPreferences.Add(new UserPreference
+            {
+                UserId = demoUserId,
+                UpdatedUtc = utcNow
+            });
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
     }

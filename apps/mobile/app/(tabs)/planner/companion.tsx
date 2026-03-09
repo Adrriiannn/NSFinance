@@ -611,10 +611,16 @@ export default function PlannerCompanionScreen() {
             icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
           />
           <Text style={styles.headerTitle}>NS Companion</Text>
-          <IconButton
+          <View style={styles.headerSpacer} />
+        </View>
+        <View style={styles.chatsActionRow}>
+          <Pressable
             onPress={() => setHistoryVisible(true)}
-            icon={<Ionicons name="menu-outline" size={18} color={palette.textPrimary} />}
-          />
+            style={({ pressed }) => [styles.chatsAction, pressed ? styles.chatsActionPressed : null]}
+          >
+            <Ionicons name="chatbubbles-outline" size={14} color={palette.textPrimary} />
+            <Text style={styles.chatsActionText}>Chats</Text>
+          </Pressable>
         </View>
 
         <View style={styles.chatWrap}>
@@ -789,6 +795,32 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: palette.textPrimary,
     ...typography.title2
+  },
+  headerSpacer: {
+    width: 42
+  },
+  chatsActionRow: {
+    marginTop: spacing[8],
+    alignItems: "flex-start"
+  },
+  chatsAction: {
+    minHeight: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.8)",
+    paddingHorizontal: spacing[12],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  chatsActionPressed: {
+    opacity: 0.86
+  },
+  chatsActionText: {
+    color: palette.textPrimary,
+    ...typography.caption,
+    fontWeight: "600"
   },
   chatWrap: {
     flex: 1,

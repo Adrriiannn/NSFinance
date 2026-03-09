@@ -1,17 +1,26 @@
+using System.Security.Claims;
+using System.Text;
+using System.Threading.RateLimiting;
+using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using NSFinTech.Api.Common.Contracts;
+using NSFinTech.Api.Infrastructure.RequestContext;
 using NSFinTech.Api.Infrastructure.Seeding;
 using NSFinTech.Api.Modules.Accounts.Services;
+using NSFinTech.Api.Modules.Audit.Services;
 using NSFinTech.Api.Modules.Auth.Services;
 using NSFinTech.Api.Modules.Categories.Services;
 using NSFinTech.Api.Modules.Insights.Services;
+using NSFinTech.Api.Modules.Policies.Services;
+using NSFinTech.Api.Modules.Support.Services;
 using NSFinTech.Api.Modules.Transactions.Services;
 using NSFinTech.Api.Modules.Users.Services;
 using NSFinTech.Api.Persistence;
 using NSFinTech.Shared.Configuration;
-using System.Text;
 
 namespace NSFinTech.Api.Infrastructure.DependencyInjection;
 
@@ -48,14 +57,10 @@ public static class ServiceCollectionExtensions
                 }
             });
         });
+
         services.AddHttpContextAccessor();
-        services.AddCors(options =>
-        {
-            options.AddPolicy("DevCors", policy =>
-            {
-                policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
-            });
-        });
+        ConfigureCors(services, configuration);
+        ConfigureRateLimiting(services);
 
         services.Configure<JwtOptions>(options =>
         {
@@ -73,15 +78,17 @@ public static class ServiceCollectionExtensions
         {
             jwtOptions.SigningKey = signingKeyFromEnv;
         }
+
         var signingKey = Encoding.UTF8.GetBytes(jwtOptions.SigningKey);
         if (signingKey.Length < 32)
         {
-            throw new InvalidOperationException("Jwt:SigningKey must be at least 32 characters for development safety.");
+            throw new InvalidOperationException("Jwt:SigningKey must be at least 32 characters.");
         }
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
+                options.MapInboundClaims = false;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
@@ -93,11 +100,49 @@ public static class ServiceCollectionExtensions
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.FromSeconds(30),
                     NameClaimType = "email",
-                    RoleClaimType = "role"
+                    RoleClaimType = ClaimTypes.Role
+                };
+
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        var subject = context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                            ?? context.Principal?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                            ?? context.Principal?.FindFirst("sub")?.Value;
+                        var sessionClaim = context.Principal?.FindFirst("sid")?.Value;
+
+                        if (!Guid.TryParse(subject, out var userId) || !Guid.TryParse(sessionClaim, out var sessionId))
+                        {
+                            context.Fail("Invalid token claims.");
+                            return;
+                        }
+
+                        var dbContext = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                        var session = await dbContext.Sessions
+                            .AsNoTracking()
+                            .Include(x => x.User)
+                            .SingleOrDefaultAsync(x => x.Id == sessionId && x.UserId == userId, context.HttpContext.RequestAborted);
+
+                        if (session is null || session.RevokedUtc is not null || session.ExpiresUtc <= DateTime.UtcNow)
+                        {
+                            context.Fail("Session is no longer active.");
+                            return;
+                        }
+
+                        if (session.User is null || session.User.IsDisabled || session.User.IsSuspended)
+                        {
+                            context.Fail("Account is restricted.");
+                        }
+                    }
                 };
             });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            options.AddPolicy("SupportOrAdmin", policy => policy.RequireRole("support", "admin"));
+            options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+        });
 
         services.AddDbContext<AppDbContext>(options =>
         {
@@ -106,8 +151,16 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddScoped<JwtTokenService>();
+        services.AddScoped<TokenSecretService>();
+        services.AddScoped<AuthAbuseService>();
+        services.AddScoped<SessionService>();
         services.AddScoped<AuthService>();
+        services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IRequestContextAccessor, HttpRequestContextAccessor>();
         services.AddScoped<ICurrentUserProvider, HttpContextCurrentUserProvider>();
+        services.AddScoped<UserService>();
+        services.AddScoped<PolicyService>();
+        services.AddScoped<SupportService>();
         services.AddScoped<AccountService>();
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();
@@ -130,5 +183,111 @@ public static class ServiceCollectionExtensions
         }
 
         return connectionString;
+    }
+
+    private static void ConfigureCors(IServiceCollection services, IConfiguration configuration)
+    {
+        var configuredOrigins =
+            configuration[EnvironmentVariableNames.AllowedCorsOrigins]
+            ?? configuration["Cors:AllowedOrigins"];
+
+        var defaultOrigins = new[]
+        {
+            "http://localhost:8081",
+            "http://localhost:19006",
+            "http://127.0.0.1:19006"
+        };
+
+        var origins = (configuredOrigins ?? string.Empty)
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+        services.AddCors(options =>
+        {
+            options.AddPolicy("AppCors", policy =>
+            {
+                var allowedOrigins = origins.Length > 0 ? origins : defaultOrigins;
+                policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod();
+            });
+        });
+    }
+
+    private static void ConfigureRateLimiting(IServiceCollection services)
+    {
+        services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.OnRejected = async (context, token) =>
+            {
+                if (!context.HttpContext.Response.HasStarted)
+                {
+                    context.HttpContext.Response.ContentType = "application/json";
+                    await context.HttpContext.Response.WriteAsJsonAsync(
+                        new ApiErrorResponse("Too many requests. Please retry later.", "rate_limited"),
+                        cancellationToken: token);
+                }
+            };
+
+            options.AddPolicy("auth-write", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveClientPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 8,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("auth-refresh", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveClientPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 20,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("auth-reset", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveClientPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 6,
+                        Window = TimeSpan.FromMinutes(5),
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("provider-callback", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveClientPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 30,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("support-public", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveClientPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 10,
+                        Window = TimeSpan.FromMinutes(5),
+                        QueueLimit = 0
+                    }));
+        });
+    }
+
+    private static string ResolveClientPartition(HttpContext httpContext)
+    {
+        return httpContext.Connection.RemoteIpAddress?.ToString()
+            ?? httpContext.Request.Headers.Host.ToString()
+            ?? "unknown";
     }
 }

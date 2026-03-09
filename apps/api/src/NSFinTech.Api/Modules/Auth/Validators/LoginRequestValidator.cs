@@ -17,6 +17,10 @@ public static class LoginRequestValidator
         {
             errors["password"] = ["Password is required."];
         }
+        else if (request.Password.Length > 256)
+        {
+            errors["password"] = ["Password is invalid."];
+        }
 
         return errors;
     }

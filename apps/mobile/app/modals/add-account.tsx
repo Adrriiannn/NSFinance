@@ -1,12 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, useRouter } from "expo-router";
 import { useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
+import {
+  ConnectionStatusIndicator,
+  type ConnectionStatus
+} from "../../src/components/ui/ConnectionStatusIndicator";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
-import { SelectField } from "../../src/components/ui/SelectField";
 import { TextField } from "../../src/components/ui/TextField";
 import { useCreateAccountMutation } from "../../src/features/accounts/useAccounts";
 import { formatUnknownError } from "../../src/lib/api/errors";
@@ -15,20 +18,26 @@ import { useAuthSession } from "../../src/providers/AuthProvider";
 import { palette, spacing, typography } from "../../src/theme/tokens";
 import type { AccountType } from "../../src/types/api";
 
-type FormErrors = Partial<Record<"name" | "type" | "currency" | "openingBalance", string>>;
+type ImportedConnection = {
+  name: string;
+  type: AccountType;
+  currency: string;
+  balance: number;
+};
 
-const accountTypeOptions: { label: string; value: AccountType }[] = [
-  { label: "Current", value: "Current" },
-  { label: "Savings", value: "Savings" },
-  { label: "Credit", value: "Credit" },
-  { label: "Cash", value: "Cash" },
-  { label: "Other", value: "Other" }
-];
-
-const currencyOptions = [
-  { label: "EUR", value: "EUR" },
-  { label: "GBP", value: "GBP" },
-  { label: "USD", value: "USD" }
+const mockConnectionProfiles: ImportedConnection[] = [
+  {
+    name: "Main Current",
+    type: "Current",
+    currency: "EUR",
+    balance: 2643.18
+  },
+  {
+    name: "Everyday Saver",
+    type: "Savings",
+    currency: "EUR",
+    balance: 9080.45
+  }
 ];
 
 export default function AddAccountModalScreen() {
@@ -36,55 +45,53 @@ export default function AddAccountModalScreen() {
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const mutation = useCreateAccountMutation();
-  const [name, setName] = useState("");
-  const [type, setType] = useState<AccountType>("Current");
-  const [currency, setCurrency] = useState("EUR");
-  const [openingBalance, setOpeningBalance] = useState("");
-  const [errors, setErrors] = useState<FormErrors>({});
+  const [status, setStatus] = useState<ConnectionStatus>("not_started");
+  const [accountName, setAccountName] = useState("");
+  const [connectedData, setConnectedData] = useState<ImportedConnection | null>(null);
 
-  const parsedOpeningBalance = useMemo(() => {
-    if (!openingBalance.trim()) {
-      return null;
+  const canSave = status === "success" && Boolean(connectedData) && accountName.trim().length > 0;
+
+  const balanceLabel = useMemo(() => {
+    if (!connectedData) {
+      return "--";
     }
 
-    const parsed = Number(openingBalance);
-    return Number.isFinite(parsed) ? parsed : Number.NaN;
-  }, [openingBalance]);
+    return connectedData.balance.toFixed(2);
+  }, [connectedData]);
 
   if (!isBootstrapping && !isAuthenticated) {
     return <Redirect href={"/login" as never} />;
   }
 
-  const validate = () => {
-    const nextErrors: FormErrors = {};
+  const handleConnectBank = () => {
+    setStatus("connecting");
 
-    if (!name.trim()) {
-      nextErrors.name = "Account name is required.";
-    }
+    setTimeout(() => {
+      const didSucceed = Math.random() > 0.25;
+      if (!didSucceed) {
+        setConnectedData(null);
+        setStatus("failed");
+        return;
+      }
 
-    if (!currency || currency.length !== 3) {
-      nextErrors.currency = "Currency must be a 3-letter code.";
-    }
-
-    if (Number.isNaN(parsedOpeningBalance)) {
-      nextErrors.openingBalance = "Opening balance must be numeric.";
-    }
-
-    setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
+      const nextConnection =
+        mockConnectionProfiles[Math.floor(Math.random() * mockConnectionProfiles.length)];
+      setConnectedData(nextConnection);
+      setAccountName(nextConnection.name);
+      setStatus("success");
+    }, 1200);
   };
 
   const handleSubmit = async () => {
-    if (!validate()) {
+    if (!connectedData || !canSave) {
       return;
     }
 
     await mutation.mutateAsync({
-      name: name.trim(),
-      type,
-      currency: currency.trim().toUpperCase(),
-      openingBalance:
-        parsedOpeningBalance === null ? null : Number(parsedOpeningBalance.toFixed(2))
+      name: accountName.trim(),
+      type: connectedData.type,
+      currency: connectedData.currency,
+      openingBalance: connectedData.balance
     });
 
     playSuccess();
@@ -94,58 +101,69 @@ export default function AddAccountModalScreen() {
   return (
     <ScreenContainer contentStyle={styles.content}>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Add account</Text>
-        </View>
-        <Ionicons
-          name="close"
-          size={26}
-          color={palette.textSecondary}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close"
           onPress={() => router.back()}
-        />
+          style={({ pressed }) => [styles.closeButton, pressed ? styles.pressed : null]}
+        >
+          <Ionicons name="arrow-back" size={20} color={palette.textSecondary} />
+        </Pressable>
+        <Text style={styles.title}>Connect bank account</Text>
       </View>
+
+      <Text style={styles.bodyCopy}>
+        Accounts are added through secure bank connection. Sensitive account fields are imported
+        from your institution.
+      </Text>
 
       {mutation.isError ? (
         <ErrorState
-          title="Could not create account"
+          title="Could not save account"
           message={formatUnknownError(mutation.error)}
           onRetry={handleSubmit}
           retryLabel="Try again"
         />
       ) : null}
 
+      <ConnectionStatusIndicator status={status} />
+
+      <PrimaryButton
+        label={status === "failed" ? "Retry bank connection" : "Connect bank"}
+        onPress={handleConnectBank}
+        isLoading={status === "connecting"}
+      />
+
       <TextField
         label="Account name"
-        value={name}
-        onChangeText={setName}
-        placeholder="Main Current"
-        autoFocus
-        error={errors.name}
-      />
-
-      <SelectField
-        label="Account type"
-        value={type}
-        options={accountTypeOptions}
-        onChange={(value) => setType(value as AccountType)}
-        error={errors.type}
-      />
-
-      <SelectField
-        label="Currency"
-        value={currency}
-        options={currencyOptions}
-        onChange={setCurrency}
-        error={errors.currency}
+        value={accountName}
+        onChangeText={setAccountName}
+        placeholder="Imported from bank"
+        editable={status === "success"}
       />
 
       <TextField
-        label="Opening balance (optional)"
-        value={openingBalance}
-        onChangeText={setOpeningBalance}
-        placeholder="0.00"
-        keyboardType="decimal-pad"
-        error={errors.openingBalance}
+        label="Account type"
+        value={connectedData?.type ?? ""}
+        onChangeText={() => undefined}
+        placeholder="Imported from bank"
+        editable={false}
+      />
+
+      <TextField
+        label="Currency"
+        value={connectedData?.currency ?? ""}
+        onChangeText={() => undefined}
+        placeholder="Imported from bank"
+        editable={false}
+      />
+
+      <TextField
+        label="Balance"
+        value={balanceLabel}
+        onChangeText={() => undefined}
+        placeholder="Imported from bank"
+        editable={false}
       />
 
       <View style={styles.actions}>
@@ -154,6 +172,7 @@ export default function AddAccountModalScreen() {
           label="Save account"
           onPress={() => void handleSubmit()}
           isLoading={mutation.isPending}
+          disabled={!canSave}
         />
       </View>
     </ScreenContainer>
@@ -167,18 +186,33 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center"
+    alignItems: "center",
+    gap: spacing[12]
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.74)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  pressed: {
+    opacity: 0.85
   },
   title: {
     color: palette.textPrimary,
     ...typography.title1
+  },
+  bodyCopy: {
+    color: palette.textSecondary,
+    ...typography.body2
   },
   actions: {
     marginTop: spacing[8],
     gap: spacing[12]
   }
 });
-
-
 

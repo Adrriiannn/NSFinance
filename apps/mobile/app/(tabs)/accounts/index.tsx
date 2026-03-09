@@ -16,14 +16,22 @@ import { TransactionRow } from "../../../src/components/transactions/Transaction
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SectionHeader } from "../../../src/components/ui/SectionHeader";
+import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
-import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
+import { TextField } from "../../../src/components/ui/TextField";
+import {
+  useAccountsQuery,
+  useDeleteAccountMutation,
+  useUpdateAccountMutation
+} from "../../../src/features/accounts/useAccounts";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency, formatMonthYear } from "../../../src/lib/format";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
+import type { AccountType } from "../../../src/types/api";
 
 type MonthRange = {
   startMonth: number;
@@ -48,6 +56,14 @@ const monthNames = [
   "Oct",
   "Nov",
   "Dec"
+];
+
+const accountTypeOptions: { label: string; value: AccountType }[] = [
+  { label: "Current", value: "Current" },
+  { label: "Savings", value: "Savings" },
+  { label: "Credit", value: "Credit" },
+  { label: "Cash", value: "Cash" },
+  { label: "Other", value: "Other" }
 ];
 
 const defaultRanges = () => {
@@ -113,8 +129,13 @@ export default function AccountsTabScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const accountsQuery = useAccountsQuery();
+  const updateAccountMutation = useUpdateAccountMutation();
+  const deleteAccountMutation = useDeleteAccountMutation();
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectorVisible, setSelectorVisible] = useState(false);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editedName, setEditedName] = useState("");
+  const [editedType, setEditedType] = useState<AccountType>("Current");
   const [rangeModalVisible, setRangeModalVisible] = useState(false);
   const [rangeTarget, setRangeTarget] = useState<RangeTarget>("primary");
   const [rangeStep, setRangeStep] = useState<RangeStep>("start");
@@ -125,7 +146,6 @@ export default function AccountsTabScreen() {
     accounts.find((item) => item.id === selectedAccountId) ?? accounts[0] ?? null;
 
   const accountTransactionsQuery = useTransactionsQuery(selectedAccount?.id);
-
   const isInitialLoading = accountsQuery.isLoading && !accountsQuery.data;
   const recentActivity = useMemo(
     () => (accountTransactionsQuery.data ?? []).slice(0, 5),
@@ -226,6 +246,66 @@ export default function AccountsTabScreen() {
         ? `You have spent ${formatCurrency(comparison.delta, selectedAccount?.currency ?? "EUR")} more in the selected primary period than in the comparison period.`
         : `You have spent ${formatCurrency(Math.abs(comparison.delta), selectedAccount?.currency ?? "EUR")} less in the selected primary period than in the comparison period.`;
 
+  const openEditModal = (accountToEdit?: (typeof accounts)[number] | null) => {
+    const target = accountToEdit ?? selectedAccount;
+    if (!target) {
+      return;
+    }
+
+    setSelectedAccountId(target.id);
+    setEditedName(target.name);
+    setEditedType(target.type);
+    setEditModalVisible(true);
+  };
+
+  const openEditFromSelector = (account: (typeof accounts)[number]) => {
+    setSelectorVisible(false);
+    setTimeout(() => {
+      openEditModal(account);
+    }, 120);
+  };
+
+  const submitEdit = async () => {
+    if (!selectedAccount || !editedName.trim()) {
+      return;
+    }
+
+    await updateAccountMutation.mutateAsync({
+      accountId: selectedAccount.id,
+      payload: {
+        name: editedName.trim(),
+        type: editedType
+      }
+    });
+
+    setEditModalVisible(false);
+  };
+
+  const confirmDelete = () => {
+    if (!selectedAccount) {
+      return;
+    }
+
+    Alert.alert(
+      "Delete account?",
+      "Deleting this account will remove all data associated with it.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              await deleteAccountMutation.mutateAsync(selectedAccount.id);
+              setEditModalVisible(false);
+              setSelectedAccountId("");
+            })();
+          }
+        }
+      ]
+    );
+  };
+
   return (
     <ScreenContainer
       scrollable={false}
@@ -247,69 +327,68 @@ export default function AccountsTabScreen() {
         />
       ) : !selectedAccount ? (
         <EmptyState
-          title="No accounts created"
-          message="Add an account to start tracking and comparing activity."
-          actionLabel="Create account"
+          title="No connected accounts"
+          message="Connect your bank to add accounts and start tracking activity."
+          actionLabel="Connect bank"
           onActionPress={() => router.push("/modals/add-account")}
         />
       ) : (
-        <ScrollView
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: listBottomInset }]}
-          showsVerticalScrollIndicator={false}
-          bounces={false}
-        >
-          <Pressable style={styles.accountSelector} onPress={() => setSelectorVisible(true)}>
-            <Text style={styles.accountSelectorText}>{selectedAccount.name}</Text>
-            <Ionicons name="chevron-down" size={16} color={palette.textSecondary} />
-          </Pressable>
-
-          <GlassCard style={styles.heroCard}>
-            <Text style={styles.heroType}>{selectedAccount.type} account</Text>
-            <AnimatedCurrencyText
-              value={selectedAccount.currentBalance}
-              currency={selectedAccount.currency}
-              style={styles.heroBalance}
-              baseColor={palette.textPrimary}
-            />
-            <Text style={styles.heroMeta}>{selectedAccount.currency}</Text>
-          </GlassCard>
-
-          <View style={styles.actionGrid}>
-            <ActionItem
-              label="Connect Bank"
-              icon="link-outline"
-              onPress={() => Alert.alert("Connect Bank", "Bank linking entry point placeholder.")}
-            />
-            <ActionItem
-              label="Move"
-              icon="swap-horizontal-outline"
-              onPress={() =>
-                Alert.alert("Move", "Transfer flow placeholder for upcoming bank/deeplink logic.")
-              }
-            />
-            <ActionItem
-              label="Details"
-              icon="information-circle-outline"
-              onPress={() =>
-                router.push({
-                  pathname: "/(tabs)/accounts/[id]",
-                  params: { id: selectedAccount.id }
-                })
-              }
-            />
-            <ActionItem
-              label="Get Help"
-              icon="help-circle-outline"
-              onPress={() => router.push("/(tabs)/accounts/support")}
-            />
+        <>
+          <View style={styles.selectorTopBar}>
+            <View style={styles.selectorRow}>
+              <Pressable style={styles.accountSelector} onPress={() => setSelectorVisible(true)}>
+                <Text style={styles.accountSelectorText}>{selectedAccount.name}</Text>
+                <Ionicons name="chevron-down" size={16} color={palette.textSecondary} />
+              </Pressable>
+              <View style={styles.selectorRightSpacer} />
+            </View>
           </View>
 
-          <SectionHeader
-            title="Monthly comparison"
-            actionLabel="Update ranges"
-            onActionPress={() => openRangeEditor("primary")}
-          />
-          <GlassCard style={styles.comparisonCard}>
+          <ScrollView
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: listBottomInset }]}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
+            <GlassCard style={styles.heroCard}>
+              <Text style={styles.heroType}>{selectedAccount.type} account</Text>
+              <AnimatedCurrencyText
+                value={selectedAccount.currentBalance}
+                currency={selectedAccount.currency}
+                style={styles.heroBalance}
+                baseColor={palette.textPrimary}
+              />
+              <Text style={styles.heroMeta}>{selectedAccount.currency}</Text>
+            </GlassCard>
+
+            <View style={styles.actionGrid}>
+              <ActionItem
+                label="Connect Bank"
+                icon="link-outline"
+                onPress={() => router.push("/modals/add-account")}
+              />
+              <ActionItem
+                label="Transfer"
+                icon="swap-horizontal-outline"
+                onPress={() => router.push("/modals/add-transaction")}
+              />
+              <ActionItem
+                label="Details"
+                icon="document-text-outline"
+                onPress={() => router.push(`/(tabs)/accounts/${selectedAccount.id}` as never)}
+              />
+              <ActionItem
+                label="Get Help"
+                icon="help-circle-outline"
+                onPress={() => router.push("/(tabs)/accounts/support")}
+              />
+            </View>
+
+            <SectionHeader
+              title="Monthly comparison"
+              actionLabel="Update ranges"
+              onActionPress={() => openRangeEditor("primary")}
+            />
+            <GlassCard style={styles.comparisonCard}>
             <View style={styles.comparisonRangeRow}>
               <Pressable style={styles.rangeButton} onPress={() => openRangeEditor("primary")}>
                 <Text style={styles.rangeLabel}>Primary range</Text>
@@ -343,14 +422,14 @@ export default function AccountsTabScreen() {
               </View>
             </View>
             <Text style={styles.comparisonSummary}>{comparisonSummary}</Text>
-          </GlassCard>
+            </GlassCard>
 
-          <SectionHeader
-            title="Recent activity"
-            actionLabel="Open feed"
-            onActionPress={() => router.push("/(tabs)/activity")}
-          />
-          <View style={styles.recentWrap}>
+            <SectionHeader
+              title="Recent activity"
+              actionLabel="Open feed"
+              onActionPress={() => router.push("/(tabs)/activity")}
+            />
+            <View style={styles.recentWrap}>
             {recentActivity.length > 0 ? (
               recentActivity.map((transaction, index) => (
                 <TransactionRow
@@ -374,8 +453,9 @@ export default function AccountsTabScreen() {
                 message="Transactions for this account will appear here."
               />
             )}
-          </View>
-        </ScrollView>
+            </View>
+          </ScrollView>
+        </>
       )}
 
       <Modal
@@ -389,23 +469,36 @@ export default function AccountsTabScreen() {
             <Text style={styles.modalTitle}>Select account</Text>
             <ScrollView contentContainerStyle={styles.modalList} showsVerticalScrollIndicator={false}>
               {accounts.map((account) => (
-                <Pressable
+                <View
                   key={account.id}
-                  style={({ pressed }) => [
-                    styles.modalItem,
-                    selectedAccount?.id === account.id ? styles.modalItemActive : null,
-                    pressed ? styles.modalItemPressed : null
-                  ]}
-                  onPress={() => {
-                    setSelectedAccountId(account.id);
-                    setSelectorVisible(false);
-                  }}
+                  style={styles.modalItemRow}
                 >
-                  <Text style={styles.modalItemTitle}>{account.name}</Text>
-                  <Text style={styles.modalItemMeta}>
-                    {account.type} | {formatCurrency(account.currentBalance, account.currency)}
-                  </Text>
-                </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.modalItem,
+                      selectedAccount?.id === account.id ? styles.modalItemActive : null,
+                      pressed ? styles.modalItemPressed : null
+                    ]}
+                    onPress={() => {
+                      setSelectedAccountId(account.id);
+                      setSelectorVisible(false);
+                    }}
+                  >
+                    <Text style={styles.modalItemTitle}>{account.name}</Text>
+                    <Text style={styles.modalItemMeta}>
+                      {account.type} | {formatCurrency(account.currentBalance, account.currency)}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => openEditFromSelector(account)}
+                    style={({ pressed }) => [
+                      styles.modalItemEditButton,
+                      pressed ? styles.modalItemPressed : null
+                    ]}
+                  >
+                    <Text style={styles.modalItemEditText}>Edit</Text>
+                  </Pressable>
+                </View>
               ))}
 
               <View style={styles.modalDivider} />
@@ -417,12 +510,59 @@ export default function AccountsTabScreen() {
                 }}
               >
                 <View style={styles.createAccountTextWrap}>
-                  <Text style={styles.createAccountTitle}>Create an account</Text>
-                  <Text style={styles.createAccountBody}>Create a new account</Text>
+                  <Text style={styles.createAccountTitle}>Connect bank</Text>
+                  <Text style={styles.createAccountBody}>Connect a financial institution</Text>
                 </View>
-                <Ionicons name="add-circle-outline" size={20} color={palette.accent} />
+                <Ionicons name="link-outline" size={20} color={palette.accent} />
               </Pressable>
             </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={editModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditModalVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setEditModalVisible(false)}>
+          <Pressable style={styles.modalSheet} onPress={() => undefined}>
+            <Text style={styles.modalTitle}>Edit account</Text>
+
+            <TextField
+              label="Account name"
+              value={editedName}
+              onChangeText={setEditedName}
+              placeholder="Account name"
+            />
+
+            <SelectField
+              label="Account type"
+              value={editedType}
+              options={accountTypeOptions}
+              onChange={(value) => setEditedType(value as AccountType)}
+            />
+
+            <PrimaryButton
+              label="Save changes"
+              onPress={() => void submitEdit()}
+              isLoading={updateAccountMutation.isPending}
+              disabled={!editedName.trim()}
+            />
+
+            <Pressable
+              onPress={confirmDelete}
+              style={({ pressed }) => [
+                styles.deleteButton,
+                pressed ? styles.modalItemPressed : null
+              ]}
+            >
+              <Text style={styles.deleteButtonText}>Delete account</Text>
+            </Pressable>
+            <Text style={styles.deleteWarning}>
+              Deleting this account will remove all data associated with it.
+            </Text>
           </Pressable>
         </Pressable>
       </Modal>
@@ -505,9 +645,22 @@ const styles = StyleSheet.create({
   scrollContent: {
     gap: spacing[16]
   },
+  selectorTopBar: {
+    marginBottom: spacing[16],
+    backgroundColor: "transparent",
+    zIndex: 20,
+    elevation: 20
+  },
+  selectorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
   accountSelector: {
-    minHeight: 46,
-    borderRadius: 14,
+    flex: 1,
+    minHeight: 42,
+    maxHeight: 42,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: "rgba(18,36,58,0.74)",
@@ -519,6 +672,10 @@ const styles = StyleSheet.create({
   accountSelectorText: {
     color: palette.textPrimary,
     ...typography.title2
+  },
+  selectorRightSpacer: {
+    width: 42,
+    height: 42
   },
   heroCard: {
     gap: spacing[8]
@@ -635,7 +792,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(12,25,43,0.98)",
     padding: spacing[16],
     gap: spacing[12],
-    maxHeight: "80%"
+    maxHeight: "84%"
   },
   modalTitle: {
     color: palette.textPrimary,
@@ -645,18 +802,26 @@ const styles = StyleSheet.create({
     gap: spacing[8],
     paddingBottom: spacing[8]
   },
+  modalItemRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: spacing[8]
+  },
   modalDivider: {
     height: 1,
     backgroundColor: "rgba(220,232,255,0.12)",
     marginVertical: spacing[4]
   },
   modalItem: {
+    flex: 1,
+    minHeight: 74,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: "rgba(18,36,58,0.75)",
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
+    justifyContent: "center",
     gap: spacing[4]
   },
   modalItemActive: {
@@ -673,6 +838,22 @@ const styles = StyleSheet.create({
   modalItemMeta: {
     color: palette.textSecondary,
     ...typography.caption
+  },
+  modalItemEditButton: {
+    minWidth: 68,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing[12],
+    alignSelf: "stretch"
+  },
+  modalItemEditText: {
+    color: palette.primaryGlow,
+    ...typography.caption,
+    fontWeight: "700"
   },
   createAccountItem: {
     borderRadius: 12,
@@ -696,6 +877,24 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   },
   createAccountBody: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  deleteButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(244,104,119,0.6)",
+    backgroundColor: "rgba(90,16,30,0.45)",
+    minHeight: 42,
+    justifyContent: "center",
+    alignItems: "center"
+  },
+  deleteButtonText: {
+    color: palette.negative,
+    ...typography.body2,
+    fontWeight: "700"
+  },
+  deleteWarning: {
     color: palette.textSecondary,
     ...typography.caption
   },

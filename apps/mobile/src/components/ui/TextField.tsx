@@ -1,18 +1,29 @@
 import { useState } from "react";
 import { StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
-import { palette, radius, spacing, surfaces, typography } from "../../theme/tokens";
+import { palette, radius, spacing, typography } from "../../theme/tokens";
 
 type TextFieldProps = TextInputProps & {
   label: string;
   error?: string;
+  showLabel?: boolean;
+  forceFocused?: boolean;
+  surfaceMode?: "normal" | "solid";
 };
 
-export function TextField({ label, error, style, ...props }: TextFieldProps) {
+export function TextField({
+  label,
+  error,
+  style,
+  showLabel = true,
+  forceFocused = false,
+  surfaceMode = "normal",
+  ...props
+}: TextFieldProps) {
   const [isFocused, setIsFocused] = useState(false);
 
   return (
-    <View style={styles.wrapper}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={[styles.wrapper, !showLabel ? styles.wrapperCompact : null]}>
+      {showLabel ? <Text style={styles.label}>{label}</Text> : null}
       <TextInput
         {...props}
         onFocus={(event) => {
@@ -26,7 +37,8 @@ export function TextField({ label, error, style, ...props }: TextFieldProps) {
         placeholderTextColor={palette.textSecondary}
         style={[
           styles.input,
-          isFocused ? styles.inputFocused : null,
+          surfaceMode === "solid" ? styles.inputSolid : styles.inputNormal,
+          isFocused || forceFocused ? styles.inputFocused : null,
           error ? styles.inputError : null,
           style
         ]}
@@ -40,6 +52,9 @@ const styles = StyleSheet.create({
   wrapper: {
     gap: spacing[8]
   },
+  wrapperCompact: {
+    gap: 0
+  },
   label: {
     color: palette.textPrimary,
     ...typography.caption
@@ -49,10 +64,16 @@ const styles = StyleSheet.create({
     borderRadius: radius.small,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.section,
     paddingHorizontal: spacing[12],
+    backgroundColor: "transparent",
     color: palette.textPrimary,
     ...typography.body1
+  },
+  inputNormal: {
+    backgroundColor: palette.elevatedBackground
+  },
+  inputSolid: {
+    backgroundColor: palette.elevatedBackground
   },
   inputFocused: {
     borderColor: palette.primaryGlow,

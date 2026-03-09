@@ -13,8 +13,30 @@ dotnet run --project .\src\NSFinTech.Api\NSFinTech.Api.csproj
 - `GET /health` (public)
 - `POST /api/auth/register`
 - `POST /api/auth/login`
+- `POST /api/auth/refresh`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
+- `POST /api/auth/logout-all`
+- `GET /api/auth/sessions`
+- `DELETE /api/auth/sessions/{sessionId}`
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
+- `POST /api/auth/verify-email/request`
+- `POST /api/auth/verify-email/confirm`
+- `POST /api/auth/change-password`
+- `GET /api/auth/providers/google`
+- `GET /api/policies/active`
+- `GET /api/policies/acceptances`
+- `POST /api/policies/accept`
+- `GET /api/policies/consents`
+- `PUT /api/policies/consents`
+- `GET /api/users/profile`
+- `PATCH /api/users/profile`
+- `GET /api/users/preferences`
+- `PATCH /api/users/preferences`
+- `POST /api/support/requests`
+- `POST /api/support/deletion-requests`
+- `POST /api/support/export-requests`
 - `GET /api/accounts`
 - `GET /api/accounts/{id}`
 - `POST /api/accounts`
@@ -31,7 +53,8 @@ All finance endpoints require a JWT bearer token.
 
 In development startup:
 
-- schema is ensured and auth-compatible columns are patched for local existing DBs
+- migrations are applied
+- baseline policy/version records are seeded
 - demo user is seeded with credentials:
   - `demo@nsfintech.local`
   - `Password123!`

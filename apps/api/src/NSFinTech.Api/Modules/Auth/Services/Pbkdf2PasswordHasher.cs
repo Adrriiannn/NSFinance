@@ -6,7 +6,8 @@ public sealed class Pbkdf2PasswordHasher : IPasswordHasher
 {
     private const int SaltSize = 16;
     private const int KeySize = 32;
-    private const int Iterations = 120_000;
+    private const int Iterations = 180_000;
+    private const string AlgorithmId = "pbkdf2-sha256";
 
     public string HashPassword(string password)
     {
@@ -18,7 +19,7 @@ public sealed class Pbkdf2PasswordHasher : IPasswordHasher
             HashAlgorithmName.SHA256,
             KeySize);
 
-        return $"pbkdf2-sha256${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(key)}";
+        return $"{AlgorithmId}${Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(key)}";
     }
 
     public bool VerifyPassword(string password, string storedHash)
@@ -29,7 +30,7 @@ public sealed class Pbkdf2PasswordHasher : IPasswordHasher
         }
 
         var parts = storedHash.Split('$', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 4 || !parts[0].Equals("pbkdf2-sha256", StringComparison.Ordinal))
+        if (parts.Length != 4 || !parts[0].Equals(AlgorithmId, StringComparison.Ordinal))
         {
             return false;
         }
@@ -59,5 +60,21 @@ public sealed class Pbkdf2PasswordHasher : IPasswordHasher
             expectedKey.Length);
 
         return CryptographicOperations.FixedTimeEquals(actualKey, expectedKey);
+    }
+
+    public bool NeedsRehash(string storedHash)
+    {
+        if (string.IsNullOrWhiteSpace(storedHash))
+        {
+            return true;
+        }
+
+        var parts = storedHash.Split('$', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 4 || !parts[0].Equals(AlgorithmId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return !int.TryParse(parts[1], out var iterations) || iterations < Iterations;
     }
 }

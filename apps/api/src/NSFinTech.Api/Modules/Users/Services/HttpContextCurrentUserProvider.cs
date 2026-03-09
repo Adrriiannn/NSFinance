@@ -30,4 +30,16 @@ public sealed class HttpContextCurrentUserProvider(IHttpContextAccessor httpCont
         userId = Guid.Empty;
         return false;
     }
+
+    public bool TryGetSessionId(out Guid sessionId)
+    {
+        var sessionClaim = httpContextAccessor.HttpContext?.User.FindFirstValue("sid");
+        if (Guid.TryParse(sessionClaim, out sessionId))
+        {
+            return true;
+        }
+
+        sessionId = Guid.Empty;
+        return false;
+    }
 }

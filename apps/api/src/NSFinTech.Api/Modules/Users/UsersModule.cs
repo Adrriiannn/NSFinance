@@ -10,8 +10,17 @@ public static class UsersModule
             .WithTags("Users")
             .RequireAuthorization();
 
-        group.MapGet("/", GetUsersEndpoint.HandleAsync)
-            .WithName("GetUsers");
+        group.MapGet("/profile", GetUserProfileEndpoint.HandleAsync)
+            .WithName("GetUserProfile");
+
+        group.MapPatch("/profile", UpdateUserProfileEndpoint.HandleAsync)
+            .WithName("UpdateUserProfile");
+
+        group.MapGet("/preferences", GetUserPreferencesEndpoint.HandleAsync)
+            .WithName("GetUserPreferences");
+
+        group.MapPatch("/preferences", UpdateUserPreferencesEndpoint.HandleAsync)
+            .WithName("UpdateUserPreferences");
 
         return app;
     }

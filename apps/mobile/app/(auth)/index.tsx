@@ -41,6 +41,22 @@ export default function AuthEntryScreen() {
         />
 
         <SecondaryButton
+          label="Forgot password"
+          onPress={() => {
+            clearSessionMessage();
+            router.push("/forgot-password" as never);
+          }}
+        />
+
+        <SecondaryButton
+          label="Verify email"
+          onPress={() => {
+            clearSessionMessage();
+            router.push("/verify-email" as never);
+          }}
+        />
+
+        <SecondaryButton
           label="Sign in with Google"
           onPress={() => clearSessionMessage()}
           disabled
@@ -48,6 +64,11 @@ export default function AuthEntryScreen() {
         <View style={styles.googleHint}>
           <Ionicons name="logo-google" size={16} color={palette.textSecondary} />
           <Text style={styles.googleHintText}>Google sign-in coming soon</Text>
+        </View>
+
+        <View style={styles.legalRow}>
+          <SecondaryButton label="Terms" onPress={() => router.push("/legal/terms" as never)} />
+          <SecondaryButton label="Privacy" onPress={() => router.push("/legal/privacy" as never)} />
         </View>
       </GlassCard>
     </AuthScreen>
@@ -90,5 +111,10 @@ const styles = StyleSheet.create({
   googleHintText: {
     color: palette.textSecondary,
     ...typography.caption
+  },
+  legalRow: {
+    marginTop: spacing[4],
+    flexDirection: "row",
+    gap: spacing[8]
   }
 });

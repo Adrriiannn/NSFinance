@@ -18,6 +18,11 @@ export type CreateAccountRequest = {
   openingBalance?: number | null;
 };
 
+export type UpdateAccountRequest = {
+  name: string;
+  type: AccountType;
+};
+
 export type TransactionDto = {
   id: string;
   accountId: string;
@@ -72,27 +77,231 @@ export type ApiErrorResponse = {
 
 export type UserProfileDto = {
   id: string;
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
+  primaryEmail: string;
+  displayName: string;
+  timezone: string;
+  locale: string;
+  preferredCurrency: string;
+  role: string;
+  emailVerified: boolean;
+  onboardingStatus: string;
+  biometricUnlockEnabled: boolean;
+  planTier: string;
   createdUtc: string;
   lastLoginUtc: string | null;
 };
 
 export type AuthTokenResponse = {
   accessToken: string;
-  expiresAtUtc: string;
+  accessTokenExpiresAtUtc: string;
+  refreshToken: string;
+  refreshTokenExpiresAtUtc: string;
+  sessionId: string;
   user: UserProfileDto;
+};
+
+export type DeviceContextDto = {
+  deviceFingerprint?: string | null;
+  deviceLabel?: string | null;
+  platform?: string | null;
+  osVersion?: string | null;
+  appVersion?: string | null;
 };
 
 export type RegisterRequest = {
   email: string;
   password: string;
-  firstName?: string | null;
-  lastName?: string | null;
+  displayName?: string | null;
+  timezone?: string | null;
+  locale?: string | null;
+  preferredCurrency?: string | null;
+  deviceContext?: DeviceContextDto | null;
 };
 
 export type LoginRequest = {
   email: string;
   password: string;
+  deviceContext?: DeviceContextDto | null;
+};
+
+export type RefreshTokenRequest = {
+  refreshToken: string;
+  deviceContext?: DeviceContextDto | null;
+};
+
+export type SessionDto = {
+  id: string;
+  createdUtc: string;
+  expiresUtc: string;
+  lastSeenUtc: string;
+  revokedUtc: string | null;
+  deviceLabel: string;
+  platform: string | null;
+  osVersion: string | null;
+  appVersion: string | null;
+  isCurrentSession: boolean;
+};
+
+export type AuthActionResponse = {
+  message: string;
+  debugToken?: string | null;
+};
+
+export type ForgotPasswordRequest = {
+  email: string;
+};
+
+export type ResetPasswordRequest = {
+  token: string;
+  newPassword: string;
+};
+
+export type RequestEmailVerificationRequest = {
+  email: string;
+};
+
+export type ConfirmEmailVerificationRequest = {
+  token: string;
+};
+
+export type ChangePasswordRequest = {
+  currentPassword: string;
+  newPassword: string;
+};
+
+export type UserProfileDetailsDto = {
+  id: string;
+  primaryEmail: string;
+  displayName: string;
+  timezone: string;
+  locale: string;
+  preferredCurrency: string;
+  onboardingStatus: string;
+  biometricUnlockEnabled: boolean;
+  emailVerified: boolean;
+  planTier: string;
+  createdUtc: string;
+  lastLoginUtc: string | null;
+};
+
+export type UpdateUserProfileRequest = {
+  displayName: string;
+  timezone: string;
+  locale: string;
+  preferredCurrency: string;
+  onboardingStatus: string;
+  biometricUnlockEnabled: boolean;
+};
+
+export type UserPreferenceDto = {
+  adviceTonePreference: string;
+  digestFrequency: string;
+  reminderPreference: string;
+  notificationPreferencesJson: string;
+  privacyPreferencesJson: string;
+  essentialCategoryPreferencesJson: string;
+  futureGoalConfigurationJson: string;
+  updatedUtc: string;
+};
+
+export type UpdateUserPreferenceRequest = {
+  adviceTonePreference: string;
+  digestFrequency: string;
+  reminderPreference: string;
+  notificationPreferencesJson: string;
+  privacyPreferencesJson: string;
+  essentialCategoryPreferencesJson: string;
+  futureGoalConfigurationJson: string;
+};
+
+export type PolicyVersionDto = {
+  policyType: string;
+  policyName: string;
+  version: string;
+  effectiveUtc: string;
+  contentReference: string;
+  isActive: boolean;
+};
+
+export type PolicyAcceptanceDto = {
+  policyType: string;
+  policyVersion: string;
+  acceptedUtc: string;
+  acceptanceContext: string;
+  platform: string | null;
+  appVersion: string | null;
+};
+
+export type AcceptPolicyRequest = {
+  policyType: string;
+  policyVersion: string;
+  acceptanceContext: string;
+  platform?: string | null;
+  appVersion?: string | null;
+};
+
+export type ConsentRecordDto = {
+  consentType: string;
+  status: string;
+  updatedUtc: string;
+  grantedUtc: string | null;
+  revokedUtc: string | null;
+  source: string;
+  metadataJson: string | null;
+};
+
+export type UpdateConsentRequest = {
+  consentType: string;
+  status: string;
+  source: string;
+  metadataJson?: string | null;
+};
+
+export type SupportRequestDto = {
+  id: string;
+  userId: string | null;
+  category: string;
+  message: string;
+  status: string;
+  createdUtc: string;
+  updatedUtc: string;
+};
+
+export type CreateSupportRequestRequest = {
+  category: string;
+  message: string;
+};
+
+export type CreateDeletionRequestRequest = {
+  notes?: string | null;
+};
+
+export type DeletionRequestDto = {
+  id: string;
+  userId: string;
+  status: string;
+  requestedUtc: string;
+  updatedUtc: string;
+  notes: string | null;
+};
+
+export type CreateExportRequestRequest = {
+  notes?: string | null;
+};
+
+export type ExportRequestDto = {
+  id: string;
+  userId: string;
+  status: string;
+  requestedUtc: string;
+  updatedUtc: string;
+  notes: string | null;
+};
+
+export type GoogleAuthOptionsDto = {
+  isConfigured: boolean;
+  providerType: string;
+  authorizationUrl: string | null;
+  callbackPath: string | null;
+  message: string;
 };

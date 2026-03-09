@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/NSFinTech.Api/NSFinTech.Api.csproj" />
+    <Project Path="src/NSFinTech.Api.Tests/NSFinTech.Api.Tests.csproj" />
   </Folder>
   <Project Path="../../libs/shared/src/NSFinTech.Shared/NSFinTech.Shared.csproj" />
 </Solution>

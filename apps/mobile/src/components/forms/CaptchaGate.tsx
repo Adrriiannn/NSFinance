@@ -6,12 +6,13 @@ import { palette, spacing, typography } from "../../theme/tokens";
 type CaptchaGateProps = {
   isVerified: boolean;
   onVerify: () => void;
+  showLabel?: boolean;
 };
 
-export function CaptchaGate({ isVerified, onVerify }: CaptchaGateProps) {
+export function CaptchaGate({ isVerified, onVerify, showLabel = true }: CaptchaGateProps) {
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>Security check</Text>
+      {showLabel ? <Text style={styles.label}>Security check</Text> : null}
       <Pressable style={({ pressed }) => [styles.card, pressed ? styles.pressed : null]} onPress={onVerify}>
         <View style={[styles.checkbox, isVerified ? styles.checkboxVerified : null]}>
           {isVerified ? <Ionicons name="checkmark" size={14} color={palette.appBackground} /> : null}

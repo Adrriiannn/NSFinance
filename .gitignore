@@ -11,3 +11,7 @@ coverage/
 .expo-shared/
 *.tsbuildinfo
 *.log
+
+# .NET local app settings / secrets
+**/appsettings.Development.json
+**/appsettings.Local.json

@@ -1,8 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../lib/api/queryKeys";
-import type { LoginRequest, RegisterRequest } from "../../types/api";
+import type {
+  ChangePasswordRequest,
+  ConfirmEmailVerificationRequest,
+  ForgotPasswordRequest,
+  LoginRequest,
+  RegisterRequest,
+  RequestEmailVerificationRequest,
+  ResetPasswordRequest
+} from "../../types/api";
 import { useAuthSession } from "../../providers/AuthProvider";
-import { getCurrentUser, login, register } from "./authApi";
+import {
+  changePassword,
+  confirmEmailVerification,
+  forgotPassword,
+  getCurrentUser,
+  login,
+  requestEmailVerification,
+  resetPassword,
+  register
+} from "./authApi";
 
 export function useCurrentUserQuery() {
   const { isAuthenticated } = useAuthSession();
@@ -37,5 +54,35 @@ export function useRegisterMutation() {
       await applyAuthTokenResponse(response);
       await queryClient.invalidateQueries();
     }
+  });
+}
+
+export function useForgotPasswordMutation() {
+  return useMutation({
+    mutationFn: (payload: ForgotPasswordRequest) => forgotPassword(payload)
+  });
+}
+
+export function useResetPasswordMutation() {
+  return useMutation({
+    mutationFn: (payload: ResetPasswordRequest) => resetPassword(payload)
+  });
+}
+
+export function useRequestEmailVerificationMutation() {
+  return useMutation({
+    mutationFn: (payload: RequestEmailVerificationRequest) => requestEmailVerification(payload)
+  });
+}
+
+export function useConfirmEmailVerificationMutation() {
+  return useMutation({
+    mutationFn: (payload: ConfirmEmailVerificationRequest) => confirmEmailVerification(payload)
+  });
+}
+
+export function useChangePasswordMutation() {
+  return useMutation({
+    mutationFn: (payload: ChangePasswordRequest) => changePassword(payload)
   });
 }

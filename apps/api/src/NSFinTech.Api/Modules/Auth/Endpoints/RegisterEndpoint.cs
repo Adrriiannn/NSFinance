@@ -19,13 +19,11 @@ public static class RegisterEndpoint
         }
 
         var result = await authService.RegisterAsync(request, cancellationToken);
-        if (result.Error is not null)
+        if (!result.Succeeded)
         {
-            return result.Conflict
-                ? Results.Conflict(new ApiErrorResponse(result.Error, "email_exists"))
-                : Results.BadRequest(new ApiErrorResponse(result.Error, "register_failed"));
+            return result.Error!.ToApiError();
         }
 
-        return Results.Ok(result.Response);
+        return Results.Ok(result.Value);
     }
 }

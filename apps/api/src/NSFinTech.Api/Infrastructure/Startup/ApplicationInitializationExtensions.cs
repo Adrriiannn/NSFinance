@@ -15,37 +15,24 @@ public static class ApplicationInitializationExtensions
         var dbContext = serviceProvider.GetRequiredService<AppDbContext>();
         var seeder = serviceProvider.GetRequiredService<DevelopmentDataSeeder>();
 
-        var ensureCreated = configuration.GetValue("Database:EnsureCreatedOnStartup", true);
+        var applyMigrations = configuration.GetValue("Database:ApplyMigrationsOnStartup", true);
         var seedDemoData = configuration.GetValue("Database:SeedDemoDataOnStartup", app.Environment.IsDevelopment());
+        var seedPolicyData = configuration.GetValue("Database:SeedPolicyDataOnStartup", true);
 
-        if (ensureCreated)
+        if (applyMigrations)
         {
-            await dbContext.Database.EnsureCreatedAsync();
-            logger.LogInformation("Database schema ensured.");
+            await dbContext.Database.MigrateAsync();
+            logger.LogInformation("Database migrations applied.");
         }
 
-        await EnsureAuthSchemaCompatibilityAsync(dbContext);
+        if (seedPolicyData)
+        {
+            await seeder.SeedPolicyDataAsync(dbContext, CancellationToken.None);
+        }
 
         if (seedDemoData)
         {
             await seeder.SeedAsync(dbContext, CancellationToken.None);
         }
-    }
-
-    private static async Task EnsureAuthSchemaCompatibilityAsync(AppDbContext dbContext)
-    {
-        if (!dbContext.Database.IsNpgsql())
-        {
-            return;
-        }
-
-        const string sql = """
-            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "PasswordHash" character varying(512) NOT NULL DEFAULT '';
-            ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "LastLoginUtc" timestamp with time zone NULL;
-            ALTER TABLE "Users" ALTER COLUMN "FirstName" DROP NOT NULL;
-            ALTER TABLE "Users" ALTER COLUMN "LastName" DROP NOT NULL;
-            """;
-
-        await dbContext.Database.ExecuteSqlRawAsync(sql);
     }
 }

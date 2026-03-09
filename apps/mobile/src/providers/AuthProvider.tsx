@@ -1,8 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, type AppStateStatus } from "react-native";
+import { AppState, Platform, type AppStateStatus } from "react-native";
 import * as SecureStore from "expo-secure-store";
-import { getCurrentUser, logout as logoutApi } from "../features/auth/authApi";
-import { setApiTokenResolver } from "../lib/api/client";
+import {
+  getCurrentUser,
+  logout as logoutApi,
+  refreshToken as refreshTokenApi
+} from "../features/auth/authApi";
+import {
+  setApiTokenResolver,
+  setApiUnauthorizedHandler
+} from "../lib/api/client";
 import type { AuthTokenResponse, UserProfileDto } from "../types/api";
 import { queryClient } from "./QueryProvider";
 
@@ -11,7 +18,10 @@ const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
 
 type StoredSession = {
   accessToken: string;
-  expiresAtUtc: string;
+  accessTokenExpiresAtUtc: string;
+  refreshToken: string;
+  refreshTokenExpiresAtUtc: string;
+  sessionId: string;
   user: UserProfileDto;
 };
 
@@ -37,6 +47,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [session, setSession] = useState<StoredSession | null>(null);
   const [sessionMessage, setSessionMessage] = useState<string | null>(null);
   const accessTokenRef = useRef<string | null>(null);
+  const sessionRef = useRef<StoredSession | null>(null);
+  const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundedAtRef = useRef<number | null>(null);
 
@@ -55,13 +67,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
+  const persistSession = useCallback(async (nextSession: StoredSession | null) => {
+    if (!nextSession) {
+      await clearSessionStorage();
+      return;
+    }
+
+    await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(nextSession));
+  }, [clearSessionStorage]);
+
   const logout = useCallback(
     async (reason?: string) => {
       stopInactivityTimer();
+      refreshPromiseRef.current = null;
 
       const hadSession = Boolean(accessTokenRef.current);
       const tokenBeforeClear = accessTokenRef.current;
       accessTokenRef.current = null;
+      sessionRef.current = null;
       setSession(null);
       setApiTokenResolver(() => accessTokenRef.current);
       await clearSessionStorage();
@@ -76,7 +99,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         try {
           await logoutApi();
         } catch {
-          // Logout endpoint is best-effort for stateless JWT.
+          // Logout endpoint is best-effort in case token already expired.
         } finally {
           setApiTokenResolver(() => accessTokenRef.current);
         }
@@ -105,24 +128,71 @@ export function AuthProvider({ children }: AuthProviderProps) {
     async (response: AuthTokenResponse) => {
       const nextSession: StoredSession = {
         accessToken: response.accessToken,
-        expiresAtUtc: response.expiresAtUtc,
+        accessTokenExpiresAtUtc: response.accessTokenExpiresAtUtc,
+        refreshToken: response.refreshToken,
+        refreshTokenExpiresAtUtc: response.refreshTokenExpiresAtUtc,
+        sessionId: response.sessionId,
         user: response.user
       };
 
       accessTokenRef.current = response.accessToken;
+      sessionRef.current = nextSession;
       setSession(nextSession);
       setApiTokenResolver(() => accessTokenRef.current);
       setSessionMessage(null);
-      await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(nextSession));
+      await persistSession(nextSession);
       startInactivityTimer();
     },
-    [startInactivityTimer]
+    [persistSession, startInactivityTimer]
   );
+
+  const refreshAccessToken = useCallback(async () => {
+    if (refreshPromiseRef.current) {
+      return refreshPromiseRef.current;
+    }
+
+    const runRefresh = (async (): Promise<string | null> => {
+      const current = sessionRef.current;
+      if (!current) {
+        return null;
+      }
+
+      const refreshExpiry = Date.parse(current.refreshTokenExpiresAtUtc);
+      if (Number.isNaN(refreshExpiry) || refreshExpiry <= Date.now()) {
+        await logout("Session expired. Please sign in again.");
+        return null;
+      }
+
+      try {
+        const refreshed = await refreshTokenApi({
+          refreshToken: current.refreshToken,
+          deviceContext: {
+            platform: Platform.OS
+          }
+        });
+        await applyAuthTokenResponse(refreshed);
+        return refreshed.accessToken;
+      } catch {
+        await logout("Session expired. Please sign in again.");
+        return null;
+      }
+    })();
+
+    refreshPromiseRef.current = runRefresh.finally(() => {
+      refreshPromiseRef.current = null;
+    });
+
+    return refreshPromiseRef.current;
+  }, [applyAuthTokenResponse, logout]);
 
   useEffect(() => {
     setApiTokenResolver(() => accessTokenRef.current);
-    return () => setApiTokenResolver(() => null);
-  }, []);
+    setApiUnauthorizedHandler(() => refreshAccessToken());
+    return () => {
+      setApiTokenResolver(() => null);
+      setApiUnauthorizedHandler(null);
+    };
+  }, [refreshAccessToken]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -134,28 +204,46 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
 
         const parsed = JSON.parse(raw) as StoredSession;
-        const expiry = Date.parse(parsed.expiresAtUtc);
-        if (!parsed.accessToken || Number.isNaN(expiry) || expiry <= Date.now()) {
+        const refreshExpiry = Date.parse(parsed.refreshTokenExpiresAtUtc);
+        if (
+          !parsed.accessToken ||
+          !parsed.refreshToken ||
+          Number.isNaN(refreshExpiry) ||
+          refreshExpiry <= Date.now()
+        ) {
           await clearSessionStorage();
           setIsBootstrapping(false);
           return;
         }
 
         accessTokenRef.current = parsed.accessToken;
+        sessionRef.current = parsed;
+        setSession(parsed);
         setApiTokenResolver(() => accessTokenRef.current);
 
+        const accessExpiry = Date.parse(parsed.accessTokenExpiresAtUtc);
+        if (Number.isNaN(accessExpiry) || accessExpiry <= Date.now()) {
+          const refreshedToken = await refreshAccessToken();
+          if (!refreshedToken) {
+            setIsBootstrapping(false);
+            return;
+          }
+        }
+
         const currentUser = await getCurrentUser();
-        const hydratedSession: StoredSession = {
-          ...parsed,
+        const nextSession = {
+          ...(sessionRef.current ?? parsed),
           user: currentUser
         };
 
-        setSession(hydratedSession);
-        await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(hydratedSession));
+        sessionRef.current = nextSession;
+        setSession(nextSession);
+        await persistSession(nextSession);
         startInactivityTimer();
       } catch {
         await clearSessionStorage();
         accessTokenRef.current = null;
+        sessionRef.current = null;
         setSession(null);
       } finally {
         setIsBootstrapping(false);
@@ -163,7 +251,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
 
     void bootstrap();
-  }, [clearSessionStorage, startInactivityTimer]);
+  }, [clearSessionStorage, persistSession, refreshAccessToken, startInactivityTimer]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener(

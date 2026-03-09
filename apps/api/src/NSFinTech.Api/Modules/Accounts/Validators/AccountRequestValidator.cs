@@ -34,4 +34,21 @@ public static class AccountRequestValidator
 
         return errors;
     }
+
+    public static Dictionary<string, string[]> Validate(UpdateAccountRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            errors["name"] = ["Account name is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Type) || !AllowedTypes.Contains(request.Type))
+        {
+            errors["type"] = ["Account type must be one of: Current, Savings, Credit, Cash, Other."];
+        }
+
+        return errors;
+    }
 }

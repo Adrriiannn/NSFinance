@@ -8,6 +8,7 @@ import {
   ViewStyle
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { GlobalAppMenu } from "../layout/GlobalAppMenu";
 import { getFloatingTabBarInset } from "../../theme/insets";
 import { layout, palette, spacing, surfaces } from "../../theme/tokens";
 
@@ -31,6 +32,12 @@ export function ScreenContainer({
   bottomInsetOffset = 0
 }: ScreenContainerProps) {
   const insets = useSafeAreaInsets();
+  const flattenedContentStyle = StyleSheet.flatten(contentStyle) ?? {};
+  const menuTopOffset =
+    typeof flattenedContentStyle.paddingTop === "number"
+      ? flattenedContentStyle.paddingTop
+      : spacing[8];
+  const menuAbsoluteTop = insets.top + menuTopOffset;
   const floatingTabInset = withBottomTabOffset
     ? getFloatingTabBarInset(insets.bottom)
     : 0;
@@ -40,6 +47,7 @@ export function ScreenContainer({
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
       <View pointerEvents="none" style={styles.backgroundGlowTop} />
       <View pointerEvents="none" style={styles.backgroundGlowBottom} />
+      <GlobalAppMenu topOffset={menuAbsoluteTop} />
 
       {scrollable ? (
         <ScrollView

@@ -1,5 +1,6 @@
 using NSFinTech.Api.Common.Contracts;
 using NSFinTech.Api.Infrastructure.DependencyInjection;
+using NSFinTech.Api.Infrastructure.RequestContext;
 using NSFinTech.Api.Infrastructure.Startup;
 using NSFinTech.Api.Modules;
 
@@ -17,16 +18,20 @@ builder.Services
 var app = builder.Build();
 
 app.UseExceptionHandler();
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseRateLimiter();
+app.UseCors("AppCors");
 
 if (app.Environment.IsDevelopment())
 {
-    app.UseCors("DevCors");
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
 if (!app.Environment.IsDevelopment())
 {
+    app.UseHsts();
     app.UseHttpsRedirection();
 }
 
@@ -43,3 +48,5 @@ app.MapModules();
 await app.InitializeDatabaseAsync();
 
 app.Run();
+
+public partial class Program;

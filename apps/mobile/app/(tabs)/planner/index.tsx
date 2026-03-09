@@ -5,6 +5,7 @@ import {
   Animated,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -315,37 +316,48 @@ export default function PlannerScreen() {
 
   return (
     <ScreenContainer
+      scrollable={false}
       contentStyle={styles.content}
-      withBottomTabOffset
-      bottomInsetOffset={spacing[12]}
-      refreshing={refreshing}
-      onRefresh={() => {
-        void Promise.all([dashboardQuery.refetch(), transactionsQuery.refetch()]);
-      }}
     >
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Planner</Text>
-        <View style={styles.headerIconWrap}>
-          <Pressable style={styles.sparkleButton} onPress={() => void openCompanion()}>
-            <Ionicons name="sparkles-outline" size={20} color={palette.accent} />
-          </Pressable>
-          {showCompanionTip ? (
-            <View style={styles.tooltip}>
-              <Text style={styles.tooltipText}>Open NS Companion here</Text>
-              <Pressable
-                onPress={() => {
-                  setShowCompanionTip(false);
-                  void markCompanionTooltipSeen();
-                }}
-              >
-                <Ionicons name="close" size={12} color={palette.textSecondary} />
-              </Pressable>
-            </View>
-          ) : null}
+      <View style={styles.topActionsBar}>
+        <View style={styles.headerActionsRow}>
+          <View style={styles.headerIconWrap}>
+            <Pressable style={styles.sparkleButton} onPress={() => void openCompanion()}>
+              <Ionicons name="sparkles-outline" size={20} color={palette.accent} />
+            </Pressable>
+            {showCompanionTip ? (
+              <View style={styles.tooltip}>
+                <Text style={styles.tooltipText}>Open NS Companion here</Text>
+                <Pressable
+                  onPress={() => {
+                    setShowCompanionTip(false);
+                    void markCompanionTooltipSeen();
+                  }}
+                >
+                  <Ionicons name="close" size={12} color={palette.textSecondary} />
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.headerRightSpacer} />
         </View>
       </View>
 
-      {isLoading ? (
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void Promise.all([dashboardQuery.refetch(), transactionsQuery.refetch()]);
+            }}
+            tintColor={palette.textSecondary}
+          />
+        }
+      >
+        {isLoading ? (
         <View style={styles.loadingWrap}>
           <SkeletonBlock style={styles.loadingHero} />
           <SkeletonBlock style={styles.loadingCard} />
@@ -493,6 +505,7 @@ export default function PlannerScreen() {
           </View>
         </>
       )}
+      </ScrollView>
 
       <Modal
         visible={comparisonVisible}
@@ -605,19 +618,29 @@ export default function PlannerScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: layout.screenTopPadding
+    paddingTop: layout.screenTopPadding,
+    paddingBottom: 0
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
+  scrollContent: {
+    gap: layout.sectionGap
   },
-  title: {
-    color: palette.textPrimary,
-    ...typography.title1
+  topActionsBar: {
+    marginBottom: spacing[16],
+    alignItems: "flex-end",
+    zIndex: 20,
+    elevation: 20
   },
   headerIconWrap: {
     position: "relative"
+  },
+  headerActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  headerRightSpacer: {
+    width: 42,
+    height: 42
   },
   sparkleButton: {
     width: 42,

@@ -19,6 +19,12 @@ public static class AccountsModule
         group.MapGet("/{id:guid}", GetAccountByIdEndpoint.HandleAsync)
             .WithName("GetAccountById");
 
+        group.MapPut("/{id:guid}", UpdateAccountEndpoint.HandleAsync)
+            .WithName("UpdateAccount");
+
+        group.MapDelete("/{id:guid}", DeleteAccountEndpoint.HandleAsync)
+            .WithName("DeleteAccount");
+
         group.MapGet("/{id:guid}/transactions", GetAccountTransactionsEndpoint.HandleAsync)
             .WithName("GetAccountTransactions");
 

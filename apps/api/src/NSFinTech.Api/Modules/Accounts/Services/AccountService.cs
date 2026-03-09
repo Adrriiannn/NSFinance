@@ -83,4 +83,58 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
             openingBalance == 0 ? 0 : 1,
             account.CreatedUtc);
     }
+
+    public async Task<AccountDto?> UpdateAccountAsync(
+        Guid accountId,
+        UpdateAccountRequest request,
+        CancellationToken cancellationToken)
+    {
+        var account = await dbContext.FinancialAccounts
+            .SingleOrDefaultAsync(
+                x => x.Id == accountId && x.UserId == currentUserProvider.UserId,
+                cancellationToken);
+
+        if (account is null)
+        {
+            return null;
+        }
+
+        account.Name = request.Name.Trim();
+        account.Type = request.Type.Trim();
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var currentBalance = await dbContext.Transactions
+            .Where(x => x.FinancialAccountId == account.Id)
+            .Select(x => (decimal?)x.Amount)
+            .SumAsync(cancellationToken) ?? 0m;
+
+        var transactionCount = await dbContext.Transactions
+            .CountAsync(x => x.FinancialAccountId == account.Id, cancellationToken);
+
+        return new AccountDto(
+            account.Id,
+            account.Name,
+            account.Type,
+            account.Currency,
+            currentBalance,
+            transactionCount,
+            account.CreatedUtc);
+    }
+
+    public async Task<bool> DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        var account = await dbContext.FinancialAccounts
+            .SingleOrDefaultAsync(
+                x => x.Id == accountId && x.UserId == currentUserProvider.UserId,
+                cancellationToken);
+
+        if (account is null)
+        {
+            return false;
+        }
+
+        dbContext.FinancialAccounts.Remove(account);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return true;
+    }
 }

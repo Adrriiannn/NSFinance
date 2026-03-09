@@ -11,7 +11,7 @@ public sealed class JwtTokenService(IOptions<JwtOptions> options)
 {
     private readonly JwtOptions _options = options.Value;
 
-    public (string AccessToken, DateTime ExpiresAtUtc) CreateAccessToken(User user)
+    public (string AccessToken, DateTime ExpiresAtUtc) CreateAccessToken(User user, Guid sessionId)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SigningKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -20,10 +20,10 @@ public sealed class JwtTokenService(IOptions<JwtOptions> options)
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new(JwtRegisteredClaimNames.Email, user.Email),
-            new("email", user.Email),
-            new("first_name", user.FirstName ?? string.Empty),
-            new("last_name", user.LastName ?? string.Empty)
+            new(JwtRegisteredClaimNames.Email, user.PrimaryEmail),
+            new("email", user.PrimaryEmail),
+            new("sid", sessionId.ToString()),
+            new(ClaimTypes.Role, user.Role)
         };
 
         var tokenDescriptor = new JwtSecurityToken(

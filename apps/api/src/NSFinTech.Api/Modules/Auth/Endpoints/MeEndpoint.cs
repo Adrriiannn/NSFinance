@@ -9,9 +9,12 @@ public static class MeEndpoint
         AuthService authService,
         CancellationToken cancellationToken)
     {
-        var user = await authService.GetCurrentUserAsync(cancellationToken);
-        return user is null
-            ? Results.NotFound(new ApiErrorResponse("Current user was not found.", "user_not_found"))
-            : Results.Ok(user);
+        var result = await authService.GetCurrentUserAsync(cancellationToken);
+        if (!result.Succeeded)
+        {
+            return result.Error!.ToApiError();
+        }
+
+        return Results.Ok(result.Value);
     }
 }

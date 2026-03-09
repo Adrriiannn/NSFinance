@@ -1,15 +1,40 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
+import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { IconButton } from "../../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SectionHeader } from "../../../src/components/ui/SectionHeader";
+import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
+import { TextField } from "../../../src/components/ui/TextField";
+import {
+  useCreateDeletionRequestMutation,
+  useCreateExportRequestMutation,
+  useCreateSupportRequestMutation
+} from "../../../src/features/support/useSupport";
+import { formatUnknownError } from "../../../src/lib/api/errors";
 import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
 
 export default function AccountSupportScreen() {
   const router = useRouter();
+  const createSupportMutation = useCreateSupportRequestMutation();
+  const createDeletionMutation = useCreateDeletionRequestMutation();
+  const createExportMutation = useCreateExportRequestMutation();
+  const [category, setCategory] = useState("account_issue");
+  const [message, setMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const submitSupport = async () => {
+    const response = await createSupportMutation.mutateAsync({
+      category,
+      message
+    });
+
+    setStatusMessage(`Support request ${response.id} created.`);
+    setMessage("");
+  };
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
@@ -22,37 +47,65 @@ export default function AccountSupportScreen() {
         <View style={{ width: 42 }} />
       </View>
 
-      <SectionHeader title="FAQ" />
+      {createSupportMutation.isError ? (
+        <ErrorState
+          title="Support request failed"
+          message={formatUnknownError(createSupportMutation.error)}
+          onRetry={submitSupport}
+          retryLabel="Try again"
+        />
+      ) : null}
+
       <GlassCard style={styles.block}>
-        <Text style={styles.itemTitle}>How do I connect a bank?</Text>
-        <Text style={styles.itemBody}>Bank connection setup will be available from the Connect Bank action soon.</Text>
-      </GlassCard>
-      <GlassCard style={styles.block}>
-        <Text style={styles.itemTitle}>How do I correct transaction context?</Text>
-        <Text style={styles.itemBody}>Open a transaction and use the Transaction Context modal to update category and notes.</Text>
+        <Text style={styles.itemTitle}>Contact support</Text>
+        <TextField label="Category" value={category} onChangeText={setCategory} />
+        <TextField
+          label="Message"
+          value={message}
+          onChangeText={setMessage}
+          placeholder="Describe the issue"
+          multiline
+          numberOfLines={4}
+          textAlignVertical="top"
+        />
+        <PrimaryButton
+          label="Submit support request"
+          onPress={() => void submitSupport()}
+          isLoading={createSupportMutation.isPending}
+          disabled={!message.trim()}
+        />
       </GlassCard>
 
-      <SectionHeader title="Help categories" />
-      <View style={styles.categoryGrid}>
-        <GlassCard style={styles.categoryItem}>
-          <Text style={styles.categoryText}>Accounts</Text>
-        </GlassCard>
-        <GlassCard style={styles.categoryItem}>
-          <Text style={styles.categoryText}>Transactions</Text>
-        </GlassCard>
-        <GlassCard style={styles.categoryItem}>
-          <Text style={styles.categoryText}>Planner</Text>
-        </GlassCard>
-        <GlassCard style={styles.categoryItem}>
-          <Text style={styles.categoryText}>Security</Text>
-        </GlassCard>
-      </View>
-
-      <SectionHeader title="Ticketing" />
       <GlassCard style={styles.block}>
-        <Text style={styles.itemBody}>Need help from the team? Create a support ticket and include the affected account or transaction.</Text>
-        <PrimaryButton label="Create support ticket" onPress={() => undefined} />
+        <Text style={styles.itemTitle}>Data rights</Text>
+        <Text style={styles.itemBody}>Create placeholder records for deletion and export workflows.</Text>
+        <SecondaryButton
+          label="Request account deletion"
+          onPress={() => {
+            void (async () => {
+              const response = await createDeletionMutation.mutateAsync({
+                notes: "User requested deletion from mobile settings."
+              });
+              setStatusMessage(`Deletion request ${response.id} created.`);
+            })();
+          }}
+          disabled={createDeletionMutation.isPending}
+        />
+        <SecondaryButton
+          label="Request data export"
+          onPress={() => {
+            void (async () => {
+              const response = await createExportMutation.mutateAsync({
+                notes: "User requested data export from mobile settings."
+              });
+              setStatusMessage(`Export request ${response.id} created.`);
+            })();
+          }}
+          disabled={createExportMutation.isPending}
+        />
       </GlassCard>
+
+      {statusMessage ? <Text style={styles.status}>{statusMessage}</Text> : null}
     </ScreenContainer>
   );
 }
@@ -82,19 +135,8 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.body2
   },
-  categoryGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing[8]
-  },
-  categoryItem: {
-    width: "48.7%",
-    minHeight: 62,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  categoryText: {
-    color: palette.textPrimary,
-    ...typography.body1
+  status: {
+    color: palette.textSecondary,
+    ...typography.caption
   }
 });

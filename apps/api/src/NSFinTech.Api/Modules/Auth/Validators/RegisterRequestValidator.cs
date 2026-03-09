@@ -18,23 +18,24 @@ public static partial class RegisterRequestValidator
             errors["email"] = ["Email format is invalid."];
         }
 
-        if (string.IsNullOrWhiteSpace(request.Password))
+        var passwordErrors = PasswordPolicyValidator.Validate(request.Password);
+        if (passwordErrors.Length > 0)
         {
-            errors["password"] = ["Password is required."];
-        }
-        else if (request.Password.Length < 8)
-        {
-            errors["password"] = ["Password must contain at least 8 characters."];
+            errors["password"] = passwordErrors;
         }
 
-        if (!string.IsNullOrWhiteSpace(request.FirstName) && request.FirstName.Trim().Length > 100)
+        if (string.IsNullOrWhiteSpace(request.DisplayName))
         {
-            errors["firstName"] = ["First name cannot exceed 100 characters."];
+            errors["displayName"] = ["Display name is required."];
+        }
+        else if (request.DisplayName.Trim().Length is < 2 or > 120)
+        {
+            errors["displayName"] = ["Display name must be between 2 and 120 characters."];
         }
 
-        if (!string.IsNullOrWhiteSpace(request.LastName) && request.LastName.Trim().Length > 100)
+        if (!string.IsNullOrWhiteSpace(request.PreferredCurrency) && request.PreferredCurrency.Trim().Length != 3)
         {
-            errors["lastName"] = ["Last name cannot exceed 100 characters."];
+            errors["preferredCurrency"] = ["Preferred currency must be an ISO 3-letter code."];
         }
 
         return errors;

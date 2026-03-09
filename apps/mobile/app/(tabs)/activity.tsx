@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   PanResponder,
+  Pressable,
   RefreshControl,
-  ScrollView,
   SectionList,
   StyleSheet,
   Text,
@@ -14,7 +14,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
-import { Chip } from "../../src/components/ui/Chip";
 import { EmptyState } from "../../src/components/ui/EmptyState";
 import { FloatingActionButton } from "../../src/components/ui/FloatingActionButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
@@ -38,6 +37,7 @@ export default function ActivityTabScreen() {
   const insets = useSafeAreaInsets();
   const plannerStore = usePlannerStore();
   const [filter, setFilter] = useState<ActivityFilter>("All");
+  const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [highlightedTransactionId, setHighlightedTransactionId] = useState<string | null>(
     null
   );
@@ -126,17 +126,48 @@ export default function ActivityTabScreen() {
       contentStyle={styles.container}
     >
       <View style={styles.headerWrap}>
-        <Text style={styles.title}>Activity</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-          {filters.map((item) => (
-            <Chip
-              key={item}
-              label={item}
-              selected={filter === item}
-              onPress={() => setFilter(item)}
+        <View style={styles.selectorRow}>
+          <Pressable
+            style={styles.filterSelector}
+            onPress={() => setFilterDropdownOpen((current) => !current)}
+          >
+            <Text style={styles.filterSelectorText}>{filter}</Text>
+            <Ionicons
+              name={filterDropdownOpen ? "chevron-up" : "chevron-down"}
+              size={16}
+              color={palette.textSecondary}
             />
-          ))}
-        </ScrollView>
+          </Pressable>
+          <View style={styles.selectorRightSpacer} />
+        </View>
+
+        {filterDropdownOpen ? (
+          <View style={styles.filterDropdown}>
+            {filters.map((item) => (
+              <Pressable
+                key={item}
+                style={({ pressed }) => [
+                  styles.filterDropdownItem,
+                  filter === item ? styles.filterDropdownItemActive : null,
+                  pressed ? styles.filterDropdownItemPressed : null
+                ]}
+                onPress={() => {
+                  setFilter(item);
+                  setFilterDropdownOpen(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.filterDropdownItemText,
+                    filter === item ? styles.filterDropdownItemTextActive : null
+                  ]}
+                >
+                  {item}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.feedWrap}>
@@ -387,16 +418,64 @@ const styles = StyleSheet.create({
   },
   headerWrap: {
     gap: spacing[12],
-    marginBottom: spacing[12]
+    marginBottom: spacing[12],
+    backgroundColor: "transparent",
+    zIndex: 20,
+    elevation: 20
   },
-  title: {
-    color: palette.textPrimary,
-    ...typography.title1,
-  },
-  filterRow: {
+  selectorRow: {
     flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  filterSelector: {
+    flex: 1,
+    minHeight: 42,
+    maxHeight: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.74)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing[12]
+  },
+  filterSelectorText: {
+    color: palette.textPrimary,
+    ...typography.title2
+  },
+  selectorRightSpacer: {
+    width: 42,
+    height: 42
+  },
+  filterDropdown: {
     gap: spacing[8],
-    paddingBottom: spacing[4]
+    zIndex: 21,
+    elevation: 21
+  },
+  filterDropdownItem: {
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.75)",
+    justifyContent: "center",
+    paddingHorizontal: spacing[12]
+  },
+  filterDropdownItemActive: {
+    borderColor: palette.primaryGlow,
+    backgroundColor: "rgba(47,107,255,0.2)"
+  },
+  filterDropdownItemPressed: {
+    opacity: 0.88
+  },
+  filterDropdownItemText: {
+    color: palette.textPrimary,
+    ...typography.body1
+  },
+  filterDropdownItemTextActive: {
+    fontWeight: "700"
   },
   feedWrap: {
     flex: 1
@@ -407,7 +486,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing[8]
   },
   listContent: {
-    paddingTop: spacing[4]
+    paddingTop: 0
   },
   loadingList: {
     gap: spacing[12]

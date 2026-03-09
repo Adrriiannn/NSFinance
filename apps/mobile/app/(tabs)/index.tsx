@@ -7,7 +7,6 @@ import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard"
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
 import { EmptyState } from "../../src/components/ui/EmptyState";
 import { GlassCard } from "../../src/components/ui/GlassCard";
-import { IconButton } from "../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
@@ -28,12 +27,13 @@ import { layout, palette, spacing, typography } from "../../src/theme/tokens";
 export default function DashboardTabScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { session, logout } = useAuthSession();
+  const { session } = useAuthSession();
   const plannerStore = usePlannerStore();
   const summaryQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
   const { greeting, dateLabel, timeLabel } = useLocalClock();
-  const firstName = session?.user.firstName?.trim() || "there";
+  const fullName = session?.user.displayName?.trim() || "";
+  const firstName = fullName.split(/\s+/).find(Boolean) || "there";
 
   const heroAnimation = useEntranceAnimation(30);
   const sectionAnimation = useEntranceAnimation(150);
@@ -81,12 +81,6 @@ export default function DashboardTabScreen() {
               {dateLabel} | {timeLabel}
             </Text>
           </View>
-          <IconButton
-            onPress={() => {
-              void logout();
-            }}
-            icon={<Ionicons name="log-out-outline" size={18} color={palette.textPrimary} />}
-          />
         </View>
 
         {isInitialLoading ? (
@@ -219,7 +213,7 @@ const styles = StyleSheet.create({
   },
   greeting: {
     color: palette.textPrimary,
-    ...typography.title1
+    ...typography.title2
   },
   subGreeting: {
     marginTop: spacing[4],
