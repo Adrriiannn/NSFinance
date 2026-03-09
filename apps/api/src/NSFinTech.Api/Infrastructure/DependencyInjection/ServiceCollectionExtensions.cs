@@ -13,6 +13,7 @@ using NSFinTech.Api.Infrastructure.Seeding;
 using NSFinTech.Api.Modules.Accounts.Services;
 using NSFinTech.Api.Modules.Audit.Services;
 using NSFinTech.Api.Modules.Auth.Services;
+using NSFinTech.Api.Modules.Banking.Services;
 using NSFinTech.Api.Modules.Categories.Services;
 using NSFinTech.Api.Modules.Insights.Services;
 using NSFinTech.Api.Modules.Policies.Services;
@@ -59,6 +60,7 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddHttpContextAccessor();
+        services.AddDataProtection();
         ConfigureCors(services, configuration);
         ConfigureRateLimiting(services);
 
@@ -70,6 +72,17 @@ public static class ServiceCollectionExtensions
             {
                 options.SigningKey = signingKeyOverride;
             }
+        });
+
+        services.Configure<TrueLayerOptions>(options =>
+        {
+            configuration.GetSection(TrueLayerOptions.SectionName).Bind(options);
+            OverrideIfSet(value => options.ClientId = value, configuration[EnvironmentVariableNames.TrueLayerClientId]);
+            OverrideIfSet(value => options.ClientSecret = value, configuration[EnvironmentVariableNames.TrueLayerClientSecret]);
+            OverrideIfSet(value => options.RedirectUri = value, configuration[EnvironmentVariableNames.TrueLayerRedirectUri]);
+            OverrideIfSet(value => options.Environment = value, configuration[EnvironmentVariableNames.TrueLayerEnvironment]);
+            OverrideIfSet(value => options.AuthBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerAuthBaseUrl]);
+            OverrideIfSet(value => options.ApiBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerApiBaseUrl]);
         });
 
         var jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
@@ -165,6 +178,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();
         services.AddScoped<DashboardService>();
+        services.AddHttpClient<TrueLayerHttpClient>();
+        services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
+        services.AddScoped<TrueLayerConfigurationService>();
+        services.AddScoped<TrueLayerAuthService>();
+        services.AddScoped<TrueLayerTokenService>();
+        services.AddScoped<TrueLayerDataService>();
+        services.AddScoped<BankConnectionService>();
+        services.AddScoped<BankSyncService>();
         services.AddScoped<DevelopmentDataSeeder>();
 
         return services;
@@ -289,5 +310,17 @@ public static class ServiceCollectionExtensions
         return httpContext.Connection.RemoteIpAddress?.ToString()
             ?? httpContext.Request.Headers.Host.ToString()
             ?? "unknown";
+    }
+
+    private static void OverrideIfSet(
+        Action<string> assign,
+        string? envValue)
+    {
+        if (string.IsNullOrWhiteSpace(envValue))
+        {
+            return;
+        }
+
+        assign(envValue.Trim());
     }
 }

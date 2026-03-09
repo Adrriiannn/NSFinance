@@ -15,13 +15,13 @@ import { useCreateTransactionMutation } from "../../src/features/transactions/us
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
-import { type NecessityType, usePlannerStore } from "../../src/providers/PlannerProvider";
+import { usePlannerStore } from "../../src/providers/PlannerProvider";
 import { palette, spacing, typography } from "../../src/theme/tokens";
 import type { TransactionDirection } from "../../src/types/api";
 
 type FormErrors = Partial<
   Record<
-    "accountId" | "description" | "amount" | "direction" | "bookedDate" | "customCategory" | "importance",
+    "description" | "amount" | "direction" | "bookedDate" | "customCategory",
     string
   >
 >;
@@ -29,11 +29,6 @@ type FormErrors = Partial<
 const directionOptions: { label: string; value: TransactionDirection }[] = [
   { label: "Expense", value: "Expense" },
   { label: "Income", value: "Income" }
-];
-
-const necessityOptions: { label: string; value: NecessityType }[] = [
-  { label: "Essential", value: "Essential" },
-  { label: "Optional", value: "Optional" }
 ];
 
 function defaultCategoryForDirection(
@@ -64,7 +59,6 @@ export default function AddTransactionModalScreen() {
   const [direction, setDirection] = useState<TransactionDirection>("Expense");
   const [category, setCategory] = useState("Groceries");
   const [customCategory, setCustomCategory] = useState("");
-  const [importance, setImportance] = useState<NecessityType | null>(null);
   const [bookedDate, setBookedDate] = useState(new Date().toISOString().slice(0, 10));
   const [errors, setErrors] = useState<FormErrors>({});
 
@@ -97,12 +91,6 @@ export default function AddTransactionModalScreen() {
     }
   }, [category, direction, plannerStore.categoryCatalog]);
 
-  useEffect(() => {
-    if (direction === "Income") {
-      setImportance(null);
-    }
-  }, [direction]);
-
   if (!isBootstrapping && !isAuthenticated) {
     return <Redirect href={("/login" as never)} />;
   }
@@ -110,10 +98,6 @@ export default function AddTransactionModalScreen() {
   const validate = () => {
     const nextErrors: FormErrors = {};
     const parsedAmount = Number(amount);
-
-    if (!accountId) {
-      nextErrors.accountId = "Account is required.";
-    }
 
     if (!description.trim()) {
       nextErrors.description = "Description is required.";
@@ -129,11 +113,6 @@ export default function AddTransactionModalScreen() {
 
     if (category === "Other" && !customCategory.trim()) {
       nextErrors.customCategory = "Enter a custom category name.";
-    }
-
-    if (direction === "Expense" && !importance) {
-      nextErrors.importance =
-        "Choose whether this transaction is essential or optional before saving.";
     }
 
     setErrors(nextErrors);
@@ -168,7 +147,7 @@ export default function AddTransactionModalScreen() {
     plannerStore.saveAnnotation({
       transactionId: created.id,
       category: resolvedCategory,
-      type: direction === "Expense" ? importance : null,
+      type: null,
       merchant: description.trim(),
       direction
     });
@@ -181,7 +160,7 @@ export default function AddTransactionModalScreen() {
     <ScreenContainer contentStyle={styles.content}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Add transaction</Text>
+          <Text style={styles.title}>Add a transaction</Text>
         </View>
         <Ionicons
           name="close"
@@ -217,21 +196,13 @@ export default function AddTransactionModalScreen() {
         />
       ) : hasNoAccounts ? (
         <EmptyState
-          title="Add an account first"
-          message="You need at least one account before adding transactions."
-          actionLabel="Create account"
+          title="No connected accounts"
+          message="Connect your bank first before adding off-book transactions."
+          actionLabel="Connect bank"
           onActionPress={() => router.push("/modals/add-account")}
         />
       ) : (
         <>
-          <SelectField
-            label="Account"
-            value={accountId}
-            options={accountOptions}
-            onChange={setAccountId}
-            error={errors.accountId}
-          />
-
           <TextField
             label="Description"
             value={description}
@@ -274,16 +245,6 @@ export default function AddTransactionModalScreen() {
             />
           ) : null}
 
-          {direction === "Expense" ? (
-            <SelectField
-              label="Importance"
-              value={importance}
-              options={necessityOptions}
-              onChange={(value) => setImportance(value as NecessityType)}
-              error={errors.importance}
-            />
-          ) : null}
-
           <TextField
             label="Booked date (UTC)"
             value={bookedDate}
@@ -293,12 +254,12 @@ export default function AddTransactionModalScreen() {
           />
 
           <View style={styles.actions}>
-            <SecondaryButton label="Cancel" onPress={() => router.back()} />
             <PrimaryButton
-              label="Save transaction"
+              label="Add the transaction"
               onPress={() => void handleSubmit()}
               isLoading={createMutation.isPending}
             />
+            <SecondaryButton label="Cancel" onPress={() => router.back()} />
           </View>
         </>
       )}
@@ -308,7 +269,7 @@ export default function AddTransactionModalScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[20],
+    paddingTop: spacing[32],
     gap: spacing[16]
   },
   header: {

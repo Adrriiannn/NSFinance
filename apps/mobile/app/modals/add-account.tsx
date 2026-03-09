@@ -1,7 +1,12 @@
-import { Ionicons } from "@expo/vector-icons";
-import { Redirect, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  Redirect,
+  useFocusEffect,
+  useLocalSearchParams,
+  useRouter
+} from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppState, Linking, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import {
   ConnectionStatusIndicator,
@@ -10,170 +15,446 @@ import {
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
-import { TextField } from "../../src/components/ui/TextField";
-import { useCreateAccountMutation } from "../../src/features/accounts/useAccounts";
+import {
+  useBankConnectionsQuery,
+  useStartTrueLayerLinkMutation,
+  useSyncBankConnectionMutation
+} from "../../src/features/banking/useBanking";
+import { useAccountsQuery } from "../../src/features/accounts/useAccounts";
 import { formatUnknownError } from "../../src/lib/api/errors";
+import { queryKeys } from "../../src/lib/api/queryKeys";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { palette, spacing, typography } from "../../src/theme/tokens";
-import type { AccountType } from "../../src/types/api";
+import type {
+  BankConnectionStatus,
+  StartTrueLayerLinkResponse
+} from "../../src/types/api";
 
-type ImportedConnection = {
-  name: string;
-  type: AccountType;
-  currency: string;
-  balance: number;
+const pendingActionStatuses = new Set<BankConnectionStatus>([
+  "connection_started",
+  "consent_in_progress"
+]);
+
+const syncableStatuses = new Set<BankConnectionStatus>([
+  "connected",
+  "synced",
+  "failed"
+]);
+
+type PendingConsentLink = {
+  authorizationUrl: string;
+  expiresAtUtc: string;
 };
 
-const mockConnectionProfiles: ImportedConnection[] = [
-  {
-    name: "Main Current",
-    type: "Current",
-    currency: "EUR",
-    balance: 2643.18
-  },
-  {
-    name: "Everyday Saver",
-    type: "Savings",
-    currency: "EUR",
-    balance: 9080.45
+function mapConnectionStatus(status?: BankConnectionStatus): ConnectionStatus {
+  switch (status) {
+    case "connection_started":
+    case "consent_in_progress":
+    case "sync_pending":
+      return "connecting";
+    case "connected":
+    case "synced":
+      return "connected";
+    case "failed":
+      return "sync_failed";
+    case "reauth_required":
+    case "expired":
+    case "revoked":
+      return "reconnect_required";
+    default:
+      return "not_connected";
   }
-];
+}
+
+function formatDateAdded(createdUtc?: string | null) {
+  if (!createdUtc) {
+    return "Pending";
+  }
+
+  const parsed = new Date(createdUtc);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Pending";
+  }
+
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(parsed);
+
+  const byType = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  return `${byType("weekday")}, ${byType("day")} ${byType("month")} ${byType("year")}, ${byType("hour")}:${byType("minute")}`;
+}
+
+function isLinkStillValid(link: PendingConsentLink | null, nowMs: number) {
+  if (!link) {
+    return false;
+  }
+
+  const expiresAtMs = Date.parse(link.expiresAtUtc);
+  if (Number.isNaN(expiresAtMs)) {
+    return false;
+  }
+
+  return expiresAtMs > nowMs + 10_000;
+}
 
 export default function AddAccountModalScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ bankingResult?: string }>();
+  const queryClient = useQueryClient();
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
-  const mutation = useCreateAccountMutation();
-  const [status, setStatus] = useState<ConnectionStatus>("not_started");
-  const [accountName, setAccountName] = useState("");
-  const [connectedData, setConnectedData] = useState<ImportedConnection | null>(null);
 
-  const canSave = status === "success" && Boolean(connectedData) && accountName.trim().length > 0;
+  const connectionsQuery = useBankConnectionsQuery();
+  const accountsQuery = useAccountsQuery();
+  const startLinkMutation = useStartTrueLayerLinkMutation();
+  const syncMutation = useSyncBankConnectionMutation();
 
-  const balanceLabel = useMemo(() => {
-    if (!connectedData) {
-      return "--";
+  const [awaitingConsentReturn, setAwaitingConsentReturn] = useState(false);
+  const [pendingConsentLink, setPendingConsentLink] = useState<PendingConsentLink | null>(null);
+  const [lastManualSyncUtc, setLastManualSyncUtc] = useState<string | null>(null);
+  const [statusClock, setStatusClock] = useState(() => Date.now());
+  const successPlayedRef = useRef(false);
+
+  const latestConnection = useMemo(() => {
+    const list = connectionsQuery.data ?? [];
+    return [...list].sort((a, b) => {
+      const aTime = Date.parse(a.updatedUtc);
+      const bTime = Date.parse(b.updatedUtc);
+      return bTime - aTime;
+    })[0] ?? null;
+  }, [connectionsQuery.data]);
+
+  const linkedAccountNames = useMemo(() => {
+    const accounts = accountsQuery.data ?? [];
+    const sorted = [...accounts].sort((a, b) => {
+      const aTime = Date.parse(a.createdUtc);
+      const bTime = Date.parse(b.createdUtc);
+      return bTime - aTime;
+    });
+
+    return Array.from(
+      new Set(
+        sorted
+          .map((account) => account.name.trim())
+          .filter((name) => name.length > 0)
+      )
+    );
+  }, [accountsQuery.data]);
+
+  const pendingLinkValid = useMemo(
+    () => isLinkStillValid(pendingConsentLink, statusClock),
+    [pendingConsentLink, statusClock]
+  );
+
+  const refreshFromBackendTruth = useCallback(async () => {
+    await Promise.all([
+      connectionsQuery.refetch(),
+      accountsQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all })
+    ]);
+  }, [accountsQuery, connectionsQuery, queryClient]);
+
+  const launchConsentInBrowser = useCallback(async (url: string) => {
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      throw new Error("Could not open the bank consent page.");
     }
 
-    return connectedData.balance.toFixed(2);
-  }, [connectedData]);
+    await Linking.openURL(url);
+  }, []);
+
+  const beginConsentSession = useCallback(
+    async (response: StartTrueLayerLinkResponse) => {
+      successPlayedRef.current = false;
+      setAwaitingConsentReturn(true);
+      setPendingConsentLink({
+        authorizationUrl: response.authorizationUrl,
+        expiresAtUtc: response.expiresAtUtc
+      });
+      setStatusClock(Date.now());
+      await launchConsentInBrowser(response.authorizationUrl);
+    },
+    [launchConsentInBrowser]
+  );
+
+  const handleConnectBank = async () => {
+    const response = await startLinkMutation.mutateAsync();
+    await beginConsentSession(response);
+  };
+
+  const handleResumeConsent = async () => {
+    if (pendingConsentLink && pendingLinkValid) {
+      setAwaitingConsentReturn(true);
+      await launchConsentInBrowser(pendingConsentLink.authorizationUrl);
+      return;
+    }
+
+    const response = await startLinkMutation.mutateAsync();
+    await beginConsentSession(response);
+  };
+
+  const handleSyncNow = async () => {
+    if (!latestConnection) {
+      return;
+    }
+
+    const syncResult = await syncMutation.mutateAsync(latestConnection.id);
+    setLastManualSyncUtc(syncResult.syncedAtUtc);
+    await refreshFromBackendTruth();
+    playSuccess();
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshFromBackendTruth();
+      return undefined;
+    }, [refreshFromBackendTruth])
+  );
+
+  useEffect(() => {
+    if (!awaitingConsentReturn) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setStatusClock(Date.now());
+    }, 4_000);
+
+    return () => clearInterval(interval);
+  }, [awaitingConsentReturn]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        return;
+      }
+
+      setStatusClock(Date.now());
+      void refreshFromBackendTruth();
+    });
+
+    return () => subscription.remove();
+  }, [refreshFromBackendTruth]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (AppState.currentState !== "active") {
+        return;
+      }
+
+      void refreshFromBackendTruth();
+    }, 30_000);
+
+    return () => clearInterval(interval);
+  }, [refreshFromBackendTruth]);
+
+  useEffect(() => {
+    if (!params.bankingResult) {
+      return;
+    }
+
+    setAwaitingConsentReturn(true);
+    setStatusClock(Date.now());
+    void refreshFromBackendTruth();
+  }, [params.bankingResult, refreshFromBackendTruth]);
+
+  useEffect(() => {
+    const status = latestConnection?.status;
+    if (!status) {
+      return;
+    }
+
+    if (status === "connected" || status === "synced") {
+      setAwaitingConsentReturn(false);
+      setPendingConsentLink(null);
+      if (!successPlayedRef.current) {
+        playSuccess();
+        successPlayedRef.current = true;
+      }
+      return;
+    }
+
+    if (
+      status === "failed" ||
+      status === "reauth_required" ||
+      status === "expired" ||
+      status === "revoked"
+    ) {
+      setAwaitingConsentReturn(false);
+      successPlayedRef.current = false;
+    }
+  }, [latestConnection?.status, playSuccess]);
 
   if (!isBootstrapping && !isAuthenticated) {
     return <Redirect href={"/login" as never} />;
   }
 
-  const handleConnectBank = () => {
-    setStatus("connecting");
+  const mappedStatus = mapConnectionStatus(latestConnection?.status);
+  const requiresBrowserCompletion = pendingActionStatuses.has(
+    latestConnection?.status ?? "not_connected"
+  );
 
-    setTimeout(() => {
-      const didSucceed = Math.random() > 0.25;
-      if (!didSucceed) {
-        setConnectedData(null);
-        setStatus("failed");
-        return;
-      }
+  let status: ConnectionStatus = mappedStatus;
+  if (startLinkMutation.isPending || syncMutation.isPending) {
+    status = "connecting";
+  } else if (awaitingConsentReturn && (requiresBrowserCompletion || !latestConnection)) {
+    status = pendingLinkValid ? "connecting" : "reconnect_required";
+  } else if (mappedStatus === "connecting" && !pendingLinkValid) {
+    status = "reconnect_required";
+  }
 
-      const nextConnection =
-        mockConnectionProfiles[Math.floor(Math.random() * mockConnectionProfiles.length)];
-      setConnectedData(nextConnection);
-      setAccountName(nextConnection.name);
-      setStatus("success");
-    }, 1200);
-  };
+  const showResumeAction =
+    (status === "connecting" || status === "reconnect_required") &&
+    (awaitingConsentReturn || requiresBrowserCompletion);
 
-  const handleSubmit = async () => {
-    if (!connectedData || !canSave) {
-      return;
-    }
+  const statusHelperText =
+    status === "connecting" && showResumeAction
+      ? "You still need to complete the required tasks in the browser."
+      : status === "reconnect_required" && requiresBrowserCompletion
+        ? "Consent is still incomplete. Reopen the browser flow to continue."
+      : status === "reconnect_required" && awaitingConsentReturn && !pendingLinkValid
+        ? "Consent session expired before completion. Start again to continue."
+        : undefined;
 
-    await mutation.mutateAsync({
-      name: accountName.trim(),
-      type: connectedData.type,
-      currency: connectedData.currency,
-      openingBalance: connectedData.balance
-    });
+  const canSyncNow = latestConnection
+    ? syncableStatuses.has(latestConnection.status)
+    : false;
 
-    playSuccess();
-    router.back();
-  };
+  const bankName =
+    latestConnection?.providerDisplayName?.trim() || "Waiting for institution details";
+  const lastSyncUtc =
+    latestConnection?.lastSuccessfulSyncUtc ?? latestConnection?.lastSyncAttemptedUtc ?? null;
+  const dateAdded = formatDateAdded(latestConnection?.createdUtc);
+  const lastManualSyncLabel = formatDateAdded(
+    lastManualSyncUtc ?? latestConnection?.lastSuccessfulSyncUtc ?? null
+  );
+  const lastSyncLabel = lastSyncUtc ? formatDateAdded(lastSyncUtc) : "Not synced yet";
 
   return (
     <ScreenContainer contentStyle={styles.content}>
-      <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.closeButton, pressed ? styles.pressed : null]}
-        >
-          <Ionicons name="arrow-back" size={20} color={palette.textSecondary} />
-        </Pressable>
-        <Text style={styles.title}>Connect bank account</Text>
+      <View style={styles.mainContent}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Bank Connection</Text>
+        </View>
+
+        {connectionsQuery.isError ? (
+          <ErrorState
+            title="Could not load connection status"
+            message={formatUnknownError(connectionsQuery.error)}
+            onRetry={() => {
+              void refreshFromBackendTruth();
+            }}
+          />
+        ) : null}
+
+        {startLinkMutation.isError ? (
+          <ErrorState
+            title="Could not start bank connection"
+            message={formatUnknownError(startLinkMutation.error)}
+            onRetry={() => {
+              void handleConnectBank();
+            }}
+            retryLabel="Try again"
+          />
+        ) : null}
+
+        {syncMutation.isError ? (
+          <ErrorState
+            title="Sync failed"
+            message={formatUnknownError(syncMutation.error)}
+            onRetry={() => {
+              void handleSyncNow();
+            }}
+            retryLabel="Retry sync"
+          />
+        ) : null}
+
+        <ConnectionStatusIndicator status={status} helperText={statusHelperText} />
+
+        <View style={styles.metadataCard}>
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Bank: </Text>
+            {bankName}
+          </Text>
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Bank account name(s): </Text>
+          </Text>
+          {linkedAccountNames.length > 0 ? (
+            linkedAccountNames.map((accountName) => (
+              <Text key={accountName} style={styles.metadataListItem}>
+                - {accountName}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.metadataRow}>Waiting for account sync</Text>
+          )}
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Last manual sync: </Text>
+            {lastManualSyncLabel}
+          </Text>
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Last sync: </Text>
+            {lastSyncLabel}
+          </Text>
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Connection provider: </Text>
+            TrueLayer
+          </Text>
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Date added: </Text>
+            {dateAdded}
+          </Text>
+        </View>
+
+        {showResumeAction ? (
+          <View style={styles.resumeCard}>
+            <Text style={styles.resumeTitle}>
+              You still need to complete the required tasks in the browser.
+            </Text>
+            <SecondaryButton
+              label="Take me there"
+              onPress={() => {
+                void handleResumeConsent();
+              }}
+              disabled={startLinkMutation.isPending}
+            />
+          </View>
+        ) : null}
+
+        <View style={styles.actionSpacer} />
+
+        <View style={styles.primaryActions}>
+          <PrimaryButton
+            label="Connect to your bank"
+            onPress={() => {
+              void handleConnectBank();
+            }}
+            isLoading={startLinkMutation.isPending}
+          />
+
+          <PrimaryButton
+            label="Sync now"
+            onPress={() => {
+              void handleSyncNow();
+            }}
+            isLoading={syncMutation.isPending}
+            disabled={!canSyncNow}
+          />
+        </View>
       </View>
 
-      <Text style={styles.bodyCopy}>
-        Accounts are added through secure bank connection. Sensitive account fields are imported
-        from your institution.
-      </Text>
-
-      {mutation.isError ? (
-        <ErrorState
-          title="Could not save account"
-          message={formatUnknownError(mutation.error)}
-          onRetry={handleSubmit}
-          retryLabel="Try again"
-        />
-      ) : null}
-
-      <ConnectionStatusIndicator status={status} />
-
-      <PrimaryButton
-        label={status === "failed" ? "Retry bank connection" : "Connect bank"}
-        onPress={handleConnectBank}
-        isLoading={status === "connecting"}
-      />
-
-      <TextField
-        label="Account name"
-        value={accountName}
-        onChangeText={setAccountName}
-        placeholder="Imported from bank"
-        editable={status === "success"}
-      />
-
-      <TextField
-        label="Account type"
-        value={connectedData?.type ?? ""}
-        onChangeText={() => undefined}
-        placeholder="Imported from bank"
-        editable={false}
-      />
-
-      <TextField
-        label="Currency"
-        value={connectedData?.currency ?? ""}
-        onChangeText={() => undefined}
-        placeholder="Imported from bank"
-        editable={false}
-      />
-
-      <TextField
-        label="Balance"
-        value={balanceLabel}
-        onChangeText={() => undefined}
-        placeholder="Imported from bank"
-        editable={false}
-      />
-
-      <View style={styles.actions}>
-        <SecondaryButton label="Cancel" onPress={() => router.back()} />
-        <PrimaryButton
-          label="Save account"
-          onPress={() => void handleSubmit()}
-          isLoading={mutation.isPending}
-          disabled={!canSave}
-        />
+      <View style={styles.closeAction}>
+        <SecondaryButton label="Close" onPress={() => router.back()} />
       </View>
     </ScreenContainer>
   );
@@ -181,38 +462,63 @@ export default function AddAccountModalScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[20],
+    flex: 1,
+    paddingTop: spacing[20]
+  },
+  mainContent: {
+    flex: 1,
     gap: spacing[16]
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing[12]
-  },
-  closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  pressed: {
-    opacity: 0.85
+    justifyContent: "space-between"
   },
   title: {
     color: palette.textPrimary,
     ...typography.title1
   },
-  bodyCopy: {
+  metadataCard: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.74)",
+    borderRadius: 12,
+    padding: spacing[12],
+    gap: spacing[8]
+  },
+  metadataRow: {
     color: palette.textSecondary,
     ...typography.body2
   },
-  actions: {
-    marginTop: spacing[8],
+  metadataLabel: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "600"
+  },
+  metadataListItem: {
+    color: palette.textSecondary,
+    ...typography.body2,
+    marginLeft: spacing[8]
+  },
+  resumeCard: {
+    borderWidth: 1,
+    borderColor: "rgba(255,154,102,0.45)",
+    backgroundColor: "rgba(51,30,14,0.5)",
+    borderRadius: 12,
+    padding: spacing[12],
     gap: spacing[12]
+  },
+  resumeTitle: {
+    color: palette.textPrimary,
+    ...typography.body2
+  },
+  actionSpacer: {
+    flex: 1
+  },
+  primaryActions: {
+    gap: spacing[12]
+  },
+  closeAction: {
+    paddingTop: spacing[16]
   }
 });
-

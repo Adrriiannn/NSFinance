@@ -43,6 +43,12 @@ Important values:
 
 - `NSFINTECH_DB_CONNECTION_STRING`
 - `NSFINTECH_JWT_SIGNING_KEY`
+- `TRUELAYER_CLIENT_ID`
+- `TRUELAYER_CLIENT_SECRET`
+- `TRUELAYER_REDIRECT_URI`
+- `TRUELAYER_ENVIRONMENT`
+- `TRUELAYER_AUTH_BASE_URL`
+- `TRUELAYER_API_BASE_URL`
 - `EXPO_PUBLIC_API_BASE_URL`
 - `ASPNETCORE_ENVIRONMENT`
 
@@ -116,8 +122,16 @@ dotnet run --project .\apps\worker\src\NSFinTech.Worker\NSFinTech.Worker.csproj
 ## Not implemented yet
 
 - Real Google OAuth
-- Open banking integrations (Plaid/TrueLayer/Tink)
+- additional open banking providers (Plaid/Tink)
+- TrueLayer payments and non-phase-2 data scopes
 - advanced AI reasoning / forecasting
 - full budgeting/goals intelligence engine
 - PDF import
 - microservice split / message broker / Redis
+
+## Phase 2 docs
+
+- `docs/phase-2-open-banking-truelayer.md`
+- `docs/api-endpoints-phase-2.md`
+- `docs/env-config-phase-2.md`
+- `docs/manual-qa-phase-2.md`

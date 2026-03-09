@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -14,10 +14,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
-import { EmptyState } from "../../src/components/ui/EmptyState";
 import { FloatingActionButton } from "../../src/components/ui/FloatingActionButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
 import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
+import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
 import {
   type ActivityFilter,
   applyActivityFilter,
@@ -65,6 +65,7 @@ export default function ActivityTabScreen() {
         data: section.items
       }));
   }, [transactionsQuery.data, filter]);
+  const showEmptyState = !isInitialLoading && !transactionsQuery.isError && grouped.length === 0;
 
   useEffect(() => {
     if (!focusTransactionId || handledFocusTransactionIdRef.current === focusKey) {
@@ -131,14 +132,24 @@ export default function ActivityTabScreen() {
             style={styles.filterSelector}
             onPress={() => setFilterDropdownOpen((current) => !current)}
           >
-            <Text style={styles.filterSelectorText}>{filter}</Text>
+            <Text style={styles.filterSelectorText} numberOfLines={1}>
+              {filter}
+            </Text>
             <Ionicons
               name={filterDropdownOpen ? "chevron-up" : "chevron-down"}
               size={16}
               color={palette.textSecondary}
             />
           </Pressable>
-          <View style={styles.selectorRightSpacer} />
+          <View style={styles.selectorActions}>
+            <Pressable
+              style={styles.companionButton}
+              onPress={() => router.push("/(tabs)/planner/companion")}
+            >
+              <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
+            </Pressable>
+            <View style={styles.selectorRightSpacer} />
+          </View>
         </View>
 
         {filterDropdownOpen ? (
@@ -171,81 +182,83 @@ export default function ActivityTabScreen() {
       </View>
 
       <View style={styles.feedWrap}>
-      <SectionList
-        ref={sectionListRef}
-        sections={grouped}
-        keyExtractor={(item) => item.id}
-        stickySectionHeadersEnabled={false}
-        bounces={false}
-        renderSectionHeader={({ section }) => (
-          <Text style={styles.groupHeading}>{section.title}</Text>
-        )}
-        renderItem={({ item, index }) => (
-          <SwipeableTransactionItem
-            transaction={item}
-            index={index}
-            onPress={() =>
-              router.push({
-                pathname: "/modals/transaction-context",
-                params: { transactionId: item.id }
-              })
-            }
-            highlighted={item.id === highlightedTransactionId}
+        {isInitialLoading ? (
+          <View style={styles.loadingList}>
+            <SkeletonBlock style={styles.loadingRow} />
+            <SkeletonBlock style={styles.loadingRow} />
+            <SkeletonBlock style={styles.loadingRow} />
+            <SkeletonBlock style={styles.loadingRow} />
+          </View>
+        ) : transactionsQuery.isError ? (
+          <ErrorState
+            title="Could not load activity"
+            message={transactionsQuery.error.message}
+            onRetry={() => {
+              void transactionsQuery.refetch();
+            }}
+          />
+        ) : showEmptyState ? (
+          <TabEmptyStateCard
+            title="No activity yet"
+            subtitle="Connect your bank to start tracking spending activity."
+            ctaLabel="Connect bank"
+            onCtaPress={() => router.push("/modals/add-account")}
+            verticalSpacingMode="tab-aligned"
+          />
+        ) : (
+          <SectionList
+            ref={sectionListRef}
+            sections={grouped}
+            keyExtractor={(item) => item.id}
+            stickySectionHeadersEnabled={false}
+            bounces={false}
+            renderSectionHeader={({ section }) => (
+              <Text style={styles.groupHeading}>{section.title}</Text>
+            )}
+            renderItem={({ item, index }) => (
+              <SwipeableTransactionItem
+                transaction={item}
+                index={index}
+                onPress={() =>
+                  router.push({
+                    pathname: "/modals/transaction-context",
+                    params: { transactionId: item.id }
+                  })
+                }
+                highlighted={item.id === highlightedTransactionId}
             onMarkEssential={() =>
               plannerStore.saveAnnotation({
                 transactionId: item.id,
-                type: "Essential",
+                type: null,
+                reason: "Flagged for review",
                 direction: item.direction
               })
             }
             onMarkOptional={() =>
               plannerStore.saveAnnotation({
                 transactionId: item.id,
-                type: "Optional",
+                type: null,
+                reason: "Skipped from focus",
                 direction: item.direction
               })
             }
+              />
+            )}
+            contentContainerStyle={[styles.listContent, { paddingBottom: listBottomInset }]}
+            SectionSeparatorComponent={() => <View style={{ height: spacing[12] }} />}
+            ItemSeparatorComponent={() => <View style={{ height: spacing[12] }} />}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => {
+                  void transactionsQuery.refetch();
+                }}
+                tintColor={palette.textSecondary}
+              />
+            }
           />
         )}
-        contentContainerStyle={[styles.listContent, { paddingBottom: listBottomInset }]}
-        SectionSeparatorComponent={() => <View style={{ height: spacing[12] }} />}
-        ItemSeparatorComponent={() => <View style={{ height: spacing[12] }} />}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              void transactionsQuery.refetch();
-            }}
-            tintColor={palette.textSecondary}
-          />
-        }
-        ListEmptyComponent={
-          isInitialLoading ? (
-            <View style={styles.loadingList}>
-              <SkeletonBlock style={styles.loadingRow} />
-              <SkeletonBlock style={styles.loadingRow} />
-              <SkeletonBlock style={styles.loadingRow} />
-              <SkeletonBlock style={styles.loadingRow} />
-            </View>
-          ) : transactionsQuery.isError ? (
-            <ErrorState
-              title="Could not load activity"
-              message={transactionsQuery.error.message}
-              onRetry={() => {
-                void transactionsQuery.refetch();
-              }}
-            />
-          ) : (
-            <EmptyState
-              title="No transactions yet"
-              message="Manual transactions will appear here once added."
-              actionLabel="Add transaction"
-              onActionPress={() => router.push("/modals/add-transaction")}
-            />
-          )
-        }
-      />
       </View>
 
       <FloatingActionButton
@@ -382,10 +395,10 @@ function SwipeableTransactionItem({
     <View style={styles.swipeWrap}>
       <View style={styles.swipeBackdrop}>
         <Animated.Text style={[styles.swipeRightText, { opacity: rightLabelOpacity }]}>
-          Mark essential
+          Flag spend
         </Animated.Text>
         <Animated.Text style={[styles.swipeLeftText, { opacity: leftLabelOpacity }]}>
-          Mark optional
+          Skip focus
         </Animated.Text>
       </View>
       {feedbackTone ? (
@@ -429,7 +442,9 @@ const styles = StyleSheet.create({
     gap: spacing[8]
   },
   filterSelector: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    maxWidth: "74%",
     minHeight: 42,
     maxHeight: 42,
     borderRadius: 12,
@@ -442,8 +457,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing[12]
   },
   filterSelectorText: {
+    flex: 1,
+    marginRight: spacing[8],
     color: palette.textPrimary,
     ...typography.title2
+  },
+  selectorActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  companionButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.8)",
+    alignItems: "center",
+    justifyContent: "center"
   },
   selectorRightSpacer: {
     width: 42,

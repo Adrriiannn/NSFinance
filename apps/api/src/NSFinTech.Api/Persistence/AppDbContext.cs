@@ -26,6 +26,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<TransactionCategory> TransactionCategories => Set<TransactionCategory>();
     public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<OpenBankingConnection> OpenBankingConnections => Set<OpenBankingConnection>();
+    public DbSet<BankConnectionToken> BankConnectionTokens => Set<BankConnectionToken>();
+    public DbSet<LinkedBankAccount> LinkedBankAccounts => Set<LinkedBankAccount>();
+    public DbSet<BankBalanceSnapshot> BankBalanceSnapshots => Set<BankBalanceSnapshot>();
+    public DbSet<RawBankTransaction> RawBankTransactions => Set<RawBankTransaction>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

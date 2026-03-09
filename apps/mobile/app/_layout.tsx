@@ -41,6 +41,22 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="modals/send-money"
+            options={{
+              presentation: "card",
+              animation: "slide_from_bottom",
+              contentStyle: { backgroundColor: palette.appBackground }
+            }}
+          />
+          <Stack.Screen
+            name="modals/move-money"
+            options={{
+              presentation: "card",
+              animation: "slide_from_bottom",
+              contentStyle: { backgroundColor: palette.appBackground }
+            }}
+          />
+          <Stack.Screen
             name="modals/add-transaction"
             options={{
               presentation: "card",

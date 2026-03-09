@@ -6,37 +6,48 @@ import { gradients, palette, radius, shadows, spacing, typography } from "../../
 
 type BalanceHeroCardProps = {
   totalBalance: number;
-  accountCount: number;
-  transactionCount: number;
+  currency: string;
+  accountCount?: number;
+  transactionCount?: number;
+  title?: string;
+  subtitleOverride?: string;
+  badgeLabel?: string;
+  currencyNote?: string | null;
 };
 
 export function BalanceHeroCard({
   totalBalance,
-  accountCount,
-  transactionCount
+  currency,
+  accountCount = 0,
+  transactionCount = 0,
+  title = "Total balance",
+  subtitleOverride,
+  badgeLabel = "Live",
+  currencyNote
 }: BalanceHeroCardProps) {
   const subtitle = useMemo(
-    () => `${accountCount} accounts | ${transactionCount} transactions`,
-    [accountCount, transactionCount]
+    () => subtitleOverride ?? `${accountCount} accounts | ${transactionCount} transactions`,
+    [accountCount, subtitleOverride, transactionCount]
   );
 
   return (
     <LinearGradient colors={gradients.hero} style={styles.card}>
       <View style={styles.glowDot} />
       <View style={styles.topRow}>
-        <Text style={styles.label}>Total balance</Text>
+        <Text style={styles.label}>{title}</Text>
         <View style={styles.badge}>
-          <Text style={styles.badgeText}>Live</Text>
+          <Text style={styles.badgeText}>{badgeLabel}</Text>
         </View>
       </View>
 
       <AnimatedCurrencyText
         value={totalBalance}
-        currency="EUR"
+        currency={currency}
         style={styles.balance}
         baseColor={palette.textPrimary}
       />
       <Text style={styles.subtitle}>{subtitle}</Text>
+      {currencyNote ? <Text style={styles.currencyNote}>{currencyNote}</Text> : null}
     </LinearGradient>
   );
 }
@@ -88,5 +99,10 @@ const styles = StyleSheet.create({
     marginTop: spacing[8],
     color: palette.textSecondary,
     ...typography.body2
+  },
+  currencyNote: {
+    marginTop: spacing[4],
+    color: "rgba(226,236,255,0.82)",
+    ...typography.caption
   }
 });

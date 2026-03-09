@@ -35,6 +35,7 @@ public class User
     public ICollection<DeletionRequest> DeletionRequests { get; set; } = [];
     public ICollection<ExportRequest> ExportRequests { get; set; } = [];
     public ICollection<EmailActionToken> EmailActionTokens { get; set; } = [];
+    public ICollection<OpenBankingConnection> OpenBankingConnections { get; set; } = [];
     public UserPreference? Preferences { get; set; }
     public PasswordCredential? PasswordCredential { get; set; }
 }

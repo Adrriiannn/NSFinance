@@ -10,6 +10,9 @@ export const queryKeys = {
     detail: (id: string) => ["accounts", "detail", id] as const,
     transactions: (id: string) => ["accounts", "transactions", id] as const
   },
+  banking: {
+    connections: ["banking", "connections"] as const
+  },
   transactions: {
     all: ["transactions"] as const,
     list: (accountId?: string) =>

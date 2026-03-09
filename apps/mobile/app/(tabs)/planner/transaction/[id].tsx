@@ -70,14 +70,6 @@ export default function PlannerTransactionDetailScreen() {
               label="Category"
               value={annotation?.category ?? transactionQuery.data.categoryName ?? "Uncategorized"}
             />
-            <DetailLine
-              label="Importance"
-              value={
-                transactionQuery.data.direction === "Expense"
-                  ? annotation?.type ?? "Not set"
-                  : "Not applicable"
-              }
-            />
             <DetailLine label="Place" value="Location enrichment coming soon" />
             <DetailLine label="Reason" value={annotation?.reason || "Not provided"} />
             <DetailLine label="Notes" value={annotation?.notes || "Not provided"} />

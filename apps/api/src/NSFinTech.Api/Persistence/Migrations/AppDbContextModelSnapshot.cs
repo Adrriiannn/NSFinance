@@ -124,6 +124,80 @@ namespace NSFinTech.Api.Persistence.Migrations
                     b.ToTable("AuthAttempts", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.BankBalanceSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("Available")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CapturedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<decimal?>("Current")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("LinkedBankAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("Overdraft")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkedBankAccountId");
+
+                    b.HasIndex("LinkedBankAccountId", "CapturedUtc");
+
+                    b.ToTable("BankBalanceSnapshots", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.BankConnectionToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AccessTokenExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EncryptedRefreshToken")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<bool>("IsRevoked")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("RevokedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("TokenObtainedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId")
+                        .IsUnique();
+
+                    b.ToTable("BankConnectionTokens", (string)null);
+                });
+
             modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.ConsentRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -410,6 +484,153 @@ namespace NSFinTech.Api.Persistence.Migrations
                     b.ToTable("ImportJobs", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.LinkedBankAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountNumberMetadataJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("AccountSubType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("AccountType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("CurrentConnectionHealth")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<Guid?>("FinancialAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderAccountId")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId");
+
+                    b.HasIndex("FinancialAccountId")
+                        .IsUnique()
+                        .HasFilter("\"FinancialAccountId\" IS NOT NULL");
+
+                    b.HasIndex("ConnectionId", "ProviderAccountId")
+                        .IsUnique();
+
+                    b.ToTable("LinkedBankAccounts", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.OpenBankingConnection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AuthStateExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AuthStateNonce")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("LastErrorReason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTime?>("LastSuccessfulSyncUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastSyncAttemptedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderConnectionReference")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("ProviderDisplayName")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("ProviderEnvironment")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ProviderName")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AuthStateNonce")
+                        .IsUnique()
+                        .HasFilter("\"AuthStateNonce\" IS NOT NULL");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "ProviderName", "ProviderEnvironment");
+
+                    b.ToTable("OpenBankingConnections", (string)null);
+                });
+
             modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.PasswordCredential", b =>
                 {
                     b.Property<Guid>("Id")
@@ -571,6 +792,69 @@ namespace NSFinTech.Api.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("PolicyVersions", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.RawBankTransaction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("BookedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("DedupeKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTime>("ImportedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("LinkedBankAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderTransactionId")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("TransactionStatus")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("TransactionType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkedBankAccountId");
+
+                    b.HasIndex("LinkedBankAccountId", "DedupeKey")
+                        .IsUnique();
+
+                    b.HasIndex("LinkedBankAccountId", "ProviderTransactionId")
+                        .IsUnique()
+                        .HasFilter("\"ProviderTransactionId\" IS NOT NULL");
+
+                    b.ToTable("RawBankTransactions", (string)null);
                 });
 
             modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.Session", b =>
@@ -1002,6 +1286,28 @@ namespace NSFinTech.Api.Persistence.Migrations
                     b.ToTable("UserPreferences", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.BankBalanceSnapshot", b =>
+                {
+                    b.HasOne("NSFinTech.Api.Persistence.Entities.LinkedBankAccount", "LinkedBankAccount")
+                        .WithMany("BalanceSnapshots")
+                        .HasForeignKey("LinkedBankAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LinkedBankAccount");
+                });
+
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.BankConnectionToken", b =>
+                {
+                    b.HasOne("NSFinTech.Api.Persistence.Entities.OpenBankingConnection", "Connection")
+                        .WithOne("Token")
+                        .HasForeignKey("NSFinTech.Api.Persistence.Entities.BankConnectionToken", "ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Connection");
+                });
+
             modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.ConsentRecord", b =>
                 {
                     b.HasOne("NSFinTech.Api.Persistence.Entities.User", "User")
@@ -1079,6 +1385,35 @@ namespace NSFinTech.Api.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.LinkedBankAccount", b =>
+                {
+                    b.HasOne("NSFinTech.Api.Persistence.Entities.OpenBankingConnection", "Connection")
+                        .WithMany("LinkedAccounts")
+                        .HasForeignKey("ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NSFinTech.Api.Persistence.Entities.FinancialAccount", "FinancialAccount")
+                        .WithMany()
+                        .HasForeignKey("FinancialAccountId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Connection");
+
+                    b.Navigation("FinancialAccount");
+                });
+
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.OpenBankingConnection", b =>
+                {
+                    b.HasOne("NSFinTech.Api.Persistence.Entities.User", "User")
+                        .WithMany("OpenBankingConnections")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.PasswordCredential", b =>
                 {
                     b.HasOne("NSFinTech.Api.Persistence.Entities.User", "User")
@@ -1118,6 +1453,17 @@ namespace NSFinTech.Api.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("PolicyDocument");
+                });
+
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.RawBankTransaction", b =>
+                {
+                    b.HasOne("NSFinTech.Api.Persistence.Entities.LinkedBankAccount", "LinkedBankAccount")
+                        .WithMany("Transactions")
+                        .HasForeignKey("LinkedBankAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LinkedBankAccount");
                 });
 
             modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.Session", b =>
@@ -1223,6 +1569,20 @@ namespace NSFinTech.Api.Persistence.Migrations
                     b.Navigation("Transactions");
                 });
 
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.LinkedBankAccount", b =>
+                {
+                    b.Navigation("BalanceSnapshots");
+
+                    b.Navigation("Transactions");
+                });
+
+            modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.OpenBankingConnection", b =>
+                {
+                    b.Navigation("LinkedAccounts");
+
+                    b.Navigation("Token");
+                });
+
             modelBuilder.Entity("NSFinTech.Api.Persistence.Entities.PolicyDocument", b =>
                 {
                     b.Navigation("Versions");
@@ -1260,6 +1620,8 @@ namespace NSFinTech.Api.Persistence.Migrations
                     b.Navigation("FinancialAccounts");
 
                     b.Navigation("ImportJobs");
+
+                    b.Navigation("OpenBankingConnections");
 
                     b.Navigation("PasswordCredential");
 

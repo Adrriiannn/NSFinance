@@ -305,3 +305,46 @@ export type GoogleAuthOptionsDto = {
   callbackPath: string | null;
   message: string;
 };
+
+export type BankConnectionStatus =
+  | "not_connected"
+  | "connection_started"
+  | "consent_in_progress"
+  | "connected"
+  | "sync_pending"
+  | "synced"
+  | "reauth_required"
+  | "expired"
+  | "revoked"
+  | "failed";
+
+export type BankConnectionDto = {
+  id: string;
+  provider: string;
+  providerEnvironment: string;
+  providerDisplayName: string | null;
+  status: BankConnectionStatus;
+  createdUtc: string;
+  updatedUtc: string;
+  lastSuccessfulSyncUtc: string | null;
+  lastSyncAttemptedUtc: string | null;
+  lastErrorCode: string | null;
+};
+
+export type StartTrueLayerLinkResponse = {
+  connectionId: string;
+  provider: string;
+  environment: string;
+  authorizationUrl: string;
+  scopes: string[];
+  expiresAtUtc: string;
+};
+
+export type SyncConnectionResponse = {
+  connectionId: string;
+  accountsSynced: number;
+  balancesSynced: number;
+  transactionsImported: number;
+  status: BankConnectionStatus;
+  syncedAtUtc: string;
+};

@@ -1,17 +1,19 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { Animated, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard";
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
-import { EmptyState } from "../../src/components/ui/EmptyState";
 import { GlassCard } from "../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
+import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
+import { useAccountsQuery } from "../../src/features/accounts/useAccounts";
 import { useDashboardSummaryQuery } from "../../src/features/dashboard/useDashboardSummaryQuery";
 import {
   buildHomeInsights
@@ -24,12 +26,29 @@ import { usePlannerStore } from "../../src/providers/PlannerProvider";
 import { getFloatingTabBarContentInset } from "../../src/theme/insets";
 import { layout, palette, spacing, typography } from "../../src/theme/tokens";
 
+type HeroCardItem = {
+  key: string;
+  accountId: string | null;
+  title: string;
+  badgeLabel: string;
+  balance: number;
+  currency: string;
+  subtitle: string;
+  currencyNote?: string | null;
+};
+
+type HeroCarouselItem = HeroCardItem & {
+  renderKey: string;
+  logicalIndex: number;
+};
+
 export default function DashboardTabScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { session } = useAuthSession();
   const plannerStore = usePlannerStore();
   const summaryQuery = useDashboardSummaryQuery();
+  const accountsQuery = useAccountsQuery();
   const transactionsQuery = useTransactionsQuery();
   const { greeting, dateLabel, timeLabel } = useLocalClock();
   const fullName = session?.user.displayName?.trim() || "";
@@ -38,13 +57,117 @@ export default function DashboardTabScreen() {
   const heroAnimation = useEntranceAnimation(30);
   const sectionAnimation = useEntranceAnimation(150);
 
-  const isInitialLoading = summaryQuery.isLoading && !summaryQuery.data;
-  const refreshing = summaryQuery.isRefetching && !isInitialLoading;
-  const data = summaryQuery.data;
+  const isInitialLoading =
+    (summaryQuery.isLoading && !summaryQuery.data) ||
+    (accountsQuery.isLoading && !accountsQuery.data) ||
+    (transactionsQuery.isLoading && !transactionsQuery.data);
+  const refreshing =
+    (summaryQuery.isRefetching || accountsQuery.isRefetching || transactionsQuery.isRefetching) &&
+    !isInitialLoading;
+  const summaryData = summaryQuery.data;
+  const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
+  const heroScrollRef = useRef<ScrollView | null>(null);
+  const heroPhysicalIndexRef = useRef(0);
+  const [heroIndex, setHeroIndex] = useState(0);
+  const [heroWidth, setHeroWidth] = useState(0);
+  const transactions = transactionsQuery.data ?? [];
+  const recentTransactions = [...transactions]
+    .sort((left, right) => new Date(right.bookedAtUtc).getTime() - new Date(left.bookedAtUtc).getTime())
+    .slice(0, 5);
+  const heroTotals = useMemo(() => {
+    if (accounts.length === 0) {
+      return null;
+    }
+
+    const grouped = new Map<string, { total: number; accountCount: number }>();
+    accounts.forEach((account) => {
+      const group = grouped.get(account.currency) ?? { total: 0, accountCount: 0 };
+      group.total += account.currentBalance;
+      group.accountCount += 1;
+      grouped.set(account.currency, group);
+    });
+
+    if (grouped.size === 1) {
+      const [currency, value] = Array.from(grouped.entries())[0];
+      return {
+        totalBalance: Number(value.total.toFixed(2)),
+        currency,
+        currencyNote: null as string | null
+      };
+    }
+
+    const [primaryCurrency, primaryGroup] = Array.from(grouped.entries()).sort((left, right) => {
+      if (right[1].accountCount !== left[1].accountCount) {
+        return right[1].accountCount - left[1].accountCount;
+      }
+
+      return Math.abs(right[1].total) - Math.abs(left[1].total);
+    })[0];
+
+    return {
+      totalBalance: Number(primaryGroup.total.toFixed(2)),
+      currency: primaryCurrency,
+      currencyNote: `Mixed currencies detected. Showing ${primaryGroup.accountCount} ${primaryCurrency} account${primaryGroup.accountCount === 1 ? "" : "s"} only.`
+    };
+  }, [accounts]);
+  const heroItems = useMemo<HeroCardItem[]>(() => {
+    if (!heroTotals) {
+      return [];
+    }
+
+    const totalItem: HeroCardItem = {
+      key: "total",
+      accountId: null,
+      title: "Total balance",
+      badgeLabel: "All accounts",
+      balance: heroTotals.totalBalance,
+      currency: heroTotals.currency,
+      subtitle: `${accounts.length} accounts | ${transactions.length} transactions`,
+      currencyNote: heroTotals.currencyNote
+    };
+
+    const accountItems = accounts.map((account) => ({
+      key: account.id,
+      accountId: account.id,
+      title: "Account balance",
+      badgeLabel: "Account",
+      balance: account.currentBalance,
+      currency: account.currency,
+      subtitle: `${account.name} | ${account.transactionCount} transactions`,
+      currencyNote: null
+    }));
+
+    return [totalItem, ...accountItems];
+  }, [accounts, heroTotals, transactions.length]);
+  const carouselItems = useMemo<HeroCarouselItem[]>(() => {
+    if (heroItems.length === 0) {
+      return [];
+    }
+
+    if (heroItems.length === 1) {
+      return [{ ...heroItems[0], logicalIndex: 0, renderKey: `${heroItems[0].key}-single` }];
+    }
+
+    const first = heroItems[0];
+    const last = heroItems[heroItems.length - 1];
+
+    return [
+      { ...last, logicalIndex: heroItems.length - 1, renderKey: `${last.key}-loop-head` },
+      ...heroItems.map((item, logicalIndex) => ({
+        ...item,
+        logicalIndex,
+        renderKey: `${item.key}-core-${logicalIndex}`
+      })),
+      { ...first, logicalIndex: 0, renderKey: `${first.key}-loop-tail` }
+    ];
+  }, [heroItems]);
+  const getInitialPhysicalIndex = useCallback(
+    () => (heroItems.length > 1 ? 1 : 0),
+    [heroItems.length]
+  );
   const suggestions = buildHomeInsights({
-    dashboard: data,
-    transactions: transactionsQuery.data ?? [],
-    necessities: plannerStore.necessities,
+    dashboard: summaryData,
+    transactions,
     annotations: plannerStore.annotations
   }).slice(0, 2);
   const listBottomInset = Math.max(
@@ -52,14 +175,83 @@ export default function DashboardTabScreen() {
     getFloatingTabBarContentInset(insets.bottom, spacing[8])
   );
   const handleRefresh = () => {
-    void Promise.all([summaryQuery.refetch(), transactionsQuery.refetch()]);
+    void Promise.all([summaryQuery.refetch(), accountsQuery.refetch(), transactionsQuery.refetch()]);
   };
+  const loadError = summaryQuery.error ?? accountsQuery.error ?? transactionsQuery.error;
+  const handleHeroPress = (item: HeroCardItem) => {
+    if (!item.accountId) {
+      router.push("/(tabs)/accounts");
+      return;
+    }
+
+    router.push({
+      pathname: "/(tabs)/accounts",
+      params: {
+        selectedAccountId: item.accountId,
+        focusNonce: Date.now().toString()
+      }
+    });
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      setHeroIndex(0);
+      const initialPhysicalIndex = getInitialPhysicalIndex();
+      heroPhysicalIndexRef.current = initialPhysicalIndex;
+      requestAnimationFrame(() => {
+        heroScrollRef.current?.scrollTo({
+          x: heroWidth > 0 ? heroWidth * initialPhysicalIndex : 0,
+          y: 0,
+          animated: false
+        });
+      });
+      return undefined;
+    }, [getInitialPhysicalIndex, heroWidth])
+  );
+
+  useEffect(() => {
+    if (heroWidth <= 0 || heroItems.length === 0) {
+      return;
+    }
+
+    const initialPhysicalIndex = getInitialPhysicalIndex();
+    heroPhysicalIndexRef.current = initialPhysicalIndex;
+    requestAnimationFrame(() => {
+      heroScrollRef.current?.scrollTo({
+        x: heroWidth * initialPhysicalIndex,
+        y: 0,
+        animated: false
+      });
+    });
+  }, [getInitialPhysicalIndex, heroItems.length, heroWidth]);
 
   return (
     <ScreenContainer
       scrollable={false}
       contentStyle={styles.content}
     >
+      <View style={styles.headerTopBar}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.greeting}>
+              {greeting}, {firstName}
+            </Text>
+            <Text style={styles.subGreeting}>
+              {dateLabel} | {timeLabel}
+            </Text>
+          </View>
+          <View style={styles.headerRightActions}>
+            <Pressable
+              style={styles.companionButton}
+              onPress={() => router.push("/(tabs)/planner/companion")}
+            >
+              <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
+            </Pressable>
+            <View style={styles.headerRightSpacer} />
+          </View>
+        </View>
+      </View>
+
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: listBottomInset }]}
         showsVerticalScrollIndicator={false}
@@ -72,42 +264,111 @@ export default function DashboardTabScreen() {
           />
         }
       >
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.greeting}>
-              {greeting}, {firstName}
-            </Text>
-            <Text style={styles.subGreeting}>
-              {dateLabel} | {timeLabel}
-            </Text>
-          </View>
-        </View>
-
         {isInitialLoading ? (
           <DashboardLoading />
-        ) : summaryQuery.isError ? (
+        ) : loadError ? (
           <ErrorState
             title="Unable to load home"
-            message={summaryQuery.error.message}
+            message={loadError.message}
             onRetry={() => {
-              void summaryQuery.refetch();
+              void handleRefresh();
             }}
           />
-        ) : data && data.accountCount === 0 ? (
-          <EmptyState
-            title="No accounts yet"
-            message="Create your first account to start tracking balances and spending."
-            actionLabel="Add account"
-            onActionPress={() => router.push("/modals/add-account")}
+        ) : accounts.length === 0 ? (
+          <TabEmptyStateCard
+            title="No connected accounts"
+            subtitle="Connect your bank to start tracking balances and spending."
+            ctaLabel="Connect bank"
+            onCtaPress={() => router.push("/modals/add-account")}
+            verticalSpacingMode="tab-aligned"
           />
-        ) : data ? (
+        ) : heroTotals ? (
           <>
             <Animated.View style={heroAnimation}>
-              <BalanceHeroCard
-                totalBalance={data.totalBalance}
-                accountCount={data.accountCount}
-                transactionCount={data.transactionCount}
-              />
+              <View
+                style={styles.heroPagerWrap}
+                onLayout={(event) => setHeroWidth(event.nativeEvent.layout.width)}
+              >
+                <ScrollView
+                  ref={heroScrollRef}
+                  horizontal
+                  pagingEnabled
+                  showsHorizontalScrollIndicator={false}
+                  bounces={false}
+                  scrollEnabled={carouselItems.length > 1}
+                  onMomentumScrollEnd={(event) => {
+                    const width = event.nativeEvent.layoutMeasurement.width;
+                    if (width <= 0) {
+                      return;
+                    }
+
+                    const logicalCount = heroItems.length;
+                    if (logicalCount === 0) {
+                      setHeroIndex(0);
+                      return;
+                    }
+
+                    let physicalIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+                    let logicalIndex = physicalIndex;
+
+                    if (logicalCount > 1) {
+                      if (physicalIndex === 0) {
+                        physicalIndex = logicalCount;
+                        logicalIndex = logicalCount - 1;
+                        requestAnimationFrame(() => {
+                          heroScrollRef.current?.scrollTo({
+                            x: width * physicalIndex,
+                            y: 0,
+                            animated: false
+                          });
+                        });
+                      } else if (physicalIndex === logicalCount + 1) {
+                        physicalIndex = 1;
+                        logicalIndex = 0;
+                        requestAnimationFrame(() => {
+                          heroScrollRef.current?.scrollTo({
+                            x: width * physicalIndex,
+                            y: 0,
+                            animated: false
+                          });
+                        });
+                      } else {
+                        logicalIndex = physicalIndex - 1;
+                      }
+                    } else {
+                      logicalIndex = 0;
+                    }
+
+                    heroPhysicalIndexRef.current = physicalIndex;
+                    setHeroIndex(logicalIndex);
+                  }}
+                >
+                  {carouselItems.map((item) => (
+                    <Pressable
+                      key={item.renderKey}
+                      style={[styles.heroPage, heroWidth > 0 ? { width: heroWidth } : null]}
+                      onPress={() => handleHeroPress(item)}
+                    >
+                      <BalanceHeroCard
+                        totalBalance={item.balance}
+                        currency={item.currency}
+                        title={item.title}
+                        badgeLabel={item.badgeLabel}
+                        subtitleOverride={item.subtitle}
+                        currencyNote={item.currencyNote}
+                      />
+                    </Pressable>
+                  ))}
+                </ScrollView>
+                <View style={styles.heroPagerDots}>
+                  {heroItems.map((item, index) => (
+                    <View
+                      key={`dot-${item.key}`}
+                      style={[styles.heroPagerDot, index === heroIndex ? styles.heroPagerDotActive : null]}
+                    />
+                  ))}
+                </View>
+              </View>
             </Animated.View>
 
             <View style={styles.quickActionRow}>
@@ -126,7 +387,7 @@ export default function DashboardTabScreen() {
               </View>
               <View style={styles.quickActionSecondary}>
                 <SecondaryButton
-                  label="Add account"
+                  label="Connect bank"
                   onPress={() => router.push("/modals/add-account")}
                 />
               </View>
@@ -163,7 +424,7 @@ export default function DashboardTabScreen() {
             />
 
             <View style={styles.transactionsWrap}>
-              {data.recentTransactions.slice(0, 5).map((transaction, index) => (
+              {recentTransactions.map((transaction, index) => (
                 <TransactionRow
                   key={transaction.id}
                   transaction={transaction}
@@ -206,10 +467,35 @@ const styles = StyleSheet.create({
   scrollContent: {
     gap: spacing[16]
   },
+  headerTopBar: {
+    marginBottom: spacing[16],
+    backgroundColor: "transparent",
+    zIndex: 20,
+    elevation: 20
+  },
   headerRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between"
+  },
+  headerRightSpacer: {
+    width: 42,
+    height: 42
+  },
+  headerRightActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  companionButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.8)",
+    alignItems: "center",
+    justifyContent: "center"
   },
   greeting: {
     color: palette.textPrimary,
@@ -223,6 +509,29 @@ const styles = StyleSheet.create({
   quickActionRow: {
     flexDirection: "row",
     gap: spacing[12]
+  },
+  heroPagerWrap: {
+    gap: spacing[8]
+  },
+  heroPage: {
+    width: "100%"
+  },
+  heroPagerDots: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing[8]
+  },
+  heroPagerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(220,232,255,0.35)"
+  },
+  heroPagerDotActive: {
+    width: 16,
+    borderRadius: 999,
+    backgroundColor: palette.accent
   },
   quickActionPrimary: {
     flex: 1

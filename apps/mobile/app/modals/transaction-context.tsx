@@ -20,15 +20,9 @@ import { TextField } from "../../src/components/ui/TextField";
 import { useTransactionDetailQuery } from "../../src/features/transactions/useTransactions";
 import {
   type PlannerCategory,
-  type NecessityType,
   usePlannerStore
 } from "../../src/providers/PlannerProvider";
 import { palette, spacing, surfaces, typography } from "../../src/theme/tokens";
-
-const typeOptions: { label: string; value: NecessityType }[] = [
-  { label: "Essential", value: "Essential" },
-  { label: "Optional", value: "Optional" }
-];
 
 function defaultCategoryForDirection(direction: "Income" | "Expense" | undefined) {
   return direction === "Income" ? "Salary" : "Groceries";
@@ -47,7 +41,6 @@ export default function TransactionContextModalScreen() {
   );
 
   const [category, setCategory] = useState<string>("Other");
-  const [importance, setImportance] = useState<NecessityType | null>(null);
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [merchant, setMerchant] = useState("");
@@ -75,7 +68,6 @@ export default function TransactionContextModalScreen() {
 
     setCategory(nextCategory);
     setCustomCategory(hasDirectMatch ? "" : (existing.category ?? ""));
-    setImportance(direction === "Expense" ? existing.type ?? null : null);
     setReason(existing.reason);
     setNotes(existing.notes);
     setMerchant(existing.merchant);
@@ -102,7 +94,7 @@ export default function TransactionContextModalScreen() {
     plannerStore.saveAnnotation({
       transactionId,
       category: (resolvedCategory as PlannerCategory) ?? null,
-      type: direction === "Expense" ? importance : null,
+      type: null,
       reason: reason.trim(),
       notes: notes.trim(),
       merchant: merchant.trim(),
@@ -169,16 +161,6 @@ export default function TransactionContextModalScreen() {
                   value={customCategory}
                   onChangeText={setCustomCategory}
                   placeholder="Type a category name"
-                />
-              ) : null}
-
-              {direction === "Expense" ? (
-                <SelectField
-                  label="Importance"
-                  value={importance}
-                  options={typeOptions}
-                  onChange={(value) => setImportance(value as NecessityType)}
-                  compact
                 />
               ) : null}
 

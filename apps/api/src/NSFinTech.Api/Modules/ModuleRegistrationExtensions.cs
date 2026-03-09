@@ -1,5 +1,6 @@
 using NSFinTech.Api.Modules.Accounts;
 using NSFinTech.Api.Modules.Auth;
+using NSFinTech.Api.Modules.Banking;
 using NSFinTech.Api.Modules.Categories;
 using NSFinTech.Api.Modules.Insights;
 using NSFinTech.Api.Modules.Policies;
@@ -17,6 +18,7 @@ public static class ModuleRegistrationExtensions
         app.MapUsersModule();
         app.MapPoliciesModule();
         app.MapSupportModule();
+        app.MapBankingModule();
         app.MapAccountsModule();
         app.MapTransactionsModule();
         app.MapCategoriesModule();

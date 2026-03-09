@@ -1,38 +1,67 @@
 import { useMemo, useState } from "react";
-import { LayoutChangeEvent, StyleSheet, View } from "react-native";
-import { palette } from "../../theme/tokens";
-
-type SpendTrendGraphProps = {
-  primarySeries: number[];
-  secondarySeries: number[];
-  height?: number;
-};
+import { LayoutChangeEvent, StyleSheet, Text, View } from "react-native";
+import { palette, typography } from "../../theme/tokens";
 
 type GraphPoint = {
   x: number;
   y: number;
 };
 
+type SpendTrendGraphProps = {
+  primarySeries: number[];
+  secondarySeries: number[];
+  xCheckpoints?: number[];
+  yCheckpoints?: number[];
+  currency?: string;
+  monthDate?: Date;
+  maxValue?: number;
+  primaryColor?: string;
+  secondaryColor?: string;
+  height?: number;
+};
+
 const MIN_WIDTH = 220;
+const LEFT_GUTTER = 56;
+const RIGHT_GUTTER = 12;
+const TOP_GUTTER = 12;
+const BOTTOM_GUTTER = 30;
+const X_LABEL_WIDTH = 48;
 
 function toPoints(values: number[], width: number, height: number, max: number): GraphPoint[] {
-  if (width <= 0 || height <= 0) {
+  if (values.length === 0 || width <= 0 || height <= 0) {
     return [];
   }
 
-  const horizontalPadding = 10;
-  const verticalPadding = 8;
-  const drawWidth = Math.max(width - horizontalPadding * 2, 1);
-  const drawHeight = Math.max(height - verticalPadding * 2, 1);
-  const normalizedValues = values.length <= 1 ? [values[0] ?? 0, values[0] ?? 0] : values;
+  const drawWidth = Math.max(width - LEFT_GUTTER - RIGHT_GUTTER, 1);
+  const drawHeight = Math.max(height - TOP_GUTTER - BOTTOM_GUTTER, 1);
+  const normalizedValues = values.length === 1 ? [values[0], values[0]] : values;
 
   return normalizedValues.map((value, index) => {
     const ratio = normalizedValues.length <= 1 ? 0 : index / (normalizedValues.length - 1);
     return {
-      x: horizontalPadding + ratio * drawWidth,
-      y: verticalPadding + (1 - value / max) * drawHeight
+      x: LEFT_GUTTER + ratio * drawWidth,
+      y: TOP_GUTTER + (1 - value / max) * drawHeight
     };
   });
+}
+
+function smoothPolyline(points: GraphPoint[]) {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  const smoothed: GraphPoint[] = [];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    smoothed.push(current);
+    smoothed.push({
+      x: (current.x + next.x) / 2,
+      y: (current.y + next.y) / 2
+    });
+  }
+  smoothed.push(points[points.length - 1]);
+  return smoothed;
 }
 
 function buildSegments(points: GraphPoint[]) {
@@ -51,7 +80,7 @@ function buildSegments(points: GraphPoint[]) {
       key: `${index}-${next.x.toFixed(2)}-${next.y.toFixed(2)}`,
       x: centerX - length / 2,
       y: centerY,
-      width: length,
+      width: Math.max(length, 1),
       angle: `${Math.atan2(dy, dx)}rad`
     });
   }
@@ -60,7 +89,7 @@ function buildSegments(points: GraphPoint[]) {
 }
 
 function LineSeries({ points, color }: { points: GraphPoint[]; color: string }) {
-  const segments = useMemo(() => buildSegments(points), [points]);
+  const segments = useMemo(() => buildSegments(smoothPolyline(points)), [points]);
 
   return (
     <>
@@ -71,23 +100,10 @@ function LineSeries({ points, color }: { points: GraphPoint[]; color: string }) 
             styles.segment,
             {
               backgroundColor: color,
-              width: Math.max(segment.width, 1),
+              width: segment.width,
               left: segment.x,
               top: segment.y,
               transform: [{ rotateZ: segment.angle }]
-            }
-          ]}
-        />
-      ))}
-      {points.map((point, index) => (
-        <View
-          key={`${point.x}-${point.y}-${index}`}
-          style={[
-            styles.dot,
-            {
-              backgroundColor: color,
-              left: point.x - 3,
-              top: point.y - 3
             }
           ]}
         />
@@ -99,7 +115,14 @@ function LineSeries({ points, color }: { points: GraphPoint[]; color: string }) 
 export function SpendTrendGraph({
   primarySeries,
   secondarySeries,
-  height = 124
+  xCheckpoints = [],
+  yCheckpoints = [],
+  currency = "GBP",
+  monthDate = new Date(),
+  maxValue,
+  primaryColor = palette.success,
+  secondaryColor = palette.negative,
+  height = 164
 }: SpendTrendGraphProps) {
   const [width, setWidth] = useState(MIN_WIDTH);
 
@@ -110,27 +133,107 @@ export function SpendTrendGraph({
     }
   };
 
-  const maxValue = useMemo(() => {
-    const allValues = [...primarySeries, ...secondarySeries];
-    const found = Math.max(...allValues, 1);
+  const safeMax = useMemo(() => {
+    if (maxValue && maxValue > 0) {
+      return maxValue;
+    }
+
+    const found = Math.max(...primarySeries, ...secondarySeries, 1);
     return Number.isFinite(found) ? found : 1;
-  }, [primarySeries, secondarySeries]);
+  }, [maxValue, primarySeries, secondarySeries]);
 
   const primaryPoints = useMemo(
-    () => toPoints(primarySeries, width, height, maxValue),
-    [height, maxValue, primarySeries, width]
+    () => toPoints(primarySeries, width, height, safeMax),
+    [height, primarySeries, safeMax, width]
   );
   const secondaryPoints = useMemo(
-    () => toPoints(secondarySeries, width, height, maxValue),
-    [height, maxValue, secondarySeries, width]
+    () => toPoints(secondarySeries, width, height, safeMax),
+    [height, secondarySeries, safeMax, width]
+  );
+
+  const drawHeight = Math.max(height - TOP_GUTTER - BOTTOM_GUTTER, 1);
+  const drawWidth = Math.max(width - LEFT_GUTTER - RIGHT_GUTTER, 1);
+  const elapsedDays = Math.max(primarySeries.length, secondarySeries.length, 1);
+
+  const yFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat("en-GB", {
+        style: "currency",
+        currency,
+        maximumFractionDigits: 0
+      }),
+    [currency]
   );
 
   return (
     <View style={[styles.graph, { height }]} onLayout={onLayout}>
-      <View style={styles.axisX} />
-      <View style={styles.axisY} />
-      <LineSeries points={secondaryPoints} color={palette.negative} />
-      <LineSeries points={primaryPoints} color={palette.success} />
+      {yCheckpoints.map((checkpoint) => {
+        const ratio = checkpoint / safeMax;
+        const y = TOP_GUTTER + (1 - ratio) * drawHeight;
+        return (
+          <View key={`y-${checkpoint}`} style={[styles.yGridRow, { top: y }]}>
+            <Text style={styles.yLabel}>{yFormatter.format(Math.round(checkpoint))}</Text>
+            <View style={styles.gridLine} />
+          </View>
+        );
+      })}
+
+      {xCheckpoints.map((day) => {
+        const ratio = elapsedDays <= 1 ? 0 : (day - 1) / (elapsedDays - 1);
+        const x = LEFT_GUTTER + ratio * drawWidth;
+        return (
+          <View
+            key={`x-guide-${day}`}
+            style={[
+              styles.xGuideLine,
+              {
+                left: x,
+                top: TOP_GUTTER,
+                height: drawHeight
+              }
+            ]}
+          />
+        );
+      })}
+
+      <LineSeries points={secondaryPoints} color={secondaryColor} />
+      <LineSeries points={primaryPoints} color={primaryColor} />
+
+      <View style={styles.xAxisBase} />
+      {Array.from({ length: elapsedDays }, (_, dayIndex) => dayIndex + 1).map((day) => {
+        const ratio = elapsedDays <= 1 ? 0 : (day - 1) / (elapsedDays - 1);
+        const x = LEFT_GUTTER + ratio * drawWidth;
+        return (
+          <View
+            key={`x-tick-${day}`}
+            style={[
+              styles.xMinorTick,
+              {
+                left: x,
+                bottom: BOTTOM_GUTTER,
+                height: xCheckpoints.includes(day) ? 7 : 4
+              }
+            ]}
+          />
+        );
+      })}
+      {xCheckpoints.map((day) => {
+        const ratio = elapsedDays <= 1 ? 0 : (day - 1) / (elapsedDays - 1);
+        const x = LEFT_GUTTER + ratio * drawWidth;
+        const monthLabel = String(monthDate.getMonth() + 1).padStart(2, "0");
+        const dayLabel = String(day).padStart(2, "0");
+        const lastCheckpointDay = xCheckpoints[xCheckpoints.length - 1] ?? day;
+        const isLastCheckpoint = day === lastCheckpointDay;
+        const minLabelLeft = LEFT_GUTTER - X_LABEL_WIDTH / 2;
+        const labelLeft = isLastCheckpoint
+          ? x - X_LABEL_WIDTH / 2
+          : Math.max(x - X_LABEL_WIDTH / 2, minLabelLeft);
+        return (
+          <View key={`x-${day}`} style={[styles.xCheckpointWrap, { left: labelLeft }]}>
+            <Text style={styles.xLabel}>{`${dayLabel}.${monthLabel}`}</Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -139,33 +242,58 @@ const styles = StyleSheet.create({
   graph: {
     position: "relative",
     width: "100%",
-    overflow: "hidden"
-  },
-  axisX: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 6,
-    height: 1,
-    backgroundColor: "rgba(220,232,255,0.12)"
-  },
-  axisY: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    left: 10,
-    width: 1,
-    backgroundColor: "rgba(220,232,255,0.12)"
+    overflow: "visible"
   },
   segment: {
     position: "absolute",
-    height: 2,
-    borderRadius: 1
+    height: 2.4,
+    borderRadius: 2
   },
-  dot: {
+  yGridRow: {
     position: "absolute",
-    width: 6,
-    height: 6,
-    borderRadius: 3
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  yLabel: {
+    width: LEFT_GUTTER - 8,
+    textAlign: "right",
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  gridLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "rgba(220,232,255,0.1)"
+  },
+  xAxisBase: {
+    position: "absolute",
+    left: LEFT_GUTTER,
+    right: RIGHT_GUTTER,
+    bottom: BOTTOM_GUTTER,
+    height: 1,
+    backgroundColor: "rgba(220,232,255,0.16)"
+  },
+  xGuideLine: {
+    position: "absolute",
+    width: 1,
+    backgroundColor: "rgba(220,232,255,0.1)"
+  },
+  xMinorTick: {
+    position: "absolute",
+    width: 1,
+    backgroundColor: "rgba(220,232,255,0.16)"
+  },
+  xCheckpointWrap: {
+    position: "absolute",
+    bottom: 2,
+    width: X_LABEL_WIDTH,
+    alignItems: "center"
+  },
+  xLabel: {
+    color: palette.textSecondary,
+    ...typography.caption
   }
 });

@@ -1,6 +1,6 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Modal,
@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
+import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendingsCard";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
@@ -21,6 +22,7 @@ import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SectionHeader } from "../../../src/components/ui/SectionHeader";
 import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
+import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
 import { TextField } from "../../../src/components/ui/TextField";
 import {
   useAccountsQuery,
@@ -28,35 +30,10 @@ import {
   useUpdateAccountMutation
 } from "../../../src/features/accounts/useAccounts";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
-import { formatCurrency, formatMonthYear } from "../../../src/lib/format";
+import { formatCurrency } from "../../../src/lib/format";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
 import type { AccountType } from "../../../src/types/api";
-
-type MonthRange = {
-  startMonth: number;
-  startYear: number;
-  endMonth: number;
-  endYear: number;
-};
-
-type RangeTarget = "primary" | "secondary";
-type RangeStep = "start" | "end";
-
-const monthNames = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec"
-];
 
 const accountTypeOptions: { label: string; value: AccountType }[] = [
   { label: "Current", value: "Current" },
@@ -66,82 +43,28 @@ const accountTypeOptions: { label: string; value: AccountType }[] = [
   { label: "Other", value: "Other" }
 ];
 
-const defaultRanges = () => {
-  const now = new Date();
-  const thisMonth = now.getMonth();
-  const thisYear = now.getFullYear();
-  const prev = new Date(thisYear, thisMonth - 1, 1);
-
-  return {
-    primary: {
-      startMonth: thisMonth,
-      startYear: thisYear,
-      endMonth: thisMonth,
-      endYear: thisYear
-    } as MonthRange,
-    secondary: {
-      startMonth: prev.getMonth(),
-      startYear: prev.getFullYear(),
-      endMonth: prev.getMonth(),
-      endYear: prev.getFullYear()
-    } as MonthRange
-  };
-};
-
-function monthRangeToDates(range: MonthRange) {
-  const start = new Date(range.startYear, range.startMonth, 1, 0, 0, 0, 0);
-  const end = new Date(range.endYear, range.endMonth + 1, 0, 23, 59, 59, 999);
-  return { start, end };
-}
-
-function rangeLabel(range: MonthRange) {
-  const start = new Date(range.startYear, range.startMonth, 1);
-  const end = new Date(range.endYear, range.endMonth, 1);
-
-  const startLabel = formatMonthYear(start);
-  const endLabel = formatMonthYear(end);
-  if (startLabel === endLabel) {
-    return startLabel;
-  }
-
-  return `${startLabel} - ${endLabel}`;
-}
-
-function computeRangeSpend(transactions: { bookedAtUtc: string; amount: number }[], range: MonthRange) {
-  const { start, end } = monthRangeToDates(range);
-
-  return Math.abs(
-    transactions
-      .filter((item) => {
-        const bookedAt = new Date(item.bookedAtUtc);
-        return bookedAt >= start && bookedAt <= end && item.amount < 0;
-      })
-      .reduce((sum, item) => sum + item.amount, 0)
-  );
-}
-
-function monthYearOptions() {
-  const current = new Date().getFullYear();
-  return Array.from({ length: 8 }, (_, index) => current - 5 + index);
-}
 
 export default function AccountsTabScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ selectedAccountId?: string; focusNonce?: string }>();
   const insets = useSafeAreaInsets();
   const accountsQuery = useAccountsQuery();
   const updateAccountMutation = useUpdateAccountMutation();
   const deleteAccountMutation = useDeleteAccountMutation();
+  const handledSelectedAccountRef = useRef<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectorVisible, setSelectorVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editedName, setEditedName] = useState("");
   const [editedType, setEditedType] = useState<AccountType>("Current");
-  const [rangeModalVisible, setRangeModalVisible] = useState(false);
-  const [rangeTarget, setRangeTarget] = useState<RangeTarget>("primary");
-  const [rangeStep, setRangeStep] = useState<RangeStep>("start");
-  const [ranges, setRanges] = useState(defaultRanges());
 
   const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
+  const requestedSelectedAccountId =
+    typeof params.selectedAccountId === "string" ? params.selectedAccountId : "";
+  const focusNonce = typeof params.focusNonce === "string" ? params.focusNonce : "";
+  const focusKey = requestedSelectedAccountId
+    ? `${requestedSelectedAccountId}:${focusNonce}`
+    : "";
   const selectedAccount =
     accounts.find((item) => item.id === selectedAccountId) ?? accounts[0] ?? null;
 
@@ -152,21 +75,6 @@ export default function AccountsTabScreen() {
     [accountTransactionsQuery.data]
   );
 
-  const comparison = useMemo(() => {
-    const transactions = accountTransactionsQuery.data ?? [];
-    const primary = computeRangeSpend(transactions, ranges.primary);
-    const secondary = computeRangeSpend(transactions, ranges.secondary);
-    const delta = primary - secondary;
-
-    return {
-      primary,
-      secondary,
-      delta
-    } as const;
-  }, [accountTransactionsQuery.data, ranges]);
-
-  const years = useMemo(() => monthYearOptions(), []);
-
   useEffect(() => {
     if (!selectedAccountId && accounts.length > 0) {
       setSelectedAccountId(accounts[0].id);
@@ -174,77 +82,24 @@ export default function AccountsTabScreen() {
   }, [accounts, selectedAccountId]);
 
   useEffect(() => {
-    if (!selectedAccount?.id) {
+    if (!requestedSelectedAccountId || handledSelectedAccountRef.current === focusKey) {
       return;
     }
 
-    setRanges(defaultRanges());
-  }, [selectedAccount?.id]);
+    if (accounts.length === 0) {
+      return;
+    }
+
+    handledSelectedAccountRef.current = focusKey;
+    if (accounts.some((item) => item.id === requestedSelectedAccountId)) {
+      setSelectedAccountId(requestedSelectedAccountId);
+    }
+  }, [accounts, focusKey, requestedSelectedAccountId]);
 
   const listBottomInset = Math.max(
     spacing[8],
     getFloatingTabBarContentInset(insets.bottom, spacing[8])
   );
-
-  const openRangeEditor = (target: RangeTarget) => {
-    setRangeTarget(target);
-    setRangeStep("start");
-    setRangeModalVisible(true);
-  };
-
-  const handleYearChange = (year: number) => {
-    setRanges((current) => {
-      const next = { ...current };
-      if (rangeStep === "start") {
-        next[rangeTarget] = {
-          ...next[rangeTarget],
-          startYear: year
-        };
-      } else {
-        next[rangeTarget] = {
-          ...next[rangeTarget],
-          endYear: year
-        };
-      }
-
-      return next;
-    });
-  };
-
-  const handleMonthChange = (month: number) => {
-    setRanges((current) => {
-      const next = { ...current };
-      if (rangeStep === "start") {
-        next[rangeTarget] = {
-          ...next[rangeTarget],
-          startMonth: month
-        };
-      } else {
-        next[rangeTarget] = {
-          ...next[rangeTarget],
-          endMonth: month
-        };
-      }
-
-      return next;
-    });
-
-    if (rangeStep === "start") {
-      setRangeStep("end");
-      return;
-    }
-
-    setRangeModalVisible(false);
-  };
-
-  const activeRange = ranges[rangeTarget];
-  const selectedYear = rangeStep === "start" ? activeRange.startYear : activeRange.endYear;
-  const comparisonSummary =
-    Math.abs(comparison.delta) < 0.01
-      ? "You spent the same amount in both selected periods."
-      : comparison.delta > 0
-        ? `You have spent ${formatCurrency(comparison.delta, selectedAccount?.currency ?? "EUR")} more in the selected primary period than in the comparison period.`
-        : `You have spent ${formatCurrency(Math.abs(comparison.delta), selectedAccount?.currency ?? "EUR")} less in the selected primary period than in the comparison period.`;
 
   const openEditModal = (accountToEdit?: (typeof accounts)[number] | null) => {
     const target = accountToEdit ?? selectedAccount;
@@ -326,21 +181,48 @@ export default function AccountsTabScreen() {
           }}
         />
       ) : !selectedAccount ? (
-        <EmptyState
-          title="No connected accounts"
-          message="Connect your bank to add accounts and start tracking activity."
-          actionLabel="Connect bank"
-          onActionPress={() => router.push("/modals/add-account")}
-        />
+        <>
+          <View style={styles.selectorTopBar}>
+            <View style={styles.selectorRow}>
+              <View style={styles.accountSelectorPlaceholder} />
+              <View style={styles.selectorActions}>
+                <Pressable
+                  style={styles.companionButton}
+                  onPress={() => router.push("/(tabs)/planner/companion")}
+                >
+                  <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
+                </Pressable>
+                <View style={styles.selectorRightSpacer} />
+              </View>
+            </View>
+          </View>
+          <TabEmptyStateCard
+            title="No connected accounts"
+            subtitle="Connect your bank to start tracking balances and spending."
+            ctaLabel="Connect bank"
+            onCtaPress={() => router.push("/modals/add-account")}
+            verticalSpacingMode="tab-aligned"
+          />
+        </>
       ) : (
         <>
           <View style={styles.selectorTopBar}>
             <View style={styles.selectorRow}>
               <Pressable style={styles.accountSelector} onPress={() => setSelectorVisible(true)}>
-                <Text style={styles.accountSelectorText}>{selectedAccount.name}</Text>
+                <Text style={styles.accountSelectorText} numberOfLines={1}>
+                  {selectedAccount.name}
+                </Text>
                 <Ionicons name="chevron-down" size={16} color={palette.textSecondary} />
               </Pressable>
-              <View style={styles.selectorRightSpacer} />
+              <View style={styles.selectorActions}>
+                <Pressable
+                  style={styles.companionButton}
+                  onPress={() => router.push("/(tabs)/planner/companion")}
+                >
+                  <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
+                </Pressable>
+                <View style={styles.selectorRightSpacer} />
+              </View>
             </View>
           </View>
 
@@ -362,14 +244,14 @@ export default function AccountsTabScreen() {
 
             <View style={styles.actionGrid}>
               <ActionItem
-                label="Connect Bank"
+                label="Send money"
                 icon="link-outline"
-                onPress={() => router.push("/modals/add-account")}
+                onPress={() => router.push("/modals/send-money")}
               />
               <ActionItem
-                label="Transfer"
+                label="Move money"
                 icon="swap-horizontal-outline"
-                onPress={() => router.push("/modals/add-transaction")}
+                onPress={() => router.push("/modals/move-money")}
               />
               <ActionItem
                 label="Details"
@@ -383,46 +265,10 @@ export default function AccountsTabScreen() {
               />
             </View>
 
-            <SectionHeader
-              title="Monthly comparison"
-              actionLabel="Update ranges"
-              onActionPress={() => openRangeEditor("primary")}
+            <CheckSpendingsCard
+              transactions={accountTransactionsQuery.data ?? []}
+              currency={selectedAccount.currency}
             />
-            <GlassCard style={styles.comparisonCard}>
-            <View style={styles.comparisonRangeRow}>
-              <Pressable style={styles.rangeButton} onPress={() => openRangeEditor("primary")}>
-                <Text style={styles.rangeLabel}>Primary range</Text>
-                <Text style={styles.rangeValue}>{rangeLabel(ranges.primary)}</Text>
-              </Pressable>
-              <Pressable style={styles.rangeButton} onPress={() => openRangeEditor("secondary")}>
-                <Text style={styles.rangeLabel}>Compare against</Text>
-                <Text style={styles.rangeValue}>{rangeLabel(ranges.secondary)}</Text>
-              </Pressable>
-            </View>
-            <View style={styles.comparisonValues}>
-              <View style={styles.comparisonValueBlock}>
-                <AnimatedCurrencyText
-                  value={-comparison.primary}
-                  currency={selectedAccount.currency}
-                  style={styles.comparisonAmount}
-                  baseColor={palette.textPrimary}
-                />
-                <Text style={styles.comparisonMeta}>Primary period spend</Text>
-                <Text style={styles.comparisonRangeLabel}>{rangeLabel(ranges.primary)}</Text>
-              </View>
-              <View style={styles.comparisonValueBlock}>
-                <AnimatedCurrencyText
-                  value={-comparison.secondary}
-                  currency={selectedAccount.currency}
-                  style={styles.comparisonAmount}
-                  baseColor={palette.textPrimary}
-                />
-                <Text style={styles.comparisonMeta}>Comparison period spend</Text>
-                <Text style={styles.comparisonRangeLabel}>{rangeLabel(ranges.secondary)}</Text>
-              </View>
-            </View>
-            <Text style={styles.comparisonSummary}>{comparisonSummary}</Text>
-            </GlassCard>
 
             <SectionHeader
               title="Recent activity"
@@ -567,55 +413,6 @@ export default function AccountsTabScreen() {
         </Pressable>
       </Modal>
 
-      <Modal
-        visible={rangeModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setRangeModalVisible(false)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setRangeModalVisible(false)}>
-          <Pressable style={styles.modalSheet} onPress={() => undefined}>
-            <Text style={styles.modalTitle}>Pick comparison ranges</Text>
-            <Text style={styles.rangeInstructionLabel}>
-              {rangeTarget === "primary" ? "Primary range" : "Comparison range"}
-            </Text>
-            <Text style={styles.rangeInstructionText}>
-              {rangeStep === "start" ? "Pick the start date" : "Pick the end date"}
-            </Text>
-
-            <Text style={styles.editorLabel}>Year</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.yearRow}>
-              {years.map((year) => (
-                <Pressable
-                  key={year}
-                  style={[styles.yearChip, selectedYear === year ? styles.yearChipActive : null]}
-                  onPress={() => {
-                    handleYearChange(year);
-                  }}
-                >
-                  <Text style={styles.yearChipText}>{year}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-
-            <Text style={styles.editorLabel}>Month</Text>
-            <View style={styles.monthGrid}>
-              {monthNames.map((month, index) => {
-                const selectedMonth = rangeStep === "start" ? activeRange.startMonth : activeRange.endMonth;
-                return (
-                  <Pressable
-                    key={month}
-                    style={[styles.monthChip, selectedMonth === index ? styles.monthChipActive : null]}
-                    onPress={() => handleMonthChange(index)}
-                  >
-                    <Text style={styles.monthChipText}>{month}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </ScreenContainer>
   );
 }
@@ -657,7 +454,9 @@ const styles = StyleSheet.create({
     gap: spacing[8]
   },
   accountSelector: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    maxWidth: "74%",
     minHeight: 42,
     maxHeight: 42,
     borderRadius: 12,
@@ -669,9 +468,33 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: spacing[12]
   },
+  accountSelectorPlaceholder: {
+    flexGrow: 1,
+    flexShrink: 1,
+    maxWidth: "74%",
+    minHeight: 42,
+    maxHeight: 42
+  },
   accountSelectorText: {
+    flex: 1,
+    marginRight: spacing[8],
     color: palette.textPrimary,
     ...typography.title2
+  },
+  selectorActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  companionButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.8)",
+    alignItems: "center",
+    justifyContent: "center"
   },
   selectorRightSpacer: {
     width: 42,
@@ -716,62 +539,6 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.body1,
     fontWeight: "600"
-  },
-  comparisonCard: {
-    gap: spacing[12]
-  },
-  comparisonRangeRow: {
-    flexDirection: "row",
-    gap: spacing[12]
-  },
-  rangeButton: {
-    flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.78)",
-    paddingHorizontal: spacing[12],
-    paddingVertical: spacing[12],
-    gap: spacing[4]
-  },
-  rangeLabel: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  rangeValue: {
-    color: palette.textPrimary,
-    ...typography.body2
-  },
-  comparisonValues: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing[12]
-  },
-  comparisonValueBlock: {
-    flex: 1,
-    alignItems: "center",
-    gap: spacing[4]
-  },
-  comparisonAmount: {
-    color: palette.textPrimary,
-    ...typography.title2,
-    fontWeight: "700",
-    textAlign: "center"
-  },
-  comparisonMeta: {
-    color: palette.textSecondary,
-    ...typography.caption,
-    textAlign: "center"
-  },
-  comparisonRangeLabel: {
-    color: palette.textSecondary,
-    ...typography.caption,
-    textAlign: "center"
-  },
-  comparisonSummary: {
-    color: palette.textSecondary,
-    ...typography.body2,
-    textAlign: "center"
   },
   recentWrap: {
     gap: spacing[12]
@@ -898,59 +665,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   },
-  rangeInstructionLabel: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  rangeInstructionText: {
-    color: palette.textPrimary,
-    ...typography.body1,
-    fontWeight: "600"
-  },
-  editorLabel: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  yearRow: {
-    gap: spacing[8]
-  },
-  yearChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
-    paddingHorizontal: spacing[12],
-    paddingVertical: spacing[8]
-  },
-  yearChipActive: {
-    borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.28)"
-  },
-  yearChipText: {
-    color: palette.textPrimary,
-    ...typography.caption
-  },
-  monthGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing[8]
-  },
-  monthChip: {
-    width: "23%",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 36
-  },
-  monthChipActive: {
-    borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.28)"
-  },
-  monthChipText: {
-    color: palette.textPrimary,
-    ...typography.caption
-  }
+  
 });

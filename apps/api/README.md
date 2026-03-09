@@ -46,6 +46,14 @@ dotnet run --project .\src\NSFinTech.Api\NSFinTech.Api.csproj
 - `POST /api/transactions`
 - `GET /api/categories`
 - `GET /api/dashboard/summary`
+- `POST /api/banking/truelayer/link`
+- `GET /api/banking/truelayer/callback`
+- `GET /api/banking/connections`
+- `GET /api/banking/accounts`
+- `GET /api/banking/accounts/{accountId}/balances`
+- `GET /api/banking/accounts/{accountId}/transactions`
+- `POST /api/banking/connections/{connectionId}/sync`
+- `POST /api/banking/connections/{connectionId}/disconnect`
 
 All finance endpoints require a JWT bearer token.
 

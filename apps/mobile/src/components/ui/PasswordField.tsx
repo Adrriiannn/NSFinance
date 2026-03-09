@@ -112,7 +112,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
     paddingLeft: spacing[12],
-    paddingRight: spacing[6],
+    paddingRight: spacing[8],
     flexDirection: "row",
     alignItems: "center",
     gap: spacing[8]

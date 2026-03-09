@@ -19,7 +19,14 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
                 x.Name,
                 x.Type,
                 x.Currency,
-                x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m,
+                dbContext.LinkedBankAccounts
+                    .Where(linked => linked.FinancialAccountId == x.Id)
+                    .Select(linked => dbContext.BankBalanceSnapshots
+                        .Where(balance => balance.LinkedBankAccountId == linked.Id)
+                        .OrderByDescending(balance => balance.CapturedUtc)
+                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .FirstOrDefault())
+                    .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
                 x.Transactions.Count,
                 x.CreatedUtc))
             .ToListAsync(cancellationToken);
@@ -35,7 +42,14 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
                 x.Name,
                 x.Type,
                 x.Currency,
-                x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m,
+                dbContext.LinkedBankAccounts
+                    .Where(linked => linked.FinancialAccountId == x.Id)
+                    .Select(linked => dbContext.BankBalanceSnapshots
+                        .Where(balance => balance.LinkedBankAccountId == linked.Id)
+                        .OrderByDescending(balance => balance.CapturedUtc)
+                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .FirstOrDefault())
+                    .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
                 x.Transactions.Count,
                 x.CreatedUtc))
             .SingleOrDefaultAsync(cancellationToken);

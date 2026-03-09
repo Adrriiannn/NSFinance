@@ -1,5 +1,5 @@
 import type { DashboardSummaryDto, TransactionDto } from "../../types/api";
-import type { NecessityItem, TransactionPlannerAnnotation } from "../../providers/PlannerProvider";
+import type { TransactionPlannerAnnotation } from "../../providers/PlannerProvider";
 
 export type MonthComparison = {
   thisMonthSpend: number;
@@ -19,6 +19,24 @@ export type HomeInsight = {
   title: string;
   message: string;
 };
+
+function getMostCommonCurrency(transactions: TransactionDto[]) {
+  const frequency = new Map<string, number>();
+  transactions.forEach((transaction) => {
+    frequency.set(transaction.currency, (frequency.get(transaction.currency) ?? 0) + 1);
+  });
+
+  return (
+    Array.from(frequency.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "GBP"
+  );
+}
+
+function formatCurrencyAmount(value: number, currency: string) {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency
+  }).format(value);
+}
 
 export function getMonthComparison(transactions: TransactionDto[]): MonthComparison {
   const now = new Date();
@@ -59,17 +77,11 @@ export function getMonthComparison(transactions: TransactionDto[]): MonthCompari
 export function buildPlannerSuggestions(input: {
   dashboard: DashboardSummaryDto | undefined;
   transactions: TransactionDto[];
-  necessities: NecessityItem[];
   annotations: Record<string, TransactionPlannerAnnotation>;
 }): PlannerSuggestion[] {
   const suggestions: PlannerSuggestion[] = [];
   const monthComparison = getMonthComparison(input.transactions);
-  const essentialsBaseline = input.necessities.reduce((sum, item) => {
-    if (item.type !== "Essential") {
-      return sum;
-    }
-    return sum + item.estimatedMonthlyCost;
-  }, 0);
+  const displayCurrency = getMostCommonCurrency(input.transactions);
 
   const unclassifiedCount = input.transactions.filter(
     (tx) => !input.annotations[tx.id]?.category
@@ -80,14 +92,6 @@ export function buildPlannerSuggestions(input: {
       id: "unclassified",
       title: `${unclassifiedCount} transactions still need a category`,
       message: "A few expenses are uncategorized. Review them so your planner stays accurate."
-    });
-  }
-
-  if (essentialsBaseline > 0) {
-    suggestions.push({
-      id: "baseline",
-      title: "Your essential baseline is now tracked",
-      message: `Your essential monthly commitments currently total EUR ${essentialsBaseline.toFixed(2)}.`
     });
   }
 
@@ -138,7 +142,7 @@ export function buildPlannerSuggestions(input: {
     suggestions.push({
       id: "dining-watch",
       title: "Dining out is pushing spend higher",
-      message: `You have spent EUR ${currentMonthDining.toFixed(2)} on dining this month, which is likely pushing spending above last month.`
+      message: `You have spent ${formatCurrencyAmount(currentMonthDining, displayCurrency)} on dining this month, which is likely pushing spending above last month.`
     });
   }
 
@@ -146,7 +150,7 @@ export function buildPlannerSuggestions(input: {
     suggestions.push({
       id: "outflow",
       title: "Spending check-in",
-      message: `Recent spending is EUR ${input.dashboard?.recentOutflow.toFixed(2)}. Pick one high-spend category to review next.`
+      message: `Recent spending is ${formatCurrencyAmount(input.dashboard?.recentOutflow ?? 0, displayCurrency)}. Pick one high-spend category to review next.`
     });
   }
 
@@ -156,15 +160,11 @@ export function buildPlannerSuggestions(input: {
 export function buildHomeInsights(input: {
   dashboard: DashboardSummaryDto | undefined;
   transactions: TransactionDto[];
-  necessities: NecessityItem[];
   annotations: Record<string, TransactionPlannerAnnotation>;
 }): HomeInsight[] {
   const insights: HomeInsight[] = [];
   const monthComparison = getMonthComparison(input.transactions);
   const balance = input.dashboard?.totalBalance ?? 0;
-  const essentialsBaseline = input.necessities
-    .filter((item) => item.type === "Essential")
-    .reduce((sum, item) => sum + item.estimatedMonthlyCost, 0);
 
   if (monthComparison.trend === "worse") {
     insights.push({
@@ -179,18 +179,6 @@ export function buildHomeInsights(input: {
       title: "Spending pace improved",
       message:
         "You are running below last month so far. Keep this rhythm to create extra room for priorities."
-    });
-  }
-
-  if (essentialsBaseline > 0 && balance > 0) {
-    const coverage = balance - essentialsBaseline;
-    insights.push({
-      id: "necessities-awareness",
-      title: "Necessities awareness",
-      message:
-        coverage >= 0
-          ? `You have around EUR ${coverage.toFixed(2)} above your essentials baseline this month.`
-          : `Essentials baseline is EUR ${Math.abs(coverage).toFixed(2)} above your current balance, so tighten discretionary spend.`
     });
   }
 
@@ -218,7 +206,9 @@ export function buildHomeInsights(input: {
       id: "decision-prompt",
       title: "Decision prompt",
       message:
-        "Pick one money decision for today: reduce one non-essential spend, or move a small amount into savings."
+        balance >= 0
+          ? "Pick one money decision for today: reduce one variable expense or move a small amount into savings."
+          : "Today focus on recovery: delay one variable expense and review upcoming commitments."
     });
   }
 
