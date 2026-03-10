@@ -13,5 +13,7 @@ coverage/
 *.log
 
 # .NET local app settings / secrets
-**/appsettings.Development.json
 **/appsettings.Local.json
+**/publish/
+**/*-publish.zip
+.dev-orchestrator/*.pid

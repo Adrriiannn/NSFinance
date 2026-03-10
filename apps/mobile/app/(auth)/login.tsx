@@ -12,6 +12,7 @@ import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { TextField } from "../../src/components/ui/TextField";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
+import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { palette, spacing, typography } from "../../src/theme/tokens";
@@ -21,6 +22,7 @@ type FocusField = "email" | "password" | null;
 
 export default function LoginScreen() {
   const loginMutation = useLoginMutation();
+  const googleSignIn = useGoogleSignIn();
   const { playSuccess } = useFeedbackSound();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,6 +30,7 @@ export default function LoginScreen() {
   const [captchaVerified, setCaptchaVerified] = useState(false);
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
 
   useEffect(() => {
     if (focusedField !== "password") {
@@ -89,6 +92,7 @@ export default function LoginScreen() {
       return;
     }
 
+    setGoogleError(null);
     await loginMutation.mutateAsync({
       email: email.trim().toLowerCase(),
       password,
@@ -96,6 +100,20 @@ export default function LoginScreen() {
         platform: Platform.OS
       }
     });
+
+    playSuccess();
+    router.replace("/(tabs)");
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleError(null);
+    const result = await googleSignIn.signInWithGoogle();
+    if (!result.succeeded) {
+      if (!result.cancelled) {
+        setGoogleError(result.message ?? "Google sign-in failed.");
+      }
+      return;
+    }
 
     playSuccess();
     router.replace("/(tabs)");
@@ -160,7 +178,12 @@ export default function LoginScreen() {
             disabled={!canSubmit}
           />
 
-          <SecondaryButton label="Sign in with Google" onPress={() => undefined} />
+          <SecondaryButton
+            label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
+            onPress={() => void handleGoogleSignIn()}
+            disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
+          />
+          {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
 
           <View style={styles.forgotWrap}>
             <Pressable
@@ -225,5 +248,9 @@ const styles = StyleSheet.create({
   },
   linkPressed: {
     opacity: 0.75
+  },
+  googleError: {
+    color: palette.negative,
+    ...typography.caption
   }
 });

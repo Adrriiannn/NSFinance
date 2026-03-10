@@ -13,7 +13,7 @@ import {
 import type { AuthTokenResponse, UserProfileDto } from "../types/api";
 import { queryClient } from "./QueryProvider";
 
-const SESSION_KEY = "nsfintech.auth.session";
+const SESSION_KEY = "nsfinance.auth.session";
 const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
 
 type StoredSession = {

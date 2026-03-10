@@ -1,9 +1,9 @@
-# NSFinTech Worker
+# NSFinance Worker
 
 .NET worker scaffold for future background jobs.
 
 Run:
 
 ```bash
-dotnet run --project .\src\NSFinTech.Worker\NSFinTech.Worker.csproj
+dotnet run --project .\src\NSFinance.Worker\NSFinance.Worker.csproj
 ```

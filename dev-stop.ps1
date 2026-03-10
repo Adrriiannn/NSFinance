@@ -1,8 +1,8 @@
 $ErrorActionPreference = "SilentlyContinue"
 
-Write-Host "`nStopping NSFinTech development stack..." -ForegroundColor Cyan
+Write-Host "`nStopping NSFinance development stack..." -ForegroundColor Cyan
 
-$root = "C:\Users\MariusAlbu\Desktop\Projects\NSFinTech"
+$root = "C:\Users\MariusAlbu\Desktop\Projects\NSFinance"
 $dbPath = Join-Path $root "infra\docker"
 $statePath = Join-Path $root ".dev-orchestrator"
 
@@ -25,7 +25,7 @@ Stop-ProcessByPidFile "worker.pid"
 Stop-ProcessByPidFile "mobile.pid"
 
 Get-Process powershell | Where-Object {
-    $_.MainWindowTitle -match "NSFinTech API|NSFinTech Worker|NSFinTech Mobile"
+    $_.MainWindowTitle -match "NSFinance API|NSFinance Worker|NSFinance Mobile"
 } | ForEach-Object {
     try { Stop-Process -Id $_.Id -Force } catch {}
 }
@@ -67,4 +67,4 @@ if (Test-Path $dbPath) {
     Pop-Location
 }
 
-Write-Host "`nAll NSFinTech services stopped." -ForegroundColor Green
+Write-Host "`nAll NSFinance services stopped." -ForegroundColor Green

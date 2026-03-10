@@ -1,21 +1,21 @@
 services:
   postgres:
     image: postgres:17
-    container_name: nsfintech-postgres
+    container_name: nsfinance-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: nsfintech
-      POSTGRES_USER: nsfintech
-      POSTGRES_PASSWORD: nsfintech_dev_password
+      POSTGRES_DB: nsfinance
+      POSTGRES_USER: nsfinance
+      POSTGRES_PASSWORD: nsfinance_dev_password
     ports:
       - "5432:5432"
     volumes:
-      - nsfintech_postgres_data:/var/lib/postgresql/data
+      - nsfinance_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nsfintech -d nsfintech"]
+      test: ["CMD-SHELL", "pg_isready -U nsfinance -d nsfinance"]
       interval: 10s
       timeout: 5s
       retries: 5
 
 volumes:
-  nsfintech_postgres_data:
+  nsfinance_postgres_data:

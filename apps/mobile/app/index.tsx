@@ -10,7 +10,7 @@ export default function IndexScreen() {
     return (
       <View style={styles.loadingWrap}>
         <ActivityIndicator color={palette.primaryGlow} />
-        <Text style={styles.loadingText}>Loading NSFinTech...</Text>
+        <Text style={styles.loadingText}>Loading NSFinance...</Text>
       </View>
     );
   }

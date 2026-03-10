@@ -53,6 +53,18 @@ function withBaseUrl(path: string): string {
   return `${apiConfig.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+function isAbortError(error: unknown): boolean {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "AbortError";
+  }
+
+  if (error && typeof error === "object" && "name" in error) {
+    return (error as { name?: unknown }).name === "AbortError";
+  }
+
+  return false;
+}
+
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const requestUrl = withBaseUrl(path);
   const makeRequest = async (overrideToken: string | null): Promise<Response> => {
@@ -72,10 +84,17 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
         signal: init?.signal ?? timeoutController.signal
       });
     } catch (error) {
-      const message =
-        error instanceof DOMException && error.name === "AbortError"
-          ? "Request timed out. Please retry."
-          : "Network request failed. Check API URL and local network connectivity.";
+      const message = isAbortError(error)
+        ? "Request timed out. Please retry."
+        : "Network request failed. Check API URL and local network connectivity.";
+
+      if (apiConfig.isDebug) {
+        console.warn("[API NETWORK ERROR]", {
+          url: requestUrl,
+          baseUrl: apiConfig.baseUrl,
+          details: error
+        });
+      }
 
       throw new ApiClientError(message, 0, { details: error });
     } finally {

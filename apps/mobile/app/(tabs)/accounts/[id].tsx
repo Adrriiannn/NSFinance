@@ -161,7 +161,7 @@ export default function AccountDetailsScreen() {
 
       const accountSlug = toSafeAccountSlug(account.name) || "account";
       const timestamp = formatExportTimestamp();
-      const fileUri = `${directory}nsfintech-${accountSlug}-transactions-${timestamp}.csv`;
+      const fileUri = `${directory}nsfinance-${accountSlug}-transactions-${timestamp}.csv`;
       await FileSystem.writeAsStringAsync(fileUri, csvText, {
         encoding: FileSystem.EncodingType.UTF8
       });

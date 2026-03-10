@@ -6,6 +6,7 @@ import type {
   ConfirmPasswordChangeCodeRequest,
   ConfirmEmailVerificationRequest,
   ForgotPasswordRequest,
+  GoogleLoginRequest,
   GoogleAuthOptionsDto,
   LoginRequest,
   RefreshTokenRequest,
@@ -26,6 +27,13 @@ export function register(payload: RegisterRequest): Promise<AuthTokenResponse> {
 
 export function login(payload: LoginRequest): Promise<AuthTokenResponse> {
   return apiRequest<AuthTokenResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function loginWithGoogle(payload: GoogleLoginRequest): Promise<AuthTokenResponse> {
+  return apiRequest<AuthTokenResponse>("/api/auth/google", {
     method: "POST",
     body: JSON.stringify(payload)
   });

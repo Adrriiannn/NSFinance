@@ -1,6 +1,0 @@
-c:\Users\MariusAlbu\Desktop\Projects\NSFinTech\artifacts\obj-temp\Debug\net10.0\NSFinTech.Shared.csproj.AssemblyReference.cache
-c:\Users\MariusAlbu\Desktop\Projects\NSFinTech\artifacts\obj-temp\Debug\net10.0\NSFinTech.Shared.GeneratedMSBuildEditorConfig.editorconfig
-c:\Users\MariusAlbu\Desktop\Projects\NSFinTech\artifacts\obj-temp\Debug\net10.0\NSFinTech.Shared.AssemblyInfoInputs.cache
-c:\Users\MariusAlbu\Desktop\Projects\NSFinTech\artifacts\obj-temp\Debug\net10.0\NSFinTech.Shared.AssemblyInfo.cs
-c:\Users\MariusAlbu\Desktop\Projects\NSFinTech\artifacts\obj-temp\Debug\net10.0\NSFinTech.Shared.csproj.CoreCompileInputs.cache
-c:\Users\MariusAlbu\Desktop\Projects\NSFinTech\artifacts\obj-temp\Debug\net10.0\NSFinTech.Shared.sourcelink.json

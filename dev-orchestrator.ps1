@@ -13,9 +13,9 @@ $ErrorActionPreference = "Stop"
 # -----------------------------
 # Paths
 # -----------------------------
-$root = "C:\Users\MariusAlbu\Desktop\Projects\NSFinTech"
-$apiPath = Join-Path $root "apps\api\src\NSFinTech.Api"
-$workerPath = Join-Path $root "apps\worker\src\NSFinTech.Worker"
+$root = "C:\Users\MariusAlbu\Desktop\Projects\NSFinance"
+$apiPath = Join-Path $root "apps\api\src\NSFinance.Api"
+$workerPath = Join-Path $root "apps\worker\src\NSFinance.Worker"
 $mobilePath = Join-Path $root "apps\mobile"
 $dbPath = Join-Path $root "infra\docker"
 $statePath = Join-Path $root ".dev-orchestrator"
@@ -154,8 +154,8 @@ if ($StartDb) {
 # Start API
 # -----------------------------
 Write-Step "Starting API"
-$apiCommand = "Write-Host 'Starting API...' -ForegroundColor Green; dotnet run --urls `"http://0.0.0.0:$ApiPort`""
-$apiProc = Start-DevWindow -title "NSFinTech API" -workingDir $apiPath -command $apiCommand
+$apiCommand = "`$env:ASPNETCORE_ENVIRONMENT='Development'; `$env:NSFINANCE_ALLOW_REMOTE_DB_IN_DEVELOPMENT='false'; Remove-Item Env:NSFINANCE_DB_CONNECTION_STRING -ErrorAction SilentlyContinue; Remove-Item Env:NSFINTECH_DB_CONNECTION_STRING -ErrorAction SilentlyContinue; Remove-Item Env:ConnectionStrings__DefaultConnection -ErrorAction SilentlyContinue; Write-Host 'Starting API...' -ForegroundColor Green; dotnet run --urls `"http://0.0.0.0:$ApiPort`""
+$apiProc = Start-DevWindow -title "NSFinance API" -workingDir $apiPath -command $apiCommand
 Save-Pid "api" $apiProc.Id
 
 # -----------------------------
@@ -179,8 +179,8 @@ if (-not $apiReady) {
 # Start Worker
 # -----------------------------
 Write-Step "Starting Worker"
-$workerCommand = "Write-Host 'Starting Worker...' -ForegroundColor Yellow; dotnet run"
-$workerProc = Start-DevWindow -title "NSFinTech Worker" -workingDir $workerPath -command $workerCommand
+$workerCommand = "`$env:ASPNETCORE_ENVIRONMENT='Development'; `$env:NSFINANCE_ALLOW_REMOTE_DB_IN_DEVELOPMENT='false'; Remove-Item Env:NSFINANCE_DB_CONNECTION_STRING -ErrorAction SilentlyContinue; Remove-Item Env:NSFINTECH_DB_CONNECTION_STRING -ErrorAction SilentlyContinue; Remove-Item Env:ConnectionStrings__DefaultConnection -ErrorAction SilentlyContinue; Write-Host 'Starting Worker...' -ForegroundColor Yellow; dotnet run"
+$workerProc = Start-DevWindow -title "NSFinance Worker" -workingDir $workerPath -command $workerCommand
 Save-Pid "worker" $workerProc.Id
 
 # -----------------------------
@@ -188,12 +188,12 @@ Save-Pid "worker" $workerProc.Id
 # -----------------------------
 Write-Step "Starting Mobile"
 $mobileCommand = if ($ClearExpoCache) {
-    "Write-Host 'Starting Mobile (Expo, cache cleared)...' -ForegroundColor Magenta; pnpm exec expo start -c"
+    "Remove-Item Env:EXPO_PUBLIC_API_BASE_URL -ErrorAction SilentlyContinue; Write-Host 'Starting Mobile (Expo, cache cleared)...' -ForegroundColor Magenta; pnpm exec expo start -c"
 } else {
-    "Write-Host 'Starting Mobile (Expo)...' -ForegroundColor Magenta; pnpm exec expo start"
+    "Remove-Item Env:EXPO_PUBLIC_API_BASE_URL -ErrorAction SilentlyContinue; Write-Host 'Starting Mobile (Expo)...' -ForegroundColor Magenta; pnpm exec expo start"
 }
 
-$mobileProc = Start-DevWindow -title "NSFinTech Mobile" -workingDir $mobilePath -command $mobileCommand
+$mobileProc = Start-DevWindow -title "NSFinance Mobile" -workingDir $mobilePath -command $mobileCommand
 Save-Pid "mobile" $mobileProc.Id
 
 # -----------------------------

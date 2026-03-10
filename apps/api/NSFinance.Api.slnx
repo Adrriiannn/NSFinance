@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NSFinance.Api/NSFinance.Api.csproj" />
+    <Project Path="src/NSFinance.Api.Tests/NSFinance.Api.Tests.csproj" />
+  </Folder>
+  <Project Path="../../libs/shared/src/NSFinance.Shared/NSFinance.Shared.csproj" />
+</Solution>

@@ -129,6 +129,11 @@ export type LoginRequest = {
   deviceContext?: DeviceContextDto | null;
 };
 
+export type GoogleLoginRequest = {
+  idToken: string;
+  deviceContext?: DeviceContextDto | null;
+};
+
 export type RefreshTokenRequest = {
   refreshToken: string;
   deviceContext?: DeviceContextDto | null;

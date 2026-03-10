@@ -1,12 +1,21 @@
-# NSFinTech API
+# NSFinance API
 
-ASP.NET Core modular monolith backend for NSFinTech mobile.
+ASP.NET Core modular monolith backend for NSFinance mobile.
 
 ## Run
 
 ```bash
-dotnet run --project .\src\NSFinTech.Api\NSFinTech.Api.csproj
+dotnet run --project .\src\NSFinance.Api\NSFinance.Api.csproj
 ```
+
+## Configuration
+
+- Shared base config: `src/NSFinance.Api/appsettings.json`
+- Local-only defaults: `src/NSFinance.Api/appsettings.Development.json`
+- Optional local secrets override (gitignored): `src/NSFinance.Api/appsettings.Local.json`
+- Template: `src/NSFinance.Api/appsettings.Local.example.json`
+- Production should use App Service environment variables (no secrets in source).
+- Deployment checklist: `..\..\docs\azure-production-checklist.md`
 
 ## Key endpoints
 
@@ -64,6 +73,6 @@ In development startup:
 - migrations are applied
 - baseline policy/version records are seeded
 - demo user is seeded with credentials:
-  - `demo@nsfintech.local`
+  - `demo@nsfinance.local`
   - `Password123!`
 - demo categories/accounts/transactions are seeded

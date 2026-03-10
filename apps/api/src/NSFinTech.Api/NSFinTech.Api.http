@@ -1,6 +1,0 @@
-@NSFinTech.Api_HostAddress = http://localhost:5147
-
-GET {{NSFinTech.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

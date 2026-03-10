@@ -1,11 +1,11 @@
 import * as SecureStore from "expo-secure-store";
 
-const CHAT_HISTORY_KEY = "nsfintech.planner.companion.chat_history";
-const COMPANION_TOOLTIP_SEEN_KEY = "nsfintech.planner.companion.tooltip_seen";
-const CHAT_SUMMARY_PREFIX = "nsfintech.companion.chat.summary.";
-const CHAT_MEMORY_PREFIX = "nsfintech.companion.chat.memory.";
-const CHAT_RETRIEVAL_PREFIX = "nsfintech.companion.chat.retrieval.";
-const CHAT_INDEX_PREFIX = "nsfintech.companion.chat.index.";
+const CHAT_HISTORY_KEY = "nsfinance.planner.companion.chat_history";
+const COMPANION_TOOLTIP_SEEN_KEY = "nsfinance.planner.companion.tooltip_seen";
+const CHAT_SUMMARY_PREFIX = "nsfinance.companion.chat.summary.";
+const CHAT_MEMORY_PREFIX = "nsfinance.companion.chat.memory.";
+const CHAT_RETRIEVAL_PREFIX = "nsfinance.companion.chat.retrieval.";
+const CHAT_INDEX_PREFIX = "nsfinance.companion.chat.index.";
 const DEFAULT_CHAT_COLOR: CompanionChatColor = "blue";
 
 export type CompanionMessage = {

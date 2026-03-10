@@ -1,4 +1,9 @@
 @echo off
-title NSFinTech API
-cd /d "C:\Users\MariusAlbu\Desktop\Projects\NSFinTech\apps\api\src\NSFinTech.Api"
+title NSFinance API
+cd /d "C:\Users\MariusAlbu\Desktop\Projects\NSFinance\apps\api\src\NSFinance.Api"
+set ASPNETCORE_ENVIRONMENT=Development
+set NSFINANCE_ALLOW_REMOTE_DB_IN_DEVELOPMENT=false
+set NSFINANCE_DB_CONNECTION_STRING=
+set NSFINTECH_DB_CONNECTION_STRING=
+set ConnectionStrings__DefaultConnection=
 dotnet run --urls http://0.0.0.0:5080

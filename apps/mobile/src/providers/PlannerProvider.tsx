@@ -135,7 +135,7 @@ type PlannerContextValue = PlannerState & {
   setPlannerNotes: (value: string) => void;
 };
 
-const STORAGE_KEY = "nsfintech.planner.state";
+const STORAGE_KEY = "nsfinance.planner.state";
 const createId = () => `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 
 const defaultState: PlannerState = {

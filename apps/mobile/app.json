@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "NSFinTech",
-    "slug": "nsfintech-mobile",
+    "name": "NSFinance",
+    "slug": "nsfinance-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "nsfintech",
+    "scheme": "nsfinance",
     "backgroundColor": "#07111F",
     "userInterfaceStyle": "automatic",
     "plugins": [
@@ -13,6 +13,9 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "android": {
+      "package": "com.anonymous.nsfinancemobile"
     }
   }
 }

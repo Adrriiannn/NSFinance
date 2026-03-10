@@ -1,4 +1,4 @@
-# NSFinTech Architecture
+# NSFinance Architecture
 
 ## Monorepo overview
 
@@ -54,7 +54,7 @@ Current implementation:
 
 Local development:
 
-- deterministic seeded demo user (`demo@nsfintech.local`)
+- deterministic seeded demo user (`demo@nsfinance.local`)
 - easy path to replace/extend with production auth providers later
 
 ## Data layer and behavior

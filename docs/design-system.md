@@ -1,7 +1,7 @@
-# NSFinTech Design System
+# NSFinance Design System
 
 ## Purpose
-This file is the source of truth for NSFinTech mobile visual language and layout behavior.
+This file is the source of truth for NSFinance mobile visual language and layout behavior.
 It defines the baseline for design decisions, engineering implementation, and future Codex work.
 
 ## Product Design Philosophy

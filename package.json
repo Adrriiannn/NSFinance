@@ -1,11 +1,11 @@
 {
-  "name": "nsfintech",
+  "name": "nsfinance",
   "private": true,
   "packageManager": "pnpm@10.8.0",
   "scripts": {
-    "mobile:start": "pnpm --filter @nsfintech/mobile start",
-    "mobile:android": "pnpm --filter @nsfintech/mobile android",
-    "mobile:ios": "pnpm --filter @nsfintech/mobile ios",
-    "mobile:web": "pnpm --filter @nsfintech/mobile web"
+    "mobile:start": "pnpm --filter @nsfinance/mobile start",
+    "mobile:android": "pnpm --filter @nsfinance/mobile android",
+    "mobile:ios": "pnpm --filter @nsfinance/mobile ios",
+    "mobile:web": "pnpm --filter @nsfinance/mobile web"
   }
 }

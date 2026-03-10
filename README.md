@@ -1,4 +1,4 @@
-# NSFinTech
+# NSFinance
 
 Ireland-first personal finance companion built as a mobile-first monorepo.
 
@@ -13,7 +13,7 @@ Ireland-first personal finance companion built as a mobile-first monorepo.
 ## Repo structure
 
 ```text
-NSFinTech
+NSFinance
 |- apps
 |  |- api
 |  |- mobile
@@ -33,7 +33,7 @@ NSFinTech
 - .NET SDK 10.x
 - Node.js 22+
 - pnpm 10+
-- PostgreSQL running locally (`nsfintech` db), or Docker in `infra`
+- PostgreSQL running locally (`nsfinance` db), or Docker in `infra`
 
 ## Environment variables
 
@@ -41,8 +41,9 @@ See `.env.example`.
 
 Important values:
 
-- `NSFINTECH_DB_CONNECTION_STRING`
-- `NSFINTECH_JWT_SIGNING_KEY`
+- `NSFINANCE_DB_CONNECTION_STRING`
+- `NSFINANCE_ALLOW_REMOTE_DB_IN_DEVELOPMENT`
+- `NSFINANCE_JWT_SIGNING_KEY`
 - `TRUELAYER_CLIENT_ID`
 - `TRUELAYER_CLIENT_SECRET`
 - `TRUELAYER_REDIRECT_URI`
@@ -54,12 +55,12 @@ Important values:
 
 Default DB:
 
-`Host=localhost;Port=5432;Database=nsfintech;Username=nsfintech;Password=nsfintech_dev_password`
+`Host=localhost;Port=5432;Database=nsfinance;Username=nsfinance`
 
 ## Run API
 
 ```bash
-dotnet run --project .\apps\api\src\NSFinTech.Api\NSFinTech.Api.csproj
+dotnet run --project .\apps\api\src\NSFinance.Api\NSFinance.Api.csproj
 ```
 
 Development behavior:
@@ -78,21 +79,30 @@ Auth endpoints:
 
 Seeded demo login:
 
-- Email: `demo@nsfintech.local`
+- Email: `demo@nsfinance.local`
 - Password: `Password123!`
+Local TrueLayer sandbox setup:
+
+1. Copy `apps/api/src/NSFinance.Api/appsettings.Local.example.json` to `apps/api/src/NSFinance.Api/appsettings.Local.json`.
+2. Set `TrueLayer:ClientId` and `TrueLayer:ClientSecret` in that local file.
+3. Set `TrueLayer:RedirectUri` to your local API callback URL (phone dev example: `http://192.168.0.11:5080/api/banking/truelayer/callback`).
+4. Register that redirect URI in your TrueLayer sandbox console.
 
 ## Run mobile
 
 ```bash
 pnpm install
-pnpm --filter @nsfintech/mobile start
+pnpm --filter @nsfinance/mobile start
 ```
 
-Set `EXPO_PUBLIC_API_BASE_URL` for your runtime target:
+Mobile API URL strategy:
 
-- iOS simulator: `http://192.168.0.11:5080`
-- Android emulator: `http://10.0.2.2:5080`
-- physical device: `http://<YOUR_PC_LAN_IP>:5080`
+- development defaults are local:
+  - iOS simulator: `http://localhost:5080`
+  - Android emulator: `http://10.0.2.2:5080`
+- production default URL: `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+- optional override: `EXPO_PUBLIC_API_BASE_URL`
+- for local safety, do not set `EXPO_PUBLIC_API_BASE_URL` to production when running Expo dev builds.
 
 Implemented mobile slice:
 
@@ -116,7 +126,7 @@ Implemented mobile slice:
 ## Run worker
 
 ```bash
-dotnet run --project .\apps\worker\src\NSFinTech.Worker\NSFinTech.Worker.csproj
+dotnet run --project .\apps\worker\src\NSFinance.Worker\NSFinance.Worker.csproj
 ```
 
 ## Not implemented yet

@@ -1,20 +1,41 @@
-import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { GlassCard } from "../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
+import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
+import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { palette, spacing, typography } from "../../src/theme/tokens";
 
 export default function AuthEntryScreen() {
   const { sessionMessage, clearSessionMessage } = useAuthSession();
+  const { playSuccess } = useFeedbackSound();
+  const googleSignIn = useGoogleSignIn();
+  const [googleError, setGoogleError] = useState<string | null>(null);
+
+  const handleGoogleSignIn = async () => {
+    clearSessionMessage();
+    setGoogleError(null);
+
+    const result = await googleSignIn.signInWithGoogle();
+    if (!result.succeeded) {
+      if (!result.cancelled) {
+        setGoogleError(result.message ?? "Google sign-in failed.");
+      }
+      return;
+    }
+
+    playSuccess();
+    router.replace("/(tabs)");
+  };
 
   return (
     <AuthScreen>
       <View style={styles.hero}>
-        <Text style={styles.brand}>NSFinTech</Text>
+        <Text style={styles.brand}>NSFinance</Text>
         <Text style={styles.title}>Your calm finance companion</Text>
         <Text style={styles.subtitle}>
           Track accounts, monitor spending, and stay clear on what matters today.
@@ -57,14 +78,11 @@ export default function AuthEntryScreen() {
         />
 
         <SecondaryButton
-          label="Sign in with Google"
-          onPress={() => clearSessionMessage()}
-          disabled
+          label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
+          onPress={() => void handleGoogleSignIn()}
+          disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
         />
-        <View style={styles.googleHint}>
-          <Ionicons name="logo-google" size={16} color={palette.textSecondary} />
-          <Text style={styles.googleHintText}>Google sign-in coming soon</Text>
-        </View>
+        {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
 
         <View style={styles.legalRow}>
           <SecondaryButton label="Terms" onPress={() => router.push("/legal/terms" as never)} />
@@ -102,14 +120,8 @@ const styles = StyleSheet.create({
     color: palette.caution,
     ...typography.caption
   },
-  googleHint: {
-    marginTop: spacing[4],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  googleHintText: {
-    color: palette.textSecondary,
+  googleError: {
+    color: palette.negative,
     ...typography.caption
   },
   legalRow: {

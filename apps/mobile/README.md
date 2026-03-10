@@ -1,6 +1,6 @@
-# NSFinTech Mobile
+# NSFinance Mobile
 
-Expo Router + TypeScript mobile client for NSFinTech.
+Expo Router + TypeScript mobile client for NSFinance.
 
 ## Implemented in this slice
 
@@ -24,16 +24,20 @@ Expo Router + TypeScript mobile client for NSFinTech.
 
 ## Run locally
 
-1. Set API URL:
-   - iOS simulator: `http://192.168.0.11:5080`
-   - Android emulator: `http://10.0.2.2:5080`
-   - physical device: `http://<YOUR_PC_LAN_IP>:5080`
+1. API base URL behavior:
+   - development default auto-detects your Metro host IP for physical devices and uses port `5080`
+   - development fallbacks:
+     - Android emulator: `http://10.0.2.2:5080`
+     - iOS simulator: `http://localhost:5080`
+   - production default is Azure API:
+     - `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+   - optional override with `EXPO_PUBLIC_API_BASE_URL` in `.env`
 2. Install dependencies:
    - `pnpm install`
 3. Start Expo:
-   - `pnpm --filter @nsfintech/mobile start`
+   - `pnpm --filter @nsfinance/mobile start`
 
 Demo login for local dev:
 
-- Email: `demo@nsfintech.local`
+- Email: `demo@nsfinance.local`
 - Password: `Password123!`

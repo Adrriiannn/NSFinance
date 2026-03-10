@@ -4,6 +4,7 @@ import type {
   ChangePasswordRequest,
   ConfirmEmailVerificationRequest,
   ForgotPasswordRequest,
+  GoogleLoginRequest,
   LoginRequest,
   RegisterRequest,
   RequestEmailVerificationRequest,
@@ -16,6 +17,7 @@ import {
   forgotPassword,
   getCurrentUser,
   login,
+  loginWithGoogle,
   requestEmailVerification,
   resetPassword,
   register
@@ -37,6 +39,19 @@ export function useLoginMutation() {
 
   return useMutation({
     mutationFn: (payload: LoginRequest) => login(payload),
+    onSuccess: async (response) => {
+      await applyAuthTokenResponse(response);
+      await queryClient.invalidateQueries();
+    }
+  });
+}
+
+export function useGoogleLoginMutation() {
+  const queryClient = useQueryClient();
+  const { applyAuthTokenResponse } = useAuthSession();
+
+  return useMutation({
+    mutationFn: (payload: GoogleLoginRequest) => loginWithGoogle(payload),
     onSuccess: async (response) => {
       await applyAuthTokenResponse(response);
       await queryClient.invalidateQueries();
