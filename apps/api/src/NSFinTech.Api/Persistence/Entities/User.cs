@@ -6,6 +6,10 @@ public class User
     public string PrimaryEmail { get; set; } = string.Empty;
     public string NormalizedEmail { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
+    public string FullName { get; set; } = string.Empty;
+    public string? Handle { get; set; }
+    public string? ProfileImageUrl { get; set; }
+    public string? ProfileSubtitle { get; set; }
     public string Status { get; set; } = "active";
     public string OnboardingStatus { get; set; } = "not_started";
     public string Role { get; set; } = "user";
@@ -22,6 +26,14 @@ public class User
     public string PreferredCurrency { get; set; } = "EUR";
     public string PlanTier { get; set; } = "standard";
     public bool BiometricUnlockEnabled { get; set; }
+    public bool TwoFactorEnabled { get; set; }
+    public string? PhoneNumber { get; set; }
+    public DateTime? DateOfBirth { get; set; }
+    public string? CountryRegion { get; set; }
+    public string? FinancialFocusJson { get; set; }
+    public string? EmploymentStatus { get; set; }
+    public string? IncomeStability { get; set; }
+    public string? PrimaryFinancialConcern { get; set; }
     public string? SupportFlagsJson { get; set; }
 
     public ICollection<FinancialAccount> FinancialAccounts { get; set; } = [];

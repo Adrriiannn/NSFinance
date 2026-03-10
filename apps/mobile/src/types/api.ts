@@ -78,7 +78,11 @@ export type ApiErrorResponse = {
 export type UserProfileDto = {
   id: string;
   primaryEmail: string;
+  fullName: string;
   displayName: string;
+  handle: string | null;
+  profileImageUrl: string | null;
+  profileSubtitle: string | null;
   timezone: string;
   locale: string;
   preferredCurrency: string;
@@ -86,6 +90,7 @@ export type UserProfileDto = {
   emailVerified: boolean;
   onboardingStatus: string;
   biometricUnlockEnabled: boolean;
+  twoFactorEnabled: boolean;
   planTier: string;
   createdUtc: string;
   lastLoginUtc: string | null;
@@ -169,15 +174,36 @@ export type ChangePasswordRequest = {
   newPassword: string;
 };
 
+export type VerifyPasswordChangeCodeRequest = {
+  code: string;
+};
+
+export type ConfirmPasswordChangeCodeRequest = {
+  code: string;
+  newPassword: string;
+};
+
 export type UserProfileDetailsDto = {
   id: string;
   primaryEmail: string;
+  fullName: string;
   displayName: string;
+  handle: string | null;
+  profileImageUrl: string | null;
+  profileSubtitle: string | null;
   timezone: string;
   locale: string;
   preferredCurrency: string;
   onboardingStatus: string;
   biometricUnlockEnabled: boolean;
+  twoFactorEnabled: boolean;
+  phoneNumber: string | null;
+  dateOfBirth: string | null;
+  countryRegion: string | null;
+  financialFocus: string[];
+  employmentStatus: string | null;
+  incomeStability: string | null;
+  primaryFinancialConcern: string | null;
   emailVerified: boolean;
   planTier: string;
   createdUtc: string;
@@ -185,12 +211,25 @@ export type UserProfileDetailsDto = {
 };
 
 export type UpdateUserProfileRequest = {
+  primaryEmail: string;
+  fullName: string;
   displayName: string;
+  handle?: string | null;
+  profileImageUrl?: string | null;
+  profileSubtitle?: string | null;
   timezone: string;
   locale: string;
   preferredCurrency: string;
   onboardingStatus: string;
   biometricUnlockEnabled: boolean;
+  twoFactorEnabled: boolean;
+  phoneNumber?: string | null;
+  dateOfBirth?: string | null;
+  countryRegion?: string | null;
+  financialFocus?: string[];
+  employmentStatus?: string | null;
+  incomeStability?: string | null;
+  primaryFinancialConcern?: string | null;
 };
 
 export type UserPreferenceDto = {
@@ -220,6 +259,7 @@ export type PolicyVersionDto = {
   version: string;
   effectiveUtc: string;
   contentReference: string;
+  contentMarkdown: string;
   isActive: boolean;
 };
 
@@ -261,7 +301,14 @@ export type SupportRequestDto = {
   id: string;
   userId: string | null;
   category: string;
+  subcategory: string;
+  title: string;
   message: string;
+  contactEmail: string | null;
+  screenshotReference: string | null;
+  connectionId: string | null;
+  linkedBankAccountId: string | null;
+  diagnosticsJson: string;
   status: string;
   createdUtc: string;
   updatedUtc: string;
@@ -269,10 +316,23 @@ export type SupportRequestDto = {
 
 export type CreateSupportRequestRequest = {
   category: string;
+  subcategory: string;
+  title: string;
   message: string;
+  contactEmail?: string | null;
+  connectionId?: string | null;
+  linkedBankAccountId?: string | null;
+  screenshots?: SupportScreenshotUploadRequest[] | null;
+};
+
+export type SupportScreenshotUploadRequest = {
+  fileName: string;
+  contentType: string;
+  base64Data: string;
 };
 
 export type CreateDeletionRequestRequest = {
+  verificationCode: string;
   notes?: string | null;
 };
 
@@ -329,6 +389,22 @@ export type BankConnectionDto = {
   lastSuccessfulSyncUtc: string | null;
   lastSyncAttemptedUtc: string | null;
   lastErrorCode: string | null;
+};
+
+export type LinkedBankAccountDto = {
+  id: string;
+  connectionId: string;
+  providerAccountId: string;
+  displayName: string;
+  accountType: string | null;
+  accountSubType: string | null;
+  currency: string;
+  currentConnectionHealth: string;
+  latestAvailable: number | null;
+  latestCurrent: number | null;
+  latestOverdraft: number | null;
+  createdUtc: string;
+  updatedUtc: string;
 };
 
 export type StartTrueLayerLinkResponse = {

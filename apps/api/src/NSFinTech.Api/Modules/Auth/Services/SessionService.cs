@@ -35,7 +35,7 @@ public sealed class SessionService(
             CreatedUtc = now,
             LastSeenUtc = now,
             ExpiresUtc = now.AddDays(_options.RefreshTokenDays),
-            DeviceLabel = device?.DeviceLabel ?? NormalizeDeviceLabel(deviceContext?.DeviceLabel),
+            DeviceLabel = BuildBestEffortDeviceLabel(device?.DeviceLabel, deviceContext, requestContext.Platform),
             Platform = deviceContext?.Platform ?? requestContext.Platform,
             OsVersion = deviceContext?.OsVersion,
             AppVersion = deviceContext?.AppVersion ?? requestContext.AppVersion,
@@ -113,7 +113,7 @@ public sealed class SessionService(
         session.LastSeenUtc = now;
         session.ExpiresUtc = now.AddDays(_options.RefreshTokenDays);
         session.DeviceId = device?.Id ?? session.DeviceId;
-        session.DeviceLabel = device?.DeviceLabel ?? session.DeviceLabel;
+        session.DeviceLabel = BuildBestEffortDeviceLabel(device?.DeviceLabel, deviceContext, session.Platform);
         session.Platform = deviceContext?.Platform ?? session.Platform;
         session.OsVersion = deviceContext?.OsVersion ?? session.OsVersion;
         session.AppVersion = deviceContext?.AppVersion ?? session.AppVersion;
@@ -154,9 +154,11 @@ public sealed class SessionService(
         Guid? currentSessionId,
         CancellationToken cancellationToken)
     {
+        var now = DateTime.UtcNow;
+
         return await dbContext.Sessions
             .AsNoTracking()
-            .Where(x => x.UserId == userId)
+            .Where(x => x.UserId == userId && x.RevokedUtc == null && x.ExpiresUtc > now)
             .OrderByDescending(x => x.LastSeenUtc)
             .Select(x => new SessionDto(
                 x.Id,
@@ -320,7 +322,11 @@ public sealed class SessionService(
         return new UserProfileDto(
             user.Id,
             user.PrimaryEmail,
+            user.FullName,
             user.DisplayName,
+            user.Handle,
+            user.ProfileImageUrl,
+            user.ProfileSubtitle,
             user.Timezone,
             user.Locale,
             user.PreferredCurrency,
@@ -328,6 +334,7 @@ public sealed class SessionService(
             user.EmailVerified,
             user.OnboardingStatus,
             user.BiometricUnlockEnabled,
+            user.TwoFactorEnabled,
             user.PlanTier,
             user.CreatedUtc,
             user.LastLoginUtc);
@@ -337,6 +344,35 @@ public sealed class SessionService(
     {
         var value = NormalizeNullable(input);
         return value ?? "Unknown Device";
+    }
+
+    private static string BuildBestEffortDeviceLabel(
+        string? persistedLabel,
+        DeviceContextDto? deviceContext,
+        string? platformFallback)
+    {
+        var normalizedPersisted = NormalizeNullable(persistedLabel);
+        if (!string.IsNullOrWhiteSpace(normalizedPersisted) && normalizedPersisted != "Unknown Device")
+        {
+            return normalizedPersisted;
+        }
+
+        var contextLabel = NormalizeNullable(deviceContext?.DeviceLabel);
+        if (!string.IsNullOrWhiteSpace(contextLabel))
+        {
+            return contextLabel;
+        }
+
+        var platform = NormalizeNullable(deviceContext?.Platform) ?? NormalizeNullable(platformFallback);
+        if (string.IsNullOrWhiteSpace(platform))
+        {
+            return "Unknown Device";
+        }
+
+        var osVersion = NormalizeNullable(deviceContext?.OsVersion);
+        return osVersion is null
+            ? $"{platform} device"
+            : $"{platform} {osVersion}";
     }
 
     private static string? NormalizeNullable(string? value)

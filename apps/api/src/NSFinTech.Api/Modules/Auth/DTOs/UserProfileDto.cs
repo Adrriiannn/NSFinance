@@ -3,7 +3,11 @@ namespace NSFinTech.Api.Modules.Auth.DTOs;
 public sealed record UserProfileDto(
     Guid Id,
     string PrimaryEmail,
+    string FullName,
     string DisplayName,
+    string? Handle,
+    string? ProfileImageUrl,
+    string? ProfileSubtitle,
     string Timezone,
     string Locale,
     string PreferredCurrency,
@@ -11,6 +15,7 @@ public sealed record UserProfileDto(
     bool EmailVerified,
     string OnboardingStatus,
     bool BiometricUnlockEnabled,
+    bool TwoFactorEnabled,
     string PlanTier,
     DateTime CreatedUtc,
     DateTime? LastLoginUtc);

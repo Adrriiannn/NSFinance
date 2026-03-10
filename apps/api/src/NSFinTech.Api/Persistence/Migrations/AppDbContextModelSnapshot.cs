@@ -758,6 +758,10 @@ namespace NSFinTech.Api.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ContentMarkdown")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("ContentReference")
                         .IsRequired()
                         .HasMaxLength(400)
@@ -1001,20 +1005,48 @@ namespace NSFinTech.Api.Persistence.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
+                    b.Property<Guid?>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContactEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
                     b.Property<DateTime>("CreatedUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("DiagnosticsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid?>("LinkedBankAccountId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Message")
                         .IsRequired()
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
+                    b.Property<string>("ScreenshotReference")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Subcategory")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
 
                     b.Property<DateTime>("UpdatedUtc")
                         .ValueGeneratedOnAdd()
@@ -1108,10 +1140,17 @@ namespace NSFinTech.Api.Persistence.Migrations
                     b.Property<bool>("BiometricUnlockEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("CountryRegion")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
                     b.Property<DateTime>("CreatedUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<DateTime?>("DateOfBirth")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("DeletionRequested")
                         .HasColumnType("boolean");
@@ -1126,6 +1165,26 @@ namespace NSFinTech.Api.Persistence.Migrations
 
                     b.Property<bool>("EmailVerified")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("EmploymentStatus")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("FinancialFocusJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("Handle")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("IncomeStability")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
 
                     b.Property<bool>("IsDisabled")
                         .HasColumnType("boolean");
@@ -1151,6 +1210,10 @@ namespace NSFinTech.Api.Persistence.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
+                    b.Property<string>("PhoneNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<string>("PlanTier")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -1165,6 +1228,18 @@ namespace NSFinTech.Api.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<string>("PrimaryFinancialConcern")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("ProfileImageUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("ProfileSubtitle")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -1183,6 +1258,9 @@ namespace NSFinTech.Api.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("TwoFactorEnabled")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime>("UpdatedUtc")
                         .ValueGeneratedOnAdd()

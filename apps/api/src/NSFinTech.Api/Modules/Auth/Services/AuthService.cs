@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
 using NSFinTech.Api.Common.Contracts;
 using NSFinTech.Api.Infrastructure.RequestContext;
 using NSFinTech.Api.Modules.Audit.Services;
 using NSFinTech.Api.Modules.Auth.DTOs;
+using NSFinTech.Api.Modules.Users;
 using NSFinTech.Api.Modules.Users.Services;
 using NSFinTech.Api.Persistence;
 using NSFinTech.Api.Persistence.Entities;
@@ -28,7 +30,9 @@ public sealed class AuthService(
     private const string ProviderTypeLocalPassword = "local_password";
     private const string ProviderTypeGoogleOidc = "google_oidc";
     private const string PurposePasswordReset = "password_reset";
+    private const string PurposePasswordChange = "password_change";
     private const string PurposeEmailVerification = "email_verification";
+    private const string PurposeAccountDeletion = "account_deletion";
 
     public async Task<ServiceResult<AuthTokenResponse>> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken)
     {
@@ -43,12 +47,18 @@ public sealed class AuthService(
         }
 
         var utcNow = DateTime.UtcNow;
+        var fullName = NormalizeFullName(request.DisplayName);
+        var nsTag = await GenerateUniqueNsTagAsync(fullName, normalizedEmail, cancellationToken);
+
         var user = new User
         {
             Id = Guid.NewGuid(),
             PrimaryEmail = normalizedEmail,
             NormalizedEmail = normalizedEmail,
-            DisplayName = NormalizeDisplayName(request.DisplayName),
+            DisplayName = nsTag,
+            FullName = fullName,
+            Handle = nsTag,
+            ProfileSubtitle = "Focused on: build financial awareness",
             Status = "active",
             OnboardingStatus = "profile_created",
             Role = "user",
@@ -63,7 +73,8 @@ public sealed class AuthService(
             Locale = NormalizeOrDefault(request.Locale, "en-US"),
             PreferredCurrency = NormalizeCurrency(request.PreferredCurrency),
             PlanTier = "standard",
-            BiometricUnlockEnabled = false
+            BiometricUnlockEnabled = false,
+            TwoFactorEnabled = false
         };
 
         dbContext.Users.Add(user);
@@ -104,7 +115,7 @@ public sealed class AuthService(
             targetEntityId: user.Id.ToString(),
             actorId: user.Id,
             actorType: "user",
-            metadata: new { provider = ProviderTypeLocalPassword },
+            metadata: new { provider = ProviderTypeLocalPassword, nsTag },
             cancellationToken);
 
         var emailToken = await IssueEmailActionTokenAsync(
@@ -529,6 +540,148 @@ public sealed class AuthService(
         return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Password updated. Please sign in again on your devices."));
     }
 
+    public async Task<ServiceResult<AuthActionResponse>> RequestPasswordChangeCodeAsync(CancellationToken cancellationToken)
+    {
+        if (!currentUserProvider.TryGetUserId(out var userId))
+        {
+            return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
+        }
+
+        var user = await dbContext.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+        if (user is null)
+        {
+            return ServiceResult<AuthActionResponse>.Fail("User not found.", "user_not_found", StatusCodes.Status404NotFound);
+        }
+
+        var debugToken = await IssueEmailActionTokenAsync(
+            userId,
+            PurposePasswordChange,
+            _options.PasswordResetTokenMinutes,
+            cancellationToken);
+
+        await auditService.WriteEventAsync(
+            category: "security",
+            eventName: "password_change_code_requested",
+            targetEntityType: "user",
+            targetEntityId: userId.ToString(),
+            actorId: userId,
+            actorType: "user",
+            metadata: null,
+            cancellationToken);
+
+        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse(
+            "A password change code was requested. Check your email to continue.",
+            hostEnvironment.IsDevelopment() ? debugToken : null));
+    }
+
+    public async Task<ServiceResult<AuthActionResponse>> VerifyPasswordChangeCodeAsync(
+        string code,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUserProvider.TryGetUserId(out var userId))
+        {
+            return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
+        }
+
+        var validation = await ValidateEmailActionTokenForUserAsync(
+            userId,
+            code,
+            PurposePasswordChange,
+            consumeToken: false,
+            cancellationToken);
+        if (!validation.Succeeded)
+        {
+            return ServiceResult<AuthActionResponse>.Fail(
+                validation.Error!.Message,
+                validation.Error.Code,
+                validation.Error.StatusCode);
+        }
+
+        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Code verified."));
+    }
+
+    public async Task<ServiceResult<AuthActionResponse>> ConfirmPasswordChangeWithCodeAsync(
+        string code,
+        string newPassword,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUserProvider.TryGetUserId(out var userId))
+        {
+            return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
+        }
+
+        var validation = await ValidateEmailActionTokenForUserAsync(
+            userId,
+            code,
+            PurposePasswordChange,
+            consumeToken: true,
+            cancellationToken);
+        if (!validation.Succeeded)
+        {
+            return ServiceResult<AuthActionResponse>.Fail(
+                validation.Error!.Message,
+                validation.Error.Code,
+                validation.Error.StatusCode);
+        }
+
+        var user = await dbContext.Users
+            .Include(x => x.PasswordCredential)
+            .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+        if (user is null || user.PasswordCredential is null)
+        {
+            return ServiceResult<AuthActionResponse>.Fail("User not found.", "user_not_found", StatusCodes.Status404NotFound);
+        }
+
+        user.PasswordCredential.PasswordHash = passwordHasher.HashPassword(newPassword);
+        user.PasswordCredential.RequiresRehash = false;
+        user.PasswordCredential.UpdatedUtc = DateTime.UtcNow;
+        user.UpdatedUtc = DateTime.UtcNow;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await sessionService.RevokeAllSessionsForUserAsync(user.Id, "password_changed", cancellationToken);
+
+        await auditService.WriteEventAsync(
+            category: "security",
+            eventName: "password_changed_with_code",
+            targetEntityType: "user",
+            targetEntityId: user.Id.ToString(),
+            actorId: user.Id,
+            actorType: "user",
+            metadata: null,
+            cancellationToken);
+
+        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Password updated. Please sign in again on your devices."));
+    }
+
+    public async Task<ServiceResult<AuthActionResponse>> RequestAccountDeletionCodeAsync(CancellationToken cancellationToken)
+    {
+        if (!currentUserProvider.TryGetUserId(out var userId))
+        {
+            return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
+        }
+
+        var debugToken = await IssueEmailActionTokenAsync(
+            userId,
+            PurposeAccountDeletion,
+            _options.PasswordResetTokenMinutes,
+            cancellationToken);
+
+        await auditService.WriteEventAsync(
+            category: "security",
+            eventName: "account_deletion_code_requested",
+            targetEntityType: "user",
+            targetEntityId: userId.ToString(),
+            actorId: userId,
+            actorType: "user",
+            metadata: null,
+            cancellationToken);
+
+        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse(
+            "A deletion verification code was requested. Check your email to continue.",
+            hostEnvironment.IsDevelopment() ? debugToken : null));
+    }
+
     public GoogleAuthOptionsDto GetGoogleAuthOptions()
     {
         return new GoogleAuthOptionsDto(
@@ -593,12 +746,65 @@ public sealed class AuthService(
         return rawToken;
     }
 
+    private async Task<ServiceResult<EmailActionToken>> ValidateEmailActionTokenForUserAsync(
+        Guid userId,
+        string rawToken,
+        string purpose,
+        bool consumeToken,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(rawToken))
+        {
+            return ServiceResult<EmailActionToken>.Fail(
+                "Verification code is required.",
+                "verification_code_required",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var tokenHash = tokenSecretService.HashToken(rawToken.Trim());
+        var now = DateTime.UtcNow;
+        var token = await dbContext.EmailActionTokens
+            .SingleOrDefaultAsync(
+                x => x.UserId == userId
+                     && x.Purpose == purpose
+                     && x.TokenHash == tokenHash,
+                cancellationToken);
+
+        if (token is null || token.ExpiresUtc <= now)
+        {
+            return ServiceResult<EmailActionToken>.Fail(
+                "Verification code is invalid or expired.",
+                "verification_code_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        if (token.UsedUtc is not null)
+        {
+            return ServiceResult<EmailActionToken>.Fail(
+                "Verification code has already been used.",
+                "verification_code_reused",
+                StatusCodes.Status400BadRequest);
+        }
+
+        if (consumeToken)
+        {
+            token.UsedUtc = now;
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return ServiceResult<EmailActionToken>.Ok(token);
+    }
+
     private static UserProfileDto MapUserProfile(User user)
     {
         return new UserProfileDto(
             user.Id,
             user.PrimaryEmail,
+            user.FullName,
             user.DisplayName,
+            user.Handle,
+            user.ProfileImageUrl,
+            user.ProfileSubtitle,
             user.Timezone,
             user.Locale,
             user.PreferredCurrency,
@@ -606,6 +812,7 @@ public sealed class AuthService(
             user.EmailVerified,
             user.OnboardingStatus,
             user.BiometricUnlockEnabled,
+            user.TwoFactorEnabled,
             user.PlanTier,
             user.CreatedUtc,
             user.LastLoginUtc);
@@ -613,7 +820,97 @@ public sealed class AuthService(
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 
-    private static string NormalizeDisplayName(string? displayName)
+    private async Task<string> GenerateUniqueNsTagAsync(
+        string fullName,
+        string normalizedEmail,
+        CancellationToken cancellationToken)
+    {
+        var tagBase = BuildTagBase(fullName, normalizedEmail);
+        if (string.IsNullOrWhiteSpace(tagBase))
+        {
+            tagBase = "member";
+        }
+
+        var primaryBaseLength = Math.Max(1, NsTagPolicy.MaxLength - 2);
+        var primaryBase = tagBase[..Math.Min(tagBase.Length, primaryBaseLength)];
+
+        for (var attempt = 0; attempt < 120; attempt++)
+        {
+            var suffix = RandomNumberGenerator.GetInt32(0, 100).ToString("D2");
+            var candidate = NsTagPolicy.Normalize($"{primaryBase}{suffix}");
+            if (await IsNsTagAvailableAsync(candidate, cancellationToken))
+            {
+                return candidate;
+            }
+        }
+
+        var fallbackBaseLength = Math.Max(1, NsTagPolicy.MaxLength - 4);
+        var fallbackBase = tagBase[..Math.Min(tagBase.Length, fallbackBaseLength)];
+
+        for (var attempt = 0; attempt < 500; attempt++)
+        {
+            var suffix = RandomNumberGenerator.GetInt32(0, 10_000).ToString("D4");
+            var candidate = NsTagPolicy.Normalize($"{fallbackBase}{suffix}");
+            if (await IsNsTagAvailableAsync(candidate, cancellationToken))
+            {
+                return candidate;
+            }
+        }
+
+        var deterministicFallback = NsTagPolicy.Normalize($"member{RandomNumberGenerator.GetInt32(1000, 9999)}");
+        if (await IsNsTagAvailableAsync(deterministicFallback, cancellationToken))
+        {
+            return deterministicFallback;
+        }
+
+        throw new InvalidOperationException("Unable to generate a unique NS Tag for the new account.");
+    }
+
+    private async Task<bool> IsNsTagAvailableAsync(string normalizedTag, CancellationToken cancellationToken)
+    {
+        var lowered = normalizedTag.ToLower();
+        return !await dbContext.Users
+            .AsNoTracking()
+            .AnyAsync(x => x.DisplayName.ToLower() == lowered, cancellationToken);
+    }
+
+    private static string BuildTagBase(string fullName, string normalizedEmail)
+    {
+        var nameParts = fullName
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeTagToken)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+
+        if (nameParts.Length >= 2)
+        {
+            return $"{nameParts[0]}{nameParts[^1]}";
+        }
+
+        if (nameParts.Length == 1)
+        {
+            return nameParts[0];
+        }
+
+        var emailLocalPart = normalizedEmail.Split('@', StringSplitOptions.TrimEntries)[0];
+        return NormalizeTagToken(emailLocalPart);
+    }
+
+    private static string NormalizeTagToken(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return new string(value
+            .Trim()
+            .ToLowerInvariant()
+            .Where(ch => (ch >= 'a' && ch <= 'z') || char.IsDigit(ch))
+            .ToArray());
+    }
+
+    private static string NormalizeFullName(string? displayName)
     {
         if (string.IsNullOrWhiteSpace(displayName))
         {

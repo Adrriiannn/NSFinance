@@ -25,6 +25,7 @@ public sealed class PolicyService(
                 x.Version,
                 x.EffectiveUtc,
                 x.ContentReference,
+                x.ContentMarkdown,
                 x.IsActive))
             .ToListAsync(cancellationToken);
     }
@@ -41,6 +42,7 @@ public sealed class PolicyService(
                 x.Version,
                 x.EffectiveUtc,
                 x.ContentReference,
+                x.ContentMarkdown,
                 x.IsActive))
             .SingleOrDefaultAsync(cancellationToken);
 

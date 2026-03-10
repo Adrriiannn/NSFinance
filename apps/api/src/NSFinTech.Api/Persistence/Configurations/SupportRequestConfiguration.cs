@@ -12,7 +12,12 @@ public class SupportRequestConfiguration : IEntityTypeConfiguration<SupportReque
 
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Category).HasMaxLength(80).IsRequired();
+        builder.Property(x => x.Subcategory).HasMaxLength(120).IsRequired();
+        builder.Property(x => x.Title).HasMaxLength(160).IsRequired();
         builder.Property(x => x.Message).HasMaxLength(4000).IsRequired();
+        builder.Property(x => x.ContactEmail).HasMaxLength(256);
+        builder.Property(x => x.ScreenshotReference).HasMaxLength(1024);
+        builder.Property(x => x.DiagnosticsJson).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.Status).HasMaxLength(40).IsRequired();
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedUtc).HasDefaultValueSql("timezone('utc', now())");

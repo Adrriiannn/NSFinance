@@ -28,6 +28,9 @@ importers:
       expo-file-system:
         specifier: ^19.0.21
         version: 19.0.21(expo@54.0.33)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.1.0))
+      expo-image-picker:
+        specifier: ^55.0.11
+        version: 55.0.11(expo@54.0.33)
       expo-linear-gradient:
         specifier: ~15.0.7
         version: 15.0.8(expo@54.0.33)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.1.0))(react@19.1.0)
@@ -2130,6 +2133,16 @@ packages:
       expo: '*'
       react: '*'
       react-native: '*'
+
+  expo-image-loader@55.0.0:
+    resolution: {integrity: sha512-NOjp56wDrfuA5aiNAybBIjqIn1IxKeGJ8CECWZncQ/GzjZfyTYAHTCyeApYkdKkMBLHINzI4BbTGSlbCa0fXXQ==}
+    peerDependencies:
+      expo: '*'
+
+  expo-image-picker@55.0.11:
+    resolution: {integrity: sha512-geJklIGdAR2N16iSk86oyJe7QgX5RpqDX1FjKpxO53fF4D0eBmg5Irm6gRwT0b+DHP1kJevZgzzbVJsRAV362g==}
+    peerDependencies:
+      expo: '*'
 
   expo-keep-awake@15.0.8:
     resolution: {integrity: sha512-YK9M1VrnoH1vLJiQzChZgzDvVimVoriibiDIFLbQMpjYBnvyfUeHJcin/Gx1a+XgupNXy92EQJLgI/9ZuXajYQ==}
@@ -6657,6 +6670,15 @@ snapshots:
       fontfaceobserver: 2.3.0
       react: 19.1.0
       react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.1.0)
+
+  expo-image-loader@55.0.0(expo@54.0.33):
+    dependencies:
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@5.0.5(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.1.0)))(expo-router@6.0.23)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.1.0))(react@19.1.0)
+
+  expo-image-picker@55.0.11(expo@54.0.33):
+    dependencies:
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@5.0.5(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.1.0)))(expo-router@6.0.23)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.0.14)(react@19.1.0))(react@19.1.0)
+      expo-image-loader: 55.0.0(expo@54.0.33)
 
   expo-keep-awake@15.0.8(expo@54.0.33)(react@19.1.0):
     dependencies:

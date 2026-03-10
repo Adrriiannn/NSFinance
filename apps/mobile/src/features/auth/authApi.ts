@@ -3,6 +3,7 @@ import type {
   AuthActionResponse,
   AuthTokenResponse,
   ChangePasswordRequest,
+  ConfirmPasswordChangeCodeRequest,
   ConfirmEmailVerificationRequest,
   ForgotPasswordRequest,
   GoogleAuthOptionsDto,
@@ -12,7 +13,8 @@ import type {
   RequestEmailVerificationRequest,
   ResetPasswordRequest,
   SessionDto,
-  UserProfileDto
+  UserProfileDto,
+  VerifyPasswordChangeCodeRequest
 } from "../../types/api";
 
 export function register(payload: RegisterRequest): Promise<AuthTokenResponse> {
@@ -98,6 +100,38 @@ export function changePassword(payload: ChangePasswordRequest): Promise<AuthActi
   return apiRequest<AuthActionResponse>("/api/auth/change-password", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export function requestPasswordChangeCode(): Promise<AuthActionResponse> {
+  return apiRequest<AuthActionResponse>("/api/auth/change-password/request-code", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function verifyPasswordChangeCode(
+  payload: VerifyPasswordChangeCodeRequest
+): Promise<AuthActionResponse> {
+  return apiRequest<AuthActionResponse>("/api/auth/change-password/verify-code", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function confirmPasswordChangeWithCode(
+  payload: ConfirmPasswordChangeCodeRequest
+): Promise<AuthActionResponse> {
+  return apiRequest<AuthActionResponse>("/api/auth/change-password/confirm", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function requestAccountDeletionCode(): Promise<AuthActionResponse> {
+  return apiRequest<AuthActionResponse>("/api/auth/deletion/request-code", {
+    method: "POST",
+    body: JSON.stringify({})
   });
 }
 

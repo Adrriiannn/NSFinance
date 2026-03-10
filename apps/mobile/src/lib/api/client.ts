@@ -1,5 +1,6 @@
 import { apiConfig } from "./config";
 import { ApiClientError, parseApiErrorBody } from "./errors";
+import { Platform } from "react-native";
 
 type TokenResolver = () => string | null;
 type UnauthorizedHandler = () => Promise<string | null>;
@@ -13,6 +14,10 @@ export function setApiTokenResolver(nextResolver: TokenResolver) {
 
 export function setApiUnauthorizedHandler(nextHandler: UnauthorizedHandler | null) {
   unauthorizedHandler = nextHandler;
+}
+
+export function getApiAccessToken(): string | null {
+  return tokenResolver();
 }
 
 function createAbortController(timeoutMs: number): {
@@ -53,6 +58,8 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   const makeRequest = async (overrideToken: string | null): Promise<Response> => {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
+      "x-platform": Platform.OS,
+      "x-app-version": process.env.EXPO_PUBLIC_APP_VERSION || "mobile-dev",
       ...(overrideToken ? { Authorization: `Bearer ${overrideToken}` } : {}),
       ...(init?.headers ?? {})
     };

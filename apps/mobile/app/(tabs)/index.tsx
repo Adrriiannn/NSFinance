@@ -51,7 +51,7 @@ export default function DashboardTabScreen() {
   const accountsQuery = useAccountsQuery();
   const transactionsQuery = useTransactionsQuery();
   const { greeting, dateLabel, timeLabel } = useLocalClock();
-  const fullName = session?.user.displayName?.trim() || "";
+  const fullName = session?.user.fullName?.trim() || session?.user.displayName?.trim() || "";
   const firstName = fullName.split(/\s+/).find(Boolean) || "there";
 
   const heroAnimation = useEntranceAnimation(30);
@@ -243,7 +243,7 @@ export default function DashboardTabScreen() {
           <View style={styles.headerRightActions}>
             <Pressable
               style={styles.companionButton}
-              onPress={() => router.push("/(tabs)/planner/companion")}
+              onPress={() => router.push("/companion" as never)}
             >
               <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
             </Pressable>
@@ -560,3 +560,4 @@ const styles = StyleSheet.create({
     gap: spacing[16]
   }
 });
+

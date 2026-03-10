@@ -8,6 +8,7 @@ import { IconButton } from "../../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
+import { ApiClientError } from "../../../src/lib/api/errors";
 import {
   getSessions,
   logoutAll,
@@ -16,6 +17,23 @@ import {
 import { palette, spacing, typography } from "../../../src/theme/tokens";
 
 const sessionKey = ["auth", "sessions"] as const;
+
+function isActiveSession(session: { revokedUtc: string | null; expiresUtc: string }) {
+  if (session.revokedUtc) {
+    return false;
+  }
+
+  const expiresAt = new Date(session.expiresUtc).getTime();
+  if (Number.isNaN(expiresAt)) {
+    return true;
+  }
+
+  return expiresAt > Date.now();
+}
+
+function isSessionNotFoundError(error: unknown) {
+  return error instanceof ApiClientError && (error.code === "session_not_found" || error.status === 404);
+}
 
 export default function SessionsScreen() {
   const router = useRouter();
@@ -27,6 +45,28 @@ export default function SessionsScreen() {
 
   const revokeMutation = useMutation({
     mutationFn: (sessionId: string) => revokeSession(sessionId),
+    onMutate: async (sessionId: string) => {
+      await queryClient.cancelQueries({ queryKey: sessionKey });
+      const previousSessions = queryClient.getQueryData(sessionKey);
+      queryClient.setQueryData(sessionKey, (current: typeof previousSessions) => {
+        if (!Array.isArray(current)) {
+          return current;
+        }
+
+        return current.filter((session) => session.id !== sessionId);
+      });
+      return { previousSessions };
+    },
+    onError: async (error, _sessionId, context) => {
+      if (isSessionNotFoundError(error)) {
+        await queryClient.invalidateQueries({ queryKey: sessionKey });
+        return;
+      }
+
+      if (context?.previousSessions) {
+        queryClient.setQueryData(sessionKey, context.previousSessions);
+      }
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: sessionKey });
     }
@@ -60,7 +100,7 @@ export default function SessionsScreen() {
         />
       ) : (
         <View style={styles.list}>
-          {(sessionsQuery.data ?? []).map((session) => (
+          {(sessionsQuery.data ?? []).filter(isActiveSession).map((session) => (
             <GlassCard key={session.id} style={styles.sessionCard}>
               <Text style={styles.sessionTitle}>
                 {session.deviceLabel} {session.isCurrentSession ? "(current)" : ""}
@@ -71,17 +111,13 @@ export default function SessionsScreen() {
               <Text style={styles.sessionMeta}>
                 Expires {new Date(session.expiresUtc).toLocaleString()}
               </Text>
-              {session.revokedUtc ? (
-                <Text style={styles.revoked}>Revoked {new Date(session.revokedUtc).toLocaleString()}</Text>
-              ) : (
-                <SecondaryButton
-                  label="Revoke session"
-                  onPress={() => {
-                    void revokeMutation.mutateAsync(session.id);
-                  }}
-                  disabled={session.isCurrentSession || revokeMutation.isPending}
-                />
-              )}
+              <SecondaryButton
+                label="Revoke session"
+                onPress={() => {
+                  void revokeMutation.mutateAsync(session.id);
+                }}
+                disabled={session.isCurrentSession || revokeMutation.isPending}
+              />
             </GlassCard>
           ))}
         </View>

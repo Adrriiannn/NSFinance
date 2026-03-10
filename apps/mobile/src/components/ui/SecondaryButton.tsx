@@ -22,14 +22,21 @@ export function SecondaryButton({
         pressed ? styles.pressed : null
       ]}
     >
-      <Text style={styles.label}>{label}</Text>
+      <Text
+        style={styles.label}
+        numberOfLines={2}
+        adjustsFontSizeToFit
+        minimumFontScale={0.88}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   button: {
-    minHeight: 50,
+    minHeight: 54,
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.borderStrong,
@@ -41,7 +48,8 @@ const styles = StyleSheet.create({
   label: {
     color: palette.textPrimary,
     ...typography.button,
-    fontWeight: "600"
+    fontWeight: "600",
+    textAlign: "center"
   },
   pressed: {
     transform: [{ scale: 0.985 }],

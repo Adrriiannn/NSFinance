@@ -28,6 +28,18 @@ public static class PoliciesModule
             GetPolicyByTypeEndpoint.HandleAsync("ai_limitations_notice", service, ct))
             .WithName("GetAiLimitations");
 
+        legal.MapGet("/open-banking", (PolicyService service, CancellationToken ct) =>
+            GetPolicyByTypeEndpoint.HandleAsync("open_banking_disclosure", service, ct))
+            .WithName("GetOpenBankingDisclosure");
+
+        legal.MapGet("/ai-disclosure", (PolicyService service, CancellationToken ct) =>
+            GetPolicyByTypeEndpoint.HandleAsync("ai_disclosure", service, ct))
+            .WithName("GetAiDisclosure");
+
+        legal.MapGet("/data-rights", (PolicyService service, CancellationToken ct) =>
+            GetPolicyByTypeEndpoint.HandleAsync("data_rights_gdpr_summary", service, ct))
+            .WithName("GetDataRightsSummary");
+
         var protectedPolicies = app.MapGroup("/api/policies")
             .WithTags("Policies")
             .RequireAuthorization();

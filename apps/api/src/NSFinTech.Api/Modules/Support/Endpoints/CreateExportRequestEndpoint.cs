@@ -7,11 +7,13 @@ namespace NSFinTech.Api.Modules.Support.Endpoints;
 public static class CreateExportRequestEndpoint
 {
     public static async Task<IResult> HandleAsync(
-        CreateExportRequestRequest request,
+        CreateExportRequestRequest? request,
         SupportService supportService,
         CancellationToken cancellationToken)
     {
-        var result = await supportService.CreateExportRequestAsync(request, cancellationToken);
+        var result = await supportService.CreateExportRequestAsync(
+            request ?? new CreateExportRequestRequest(null),
+            cancellationToken);
         if (!result.Succeeded)
         {
             return result.Error!.ToApiError();

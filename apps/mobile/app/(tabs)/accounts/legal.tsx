@@ -1,98 +1,95 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
-import { ErrorState } from "../../../src/components/feedback/ErrorState";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { IconButton } from "../../../src/components/ui/IconButton";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import {
-  useAcceptPolicyMutation,
-  usePolicyAcceptancesQuery,
+  useAiDisclosurePolicyQuery,
+  useDataRightsPolicyQuery,
+  useOpenBankingDisclosurePolicyQuery,
   usePrivacyPolicyQuery,
   useTermsPolicyQuery
 } from "../../../src/features/policies/usePolicies";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
 
+function formatVersion(version?: string) {
+  return version ? `v${version}` : "loading";
+}
+
 export default function LegalScreen() {
   const router = useRouter();
   const termsQuery = useTermsPolicyQuery();
   const privacyQuery = usePrivacyPolicyQuery();
-  const acceptancesQuery = usePolicyAcceptancesQuery();
-  const acceptMutation = useAcceptPolicyMutation();
+  const openBankingQuery = useOpenBankingDisclosurePolicyQuery();
+  const aiDisclosureQuery = useAiDisclosurePolicyQuery();
+  const dataRightsQuery = useDataRightsPolicyQuery();
 
-  const acceptPolicy = async (policyType: string, policyVersion: string) => {
-    await acceptMutation.mutateAsync({
-      policyType,
-      policyVersion,
-      acceptanceContext: "in_app_settings",
-      platform: "mobile"
-    });
-  };
+  const items = [
+    {
+      key: "terms",
+      title: "Terms of Service",
+      description: "Service rules, eligibility, and limitations.",
+      version: formatVersion(termsQuery.data?.version),
+      onPress: () => router.push("/legal/terms")
+    },
+    {
+      key: "privacy",
+      title: "Privacy Policy",
+      description: "How profile and financial data is processed.",
+      version: formatVersion(privacyQuery.data?.version),
+      onPress: () => router.push("/legal/privacy")
+    },
+    {
+      key: "open-banking",
+      title: "Open Banking Disclosure",
+      description: "Permissions, provider model, and disconnect rights.",
+      version: formatVersion(openBankingQuery.data?.version),
+      onPress: () => router.push("/legal/open-banking")
+    },
+    {
+      key: "ai-disclosure",
+      title: "AI Disclosure",
+      description: "What AI features do and their limitations.",
+      version: formatVersion(aiDisclosureQuery.data?.version),
+      onPress: () => router.push("/legal/ai-disclosure")
+    },
+    {
+      key: "data-rights",
+      title: "Data Rights / GDPR Summary",
+      description: "Export, deletion, correction, and privacy rights.",
+      version: formatVersion(dataRightsQuery.data?.version),
+      onPress: () => router.push("/legal/data-rights")
+    }
+  ];
 
   return (
-    <ScreenContainer contentStyle={styles.content} withBottomTabOffset>
+    <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
       <View style={styles.headerRow}>
         <IconButton
           onPress={() => router.back()}
           icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
         />
-        <Text style={styles.headerTitle}>Legal & Acceptances</Text>
-        <View style={{ width: 42 }} />
+        <Text style={styles.headerTitle}>Legal</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
-      {acceptancesQuery.isError ? (
-        <ErrorState
-          title="Could not load acceptances"
-          message={acceptancesQuery.error.message}
-          onRetry={() => {
-            void acceptancesQuery.refetch();
-          }}
-        />
-      ) : (
-        <GlassCard style={styles.card}>
-          <Text style={styles.sectionTitle}>Recorded Acceptances</Text>
-          {(acceptancesQuery.data ?? []).length === 0 ? (
-            <Text style={styles.meta}>No policy acceptances recorded yet.</Text>
-          ) : (
-            (acceptancesQuery.data ?? []).map((item) => (
-              <View key={`${item.policyType}-${item.policyVersion}`} style={styles.acceptanceRow}>
-                <Text style={styles.body}>
-                  {item.policyType} v{item.policyVersion}
-                </Text>
-                <Text style={styles.meta}>{new Date(item.acceptedUtc).toLocaleString()}</Text>
-              </View>
-            ))
-          )}
-        </GlassCard>
-      )}
+      <Text style={styles.subtitle}>
+        Review current legal documents and disclosures. Drafts are production-shaped and pending external legal review.
+      </Text>
 
-      <GlassCard style={styles.card}>
-        <Text style={styles.sectionTitle}>Current Policies</Text>
-        <Text style={styles.meta}>
-          Terms: {termsQuery.data?.version ?? "loading"} | Privacy: {privacyQuery.data?.version ?? "loading"}
-        </Text>
-        <PrimaryButton
-          label="Accept current Terms"
-          onPress={() => {
-            if (termsQuery.data) {
-              void acceptPolicy("terms_of_service", termsQuery.data.version);
-            }
-          }}
-          disabled={!termsQuery.data}
-          isLoading={acceptMutation.isPending}
-        />
-        <PrimaryButton
-          label="Accept current Privacy"
-          onPress={() => {
-            if (privacyQuery.data) {
-              void acceptPolicy("privacy_policy", privacyQuery.data.version);
-            }
-          }}
-          disabled={!privacyQuery.data}
-          isLoading={acceptMutation.isPending}
-        />
-      </GlassCard>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContent}>
+        {items.map((item) => (
+          <GlassCard key={item.key} style={styles.itemCard} onPress={item.onPress}>
+            <Text style={styles.itemTitle}>{item.title}</Text>
+            <Text style={styles.itemBody}>{item.description}</Text>
+            <View style={styles.itemFooter}>
+              <Text style={styles.itemMeta}>{item.version}</Text>
+              <Ionicons name="chevron-forward" size={14} color={palette.textSecondary} />
+            </View>
+          </GlassCard>
+        ))}
+      </ScrollView>
     </ScreenContainer>
   );
 }
@@ -100,7 +97,11 @@ export default function LegalScreen() {
 const styles = StyleSheet.create({
   content: {
     paddingTop: spacing[16],
-    gap: spacing[16]
+    gap: spacing[12]
+  },
+  listContent: {
+    gap: spacing[12],
+    paddingBottom: spacing[4]
   },
   headerRow: {
     flexDirection: "row",
@@ -111,22 +112,32 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.title2
   },
-  card: {
-    gap: spacing[12]
+  headerSpacer: {
+    width: 42
   },
-  sectionTitle: {
+  subtitle: {
+    color: palette.textSecondary,
+    ...typography.body2
+  },
+  itemCard: {
+    gap: spacing[8]
+  },
+  itemTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong
   },
-  acceptanceRow: {
-    gap: spacing[4]
-  },
-  body: {
-    color: palette.textPrimary,
+  itemBody: {
+    color: palette.textSecondary,
     ...typography.body2
   },
-  meta: {
-    color: palette.textSecondary,
+  itemFooter: {
+    marginTop: spacing[4],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  itemMeta: {
+    color: palette.primaryGlow,
     ...typography.caption
   }
 });

@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AcceptPolicyRequest, UpdateConsentRequest } from "../../types/api";
 import {
+  getAiDisclosurePolicy,
   acceptPolicy,
   getAiLimitationsPolicy,
   getConsents,
+  getDataRightsPolicy,
+  getOpenBankingDisclosurePolicy,
   getPolicyAcceptances,
   getPrivacyPolicy,
   getTermsPolicy,
@@ -14,6 +17,9 @@ const policyKeys = {
   terms: ["policies", "terms"] as const,
   privacy: ["policies", "privacy"] as const,
   ai: ["policies", "ai"] as const,
+  aiDisclosure: ["policies", "ai-disclosure"] as const,
+  openBanking: ["policies", "open-banking"] as const,
+  dataRights: ["policies", "data-rights"] as const,
   acceptances: ["policies", "acceptances"] as const,
   consents: ["policies", "consents"] as const
 };
@@ -36,6 +42,27 @@ export function useAiLimitationsPolicyQuery() {
   return useQuery({
     queryKey: policyKeys.ai,
     queryFn: getAiLimitationsPolicy
+  });
+}
+
+export function useAiDisclosurePolicyQuery() {
+  return useQuery({
+    queryKey: policyKeys.aiDisclosure,
+    queryFn: getAiDisclosurePolicy
+  });
+}
+
+export function useOpenBankingDisclosurePolicyQuery() {
+  return useQuery({
+    queryKey: policyKeys.openBanking,
+    queryFn: getOpenBankingDisclosurePolicy
+  });
+}
+
+export function useDataRightsPolicyQuery() {
+  return useQuery({
+    queryKey: policyKeys.dataRights,
+    queryFn: getDataRightsPolicy
   });
 }
 

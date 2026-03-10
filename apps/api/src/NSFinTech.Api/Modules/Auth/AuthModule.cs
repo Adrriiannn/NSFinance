@@ -61,6 +61,22 @@ public static class AuthModule
             .WithName("ChangePassword")
             .RequireAuthorization();
 
+        group.MapPost("/change-password/request-code", RequestPasswordChangeCodeEndpoint.HandleAsync)
+            .WithName("RequestPasswordChangeCode")
+            .RequireAuthorization();
+
+        group.MapPost("/change-password/verify-code", VerifyPasswordChangeCodeEndpoint.HandleAsync)
+            .WithName("VerifyPasswordChangeCode")
+            .RequireAuthorization();
+
+        group.MapPost("/change-password/confirm", ConfirmPasswordChangeCodeEndpoint.HandleAsync)
+            .WithName("ConfirmPasswordChangeWithCode")
+            .RequireAuthorization();
+
+        group.MapPost("/deletion/request-code", RequestAccountDeletionCodeEndpoint.HandleAsync)
+            .WithName("RequestAccountDeletionCode")
+            .RequireAuthorization();
+
         group.MapGet("/providers/google", GoogleAuthOptionsEndpoint.HandleAsync)
             .WithName("GetGoogleAuthOptions");
 

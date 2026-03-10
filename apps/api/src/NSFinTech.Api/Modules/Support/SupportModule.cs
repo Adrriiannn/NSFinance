@@ -23,8 +23,17 @@ public static class SupportModule
         authenticated.MapPost("/deletion-requests", CreateDeletionRequestEndpoint.HandleAsync)
             .WithName("CreateDeletionRequest");
 
+        authenticated.MapGet("/deletion-requests/me", GetMyDeletionRequestsEndpoint.HandleAsync)
+            .WithName("GetMyDeletionRequests");
+
         authenticated.MapPost("/export-requests", CreateExportRequestEndpoint.HandleAsync)
             .WithName("CreateExportRequest");
+
+        authenticated.MapGet("/export-requests/me", GetMyExportRequestsEndpoint.HandleAsync)
+            .WithName("GetMyExportRequests");
+
+        authenticated.MapGet("/export-requests/{requestId:guid}/download", DownloadExportRequestEndpoint.HandleAsync)
+            .WithName("DownloadExportRequest");
 
         return app;
     }

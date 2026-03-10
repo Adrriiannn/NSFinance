@@ -1,8 +1,6 @@
-const fallbackInstagramUrl = "https://instagram.com/nsfintech";
-const fallbackWebsiteUrl = "https://nsfintech.app";
+const fallbackWebsiteUrl = "https://nsireland.ie";
 
 export const externalLinks = {
-  instagram: process.env.EXPO_PUBLIC_NSFINTECH_INSTAGRAM_URL?.trim() || fallbackInstagramUrl,
+  instagram: null,
   website: process.env.EXPO_PUBLIC_NSFINTECH_WEBSITE_URL?.trim() || fallbackWebsiteUrl
 } as const;
-

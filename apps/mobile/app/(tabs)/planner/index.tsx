@@ -269,7 +269,7 @@ export default function PlannerScreen() {
         <View style={styles.headerActionsRow}>
           <Pressable
             style={styles.sparkleButton}
-            onPress={() => router.push("/(tabs)/planner/companion")}
+            onPress={() => router.push("/companion" as never)}
           >
             <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
           </Pressable>
@@ -868,3 +868,4 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   }
 });
+

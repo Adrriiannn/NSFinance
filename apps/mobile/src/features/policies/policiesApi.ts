@@ -23,6 +23,18 @@ export function getAiLimitationsPolicy(): Promise<PolicyVersionDto> {
   return apiRequest<PolicyVersionDto>("/api/legal/ai-limitations");
 }
 
+export function getOpenBankingDisclosurePolicy(): Promise<PolicyVersionDto> {
+  return apiRequest<PolicyVersionDto>("/api/legal/open-banking");
+}
+
+export function getAiDisclosurePolicy(): Promise<PolicyVersionDto> {
+  return apiRequest<PolicyVersionDto>("/api/legal/ai-disclosure");
+}
+
+export function getDataRightsPolicy(): Promise<PolicyVersionDto> {
+  return apiRequest<PolicyVersionDto>("/api/legal/data-rights");
+}
+
 export function getPolicyAcceptances(): Promise<PolicyAcceptanceDto[]> {
   return apiRequest<PolicyAcceptanceDto[]>("/api/policies/acceptances");
 }

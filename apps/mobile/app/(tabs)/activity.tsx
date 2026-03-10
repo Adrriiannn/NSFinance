@@ -144,7 +144,7 @@ export default function ActivityTabScreen() {
           <View style={styles.selectorActions}>
             <Pressable
               style={styles.companionButton}
-              onPress={() => router.push("/(tabs)/planner/companion")}
+              onPress={() => router.push("/companion" as never)}
             >
               <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
             </Pressable>
@@ -563,3 +563,4 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+

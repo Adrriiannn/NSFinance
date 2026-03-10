@@ -1,6 +1,7 @@
 import { DarkTheme, ThemeProvider } from "@react-navigation/native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { GlobalFlashToast } from "../src/components/feedback/GlobalFlashToast";
 import { AppProviders } from "../src/providers/AppProviders";
 import { palette } from "../src/theme/tokens";
 
@@ -22,6 +23,7 @@ export default function RootLayout() {
     <AppProviders>
       <ThemeProvider value={appNavigationTheme}>
         <StatusBar style="light" backgroundColor={palette.appBackground} />
+        <GlobalFlashToast />
         <Stack
           screenOptions={{
             headerShown: false,
@@ -32,6 +34,14 @@ export default function RootLayout() {
           <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="companion/index"
+            options={{
+              presentation: "card",
+              animation: "slide_from_right",
+              contentStyle: { backgroundColor: palette.appBackground }
+            }}
+          />
           <Stack.Screen
             name="modals/add-account"
             options={{

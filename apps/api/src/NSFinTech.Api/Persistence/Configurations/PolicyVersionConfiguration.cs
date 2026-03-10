@@ -13,6 +13,7 @@ public class PolicyVersionConfiguration : IEntityTypeConfiguration<PolicyVersion
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Version).HasMaxLength(40).IsRequired();
         builder.Property(x => x.ContentReference).HasMaxLength(400).IsRequired();
+        builder.Property(x => x.ContentMarkdown).HasColumnType("text").IsRequired();
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.IsActive).HasDefaultValue(false);
 

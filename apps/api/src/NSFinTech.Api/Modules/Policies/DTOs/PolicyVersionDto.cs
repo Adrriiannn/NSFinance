@@ -6,4 +6,5 @@ public sealed record PolicyVersionDto(
     string Version,
     DateTime EffectiveUtc,
     string ContentReference,
+    string ContentMarkdown,
     bool IsActive);

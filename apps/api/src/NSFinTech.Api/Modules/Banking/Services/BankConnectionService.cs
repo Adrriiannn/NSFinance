@@ -339,6 +339,45 @@ public sealed class BankConnectionService(
             connection.Token.RevokedUtc = DateTime.UtcNow;
         }
 
+        var linkedAccounts = await dbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == connection.Id)
+            .ToListAsync(cancellationToken);
+
+        var linkedAccountIds = linkedAccounts.Select(x => x.Id).ToList();
+        var projectedFinancialAccountIds = linkedAccounts
+            .Where(x => x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (linkedAccountIds.Count > 0)
+        {
+            var balanceSnapshots = await dbContext.BankBalanceSnapshots
+                .Where(x => linkedAccountIds.Contains(x.LinkedBankAccountId))
+                .ToListAsync(cancellationToken);
+
+            var rawTransactions = await dbContext.RawBankTransactions
+                .Where(x => linkedAccountIds.Contains(x.LinkedBankAccountId))
+                .ToListAsync(cancellationToken);
+
+            dbContext.BankBalanceSnapshots.RemoveRange(balanceSnapshots);
+            dbContext.RawBankTransactions.RemoveRange(rawTransactions);
+            dbContext.LinkedBankAccounts.RemoveRange(linkedAccounts);
+        }
+
+        if (projectedFinancialAccountIds.Count > 0)
+        {
+            var projectionTransactions = await dbContext.Transactions
+                .Where(x => projectedFinancialAccountIds.Contains(x.FinancialAccountId))
+                .ToListAsync(cancellationToken);
+            var projectionAccounts = await dbContext.FinancialAccounts
+                .Where(x => projectedFinancialAccountIds.Contains(x.Id))
+                .ToListAsync(cancellationToken);
+
+            dbContext.Transactions.RemoveRange(projectionTransactions);
+            dbContext.FinancialAccounts.RemoveRange(projectionAccounts);
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await auditService.WriteEventAsync(
@@ -351,7 +390,9 @@ public sealed class BankConnectionService(
             metadata: new
             {
                 connection.Status,
-                provider = connection.ProviderName
+                provider = connection.ProviderName,
+                linkedAccountsRemoved = linkedAccountIds.Count,
+                projectedAccountsRemoved = projectedFinancialAccountIds.Count
             },
             cancellationToken);
 
