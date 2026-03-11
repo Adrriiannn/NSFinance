@@ -1,4 +1,4 @@
-# NSFinTech
+# NSFinance
 
 Ireland-first personal finance companion built as a mobile-first monorepo.
 
@@ -69,11 +69,6 @@ Auth endpoints:
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
-
-Seeded demo login:
-
-- Email: `demo@nsfintech.local`
-- Password: `Password123!`
 
 ## Run mobile
 
