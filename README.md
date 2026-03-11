@@ -35,6 +35,7 @@ NSFinance
 - pnpm 10+
 - PostgreSQL running locally (`nsfinance` db), or Docker in `infra`
 
+<<<<<<< HEAD
 ## Environment variables
 
 See `.env.example`.
@@ -96,6 +97,9 @@ pnpm --filter @nsfinance/mobile start
 ```
 
 Mobile API URL strategy:
+=======
+Set `EXPO_PUBLIC_API_BASE_URL` for your runtime target:
+>>>>>>> a5e9c2674941c884d3ac97161d995961900ca3c2
 
 - development defaults are local:
   - iOS simulator: `http://localhost:5080`
