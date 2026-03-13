@@ -12,6 +12,7 @@ export const queryKeys = {
   },
   banking: {
     connections: ["banking", "connections"] as const,
+    connection: (id: string) => ["banking", "connections", id] as const,
     accounts: ["banking", "accounts"] as const
   },
   transactions: {

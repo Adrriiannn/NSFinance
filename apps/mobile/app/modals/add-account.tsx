@@ -1,10 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Redirect,
-  useFocusEffect,
-  useLocalSearchParams,
-  useRouter
-} from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Linking, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
@@ -16,6 +11,7 @@ import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import {
+  useBankConnectionQuery,
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
   useStartTrueLayerLinkMutation,
@@ -66,10 +62,18 @@ const connectedFlowStatuses = new Set<BankConnectionStatus>([
   "sync_pending"
 ]);
 
+const failureStatuses = new Set<BankConnectionStatus>([
+  "failed",
+  "reauth_required",
+  "expired",
+  "revoked"
+]);
+
 const consentTimeoutMs = 90_000;
 const aggressivePollDurationMs = 15_000;
 const aggressivePollIntervalMs = 1_500;
 const steadyPollIntervalMs = 5_000;
+const refreshCoalesceWindowMs = 750;
 
 type PendingConsentLink = {
   authorizationUrl: string;
@@ -123,22 +127,7 @@ function deriveUiState(
   connection: BankConnectionDto | null,
   consentTimedOut: boolean
 ): ConnectionStatus {
-  if (browserPhase === "opening_bank") {
-    return "opening_bank";
-  }
-
-  if (consentTimedOut) {
-    return "reauth_required";
-  }
-
-  if (awaitingConsentReturn && (browserPhase === "awaiting_consent" || !connection)) {
-    return "awaiting_consent";
-  }
-
   switch (connection?.status) {
-    case "connection_started":
-    case "consent_in_progress":
-      return "awaiting_consent";
     case "connected_pending_sync":
     case "connected":
       return "connected_pending_sync";
@@ -147,11 +136,29 @@ function deriveUiState(
     case "synced":
       return "synced";
     case "failed":
-      return "failed";
     case "reauth_required":
     case "expired":
     case "revoked":
       return "reauth_required";
+  }
+
+  if (browserPhase === "opening_bank") {
+    return "opening_bank";
+  }
+
+  const pendingOrMissing = !connection || pendingActionStatuses.has(connection.status);
+  if (awaitingConsentReturn && (browserPhase === "awaiting_consent" || pendingOrMissing)) {
+    return "awaiting_consent";
+  }
+
+  if (consentTimedOut && pendingOrMissing) {
+    return "awaiting_consent";
+  }
+
+  switch (connection?.status) {
+    case "connection_started":
+    case "consent_in_progress":
+      return "awaiting_consent";
     default:
       return "not_connected";
   }
@@ -164,11 +171,6 @@ export default function AddAccountModalScreen() {
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
 
-  const connectionsQuery = useBankConnectionsQuery();
-  const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
-  const startLinkMutation = useStartTrueLayerLinkMutation();
-  const syncMutation = useSyncBankConnectionMutation();
-
   const [awaitingConsentReturn, setAwaitingConsentReturn] = useState(false);
   const [browserPhase, setBrowserPhase] = useState<BrowserPhase>("idle");
   const [pendingConsentLink, setPendingConsentLink] = useState<PendingConsentLink | null>(null);
@@ -176,12 +178,23 @@ export default function AddAccountModalScreen() {
   const [consentStartedAtMs, setConsentStartedAtMs] = useState<number | null>(null);
   const [returnStartedAtMs, setReturnStartedAtMs] = useState<number | null>(null);
   const [lastManualSyncUtc, setLastManualSyncUtc] = useState<string | null>(null);
-  const [statusClock, setStatusClock] = useState(() => Date.now());
+  const [consentTimedOut, setConsentTimedOut] = useState(false);
+
+  const connectionsQuery = useBankConnectionsQuery(!pendingConnectionId);
+  const activeConnectionQuery = useBankConnectionQuery(pendingConnectionId);
+  const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
+  const startLinkMutation = useStartTrueLayerLinkMutation();
+  const syncMutation = useSyncBankConnectionMutation();
+
   const successPlayedRef = useRef(false);
   const lastPolledStatusRef = useRef<string | null>(null);
   const lastUiStateRef = useRef<string | null>(null);
   const interactiveReturnRef = useRef<number | null>(null);
   const syncedInvalidationRef = useRef<string | null>(null);
+  const earlyPortfolioInvalidationRef = useRef<string | null>(null);
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const lastRefreshStartedAtRef = useRef(0);
+  const processedDeepLinkRef = useRef<string | null>(null);
 
   const logBankingEvent = useCallback((event: string, metadata?: Record<string, unknown>) => {
     console.info("[Banking UX]", {
@@ -201,32 +214,23 @@ export default function AddAccountModalScreen() {
 
   const latestConnection = useMemo(() => {
     const list = connectionsQuery.data ?? [];
-    return [...list].sort((a, b) => {
-      const aTime = Date.parse(a.updatedUtc);
-      const bTime = Date.parse(b.updatedUtc);
-      return bTime - aTime;
-    })[0] ?? null;
+    return [...list].sort((a, b) => Date.parse(b.updatedUtc) - Date.parse(a.updatedUtc))[0] ?? null;
   }, [connectionsQuery.data]);
 
   const activeConnection = useMemo(() => {
-    const list = connectionsQuery.data ?? [];
     if (pendingConnectionId) {
-      return list.find((connection) => connection.id === pendingConnectionId) ?? null;
+      return activeConnectionQuery.data ?? null;
     }
 
     return latestConnection;
-  }, [connectionsQuery.data, latestConnection, pendingConnectionId]);
+  }, [activeConnectionQuery.data, latestConnection, pendingConnectionId]);
 
   const linkedAccountNames = useMemo(() => {
     const accounts = linkedBankAccountsQuery.data ?? [];
     const filtered = pendingConnectionId
       ? accounts.filter((account) => account.connectionId === pendingConnectionId)
       : accounts;
-    const sorted = [...filtered].sort((a, b) => {
-      const aTime = Date.parse(a.createdUtc);
-      const bTime = Date.parse(b.createdUtc);
-      return bTime - aTime;
-    });
+    const sorted = [...filtered].sort((a, b) => Date.parse(b.createdUtc) - Date.parse(a.createdUtc));
 
     return Array.from(
       new Set(
@@ -238,14 +242,9 @@ export default function AddAccountModalScreen() {
   }, [linkedBankAccountsQuery.data, pendingConnectionId]);
 
   const pendingLinkValid = useMemo(
-    () => isLinkStillValid(pendingConsentLink, statusClock),
-    [pendingConsentLink, statusClock]
+    () => isLinkStillValid(pendingConsentLink, Date.now()),
+    [pendingConsentLink]
   );
-
-  const consentTimedOut =
-    awaitingConsentReturn &&
-    consentStartedAtMs !== null &&
-    statusClock - consentStartedAtMs >= consentTimeoutMs;
 
   const uiState = useMemo(
     () => deriveUiState(browserPhase, awaitingConsentReturn, activeConnection, consentTimedOut),
@@ -253,35 +252,78 @@ export default function AddAccountModalScreen() {
   );
 
   const shouldPoll =
-    uiState === "awaiting_consent" ||
-    uiState === "connected_pending_sync" ||
-    uiState === "syncing_data";
+    Boolean(pendingConnectionId) &&
+    (uiState === "awaiting_consent" ||
+      uiState === "connected_pending_sync" ||
+      uiState === "syncing_data");
 
   const refreshBankingState = useCallback(
-    async (reason: string, options?: { fullInvalidate?: boolean }) => {
-      const startedAt = Date.now();
-      logBankingEvent("refresh_start", {
-        reason,
-        connectionId: pendingConnectionId,
-        fullInvalidate: Boolean(options?.fullInvalidate)
-      });
-
-      await Promise.all([
-        connectionsQuery.refetch(),
-        linkedBankAccountsQuery.refetch()
-      ]);
-
-      if (options?.fullInvalidate) {
-        await invalidatePortfolioQueries();
+    async (reason: string, options?: { fullInvalidate?: boolean; force?: boolean }) => {
+      const now = Date.now();
+      if (refreshInFlightRef.current && !options?.force) {
+        logBankingEvent("refresh_joined", {
+          reason,
+          connectionId: pendingConnectionId
+        });
+        return refreshInFlightRef.current;
       }
 
-      logBankingEvent("refresh_complete", {
-        reason,
-        connectionId: pendingConnectionId,
-        elapsedMs: Date.now() - startedAt
+      if (
+        !options?.force &&
+        lastRefreshStartedAtRef.current > 0 &&
+        now - lastRefreshStartedAtRef.current < refreshCoalesceWindowMs
+      ) {
+        logBankingEvent("refresh_coalesced", {
+          reason,
+          connectionId: pendingConnectionId,
+          elapsedMs: now - lastRefreshStartedAtRef.current
+        });
+        return refreshInFlightRef.current ?? Promise.resolve();
+      }
+
+      lastRefreshStartedAtRef.current = now;
+
+      const refreshPromise = (async () => {
+        logBankingEvent("refresh_start", {
+          reason,
+          connectionId: pendingConnectionId,
+          fullInvalidate: Boolean(options?.fullInvalidate)
+        });
+
+        const connectionRefresh = pendingConnectionId
+          ? activeConnectionQuery.refetch()
+          : connectionsQuery.refetch();
+
+        await Promise.all([connectionRefresh, linkedBankAccountsQuery.refetch()]);
+
+        if (options?.fullInvalidate) {
+          await invalidatePortfolioQueries();
+        }
+
+        logBankingEvent("refresh_complete", {
+          reason,
+          connectionId: pendingConnectionId,
+          elapsedMs: Date.now() - now
+        });
+      })();
+
+      const trackedPromise = refreshPromise.finally(() => {
+        if (refreshInFlightRef.current === trackedPromise) {
+          refreshInFlightRef.current = null;
+        }
       });
+
+      refreshInFlightRef.current = trackedPromise;
+      return trackedPromise;
     },
-    [connectionsQuery, invalidatePortfolioQueries, linkedBankAccountsQuery, logBankingEvent, pendingConnectionId]
+    [
+      activeConnectionQuery,
+      connectionsQuery,
+      invalidatePortfolioQueries,
+      linkedBankAccountsQuery,
+      logBankingEvent,
+      pendingConnectionId
+    ]
   );
 
   const markReturnAttempt = useCallback(
@@ -290,7 +332,6 @@ export default function AddAccountModalScreen() {
       setReturnStartedAtMs(startedAt);
       interactiveReturnRef.current = startedAt;
       setBrowserPhase("idle");
-      setStatusClock(startedAt);
       logBankingEvent(reason, {
         connectionId: connectionId ?? pendingConnectionId,
         uiState
@@ -299,16 +340,19 @@ export default function AddAccountModalScreen() {
     [logBankingEvent, pendingConnectionId, uiState]
   );
 
-  const launchConsentInBrowser = useCallback(async (url: string) => {
-    logBankingEvent("browser_open_start", { connectionId: pendingConnectionId });
-    const canOpen = await Linking.canOpenURL(url);
-    if (!canOpen) {
-      throw new Error("Could not open the bank consent page.");
-    }
+  const launchConsentInBrowser = useCallback(
+    async (url: string, connectionId?: string | null) => {
+      logBankingEvent("browser_open_start", { connectionId: connectionId ?? pendingConnectionId });
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) {
+        throw new Error("Could not open the bank consent page.");
+      }
 
-    await Linking.openURL(url);
-    logBankingEvent("browser_open_complete", { connectionId: pendingConnectionId });
-  }, [logBankingEvent, pendingConnectionId]);
+      await Linking.openURL(url);
+      logBankingEvent("browser_open_complete", { connectionId: connectionId ?? pendingConnectionId });
+    },
+    [logBankingEvent, pendingConnectionId]
+  );
 
   const beginConsentSession = useCallback(
     async (response: StartTrueLayerLinkResponse) => {
@@ -321,12 +365,13 @@ export default function AddAccountModalScreen() {
         expiresAtUtc: response.expiresAtUtc
       });
       setConsentStartedAtMs(Date.now());
-      setStatusClock(Date.now());
+      setConsentTimedOut(false);
+      processedDeepLinkRef.current = null;
       logBankingEvent("connect_start", {
         connectionId: response.connectionId,
         expiresAtUtc: response.expiresAtUtc
       });
-      await launchConsentInBrowser(response.authorizationUrl);
+      await launchConsentInBrowser(response.authorizationUrl, response.connectionId);
       setBrowserPhase("awaiting_consent");
       logBankingEvent("awaiting_consent", { connectionId: response.connectionId });
     },
@@ -345,12 +390,11 @@ export default function AddAccountModalScreen() {
   };
 
   const handleResumeConsent = async () => {
-    if (pendingConsentLink && pendingLinkValid) {
+    if (pendingConsentLink && isLinkStillValid(pendingConsentLink, Date.now())) {
       setAwaitingConsentReturn(true);
       setBrowserPhase("opening_bank");
-      setStatusClock(Date.now());
       logBankingEvent("resume_browser_flow", { connectionId: pendingConnectionId });
-      await launchConsentInBrowser(pendingConsentLink.authorizationUrl);
+      await launchConsentInBrowser(pendingConsentLink.authorizationUrl, pendingConnectionId);
       setBrowserPhase("awaiting_consent");
       return;
     }
@@ -360,10 +404,10 @@ export default function AddAccountModalScreen() {
   };
 
   const handleManualRefresh = async () => {
-    setStatusClock(Date.now());
     logBankingEvent("manual_refresh", { connectionId: pendingConnectionId, uiState });
     await refreshBankingState("manual_refresh", {
-      fullInvalidate: activeConnection?.status === "synced"
+      fullInvalidate: activeConnection?.status === "synced",
+      force: true
     });
   };
 
@@ -375,7 +419,7 @@ export default function AddAccountModalScreen() {
     logBankingEvent("manual_sync_start", { connectionId: activeConnection.id });
     const syncResult = await syncMutation.mutateAsync(activeConnection.id);
     setLastManualSyncUtc(syncResult.syncedAtUtc);
-    await refreshBankingState("manual_sync_complete", { fullInvalidate: true });
+    await refreshBankingState("manual_sync_complete", { fullInvalidate: true, force: true });
     playSuccess();
   };
 
@@ -383,24 +427,25 @@ export default function AddAccountModalScreen() {
     logBankingEvent("screen_mount", { route: "modals/add-account" });
   }, [logBankingEvent]);
 
-  useFocusEffect(
-    useCallback(() => {
-      void refreshBankingState("focus");
-      return undefined;
-    }, [refreshBankingState])
-  );
-
   useEffect(() => {
-    if (!shouldPoll) {
+    if (!awaitingConsentReturn || consentStartedAtMs === null) {
+      setConsentTimedOut(false);
       return;
     }
 
-    const interval = setInterval(() => {
-      setStatusClock(Date.now());
-    }, 1000);
+    const elapsedMs = Date.now() - consentStartedAtMs;
+    if (elapsedMs >= consentTimeoutMs) {
+      setConsentTimedOut(true);
+      return;
+    }
 
-    return () => clearInterval(interval);
-  }, [shouldPoll]);
+    setConsentTimedOut(false);
+    const timer = setTimeout(() => {
+      setConsentTimedOut(true);
+    }, consentTimeoutMs - elapsedMs);
+
+    return () => clearTimeout(timer);
+  }, [awaitingConsentReturn, consentStartedAtMs]);
 
   useEffect(() => {
     if (!shouldPoll) {
@@ -424,7 +469,6 @@ export default function AddAccountModalScreen() {
           return;
         }
 
-        setStatusClock(Date.now());
         logBankingEvent("poll_tick", {
           connectionId: pendingConnectionId,
           uiState,
@@ -452,7 +496,7 @@ export default function AddAccountModalScreen() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState !== "active") {
+      if (nextState !== "active" || (!awaitingConsentReturn && !pendingConnectionId)) {
         return;
       }
 
@@ -461,12 +505,19 @@ export default function AddAccountModalScreen() {
     });
 
     return () => subscription.remove();
-  }, [markReturnAttempt, pendingConnectionId, refreshBankingState]);
+  }, [awaitingConsentReturn, markReturnAttempt, pendingConnectionId, refreshBankingState]);
 
   useEffect(() => {
     if (!params.bankingResult) {
       return;
     }
+
+    const deepLinkSnapshot = `${params.bankingResult}:${typeof params.connectionId === "string" ? params.connectionId : ""}`;
+    if (processedDeepLinkRef.current === deepLinkSnapshot) {
+      return;
+    }
+
+    processedDeepLinkRef.current = deepLinkSnapshot;
 
     const returnedConnectionId =
       typeof params.connectionId === "string" && params.connectionId.trim().length > 0
@@ -478,7 +529,7 @@ export default function AddAccountModalScreen() {
       setPendingConnectionId(returnedConnectionId);
     }
     markReturnAttempt("deep_link_return", returnedConnectionId);
-    void refreshBankingState("deep_link_return");
+    void refreshBankingState("deep_link_return", { force: true });
   }, [markReturnAttempt, params.bankingResult, params.connectionId, pendingConnectionId, refreshBankingState]);
 
   useEffect(() => {
@@ -492,9 +543,10 @@ export default function AddAccountModalScreen() {
     logBankingEvent("backend_status_transition", {
       connectionId: pendingConnectionId,
       status,
-      awaitingConsentReturn
+      awaitingConsentReturn,
+      linkedAccountCount: linkedAccountNames.length
     });
-  }, [activeConnection?.status, awaitingConsentReturn, logBankingEvent, pendingConnectionId]);
+  }, [activeConnection?.status, awaitingConsentReturn, linkedAccountNames.length, logBankingEvent, pendingConnectionId]);
 
   useEffect(() => {
     if (lastUiStateRef.current === uiState) {
@@ -504,9 +556,10 @@ export default function AddAccountModalScreen() {
     lastUiStateRef.current = uiState;
     logBankingEvent("ui_state_transition", {
       connectionId: pendingConnectionId,
-      uiState
+      uiState,
+      consentTimedOut
     });
-  }, [logBankingEvent, pendingConnectionId, uiState]);
+  }, [consentTimedOut, logBankingEvent, pendingConnectionId, uiState]);
 
   useEffect(() => {
     if (interactiveReturnRef.current === null) {
@@ -534,10 +587,15 @@ export default function AddAccountModalScreen() {
       return;
     }
 
-    if (connectedFlowStatuses.has(status)) {
+    if (connectedFlowStatuses.has(status) && activeConnection) {
       setAwaitingConsentReturn(false);
       setBrowserPhase("idle");
       setPendingConsentLink(null);
+      setConsentTimedOut(false);
+      if (earlyPortfolioInvalidationRef.current !== activeConnection.id) {
+        earlyPortfolioInvalidationRef.current = activeConnection.id;
+        void invalidatePortfolioQueries();
+      }
       if (!successPlayedRef.current && successStatuses.has(status)) {
         playSuccess();
         successPlayedRef.current = true;
@@ -545,10 +603,15 @@ export default function AddAccountModalScreen() {
       return;
     }
 
-    if (status === "synced") {
+    if (status === "synced" && activeConnection) {
       setAwaitingConsentReturn(false);
       setBrowserPhase("idle");
       setPendingConsentLink(null);
+      setConsentTimedOut(false);
+      if (earlyPortfolioInvalidationRef.current !== activeConnection.id) {
+        earlyPortfolioInvalidationRef.current = activeConnection.id;
+        void invalidatePortfolioQueries();
+      }
       if (syncedInvalidationRef.current !== activeConnection.id) {
         syncedInvalidationRef.current = activeConnection.id;
         void invalidatePortfolioQueries();
@@ -560,14 +623,10 @@ export default function AddAccountModalScreen() {
       return;
     }
 
-    if (
-      status === "failed" ||
-      status === "reauth_required" ||
-      status === "expired" ||
-      status === "revoked"
-    ) {
+    if (failureStatuses.has(status)) {
       setAwaitingConsentReturn(false);
       setBrowserPhase("idle");
+      setConsentTimedOut(false);
       successPlayedRef.current = false;
     }
   }, [activeConnection, invalidatePortfolioQueries, playSuccess]);
@@ -576,38 +635,37 @@ export default function AddAccountModalScreen() {
     return <Redirect href={"/login" as never} />;
   }
 
+  const connectionQueryError = pendingConnectionId ? activeConnectionQuery.error : connectionsQuery.error;
+  const connectionQueryIsError = pendingConnectionId ? activeConnectionQuery.isError : connectionsQuery.isError;
   const completionReached = completionStatuses.has(activeConnection?.status ?? "not_connected");
   const showResumeAction =
-    (uiState === "awaiting_consent" || !completionReached) &&
+    uiState === "awaiting_consent" &&
     (pendingActionStatuses.has(activeConnection?.status ?? "not_connected") ||
       (awaitingConsentReturn && pendingLinkValid));
   const showRefreshAction =
     uiState === "awaiting_consent" ||
     uiState === "connected_pending_sync" ||
-    uiState === "syncing_data" ||
-    consentTimedOut;
+    uiState === "syncing_data";
 
   const statusHelperText =
-    consentTimedOut
-      ? "If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
-      : uiState === "opening_bank"
-        ? "Opening the secure bank consent page now. Stay here if your browser does not launch immediately."
+    uiState === "opening_bank"
+      ? "Opening the secure bank consent page now. Stay here if your browser does not launch immediately."
+      : uiState === "awaiting_consent" && consentTimedOut
+        ? "We still have not seen the completed bank connection. If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
         : uiState === "awaiting_consent"
-          ? "Finish the bank consent flow in your browser. As soon as you return, we will start checking the saved connection." 
+          ? "Finish the bank consent flow in your browser. As soon as you return, we will start checking the saved connection."
           : uiState === "connected_pending_sync"
-            ? "Connection confirmed. We are waiting for the first sync to begin."
+            ? "Connection confirmed. We are syncing the first account details now."
             : uiState === "syncing_data"
               ? "Connected to your bank. We are importing account details and recent transactions now."
               : uiState === "failed"
                 ? "The bank connection exists, but data sync failed. You can retry sync without reconnecting."
-                : undefined;
+                : uiState === "reauth_required"
+                  ? "Provider access expired or failed. Reconnect your bank to continue syncing."
+                  : undefined;
 
-  const canSyncNow = activeConnection
-    ? syncableStatuses.has(activeConnection.status)
-    : false;
-
-  const bankName =
-    activeConnection?.providerDisplayName?.trim() || "Waiting for institution details";
+  const canSyncNow = activeConnection ? syncableStatuses.has(activeConnection.status) : false;
+  const bankName = activeConnection?.providerDisplayName?.trim() || "Waiting for institution details";
   const lastSyncUtc =
     activeConnection?.lastSuccessfulSyncUtc ?? activeConnection?.lastSyncAttemptedUtc ?? null;
   const dateAdded = formatDateAdded(activeConnection?.createdUtc);
@@ -623,12 +681,12 @@ export default function AddAccountModalScreen() {
           <Text style={styles.title}>Bank Connection</Text>
         </View>
 
-        {connectionsQuery.isError ? (
+        {connectionQueryIsError ? (
           <ErrorState
             title="Could not load connection status"
-            message={formatUnknownError(connectionsQuery.error)}
+            message={formatUnknownError(connectionQueryError)}
             onRetry={() => {
-              void refreshBankingState("connections_error_retry");
+              void refreshBankingState("connections_error_retry", { force: true });
             }}
           />
         ) : null}
@@ -638,7 +696,7 @@ export default function AddAccountModalScreen() {
             title="Could not load linked bank accounts"
             message={formatUnknownError(linkedBankAccountsQuery.error)}
             onRetry={() => {
-              void refreshBankingState("linked_accounts_error_retry");
+              void refreshBankingState("linked_accounts_error_retry", { force: true });
             }}
           />
         ) : null}
@@ -706,10 +764,12 @@ export default function AddAccountModalScreen() {
           <View style={styles.resumeCard}>
             <Text style={styles.resumeTitle}>
               {uiState === "connected_pending_sync"
-                ? "The bank connection is confirmed. Tap Refresh if you want to check whether the first sync has started."
+                ? "The bank connection is confirmed. Tap Refresh if you want to check the projected accounts and balances now."
                 : uiState === "syncing_data"
                   ? "We are still syncing your bank data. You can keep waiting or tap Refresh to reconcile now."
-                  : "If you already finished in the browser, tap Refresh to check the latest bank connection status."}
+                  : consentTimedOut
+                    ? "If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
+                    : "If you already finished in the browser, tap Refresh to check the latest bank connection status."}
             </Text>
             <View style={styles.resumeActions}>
               <SecondaryButton
@@ -754,7 +814,19 @@ export default function AddAccountModalScreen() {
       </View>
 
       <View style={styles.closeAction}>
-        <SecondaryButton label="Close" onPress={() => router.back()} />
+        <SecondaryButton
+          label="Close"
+          onPress={() => {
+            logBankingEvent("modal_close", {
+              connectionId: pendingConnectionId,
+              uiState,
+              backendStatus: activeConnection?.status ?? null,
+              linkedAccountCount: linkedAccountNames.length,
+              completionReached
+            });
+            router.back();
+          }}
+        />
       </View>
     </ScreenContainer>
   );
@@ -825,3 +897,4 @@ const styles = StyleSheet.create({
     paddingTop: spacing[16]
   }
 });
+

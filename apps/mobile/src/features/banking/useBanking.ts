@@ -2,16 +2,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../lib/api/queryKeys";
 import {
   disconnectBankConnection,
+  getBankConnection,
   getBankConnections,
   getLinkedBankAccounts,
   startTrueLayerLink,
   syncBankConnection
 } from "./bankingApi";
 
-export function useBankConnectionsQuery() {
+export function useBankConnectionsQuery(enabled = true) {
   return useQuery({
     queryKey: queryKeys.banking.connections,
-    queryFn: getBankConnections
+    queryFn: getBankConnections,
+    enabled
+  });
+}
+
+export function useBankConnectionQuery(connectionId: string | null) {
+  return useQuery({
+    queryKey: connectionId ? queryKeys.banking.connection(connectionId) : queryKeys.banking.connections,
+    queryFn: () => getBankConnection(connectionId as string),
+    enabled: Boolean(connectionId)
   });
 }
 
@@ -38,9 +48,10 @@ export function useSyncBankConnectionMutation() {
 
   return useMutation({
     mutationFn: (connectionId: string) => syncBankConnection(connectionId),
-    onSuccess: async () => {
+    onSuccess: async (_, connectionId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
@@ -55,9 +66,10 @@ export function useDisconnectBankConnectionMutation() {
 
   return useMutation({
     mutationFn: (connectionId: string) => disconnectBankConnection(connectionId),
-    onSuccess: async () => {
+    onSuccess: async (_, connectionId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),

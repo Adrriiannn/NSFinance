@@ -16,6 +16,9 @@ public static class BankingModule
         protectedGroup.MapGet("/connections", GetBankConnectionsEndpoint.HandleAsync)
             .WithName("GetBankConnections");
 
+        protectedGroup.MapGet("/connections/{connectionId:guid}", GetBankConnectionEndpoint.HandleAsync)
+            .WithName("GetBankConnection");
+
         protectedGroup.MapGet("/accounts", GetLinkedBankAccountsEndpoint.HandleAsync)
             .WithName("GetLinkedBankAccounts");
 

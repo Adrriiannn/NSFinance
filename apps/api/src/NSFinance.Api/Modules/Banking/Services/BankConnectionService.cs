@@ -121,6 +121,28 @@ public sealed class BankConnectionService(
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<BankConnectionDto?> GetConnectionSummaryAsync(
+        Guid userId,
+        Guid connectionId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && x.Id == connectionId)
+            .Select(x => new BankConnectionDto(
+                x.Id,
+                x.ProviderName,
+                x.ProviderEnvironment,
+                x.ProviderDisplayName,
+                x.Status,
+                x.CreatedUtc,
+                x.UpdatedUtc,
+                x.LastSuccessfulSyncUtc,
+                x.LastSyncAttemptedUtc,
+                x.LastErrorCode))
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsAsync(
         Guid userId,
         CancellationToken cancellationToken)
@@ -404,3 +426,4 @@ public sealed class BankConnectionService(
         return Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
     }
 }
+

@@ -10,6 +10,10 @@ export function getBankConnections(): Promise<BankConnectionDto[]> {
   return apiRequest<BankConnectionDto[]>("/api/banking/connections");
 }
 
+export function getBankConnection(connectionId: string): Promise<BankConnectionDto> {
+  return apiRequest<BankConnectionDto>(`/api/banking/connections/${connectionId}`);
+}
+
 export function getLinkedBankAccounts(): Promise<LinkedBankAccountDto[]> {
   return apiRequest<LinkedBankAccountDto[]>("/api/banking/accounts");
 }

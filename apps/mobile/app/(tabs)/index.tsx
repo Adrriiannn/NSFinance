@@ -57,6 +57,14 @@ export default function DashboardTabScreen() {
   const heroAnimation = useEntranceAnimation(30);
   const sectionAnimation = useEntranceAnimation(150);
 
+  const logHomeEvent = useCallback((event: string, metadata?: Record<string, unknown>) => {
+    console.info("[Home Banking Timeline]", {
+      event,
+      timestampUtc: new Date().toISOString(),
+      ...metadata
+    });
+  }, []);
+
   const isInitialLoading =
     (summaryQuery.isLoading && !summaryQuery.data) ||
     (accountsQuery.isLoading && !accountsQuery.data) ||
@@ -175,7 +183,18 @@ export default function DashboardTabScreen() {
     getFloatingTabBarContentInset(insets.bottom, spacing[8])
   );
   const handleRefresh = () => {
-    void Promise.all([summaryQuery.refetch(), accountsQuery.refetch(), transactionsQuery.refetch()]);
+    logHomeEvent("home_refresh_start", {
+      summaryStale: summaryQuery.isStale,
+      accountsStale: accountsQuery.isStale,
+      transactionsStale: transactionsQuery.isStale
+    });
+    void Promise.all([summaryQuery.refetch(), accountsQuery.refetch(), transactionsQuery.refetch()]).then(() => {
+      logHomeEvent("home_refresh_complete", {
+        accountCount: accountsQuery.data?.length ?? 0,
+        transactionCount: transactionsQuery.data?.length ?? 0,
+        previewCount: summaryQuery.data?.accountCount ?? 0
+      });
+    });
   };
   const loadError = summaryQuery.error ?? accountsQuery.error ?? transactionsQuery.error;
   const handleHeroPress = (item: HeroCardItem) => {
@@ -193,8 +212,43 @@ export default function DashboardTabScreen() {
     });
   };
 
+  useEffect(() => {
+    logHomeEvent("home_mount");
+  }, [logHomeEvent]);
+
+  useEffect(() => {
+    logHomeEvent("home_accounts_query_state", {
+      status: accountsQuery.status,
+      fetchStatus: accountsQuery.fetchStatus,
+      isRefetching: accountsQuery.isRefetching,
+      accountCount: accounts.length
+    });
+  }, [accounts.length, accountsQuery.fetchStatus, accountsQuery.isRefetching, accountsQuery.status, logHomeEvent]);
+
+  useEffect(() => {
+    logHomeEvent("home_summary_query_state", {
+      status: summaryQuery.status,
+      fetchStatus: summaryQuery.fetchStatus,
+      isRefetching: summaryQuery.isRefetching,
+      accountPreviewCount: summaryData?.accountCount ?? 0
+    });
+  }, [logHomeEvent, summaryData?.accountCount, summaryQuery.fetchStatus, summaryQuery.isRefetching, summaryQuery.status]);
+
+  useEffect(() => {
+    if (accounts.length === 0) {
+      return;
+    }
+
+    logHomeEvent("home_connected_account_data_visible", {
+      accountCount: accounts.length,
+      firstAccountName: accounts[0]?.name ?? null,
+      firstAccountBalance: accounts[0]?.currentBalance ?? null
+    });
+  }, [accounts, logHomeEvent]);
+
   useFocusEffect(
     useCallback(() => {
+      logHomeEvent("home_focus");
       setHeroIndex(0);
       const initialPhysicalIndex = getInitialPhysicalIndex();
       heroPhysicalIndexRef.current = initialPhysicalIndex;
@@ -206,8 +260,9 @@ export default function DashboardTabScreen() {
         });
       });
       return undefined;
-    }, [getInitialPhysicalIndex, heroWidth])
+    }, [getInitialPhysicalIndex, heroWidth, logHomeEvent])
   );
+
 
   useEffect(() => {
     if (heroWidth <= 0 || heroItems.length === 0) {
