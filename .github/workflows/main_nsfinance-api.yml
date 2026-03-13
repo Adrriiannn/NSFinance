@@ -24,7 +24,7 @@ env:
   API_PROJECT_PATH: apps/api/src/NSFinance.Api/NSFinance.Api.csproj
   PUBLISH_OUTPUT_PATH: ${{ github.workspace }}/artifacts/api-publish
   DEPLOY_PACKAGE_PATH: ${{ github.workspace }}/artifacts/nsfinance-api.zip
-  AZURE_WEBAPP_NAME: nsfinance-api-auazcjdde0h4bsey
+  AZURE_WEBAPP_NAME: nsfinance-api
   AZURE_RESOURCE_GROUP: ${{ vars.AZURE_API_RESOURCE_GROUP }}
 
 jobs:
