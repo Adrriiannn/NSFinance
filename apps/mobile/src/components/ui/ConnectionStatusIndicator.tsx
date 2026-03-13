@@ -4,10 +4,13 @@ import { palette, spacing, typography } from "../../theme/tokens";
 
 export type ConnectionStatus =
   | "not_connected"
-  | "connecting"
-  | "connected"
-  | "sync_failed"
-  | "reconnect_required";
+  | "opening_bank"
+  | "awaiting_consent"
+  | "connected_pending_sync"
+  | "syncing_data"
+  | "synced"
+  | "failed"
+  | "reauth_required";
 
 type ConnectionStatusIndicatorProps = {
   status: ConnectionStatus;
@@ -23,34 +26,55 @@ const statusConfig: Record<
     color: "rgba(200,210,228,0.46)",
     helper: "Connect your bank to import linked accounts, balances, and transactions."
   },
-  connecting: {
-    label: "Connecting",
+  opening_bank: {
+    label: "Opening bank",
     color: palette.caution,
-    helper: "Authorizing secure bank connection. Finish consent in your browser."
+    helper: "Launching the secure TrueLayer consent page."
   },
-  connected: {
+  awaiting_consent: {
+    label: "Awaiting consent",
+    color: palette.caution,
+    helper: "Finish the secure bank consent flow in your browser."
+  },
+  connected_pending_sync: {
     label: "Connected",
     color: palette.success,
-    helper: "Connection is active. Initial sync may still be starting; run sync to refresh latest account data."
+    helper: "Your bank connection is confirmed. Initial sync is about to start."
   },
-  sync_failed: {
+  syncing_data: {
+    label: "Syncing data",
+    color: palette.success,
+    helper: "Your bank is connected. We are importing account details and transactions now."
+  },
+  synced: {
+    label: "Synced",
+    color: palette.success,
+    helper: "Connection is active and account data is up to date."
+  },
+  failed: {
     label: "Sync failed",
     color: palette.negative,
-    helper: "Connection exists but sync failed. Retry sync."
+    helper: "Connection exists but the data sync failed. Retry sync."
   },
-  reconnect_required: {
+  reauth_required: {
     label: "Reconnect required",
     color: palette.negative,
-    helper: "Provider access expired or revoked. Reconnect your bank."
+    helper: "Provider access expired or was interrupted. Reconnect your bank."
   }
 };
+
+const animatedStatuses = new Set<ConnectionStatus>([
+  "opening_bank",
+  "awaiting_consent",
+  "syncing_data"
+]);
 
 export function ConnectionStatusIndicator({ status, helperText }: ConnectionStatusIndicatorProps) {
   const config = statusConfig[status];
   const [dotCount, setDotCount] = useState(1);
 
   useEffect(() => {
-    if (status !== "connecting") {
+    if (!animatedStatuses.has(status)) {
       setDotCount(1);
       return;
     }
@@ -62,7 +86,7 @@ export function ConnectionStatusIndicator({ status, helperText }: ConnectionStat
     return () => clearInterval(interval);
   }, [status]);
 
-  const label = status === "connecting" ? `Connecting${".".repeat(dotCount)}` : config.label;
+  const label = animatedStatuses.has(status) ? `${config.label}${".".repeat(dotCount)}` : config.label;
 
   return (
     <View style={styles.wrap}>
@@ -113,4 +137,3 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
-

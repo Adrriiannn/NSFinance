@@ -32,6 +32,8 @@ public static class TrueLayerCallbackEndpoint
 
     private static string BuildSafeHtml(TrueLayerCallbackOutcome outcome)
     {
+        const int autoReturnDelayMs = 3000;
+
         var title = outcome.Succeeded ? "Bank Connected" : "Bank Connection Failed";
         var message = WebUtility.HtmlEncode(outcome.Message);
         var statusCode = WebUtility.HtmlEncode(outcome.Code);
@@ -47,6 +49,10 @@ public static class TrueLayerCallbackEndpoint
         var nextStepText = outcome.Succeeded
             ? "Return to the app. Your bank connection is saved and the first sync will continue in the background."
             : "Return to the app, start the bank connection again, and complete the consent flow without refreshing this page.";
+        var autoReturnMessage = outcome.Succeeded
+            ? "We will try to reopen the app in 3 seconds."
+            : "We will keep this page open. When you are ready, use the button above to return to the app.";
+        var autoReturnFlag = outcome.Succeeded ? "true" : "false";
 
         return $$"""
                 <!DOCTYPE html>
@@ -70,19 +76,41 @@ public static class TrueLayerCallbackEndpoint
                       {{buttonLabel}}
                     </a>
                     <p style="margin:18px 0 0; opacity:0.75; font-size:13px;">Code: {{statusCode}}</p>
-                    <p style="margin:10px 0 0; opacity:0.75; font-size:13px;">We will try to reopen the app automatically in a moment.</p>
+                    <p style="margin:10px 0 0; opacity:0.75; font-size:13px;" id="return-status">{{autoReturnMessage}}</p>
                   </main>
                   <script>
                     (function () {
                       var target = "{{appReturnUrlForScript}}";
                       var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+                      var shouldAutoReturn = {{autoReturnFlag}};
+                      var returnStatus = document.getElementById("return-status");
+                      var countdownSeconds = 3;
                       if (!isMobile) {
                         return;
                       }
 
+                      if (!shouldAutoReturn) {
+                        return;
+                      }
+
+                      var countdownTimer = setInterval(function () {
+                        countdownSeconds -= 1;
+                        if (!returnStatus) {
+                          return;
+                        }
+
+                        if (countdownSeconds <= 0) {
+                          clearInterval(countdownTimer);
+                          returnStatus.textContent = "Reopening NSFinance now...";
+                          return;
+                        }
+
+                        returnStatus.textContent = "We will try to reopen the app in " + countdownSeconds + " seconds.";
+                      }, 1000);
+
                       setTimeout(function () {
                         window.location.href = target;
-                      }, 1200);
+                      }, {{autoReturnDelayMs}});
                     })();
                   </script>
                 </body>

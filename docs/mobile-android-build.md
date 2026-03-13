@@ -143,3 +143,29 @@ To disable later:
 - Remove `isPreviewDiagnosticsEnabled` usage from `api/config.ts` and related `authApiRouteDiagnostics` usage.
 - Or keep it as-is; it only activates for preview (`EXPO_PUBLIC_APP_ENV=preview` and non-__DEV__ runtime).
 
+## 8. Stronger return-link strategy (recommended follow-up)
+
+Current production bank return flow uses the custom scheme:
+
+- `nsfinance://modals/add-account?...`
+
+This remains the active and supported flow.
+
+For a stronger production return path later, add verified HTTPS app links / universal links alongside the custom scheme.
+
+Android App Links requirements:
+
+- Keep the current package name: `com.nsfinance.mobile`
+- Add an intent filter for `https://api.finance.nsireland.ie`
+- Host `/.well-known/assetlinks.json` on `api.finance.nsireland.ie`
+- Include the app signing certificate fingerprints used by the preview/production builds
+- Update the callback return page to prefer the verified HTTPS app link and keep the custom scheme as fallback
+
+Apple Universal Links requirements:
+
+- Host `/.well-known/apple-app-site-association` on `api.finance.nsireland.ie`
+- Add the associated domains entitlement in the iOS app configuration
+- Add the matching app path rules for the bank return route
+- Keep the custom scheme as fallback until universal links are verified end-to-end
+
+Do not remove the custom scheme until verified HTTPS app links work on real preview/production builds.
