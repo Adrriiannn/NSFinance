@@ -42,7 +42,7 @@ Source of truth:
 
 Azure production API base URL:
 
-`https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+`https://api.finance.nsireland.ie`
 
 ## 3. Build profiles
 
@@ -58,13 +58,13 @@ Defined in `apps/mobile/eas.json`:
   - Android output: APK
   - Env:
     - `EXPO_PUBLIC_APP_ENV=preview`
-    - `EXPO_PUBLIC_API_BASE_URL=https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+    - `EXPO_PUBLIC_API_BASE_URL=https://api.finance.nsireland.ie`
 - `production`
   - Purpose: production release build against Azure
   - Android output: AAB
   - Env:
     - `EXPO_PUBLIC_APP_ENV=production`
-    - `EXPO_PUBLIC_API_BASE_URL=https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+    - `EXPO_PUBLIC_API_BASE_URL=https://api.finance.nsireland.ie`
 
 ## 4. Exact commands
 
@@ -109,7 +109,7 @@ pnpm dlx eas-cli build --platform android --profile production --non-interactive
   - Ensure client IDs used by mobile and API verification are aligned.
 - TrueLayer console:
   - Register callback URL to backend endpoint:
-    - `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net/api/banking/truelayer/callback`
+    - `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 - Azure App Service:
   - Keep production env vars configured (`ConnectionStrings__DefaultConnection`, JWT keys, TrueLayer credentials, Google auth settings).
 

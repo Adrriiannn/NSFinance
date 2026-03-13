@@ -104,7 +104,7 @@ Set `EXPO_PUBLIC_API_BASE_URL` for your runtime target:
 - development defaults are local:
   - iOS simulator: `http://localhost:5080`
   - Android emulator: `http://10.0.2.2:5080`
-- production default URL: `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+- production default URL: `https://api.finance.nsireland.ie`
 - optional override: `EXPO_PUBLIC_API_BASE_URL`
 - for local safety, do not set `EXPO_PUBLIC_API_BASE_URL` to production when running Expo dev builds.
 

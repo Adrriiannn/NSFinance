@@ -32,7 +32,7 @@ Expo Router + TypeScript mobile client for NSFinance.
   - Prevents accidental Azure usage unless `EXPO_PUBLIC_ALLOW_AZURE_IN_DEV=true`.
 - Production runtime (`__DEV__ = false`):
   - Uses Azure API by default:
-    - `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+    - `https://api.finance.nsireland.ie`
   - Ignores local/LAN API URLs if they are accidentally provided.
 
 ## Run locally

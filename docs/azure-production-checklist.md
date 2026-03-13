@@ -1,7 +1,7 @@
 # NSFinance Azure Production Checklist
 
 ## Target Endpoints
-- Production API base URL: `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+- Production API base URL: `https://api.finance.nsireland.ie`
 - Health endpoint: `GET /health`
 
 ## Required Azure App Service Environment Variables
@@ -11,7 +11,7 @@
 - `GoogleAuth__ClientId=<Google OAuth client id used by mobile>`
 - `TrueLayer__ClientId=<TrueLayer client id>`
 - `TrueLayer__ClientSecret=<TrueLayer client secret>`
-- `TrueLayer__RedirectUri=https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net/api/banking/truelayer/callback`
+- `TrueLayer__RedirectUri=https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 - `TrueLayer__Environment=live`
 - `TrueLayer__AuthBaseUrl=https://auth.truelayer.com`
 - `TrueLayer__ApiBaseUrl=https://api.truelayer.com`

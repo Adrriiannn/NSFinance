@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 
 const azureProductionBaseUrl =
-  "https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net";
+  "https://api.finance.nsireland.ie";
 
 type AppEnv = "development" | "preview" | "production";
 

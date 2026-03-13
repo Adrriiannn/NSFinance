@@ -21,7 +21,7 @@
       },
       "env": {
         "EXPO_PUBLIC_APP_ENV": "preview",
-        "EXPO_PUBLIC_API_BASE_URL": "https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net"
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.finance.nsireland.ie"
       }
     },
     "production": {
@@ -32,7 +32,7 @@
       },
       "env": {
         "EXPO_PUBLIC_APP_ENV": "production",
-        "EXPO_PUBLIC_API_BASE_URL": "https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net"
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.finance.nsireland.ie"
       }
     }
   },

@@ -3,7 +3,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 const appJson = require("./app.json") as { expo: ExpoConfig };
 
 const azureProductionBaseUrl =
-  "https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net";
+  "https://api.finance.nsireland.ie";
 const androidPackageName = "com.nsfinance.mobile";
 
 function normalizeAppEnv(value: string | undefined): "development" | "preview" | "production" {
