@@ -1,0 +1,127 @@
+name: Deploy NSFinance API
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/main_nsfinance-api.yml"
+      - "apps/api/**"
+      - "libs/shared/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: nsfinance-api-production
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  # Always publish the API project directly so repo-root content never reaches App Service.
+  API_PROJECT_PATH: apps/api/src/NSFinance.Api/NSFinance.Api.csproj
+  PUBLISH_OUTPUT_PATH: ${{ github.workspace }}/artifacts/api-publish
+  DEPLOY_PACKAGE_PATH: ${{ github.workspace }}/artifacts/nsfinance-api.zip
+  AZURE_WEBAPP_NAME: nsfinance-api-auazcjdde0h4bsey
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_API_RESOURCE_GROUP }}
+
+jobs:
+  deploy-api:
+    name: Build And Clean-Deploy API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Validate workflow inputs
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace("${{ env.AZURE_RESOURCE_GROUP }}")) {
+            throw "Repository variable AZURE_API_RESOURCE_GROUP must be configured."
+          }
+
+      - name: Restore API dependencies
+        shell: pwsh
+        run: |
+          dotnet restore $env:API_PROJECT_PATH
+
+      - name: Publish API project
+        shell: pwsh
+        run: |
+          Remove-Item $env:PUBLISH_OUTPUT_PATH -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_PATH | Out-Null
+
+          # Publish the API project directly so the deployment artifact contains only app binaries.
+          dotnet publish $env:API_PROJECT_PATH `
+            --configuration Release `
+            --output $env:PUBLISH_OUTPUT_PATH `
+            --no-restore
+
+      - name: Show published files
+        shell: pwsh
+        run: |
+          Write-Host "Published output path: $env:PUBLISH_OUTPUT_PATH"
+          Get-ChildItem $env:PUBLISH_OUTPUT_PATH | Select-Object Name, Length, LastWriteTimeUtc
+
+      - name: Archive published output
+        shell: pwsh
+        run: |
+          Remove-Item $env:DEPLOY_PACKAGE_PATH -Force -ErrorAction SilentlyContinue
+          Compress-Archive `
+            -Path (Join-Path $env:PUBLISH_OUTPUT_PATH '*') `
+            -DestinationPath $env:DEPLOY_PACKAGE_PATH `
+            -Force
+
+          Write-Host "Deploy package path: $env:DEPLOY_PACKAGE_PATH"
+          Get-Item $env:DEPLOY_PACKAGE_PATH | Select-Object FullName, Length, LastWriteTimeUtc
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Show Azure target
+        shell: pwsh
+        run: |
+          Write-Host "Deploying package to App Service: $env:AZURE_WEBAPP_NAME"
+          Write-Host "Resource group: $env:AZURE_RESOURCE_GROUP"
+
+      - name: Clean deploy published API artifact
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+
+            echo "Deploy package: $DEPLOY_PACKAGE_PATH"
+            echo "GitHub Actions is the authoritative deployment path for this app."
+            echo "Using 'az webapp deploy --clean true' so the App Service content directory is replaced by the current publish output."
+            echo "Manual Kudu or zip deploys should not be used, because they can leave stale binaries behind."
+
+            az webapp deploy \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_NAME" \
+              --src-path "$DEPLOY_PACKAGE_PATH" \
+              --type zip \
+              --clean true \
+              --restart true \
+              --async false
+
+      - name: Show deployed app summary
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az webapp show \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_WEBAPP_NAME" \
+              --query "{name:name,state:state,defaultHostName:defaultHostName}" \
+              --output table

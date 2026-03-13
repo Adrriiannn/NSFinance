@@ -1,4 +1,5 @@
 import { apiConfig } from "./config";
+import { authApiRouteDiagnostics, resolveApiRequestUrl } from "./diagnostics";
 import { ApiClientError, parseApiErrorBody } from "./errors";
 import { Platform } from "react-native";
 
@@ -45,14 +46,6 @@ async function tryParseJson(response: Response): Promise<unknown | null> {
   }
 }
 
-function withBaseUrl(path: string): string {
-  if (/^https?:\/\//i.test(path)) {
-    return path;
-  }
-
-  return `${apiConfig.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
 function isAbortError(error: unknown): boolean {
   if (typeof DOMException !== "undefined" && error instanceof DOMException) {
     return error.name === "AbortError";
@@ -65,8 +58,22 @@ function isAbortError(error: unknown): boolean {
   return false;
 }
 
+function isAuthRoute(path: string): boolean {
+  return path === "/api/auth/register" || path === "/api/auth/login";
+}
+
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const requestUrl = withBaseUrl(path);
+  const requestUrl = resolveApiRequestUrl(path);
+
+  if (authApiRouteDiagnostics.enabled && isAuthRoute(path)) {
+    console.warn("[API ROUTE DIAGNOSTIC]", {
+      env: authApiRouteDiagnostics.appEnv,
+      baseUrl: authApiRouteDiagnostics.baseUrl,
+      route: path,
+      requestUrl
+    });
+  }
+
   const makeRequest = async (overrideToken: string | null): Promise<Response> => {
     const headers: HeadersInit = {
       "Content-Type": "application/json",
@@ -88,7 +95,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
         ? "Request timed out. Please retry."
         : "Network request failed. Check API URL and local network connectivity.";
 
-      if (apiConfig.isDebug) {
+      if (apiConfig.isDebug || authApiRouteDiagnostics.enabled) {
         console.warn("[API NETWORK ERROR]", {
           url: requestUrl,
           baseUrl: apiConfig.baseUrl,
@@ -118,7 +125,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     const message =
       parsedError.message || `Request failed with status ${response.status}.`;
 
-    if (apiConfig.isDebug) {
+    if (apiConfig.isDebug || authApiRouteDiagnostics.enabled) {
       console.warn("[API ERROR]", {
         url: requestUrl,
         status: response.status,

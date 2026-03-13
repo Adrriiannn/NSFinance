@@ -12,6 +12,7 @@ import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { TextField } from "../../src/components/ui/TextField";
 import { useRegisterMutation } from "../../src/features/auth/useAuthMutations";
 import { formatUnknownError } from "../../src/lib/api/errors";
+import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { palette, spacing, typography } from "../../src/theme/tokens";
 
@@ -37,6 +38,7 @@ export default function RegisterScreen() {
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
+  const authApiDebugDetail = getAuthApiDebugDetail();
 
   useEffect(() => {
     if (focusedField !== "password") {
@@ -246,6 +248,8 @@ export default function RegisterScreen() {
             message={formatUnknownError(registerMutation.error)}
             onRetry={handleRegister}
             retryLabel="Try again"
+            debugDetail={authApiDebugDetail}
+            showDebugDetail={authApiRouteDiagnostics.enabled}
           />
         ) : null}
 
@@ -433,3 +437,5 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+
+

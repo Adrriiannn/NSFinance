@@ -22,22 +22,37 @@ Expo Router + TypeScript mobile client for NSFinance.
   - suggestions cards
   - AI companion chat shell
 
+## API environment behavior
+
+- Development runtime (`__DEV__ = true`):
+  - Uses `EXPO_PUBLIC_API_BASE_URL` when set.
+  - Falls back to local defaults:
+    - Android emulator: `http://10.0.2.2:5080`
+    - iOS simulator: `http://localhost:5080`
+  - Prevents accidental Azure usage unless `EXPO_PUBLIC_ALLOW_AZURE_IN_DEV=true`.
+- Production runtime (`__DEV__ = false`):
+  - Uses Azure API by default:
+    - `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
+  - Ignores local/LAN API URLs if they are accidentally provided.
+
 ## Run locally
 
-1. API base URL behavior:
-   - development default auto-detects your Metro host IP for physical devices and uses port `5080`
-   - development fallbacks:
-     - Android emulator: `http://10.0.2.2:5080`
-     - iOS simulator: `http://localhost:5080`
-   - production default is Azure API:
-     - `https://nsfinance-api-auazcjdde0h4bsey.northeurope-01.azurewebsites.net`
-   - optional override with `EXPO_PUBLIC_API_BASE_URL` in `.env`
-2. Install dependencies:
+1. Install dependencies:
    - `pnpm install`
+2. Configure local env:
+   - copy `.env.example` to `.env`
+   - set `EXPO_PUBLIC_API_BASE_URL` only if testing on a physical device
 3. Start Expo:
    - `pnpm --filter @nsfinance/mobile start`
+
+## EAS build profiles
+
+- `development`: internal dev client build, local-development environment mode.
+- `preview`: internal APK build targeting Azure API.
+- `production`: release AAB build targeting Azure API.
 
 Demo login for local dev:
 
 - Email: `demo@nsfinance.local`
 - Password: `Password123!`
+

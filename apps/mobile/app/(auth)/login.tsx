@@ -14,6 +14,7 @@ import { TextField } from "../../src/components/ui/TextField";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
+import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { palette, spacing, typography } from "../../src/theme/tokens";
 
@@ -31,6 +32,7 @@ export default function LoginScreen() {
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const authApiDebugDetail = getAuthApiDebugDetail();
 
   useEffect(() => {
     if (focusedField !== "password") {
@@ -136,6 +138,8 @@ export default function LoginScreen() {
             message={formatUnknownError(loginMutation.error)}
             onRetry={handleLogin}
             retryLabel="Try again"
+            debugDetail={authApiDebugDetail}
+            showDebugDetail={authApiRouteDiagnostics.enabled}
           />
         ) : null}
 
@@ -254,3 +258,4 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+

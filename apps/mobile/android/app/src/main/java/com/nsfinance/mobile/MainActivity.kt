@@ -1,4 +1,4 @@
-package com.anonymous.nsfinancemobile
+package com.nsfinance.mobile
 
 import android.os.Build
 import android.os.Bundle

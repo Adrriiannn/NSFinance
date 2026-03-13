@@ -15,7 +15,7 @@
       "typedRoutes": true
     },
     "android": {
-      "package": "com.anonymous.nsfinancemobile"
+      "package": "com.nsfinance.mobile"
     }
   }
 }
