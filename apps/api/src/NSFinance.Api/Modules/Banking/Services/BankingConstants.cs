@@ -10,6 +10,7 @@ public static class BankConnectionStatuses
     public const string NotConnected = "not_connected";
     public const string ConnectionStarted = "connection_started";
     public const string ConsentInProgress = "consent_in_progress";
+    public const string ConnectedPendingSync = "connected_pending_sync";
     public const string Connected = "connected";
     public const string SyncPending = "sync_pending";
     public const string Synced = "synced";

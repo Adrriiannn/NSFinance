@@ -40,6 +40,14 @@ public sealed class BankSyncService(
             cancellationToken);
     }
 
+    public async Task<ServiceResult> PersistTokenAsync(
+        OpenBankingConnection connection,
+        TrueLayerTokenExchangeResult tokenResult,
+        CancellationToken cancellationToken)
+    {
+        return await StoreRefreshedTokenAsync(connection, tokenResult, cancellationToken);
+    }
+
     public async Task<ServiceResult<BankSyncResult>> SyncConnectionAsync(
         Guid userId,
         Guid connectionId,
@@ -194,6 +202,11 @@ public sealed class BankSyncService(
             errorReason: null,
             cancellationToken);
 
+        logger.LogInformation(
+            "Bank sync started for connectionId={ConnectionId} trigger={Trigger}",
+            connection.Id,
+            trigger);
+
         var accountsResult = await dataService.GetAccountsAsync(configuration, accessToken, cancellationToken);
         if (!accountsResult.Succeeded)
         {
@@ -289,6 +302,13 @@ public sealed class BankSyncService(
                 transactionsImported
             },
             cancellationToken);
+
+        logger.LogInformation(
+            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} transactionsImported={TransactionsImported}",
+            connection.Id,
+            accountsSynced,
+            balancesSynced,
+            transactionsImported);
 
         return ServiceResult<BankSyncResult>.Ok(
             new BankSyncResult(
@@ -498,6 +518,12 @@ public sealed class BankSyncService(
             },
             cancellationToken);
 
+        logger.LogWarning(
+            "Bank sync failed for connectionId={ConnectionId} trigger={Trigger} code={Code}",
+            connection.Id,
+            trigger,
+            error.Code);
+
         return ServiceResult<BankSyncResult>.Fail(error.Message, error.Code, error.StatusCode);
     }
 
@@ -514,3 +540,4 @@ public sealed class BankSyncService(
         };
     }
 }
+

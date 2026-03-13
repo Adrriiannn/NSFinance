@@ -11,6 +11,7 @@ public sealed class TrueLayerAuthService(
     BankConnectionService bankConnectionService,
     TrueLayerTokenService tokenService,
     BankSyncService bankSyncService,
+    ITrueLayerSyncQueue trueLayerSyncQueue,
     IAuditService auditService,
     ILogger<TrueLayerAuthService> logger)
 {
@@ -72,6 +73,7 @@ public sealed class TrueLayerAuthService(
         var connection = await bankConnectionService.FindConnectionByStateAsync(query.State!, cancellationToken);
         if (connection is null)
         {
+            logger.LogWarning("TrueLayer callback rejected because state was invalid or expired.");
             return new TrueLayerCallbackOutcome(
                 false,
                 "callback_state_invalid",
@@ -79,6 +81,12 @@ public sealed class TrueLayerAuthService(
                 StatusCodes.Status400BadRequest,
                 null);
         }
+
+        logger.LogInformation(
+            "TrueLayer callback received for connectionId={ConnectionId} hasCode={HasCode} hasError={HasError}",
+            connection.Id,
+            !string.IsNullOrWhiteSpace(query.Code),
+            !string.IsNullOrWhiteSpace(query.Error));
 
         await auditService.WriteEventAsync(
             category: "banking",
@@ -96,6 +104,10 @@ public sealed class TrueLayerAuthService(
 
         connection.AuthStateNonce = null;
         connection.AuthStateExpiresUtc = null;
+
+        logger.LogInformation(
+            "TrueLayer callback state consumed for connectionId={ConnectionId}",
+            connection.Id);
 
         if (!string.IsNullOrWhiteSpace(query.Error))
         {
@@ -210,12 +222,40 @@ public sealed class TrueLayerAuthService(
                 connection.Id);
         }
 
+        logger.LogInformation(
+            "TrueLayer token exchange succeeded for connectionId={ConnectionId}",
+            connection.Id);
+
+        var persistResult = await bankSyncService.PersistTokenAsync(
+            connection,
+            tokenResult.Value!,
+            cancellationToken);
+        if (!persistResult.Succeeded)
+        {
+            logger.LogError(
+                "TrueLayer token persistence failed for connectionId={ConnectionId} code={Code}",
+                connection.Id,
+                persistResult.Error?.Code);
+
+            return new TrueLayerCallbackOutcome(
+                false,
+                persistResult.Error!.Code,
+                "Bank linked, but secure token storage failed. Please reconnect from the app.",
+                persistResult.Error.StatusCode,
+                connection.Id);
+        }
+
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
-            BankConnectionStatuses.Connected,
+            BankConnectionStatuses.ConnectedPendingSync,
             errorCode: null,
             errorReason: null,
             cancellationToken);
+
+        logger.LogInformation(
+            "Bank connection marked as {Status} for connectionId={ConnectionId}",
+            BankConnectionStatuses.ConnectedPendingSync,
+            connection.Id);
 
         await auditService.WriteEventAsync(
             category: "banking",
@@ -227,25 +267,25 @@ public sealed class TrueLayerAuthService(
             metadata: new { provider = connection.ProviderName },
             cancellationToken);
 
-        var syncResult = await bankSyncService.RunInitialSyncAsync(
-            connection,
-            configResult.Value,
-            tokenResult.Value!,
-            cancellationToken);
-        if (!syncResult.Succeeded)
+        try
         {
-            return new TrueLayerCallbackOutcome(
-                false,
-                syncResult.Error!.Code,
-                "Bank linked, but the initial sync did not complete. Use reconnect or manual sync in app.",
-                syncResult.Error.StatusCode,
+            await trueLayerSyncQueue.QueueInitialSyncAsync(connection.UserId, connection.Id, cancellationToken);
+            logger.LogInformation(
+                "TrueLayer callback queued initial sync for connectionId={ConnectionId}",
+                connection.Id);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "TrueLayer callback could not queue initial sync for connectionId={ConnectionId}",
                 connection.Id);
         }
 
         return new TrueLayerCallbackOutcome(
             true,
-            "connected",
-            "Bank connection complete. Return to the app and refresh accounts.",
+            BankConnectionStatuses.ConnectedPendingSync,
+            "Bank linked successfully. Return to the app while we start the first sync.",
             StatusCodes.Status200OK,
             connection.Id);
     }

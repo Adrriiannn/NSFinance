@@ -375,6 +375,7 @@ export type BankConnectionStatus =
   | "not_connected"
   | "connection_started"
   | "consent_in_progress"
+  | "connected_pending_sync"
   | "connected"
   | "sync_pending"
   | "synced"
@@ -429,3 +430,4 @@ export type SyncConnectionResponse = {
   status: BankConnectionStatus;
   syncedAtUtc: string;
 };
+

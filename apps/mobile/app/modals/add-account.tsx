@@ -36,11 +36,24 @@ const pendingActionStatuses = new Set<BankConnectionStatus>([
   "consent_in_progress"
 ]);
 
+const completionStatuses = new Set<BankConnectionStatus>([
+  "connected_pending_sync",
+  "connected",
+  "synced",
+  "failed",
+  "reauth_required",
+  "expired",
+  "revoked"
+]);
+
 const syncableStatuses = new Set<BankConnectionStatus>([
+  "connected_pending_sync",
   "connected",
   "synced",
   "failed"
 ]);
+
+const consentTimeoutMs = 90_000;
 
 type PendingConsentLink = {
   authorizationUrl: string;
@@ -53,6 +66,7 @@ function mapConnectionStatus(status?: BankConnectionStatus): ConnectionStatus {
     case "consent_in_progress":
     case "sync_pending":
       return "connecting";
+    case "connected_pending_sync":
     case "connected":
     case "synced":
       return "connected";
@@ -108,7 +122,7 @@ function isLinkStillValid(link: PendingConsentLink | null, nowMs: number) {
 
 export default function AddAccountModalScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ bankingResult?: string }>();
+  const params = useLocalSearchParams<{ bankingResult?: string; connectionId?: string }>();
   const queryClient = useQueryClient();
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
@@ -120,9 +134,12 @@ export default function AddAccountModalScreen() {
 
   const [awaitingConsentReturn, setAwaitingConsentReturn] = useState(false);
   const [pendingConsentLink, setPendingConsentLink] = useState<PendingConsentLink | null>(null);
+  const [pendingConnectionId, setPendingConnectionId] = useState<string | null>(null);
+  const [consentStartedAtMs, setConsentStartedAtMs] = useState<number | null>(null);
   const [lastManualSyncUtc, setLastManualSyncUtc] = useState<string | null>(null);
   const [statusClock, setStatusClock] = useState(() => Date.now());
   const successPlayedRef = useRef(false);
+  const lastPolledStatusRef = useRef<string | null>(null);
 
   const latestConnection = useMemo(() => {
     const list = connectionsQuery.data ?? [];
@@ -132,6 +149,15 @@ export default function AddAccountModalScreen() {
       return bTime - aTime;
     })[0] ?? null;
   }, [connectionsQuery.data]);
+
+  const activeConnection = useMemo(() => {
+    const list = connectionsQuery.data ?? [];
+    if (pendingConnectionId) {
+      return list.find((connection) => connection.id === pendingConnectionId) ?? null;
+    }
+
+    return latestConnection;
+  }, [connectionsQuery.data, latestConnection, pendingConnectionId]);
 
   const linkedAccountNames = useMemo(() => {
     const accounts = accountsQuery.data ?? [];
@@ -148,12 +174,17 @@ export default function AddAccountModalScreen() {
           .filter((name) => name.length > 0)
       )
     );
-  }, [accountsQuery.data]);
+  }, [accountsQuery.data, pendingConnectionId]);
 
   const pendingLinkValid = useMemo(
     () => isLinkStillValid(pendingConsentLink, statusClock),
     [pendingConsentLink, statusClock]
   );
+
+  const consentTimedOut =
+    awaitingConsentReturn &&
+    consentStartedAtMs !== null &&
+    statusClock - consentStartedAtMs >= consentTimeoutMs;
 
   const refreshFromBackendTruth = useCallback(async () => {
     await Promise.all([
@@ -177,10 +208,12 @@ export default function AddAccountModalScreen() {
     async (response: StartTrueLayerLinkResponse) => {
       successPlayedRef.current = false;
       setAwaitingConsentReturn(true);
+      setPendingConnectionId(response.connectionId);
       setPendingConsentLink({
         authorizationUrl: response.authorizationUrl,
         expiresAtUtc: response.expiresAtUtc
       });
+      setConsentStartedAtMs(Date.now());
       setStatusClock(Date.now());
       await launchConsentInBrowser(response.authorizationUrl);
     },
@@ -195,6 +228,7 @@ export default function AddAccountModalScreen() {
   const handleResumeConsent = async () => {
     if (pendingConsentLink && pendingLinkValid) {
       setAwaitingConsentReturn(true);
+      setStatusClock(Date.now());
       await launchConsentInBrowser(pendingConsentLink.authorizationUrl);
       return;
     }
@@ -203,12 +237,17 @@ export default function AddAccountModalScreen() {
     await beginConsentSession(response);
   };
 
+  const handleManualRefresh = async () => {
+    setStatusClock(Date.now());
+    await refreshFromBackendTruth();
+  };
+
   const handleSyncNow = async () => {
-    if (!latestConnection) {
+    if (!activeConnection) {
       return;
     }
 
-    const syncResult = await syncMutation.mutateAsync(latestConnection.id);
+    const syncResult = await syncMutation.mutateAsync(activeConnection.id);
     setLastManualSyncUtc(syncResult.syncedAtUtc);
     await refreshFromBackendTruth();
     playSuccess();
@@ -222,16 +261,21 @@ export default function AddAccountModalScreen() {
   );
 
   useEffect(() => {
-    if (!awaitingConsentReturn) {
+    if (!awaitingConsentReturn || consentTimedOut) {
       return;
     }
 
     const interval = setInterval(() => {
       setStatusClock(Date.now());
+      if (AppState.currentState !== "active") {
+        return;
+      }
+
+      void refreshFromBackendTruth();
     }, 4_000);
 
     return () => clearInterval(interval);
-  }, [awaitingConsentReturn]);
+  }, [awaitingConsentReturn, consentTimedOut, refreshFromBackendTruth]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -264,17 +308,41 @@ export default function AddAccountModalScreen() {
     }
 
     setAwaitingConsentReturn(true);
+    if (typeof params.connectionId === "string" && params.connectionId.trim().length > 0) {
+      setPendingConnectionId(params.connectionId.trim());
+    }
     setStatusClock(Date.now());
     void refreshFromBackendTruth();
-  }, [params.bankingResult, refreshFromBackendTruth]);
+  }, [params.bankingResult, params.connectionId, refreshFromBackendTruth]);
 
   useEffect(() => {
-    const status = latestConnection?.status;
+    if (!pendingConnectionId) {
+      lastPolledStatusRef.current = null;
+      return;
+    }
+
+    const nextStatus = activeConnection?.status ?? "missing";
+    const snapshot = `${pendingConnectionId}:${nextStatus}`;
+    if (lastPolledStatusRef.current === snapshot) {
+      return;
+    }
+
+    lastPolledStatusRef.current = snapshot;
+    console.info("[Banking Poll]", {
+      connectionId: pendingConnectionId,
+      status: nextStatus,
+      awaitingConsentReturn,
+      consentTimedOut
+    });
+  }, [activeConnection?.status, awaitingConsentReturn, consentTimedOut, pendingConnectionId]);
+
+  useEffect(() => {
+    const status = activeConnection?.status;
     if (!status) {
       return;
     }
 
-    if (status === "connected" || status === "synced") {
+    if (status === "connected_pending_sync" || status === "connected" || status === "synced") {
       setAwaitingConsentReturn(false);
       setPendingConsentLink(null);
       if (!successPlayedRef.current) {
@@ -293,50 +361,62 @@ export default function AddAccountModalScreen() {
       setAwaitingConsentReturn(false);
       successPlayedRef.current = false;
     }
-  }, [latestConnection?.status, playSuccess]);
+  }, [activeConnection?.status, playSuccess]);
 
   if (!isBootstrapping && !isAuthenticated) {
     return <Redirect href={"/login" as never} />;
   }
 
-  const mappedStatus = mapConnectionStatus(latestConnection?.status);
+  const mappedStatus = mapConnectionStatus(activeConnection?.status);
   const requiresBrowserCompletion = pendingActionStatuses.has(
-    latestConnection?.status ?? "not_connected"
+    activeConnection?.status ?? "not_connected"
   );
+  const completionReached = completionStatuses.has(activeConnection?.status ?? "not_connected");
 
   let status: ConnectionStatus = mappedStatus;
   if (startLinkMutation.isPending || syncMutation.isPending) {
     status = "connecting";
-  } else if (awaitingConsentReturn && (requiresBrowserCompletion || !latestConnection)) {
-    status = pendingLinkValid ? "connecting" : "reconnect_required";
-  } else if (mappedStatus === "connecting" && !pendingLinkValid) {
+  } else if (awaitingConsentReturn && !completionReached && !consentTimedOut) {
+    status = "connecting";
+  } else if (!completionReached && awaitingConsentReturn && consentTimedOut) {
+    status = "reconnect_required";
+  } else if (mappedStatus === "connecting" && !pendingLinkValid && !requiresBrowserCompletion) {
     status = "reconnect_required";
   }
 
   const showResumeAction =
-    (status === "connecting" || status === "reconnect_required") &&
-    (awaitingConsentReturn || requiresBrowserCompletion);
+    !completionReached &&
+    (requiresBrowserCompletion || (awaitingConsentReturn && pendingLinkValid));
+  const showRefreshAction =
+    awaitingConsentReturn ||
+    consentTimedOut ||
+    showResumeAction ||
+    activeConnection?.status === "connected_pending_sync";
 
   const statusHelperText =
-    status === "connecting" && showResumeAction
-      ? "You still need to complete the required tasks in the browser."
-      : status === "reconnect_required" && requiresBrowserCompletion
-        ? "Consent is still incomplete. Reopen the browser flow to continue."
-      : status === "reconnect_required" && awaitingConsentReturn && !pendingLinkValid
-        ? "Consent session expired before completion. Start again to continue."
-        : undefined;
+    consentTimedOut
+      ? "If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
+      : activeConnection?.status === "connected_pending_sync"
+        ? "Bank linked successfully. Initial sync is starting in the background."
+        : status === "connecting" && showResumeAction
+          ? "Finish the consent flow in your browser. If you already finished there, return here and tap Refresh."
+          : status === "reconnect_required" && requiresBrowserCompletion
+            ? "Consent is still incomplete. Reopen the browser flow to continue."
+            : status === "reconnect_required" && awaitingConsentReturn && !pendingLinkValid
+              ? "Consent session expired before completion. Start again to continue."
+              : undefined;
 
-  const canSyncNow = latestConnection
-    ? syncableStatuses.has(latestConnection.status)
+  const canSyncNow = activeConnection
+    ? syncableStatuses.has(activeConnection.status)
     : false;
 
   const bankName =
-    latestConnection?.providerDisplayName?.trim() || "Waiting for institution details";
+    activeConnection?.providerDisplayName?.trim() || "Waiting for institution details";
   const lastSyncUtc =
-    latestConnection?.lastSuccessfulSyncUtc ?? latestConnection?.lastSyncAttemptedUtc ?? null;
-  const dateAdded = formatDateAdded(latestConnection?.createdUtc);
+    activeConnection?.lastSuccessfulSyncUtc ?? activeConnection?.lastSyncAttemptedUtc ?? null;
+  const dateAdded = formatDateAdded(activeConnection?.createdUtc);
   const lastManualSyncLabel = formatDateAdded(
-    lastManualSyncUtc ?? latestConnection?.lastSuccessfulSyncUtc ?? null
+    lastManualSyncUtc ?? activeConnection?.lastSuccessfulSyncUtc ?? null
   );
   const lastSyncLabel = lastSyncUtc ? formatDateAdded(lastSyncUtc) : "Not synced yet";
 
@@ -416,18 +496,28 @@ export default function AddAccountModalScreen() {
           </Text>
         </View>
 
-        {showResumeAction ? (
+        {showRefreshAction ? (
           <View style={styles.resumeCard}>
             <Text style={styles.resumeTitle}>
-              You still need to complete the required tasks in the browser.
+              If you already finished in the browser, tap Refresh to check the latest bank connection status.
             </Text>
-            <SecondaryButton
-              label="Take me there"
-              onPress={() => {
-                void handleResumeConsent();
-              }}
-              disabled={startLinkMutation.isPending}
-            />
+            <View style={styles.resumeActions}>
+              <SecondaryButton
+                label="Refresh status"
+                onPress={() => {
+                  void handleManualRefresh();
+                }}
+              />
+              {showResumeAction ? (
+                <SecondaryButton
+                  label="Open browser again"
+                  onPress={() => {
+                    void handleResumeConsent();
+                  }}
+                  disabled={startLinkMutation.isPending}
+                />
+              ) : null}
+            </View>
           </View>
         ) : null}
 
@@ -512,6 +602,9 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.body2
   },
+  resumeActions: {
+    gap: spacing[12]
+  },
   actionSpacer: {
     flex: 1
   },
@@ -522,3 +615,4 @@ const styles = StyleSheet.create({
     paddingTop: spacing[16]
   }
 });
+

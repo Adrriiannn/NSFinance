@@ -218,6 +218,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TrueLayerDataService>();
         services.AddScoped<BankConnectionService>();
         services.AddScoped<BankSyncService>();
+        services.AddSingleton<TrueLayerSyncBackgroundWorker>();
+        services.AddSingleton<ITrueLayerSyncQueue>(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
+        services.AddHostedService(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
         services.AddScoped<DevelopmentDataSeeder>();
 
         return services;
@@ -428,3 +431,4 @@ public static class ServiceCollectionExtensions
         return configuration[legacyKey];
     }
 }
+

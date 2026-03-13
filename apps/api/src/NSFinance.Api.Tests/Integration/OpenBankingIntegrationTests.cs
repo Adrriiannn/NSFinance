@@ -312,6 +312,7 @@ public class OpenBankingIntegrationTests
                 connectionService,
                 tokenService,
                 syncService,
+                new TestTrueLayerSyncQueue(),
                 _auditService,
                 NullLogger<TrueLayerAuthService>.Instance);
         }
@@ -370,6 +371,14 @@ public class OpenBankingIntegrationTests
         public string? AppVersion => "1.0.0";
     }
 
+    private sealed class TestTrueLayerSyncQueue : ITrueLayerSyncQueue
+    {
+        public ValueTask QueueInitialSyncAsync(Guid userId, Guid connectionId, CancellationToken cancellationToken = default)
+        {
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class TestSecretProtector : ISecretProtector
     {
         public string Protect(string plaintext)
@@ -383,3 +392,4 @@ public class OpenBankingIntegrationTests
         }
     }
 }
+

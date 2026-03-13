@@ -31,7 +31,7 @@ const statusConfig: Record<
   connected: {
     label: "Connected",
     color: palette.success,
-    helper: "Connection is active. Run sync to refresh latest account data."
+    helper: "Connection is active. Initial sync may still be starting; run sync to refresh latest account data."
   },
   sync_failed: {
     label: "Sync failed",
@@ -113,3 +113,4 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+
