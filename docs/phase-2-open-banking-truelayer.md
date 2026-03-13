@@ -34,10 +34,14 @@
 - Sandbox defaults:
   - `TRUELAYER_AUTH_BASE_URL=https://auth.truelayer-sandbox.com`
   - `TRUELAYER_API_BASE_URL=https://api.truelayer-sandbox.com`
+  - `TRUELAYER_REDIRECT_URI=http://localhost:5080/api/banking/truelayer/callback`
+- Production callback:
+  - `TRUELAYER_REDIRECT_URI=https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 - Environment mismatch protection is enforced:
   - sandbox environment + live URLs is rejected
   - live environment + sandbox URLs is rejected
 - Live support is scaffolded but only active when `TRUELAYER_ENVIRONMENT=live` and matching live base URLs are configured.
+- The URI registered in TrueLayer Console must exactly match the callback URI configured for the current environment.
 
 ## Scope for Phase 2
 - Implemented scopes:

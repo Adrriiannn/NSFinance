@@ -37,7 +37,7 @@ public class TrueLayerTokenServiceTests
             new TrueLayerResolvedConfiguration(
                 "client",
                 "secret",
-                "https://localhost/callback",
+                "http://localhost:5080/api/banking/truelayer/callback",
                 "sandbox",
                 "https://auth.truelayer-sandbox.com",
                 "https://api.truelayer-sandbox.com"),
@@ -56,7 +56,7 @@ public class TrueLayerTokenServiceTests
         Assert.Contains("client_id=client", requestCapture.Body, StringComparison.Ordinal);
         Assert.Contains("client_secret=secret", requestCapture.Body, StringComparison.Ordinal);
         Assert.Contains("code=code-1", requestCapture.Body, StringComparison.Ordinal);
-        Assert.Contains("redirect_uri=https%3A%2F%2Flocalhost%2Fcallback", requestCapture.Body, StringComparison.Ordinal);
+        Assert.Contains("redirect_uri=http%3A%2F%2Flocalhost%3A5080%2Fapi%2Fbanking%2Ftruelayer%2Fcallback", requestCapture.Body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class TrueLayerTokenServiceTests
             new TrueLayerResolvedConfiguration(
                 "client",
                 "secret",
-                "https://localhost/callback",
+                "http://localhost:5080/api/banking/truelayer/callback",
                 "sandbox",
                 "https://auth.truelayer-sandbox.com",
                 "https://api.truelayer-sandbox.com"),
@@ -122,7 +122,7 @@ public class TrueLayerTokenServiceTests
             new TrueLayerResolvedConfiguration(
                 "client",
                 "secret",
-                "https://localhost/callback",
+                "http://localhost:5080/api/banking/truelayer/callback",
                 "sandbox",
                 "https://auth.truelayer-sandbox.com",
                 "https://api.truelayer-sandbox.com"),

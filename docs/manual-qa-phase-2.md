@@ -4,11 +4,11 @@
 1. Set backend env vars:
    - `TRUELAYER_CLIENT_ID`
    - `TRUELAYER_CLIENT_SECRET`
-   - `TRUELAYER_REDIRECT_URI`
+   - `TRUELAYER_REDIRECT_URI=http://localhost:5080/api/banking/truelayer/callback`
    - `TRUELAYER_ENVIRONMENT=sandbox`
    - `TRUELAYER_AUTH_BASE_URL=https://auth.truelayer-sandbox.com`
    - `TRUELAYER_API_BASE_URL=https://api.truelayer-sandbox.com`
-2. Ensure `TRUELAYER_REDIRECT_URI` is registered in TrueLayer Console.
+2. Ensure `http://localhost:5080/api/banking/truelayer/callback` is registered in the TrueLayer sandbox console.
 3. Run API migrations and start API.
 4. Log into mobile app with a test user.
 
@@ -43,6 +43,10 @@
    - verify link/callback returns actionable config error
 3. Environment mismatch (`sandbox` env with live URLs or reverse):
    - verify operation fails with mismatch guidance
+
+## Production Reference
+1. Production redirect URI must be `https://api.finance.nsireland.ie/api/banking/truelayer/callback`.
+2. TrueLayer production console registration must exactly match that URI.
 
 ## Disconnect
 1. Call `POST /api/banking/connections/{connectionId}/disconnect`.

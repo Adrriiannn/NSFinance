@@ -72,5 +72,5 @@
 - Configure custom domains/TLS if needed.
 - Register production callback/redirect URIs in:
   - Google OAuth console (mobile client IDs and redirect handling).
-  - TrueLayer console (`/api/banking/truelayer/callback` exact URI).
+  - TrueLayer console (`https://api.finance.nsireland.ie/api/banking/truelayer/callback` exact URI).
 - Handle APK/AAB distribution and mobile release rollout.

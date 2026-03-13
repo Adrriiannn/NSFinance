@@ -126,7 +126,7 @@ public class OpenBankingIntegrationTests
     {
         ClientId = "sandbox-client",
         ClientSecret = "sandbox-secret",
-        RedirectUri = "https://api.nsfinance.local/api/banking/truelayer/callback",
+        RedirectUri = "http://localhost:5080/api/banking/truelayer/callback",
         Environment = "sandbox",
         AuthBaseUrl = "https://auth.truelayer-sandbox.com",
         ApiBaseUrl = "https://api.truelayer-sandbox.com"

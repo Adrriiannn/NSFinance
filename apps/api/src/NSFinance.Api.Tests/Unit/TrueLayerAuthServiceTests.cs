@@ -11,7 +11,7 @@ public class TrueLayerAuthServiceTests
         var url = TrueLayerAuthService.BuildAuthorizationLink(
             "https://auth.truelayer-sandbox.com",
             "client-123",
-            "https://api.nsfinance.local/api/banking/truelayer/callback",
+            "http://localhost:5080/api/banking/truelayer/callback",
             "state-xyz",
             TrueLayerAuthService.BuildScopes(),
             providers);
@@ -21,7 +21,7 @@ public class TrueLayerAuthServiceTests
 
         Assert.Equal("code", query["response_type"]);
         Assert.Equal("client-123", query["client_id"]);
-        Assert.Equal("https://api.nsfinance.local/api/banking/truelayer/callback", query["redirect_uri"]);
+        Assert.Equal("http://localhost:5080/api/banking/truelayer/callback", query["redirect_uri"]);
         Assert.Equal("state-xyz", query["state"]);
         Assert.Equal("accounts balance transactions offline_access", query["scope"]);
         Assert.Equal("uk-cs-mock", query["providers"]);
@@ -33,7 +33,7 @@ public class TrueLayerAuthServiceTests
         var url = TrueLayerAuthService.BuildAuthorizationLink(
             "https://auth.truelayer-sandbox.com",
             "client-123",
-            "http://192.168.0.11:5080/api/banking/truelayer/callback",
+            "http://localhost:5080/api/banking/truelayer/callback",
             "state-xyz",
             TrueLayerAuthService.BuildScopes(),
             TrueLayerAuthService.BuildProviders("sandbox"));

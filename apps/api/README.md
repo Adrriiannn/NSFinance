@@ -16,6 +16,9 @@ dotnet run --project .\src\NSFinance.Api\NSFinance.Api.csproj
 - Template: `src/NSFinance.Api/appsettings.Local.example.json`
 - Production should use App Service environment variables (no secrets in source).
 - Deployment checklist: `..\..\docs\azure-production-checklist.md`
+- TrueLayer callback URIs:
+  - Development: `http://localhost:5080/api/banking/truelayer/callback`
+  - Production: `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 
 ## Key endpoints
 

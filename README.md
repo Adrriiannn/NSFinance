@@ -35,7 +35,6 @@ NSFinance
 - pnpm 10+
 - PostgreSQL running locally (`nsfinance` db), or Docker in `infra`
 
-<<<<<<< HEAD
 ## Environment variables
 
 See `.env.example`.
@@ -82,12 +81,17 @@ Seeded demo login:
 
 - Email: `demo@nsfinance.local`
 - Password: `Password123!`
+
 Local TrueLayer sandbox setup:
 
 1. Copy `apps/api/src/NSFinance.Api/appsettings.Local.example.json` to `apps/api/src/NSFinance.Api/appsettings.Local.json`.
 2. Set `TrueLayer:ClientId` and `TrueLayer:ClientSecret` in that local file.
-3. Set `TrueLayer:RedirectUri` to your local API callback URL (phone dev example: `http://192.168.0.11:5080/api/banking/truelayer/callback`).
+3. Set `TrueLayer:RedirectUri` to `http://localhost:5080/api/banking/truelayer/callback`.
 4. Register that redirect URI in your TrueLayer sandbox console.
+
+Production TrueLayer callback:
+
+- `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 
 ## Run mobile
 
@@ -97,9 +101,6 @@ pnpm --filter @nsfinance/mobile start
 ```
 
 Mobile API URL strategy:
-=======
-Set `EXPO_PUBLIC_API_BASE_URL` for your runtime target:
->>>>>>> a5e9c2674941c884d3ac97161d995961900ca3c2
 
 - development defaults are local:
   - iOS simulator: `http://localhost:5080`
