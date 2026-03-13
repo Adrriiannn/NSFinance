@@ -397,6 +397,11 @@ export type BankConnectionDto = {
   lastErrorCode: string | null;
 };
 
+export type ConnectedBanksOverviewDto = {
+  activeConnections: BankConnectionDto[];
+  attentionConnections: BankConnectionDto[];
+};
+
 export type LinkedBankAccountDto = {
   id: string;
   connectionId: string;
@@ -430,4 +435,5 @@ export type SyncConnectionResponse = {
   status: BankConnectionStatus;
   syncedAtUtc: string;
 };
+
 

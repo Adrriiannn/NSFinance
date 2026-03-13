@@ -122,6 +122,243 @@ public class OpenBankingIntegrationTests
         Assert.Equal("truelayer_environment_mismatch", connection.LastErrorCode);
     }
 
+
+    [Fact]
+    public async Task ListUserVisibleConnectionsAsync_ShowsOnlyActiveAndAttentionConnectionsWithoutHistoryNoise()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.visible@test.local");
+        var now = DateTime.UtcNow;
+
+        harness.DbContext.OpenBankingConnections.AddRange(
+            new OpenBankingConnection
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Mock Bank Plc",
+                ProviderConnectionReference = "provider-connection-1",
+                Status = BankConnectionStatuses.Failed,
+                CreatedUtc = now.AddMinutes(-40),
+                UpdatedUtc = now.AddMinutes(-40)
+            },
+            new OpenBankingConnection
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Mock Bank Plc",
+                ProviderConnectionReference = "provider-connection-1",
+                Status = BankConnectionStatuses.Synced,
+                CreatedUtc = now.AddMinutes(-20),
+                UpdatedUtc = now.AddMinutes(-5)
+            },
+            new OpenBankingConnection
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Needs Attention Bank",
+                ProviderConnectionReference = "provider-connection-2",
+                Status = BankConnectionStatuses.ReauthRequired,
+                CreatedUtc = now.AddMinutes(-10),
+                UpdatedUtc = now.AddMinutes(-4)
+            },
+            new OpenBankingConnection
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Pending Bank",
+                ProviderConnectionReference = "provider-connection-3",
+                Status = BankConnectionStatuses.ConsentInProgress,
+                CreatedUtc = now.AddMinutes(-6),
+                UpdatedUtc = now.AddMinutes(-6)
+            },
+            new OpenBankingConnection
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Already Active Bank",
+                ProviderConnectionReference = "provider-connection-4",
+                Status = BankConnectionStatuses.Expired,
+                CreatedUtc = now.AddMinutes(-30),
+                UpdatedUtc = now.AddMinutes(-30)
+            },
+            new OpenBankingConnection
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Already Active Bank",
+                ProviderConnectionReference = "provider-connection-4",
+                Status = BankConnectionStatuses.ConnectedPendingSync,
+                CreatedUtc = now.AddMinutes(-8),
+                UpdatedUtc = now.AddMinutes(-2)
+            },
+            new OpenBankingConnection
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Revoked Bank",
+                ProviderConnectionReference = "provider-connection-5",
+                Status = BankConnectionStatuses.Revoked,
+                CreatedUtc = now.AddMinutes(-50),
+                UpdatedUtc = now.AddMinutes(-50)
+            });
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var overview = await harness.CreateConnectionService()
+            .ListUserVisibleConnectionsAsync(user.Id, CancellationToken.None);
+
+        Assert.Equal(2, overview.ActiveConnections.Count);
+        Assert.Contains(overview.ActiveConnections, x => x.ProviderDisplayName == "Mock Bank Plc" && x.Status == BankConnectionStatuses.Synced);
+        Assert.Contains(overview.ActiveConnections, x => x.ProviderDisplayName == "Already Active Bank" && x.Status == BankConnectionStatuses.ConnectedPendingSync);
+
+        Assert.Single(overview.AttentionConnections);
+        Assert.Equal("Needs Attention Bank", overview.AttentionConnections[0].ProviderDisplayName);
+        Assert.Equal(BankConnectionStatuses.ReauthRequired, overview.AttentionConnections[0].Status);
+
+        Assert.DoesNotContain(overview.ActiveConnections, x => x.Status == BankConnectionStatuses.Failed || x.Status == BankConnectionStatuses.ConsentInProgress || x.Status == BankConnectionStatuses.Revoked);
+        Assert.DoesNotContain(overview.AttentionConnections, x => x.ProviderDisplayName == "Already Active Bank");
+    }
+
+    [Fact]
+    public async Task DisconnectAsync_RemovesImportedDataAndHidesConnectionFromUserVisibleList()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.disconnect@test.local");
+        var now = DateTime.UtcNow;
+        var connectionId = Guid.NewGuid();
+        var financialAccountId = Guid.NewGuid();
+        var linkedAccountId = Guid.NewGuid();
+
+        harness.DbContext.OpenBankingConnections.Add(new OpenBankingConnection
+        {
+            Id = connectionId,
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Disconnect Bank",
+            ProviderConnectionReference = "provider-disconnect-1",
+            Status = BankConnectionStatuses.Synced,
+            CreatedUtc = now.AddMinutes(-15),
+            UpdatedUtc = now.AddMinutes(-1),
+            Token = new BankConnectionToken
+            {
+                Id = Guid.NewGuid(),
+                ConnectionId = connectionId,
+                EncryptedRefreshToken = "ciphertext",
+                AccessTokenExpiresUtc = now.AddHours(1),
+                TokenObtainedUtc = now.AddMinutes(-5),
+                IsRevoked = false
+            }
+        });
+
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = financialAccountId,
+            UserId = user.Id,
+            Name = "Disconnect Projection",
+            Type = "Current",
+            Currency = "GBP",
+            CreatedUtc = now.AddMinutes(-15)
+        });
+
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = linkedAccountId,
+            ConnectionId = connectionId,
+            ProviderAccountId = "provider-account-1",
+            DisplayName = "Disconnect Account",
+            Currency = "GBP",
+            CurrentConnectionHealth = "healthy",
+            RawPayloadJson = "{}",
+            FinancialAccountId = financialAccountId,
+            CreatedUtc = now.AddMinutes(-15),
+            UpdatedUtc = now.AddMinutes(-1)
+        });
+
+        harness.DbContext.BankBalanceSnapshots.Add(new BankBalanceSnapshot
+        {
+            Id = Guid.NewGuid(),
+            LinkedBankAccountId = linkedAccountId,
+            Available = 10,
+            Current = 10,
+            Overdraft = 0,
+            Currency = "GBP",
+            CapturedUtc = now.AddMinutes(-1)
+        });
+
+        harness.DbContext.RawBankTransactions.Add(new RawBankTransaction
+        {
+            Id = Guid.NewGuid(),
+            LinkedBankAccountId = linkedAccountId,
+            ProviderTransactionId = "raw-1",
+            DedupeKey = "norm-1",
+            Amount = -12.34m,
+            Currency = "GBP",
+            BookedAtUtc = now.AddDays(-1),
+            Description = "Coffee",
+            TransactionType = "DEBIT",
+            TransactionStatus = "booked",
+            RawPayloadJson = "{}",
+            ImportedUtc = now.AddMinutes(-1)
+        });
+
+        harness.DbContext.Transactions.Add(new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = financialAccountId,
+            Amount = -12.34m,
+            Currency = "GBP",
+            Description = "Coffee",
+            BookedAtUtc = now.AddDays(-1),
+            CreatedUtc = now.AddMinutes(-1)
+        });
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var service = harness.CreateConnectionService();
+        var result = await service.DisconnectAsync(user.Id, connectionId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections
+            .Include(x => x.Token)
+            .SingleAsync(x => x.Id == connectionId);
+        Assert.Equal(BankConnectionStatuses.Revoked, connection.Status);
+        Assert.NotNull(connection.Token);
+        Assert.True(connection.Token!.IsRevoked);
+        Assert.Null(connection.Token.EncryptedRefreshToken);
+
+        Assert.Empty(await harness.DbContext.LinkedBankAccounts.ToListAsync());
+        Assert.Empty(await harness.DbContext.BankBalanceSnapshots.ToListAsync());
+        Assert.Empty(await harness.DbContext.RawBankTransactions.ToListAsync());
+        Assert.Empty(await harness.DbContext.FinancialAccounts.ToListAsync());
+        Assert.Empty(await harness.DbContext.Transactions.ToListAsync());
+
+        var overview = await service.ListUserVisibleConnectionsAsync(user.Id, CancellationToken.None);
+        Assert.Empty(overview.ActiveConnections);
+        Assert.Empty(overview.AttentionConnections);
+    }
+
     private static TrueLayerOptions ValidSandboxOptions() => new()
     {
         ClientId = "sandbox-client",
@@ -296,7 +533,7 @@ public class OpenBankingIntegrationTests
             var httpClient = new TrueLayerHttpClient(new HttpClient(_httpHandler));
             var tokenService = new TrueLayerTokenService(httpClient, NullLogger<TrueLayerTokenService>.Instance);
             var dataService = new TrueLayerDataService(httpClient, NullLogger<TrueLayerDataService>.Instance);
-            var connectionService = new BankConnectionService(DbContext, _auditService);
+            var connectionService = CreateConnectionService();
             var syncService = new BankSyncService(
                 DbContext,
                 connectionService,
@@ -312,9 +549,14 @@ public class OpenBankingIntegrationTests
                 connectionService,
                 tokenService,
                 syncService,
-                new TestTrueLayerSyncQueue(),
+                new TestTrueLayerSyncQueue(syncService),
                 _auditService,
                 NullLogger<TrueLayerAuthService>.Instance);
+        }
+
+        public BankConnectionService CreateConnectionService()
+        {
+            return new BankConnectionService(DbContext, _auditService);
         }
 
         public async Task<User> CreateUserAsync(string email)
@@ -371,11 +613,11 @@ public class OpenBankingIntegrationTests
         public string? AppVersion => "1.0.0";
     }
 
-    private sealed class TestTrueLayerSyncQueue : ITrueLayerSyncQueue
+    private sealed class TestTrueLayerSyncQueue(BankSyncService syncService) : ITrueLayerSyncQueue
     {
-        public ValueTask QueueInitialSyncAsync(Guid userId, Guid connectionId, CancellationToken cancellationToken = default)
+        public async ValueTask QueueInitialSyncAsync(Guid userId, Guid connectionId, CancellationToken cancellationToken = default)
         {
-            return ValueTask.CompletedTask;
+            await syncService.SyncConnectionAsync(userId, connectionId, cancellationToken);
         }
     }
 

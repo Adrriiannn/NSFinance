@@ -13,6 +13,7 @@ export const queryKeys = {
   banking: {
     connections: ["banking", "connections"] as const,
     connection: (id: string) => ["banking", "connections", id] as const,
+    connectedBanks: ["banking", "connected-banks"] as const,
     accounts: ["banking", "accounts"] as const
   },
   transactions: {
@@ -24,3 +25,4 @@ export const queryKeys = {
     all: ["categories"] as const
   }
 } as const;
+

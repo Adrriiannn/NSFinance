@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../lib/api/queryKeys";
+import type { ConnectedBanksOverviewDto } from "../../types/api";
 import {
   disconnectBankConnection,
   getBankConnection,
   getBankConnections,
+  getConnectedBanks,
   getLinkedBankAccounts,
   startTrueLayerLink,
   syncBankConnection
@@ -14,6 +16,13 @@ export function useBankConnectionsQuery(enabled = true) {
     queryKey: queryKeys.banking.connections,
     queryFn: getBankConnections,
     enabled
+  });
+}
+
+export function useConnectedBanksQuery() {
+  return useQuery({
+    queryKey: queryKeys.banking.connectedBanks,
+    queryFn: getConnectedBanks
   });
 }
 
@@ -39,6 +48,7 @@ export function useStartTrueLayerLinkMutation() {
     mutationFn: startTrueLayerLink,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks });
     }
   });
 }
@@ -51,6 +61,7 @@ export function useSyncBankConnectionMutation() {
     onSuccess: async (_, connectionId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
@@ -66,9 +77,34 @@ export function useDisconnectBankConnectionMutation() {
 
   return useMutation({
     mutationFn: (connectionId: string) => disconnectBankConnection(connectionId),
+    onMutate: async (connectionId: string) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.banking.connectedBanks });
+      const previousConnectedBanks = queryClient.getQueryData<ConnectedBanksOverviewDto>(
+        queryKeys.banking.connectedBanks
+      );
+
+      if (previousConnectedBanks) {
+        queryClient.setQueryData<ConnectedBanksOverviewDto>(queryKeys.banking.connectedBanks, {
+          activeConnections: previousConnectedBanks.activeConnections.filter(
+            (connection) => connection.id !== connectionId
+          ),
+          attentionConnections: previousConnectedBanks.attentionConnections.filter(
+            (connection) => connection.id !== connectionId
+          )
+        });
+      }
+
+      return { previousConnectedBanks };
+    },
+    onError: (_error, _connectionId, context) => {
+      if (context?.previousConnectedBanks) {
+        queryClient.setQueryData(queryKeys.banking.connectedBanks, context.previousConnectedBanks);
+      }
+    },
     onSuccess: async (_, connectionId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),

@@ -16,6 +16,9 @@ public static class BankingModule
         protectedGroup.MapGet("/connections", GetBankConnectionsEndpoint.HandleAsync)
             .WithName("GetBankConnections");
 
+        protectedGroup.MapGet("/connected-banks", GetConnectedBanksEndpoint.HandleAsync)
+            .WithName("GetConnectedBanks");
+
         protectedGroup.MapGet("/connections/{connectionId:guid}", GetBankConnectionEndpoint.HandleAsync)
             .WithName("GetBankConnection");
 
@@ -41,3 +44,4 @@ public static class BankingModule
         return app;
     }
 }
+

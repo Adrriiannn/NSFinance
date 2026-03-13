@@ -11,6 +11,19 @@ public sealed class BankConnectionService(
     AppDbContext dbContext,
     IAuditService auditService)
 {
+    private static readonly string[] UserVisibleActiveStatuses =
+    [
+        BankConnectionStatuses.ConnectedPendingSync,
+        BankConnectionStatuses.Connected,
+        BankConnectionStatuses.SyncPending,
+        BankConnectionStatuses.Synced
+    ];
+
+    private static readonly string[] UserVisibleAttentionStatuses =
+    [
+        BankConnectionStatuses.ReauthRequired,
+        BankConnectionStatuses.Expired
+    ];
     public async Task<OpenBankingConnection> CreateConnectionStartedAsync(
         Guid userId,
         string providerName,
@@ -141,6 +154,52 @@ public sealed class BankConnectionService(
                 x.LastSyncAttemptedUtc,
                 x.LastErrorCode))
             .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<ConnectedBanksOverviewDto> ListUserVisibleConnectionsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var includedStatuses = UserVisibleActiveStatuses
+            .Concat(UserVisibleAttentionStatuses)
+            .ToArray();
+
+        var projected = await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && includedStatuses.Contains(x.Status))
+            .OrderByDescending(x => x.UpdatedUtc)
+            .Select(x => new UserVisibleConnectionCandidate(
+                new BankConnectionDto(
+                    x.Id,
+                    x.ProviderName,
+                    x.ProviderEnvironment,
+                    x.ProviderDisplayName,
+                    x.Status,
+                    x.CreatedUtc,
+                    x.UpdatedUtc,
+                    x.LastSuccessfulSyncUtc,
+                    x.LastSyncAttemptedUtc,
+                    x.LastErrorCode),
+                x.ProviderConnectionReference,
+                x.ProviderDisplayName,
+                x.ProviderName,
+                x.ProviderEnvironment))
+            .ToListAsync(cancellationToken);
+
+        var activeCandidates = projected
+            .Where(x => UserVisibleActiveStatuses.Contains(x.Summary.Status))
+            .OrderByDescending(x => x.Summary.UpdatedUtc)
+            .ToList();
+        var active = DeduplicateUserVisibleConnections(activeCandidates);
+        var activeKeys = activeCandidates
+            .Select(BuildUserVisibleDedupKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var attention = DeduplicateUserVisibleConnections(
+            projected.Where(x =>
+                UserVisibleAttentionStatuses.Contains(x.Summary.Status)
+                && !activeKeys.Contains(BuildUserVisibleDedupKey(x))));
+
+        return new ConnectedBanksOverviewDto(active, attention);
     }
 
     public async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsAsync(
@@ -421,9 +480,54 @@ public sealed class BankConnectionService(
         return ServiceResult.Ok();
     }
 
+    private static IReadOnlyList<BankConnectionDto> DeduplicateUserVisibleConnections(
+        IEnumerable<UserVisibleConnectionCandidate> candidates)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<BankConnectionDto>();
+
+        foreach (var candidate in candidates.OrderByDescending(x => x.Summary.UpdatedUtc))
+        {
+            var key = BuildUserVisibleDedupKey(candidate);
+            if (!seen.Add(key))
+            {
+                continue;
+            }
+
+            results.Add(candidate.Summary);
+        }
+
+        return results;
+    }
+
+    private static string BuildUserVisibleDedupKey(UserVisibleConnectionCandidate candidate)
+    {
+        if (!string.IsNullOrWhiteSpace(candidate.ProviderConnectionReference))
+        {
+            return $"ref:{candidate.Provider}:{candidate.ProviderEnvironment}:{candidate.ProviderConnectionReference}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate.ProviderDisplayName))
+        {
+            return $"display:{candidate.Provider}:{candidate.ProviderEnvironment}:{candidate.ProviderDisplayName}";
+        }
+
+        return $"connection:{candidate.Summary.Id}";
+    }
+
+    private sealed record UserVisibleConnectionCandidate(
+        BankConnectionDto Summary,
+        string? ProviderConnectionReference,
+        string? ProviderDisplayName,
+        string Provider,
+        string ProviderEnvironment);
+
     private static string CreateStateNonce()
     {
         return Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
     }
 }
+
+
+
 

@@ -1,6 +1,7 @@
 import { apiRequest } from "../../lib/api/client";
 import type {
   BankConnectionDto,
+  ConnectedBanksOverviewDto,
   LinkedBankAccountDto,
   StartTrueLayerLinkResponse,
   SyncConnectionResponse
@@ -8,6 +9,10 @@ import type {
 
 export function getBankConnections(): Promise<BankConnectionDto[]> {
   return apiRequest<BankConnectionDto[]>("/api/banking/connections");
+}
+
+export function getConnectedBanks(): Promise<ConnectedBanksOverviewDto> {
+  return apiRequest<ConnectedBanksOverviewDto>("/api/banking/connected-banks");
 }
 
 export function getBankConnection(connectionId: string): Promise<BankConnectionDto> {

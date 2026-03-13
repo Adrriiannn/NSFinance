@@ -31,10 +31,11 @@ import {
   confirmPasswordChangeWithCode
 } from "../../../src/features/auth/authApi";
 import {
-  useBankConnectionsQuery,
+  useConnectedBanksQuery,
   useDisconnectBankConnectionMutation
 } from "../../../src/features/banking/useBanking";
 import { ApiClientError, formatUnknownError } from "../../../src/lib/api/errors";
+import type { BankConnectionStatus } from "../../../src/types/api";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
 import {
   useCreateDeletionRequestMutation,
@@ -88,6 +89,25 @@ function isSessionNotFoundError(error: unknown) {
   return error instanceof ApiClientError && (error.code === "session_not_found" || error.status === 404);
 }
 
+function formatBankConnectionStatus(status: BankConnectionStatus) {
+  switch (status) {
+    case "connected_pending_sync":
+      return "Connected - sync starting";
+    case "connected":
+      return "Connected";
+    case "sync_pending":
+      return "Syncing";
+    case "synced":
+      return "Synced";
+    case "reauth_required":
+      return "Reconnect required";
+    case "expired":
+      return "Consent expired";
+    default:
+      return status;
+  }
+}
+
 export default function SecuritySettingsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ focus?: string }>();
@@ -96,7 +116,7 @@ export default function SecuritySettingsScreen() {
   const updateProfileMutation = useUpdateUserProfileMutation();
   const sessionsQuery = useQuery({ queryKey: sessionKey, queryFn: getSessions });
   const googleAuthQuery = useQuery({ queryKey: ["auth", "google-options"], queryFn: getGoogleAuthOptions });
-  const bankConnectionsQuery = useBankConnectionsQuery();
+  const connectedBanksQuery = useConnectedBanksQuery();
   const disconnectMutation = useDisconnectBankConnectionMutation();
   const exportRequestsQuery = useMyExportRequestsQuery();
   const deletionRequestsQuery = useMyDeletionRequestsQuery();
@@ -146,6 +166,7 @@ export default function SecuritySettingsScreen() {
 
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [securityMessage, setSecurityMessage] = useState<string | null>(null);
+  const [disconnectingConnectionId, setDisconnectingConnectionId] = useState<string | null>(null);
 
   const [passwordCodeModalVisible, setPasswordCodeModalVisible] = useState(false);
   const [passwordResetModalVisible, setPasswordResetModalVisible] = useState(false);
@@ -417,6 +438,22 @@ export default function SecuritySettingsScreen() {
     }
   };
 
+  const activeBankConnections = connectedBanksQuery.data?.activeConnections ?? [];
+  const attentionBankConnections = connectedBanksQuery.data?.attentionConnections ?? [];
+
+  const handleDisconnectBank = async (connectionId: string) => {
+    setDisconnectingConnectionId(connectionId);
+    setSecurityMessage(null);
+    try {
+      await disconnectMutation.mutateAsync(connectionId);
+      setSecurityMessage("Bank disconnected and imported data removed.");
+    } catch (error) {
+      setSecurityMessage(formatUnknownError(error));
+    } finally {
+      setDisconnectingConnectionId(null);
+    }
+  };
+
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
       <View style={styles.headerRow}>
@@ -544,35 +581,35 @@ export default function SecuritySettingsScreen() {
         <GlassCard style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Connected banks</Text>
           <Text style={styles.hintText}>
-            Bank connections are consent-based and may require reconnection after consent expiry.
+            This list shows only currently usable bank links. Failed or abandoned attempts are hidden.
           </Text>
-          {bankConnectionsQuery.isError ? (
-            <Text style={styles.errorText}>{bankConnectionsQuery.error.message}</Text>
-          ) : (bankConnectionsQuery.data ?? []).length === 0 ? (
-            <Text style={styles.metaLine}>No linked banks yet.</Text>
+          {connectedBanksQuery.isError ? (
+            <Text style={styles.errorText}>{formatUnknownError(connectedBanksQuery.error)}</Text>
+          ) : activeBankConnections.length === 0 ? (
+            <Text style={styles.metaLine}>No connected banks right now.</Text>
           ) : (
-            (bankConnectionsQuery.data ?? []).map((connection) => (
+            activeBankConnections.map((connection) => (
               <View key={connection.id} style={styles.bankRow}>
                 <Text style={styles.sessionTitle}>
                   {connection.providerDisplayName || connection.provider}
                 </Text>
-                <Text style={styles.metaLine}>Provider: TrueLayer</Text>
+                <Text style={styles.metaLine}>Provider: {connection.provider}</Text>
                 <Text style={styles.metaLine}>Connected: {formatDateTime(connection.createdUtc)}</Text>
                 <Text style={styles.metaLine}>Last synced at: {formatDateTime(connection.lastSuccessfulSyncUtc)}</Text>
-                <Text style={styles.metaLine}>Status: {connection.status}</Text>
+                <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
                 <SecondaryButton
-                  label="Disconnect bank"
+                  label={disconnectingConnectionId === connection.id ? "Disconnecting..." : "Disconnect bank"}
                   onPress={() => {
                     Alert.alert(
                       "Disconnect bank",
-                      "This removes linked account data for this bank from active views.",
+                      "This disconnects the bank and removes imported accounts, transactions, balances, and summaries from the app.",
                       [
                         { text: "Cancel", style: "cancel" },
                         {
                           text: "Disconnect",
                           style: "destructive",
                           onPress: () => {
-                            void disconnectMutation.mutateAsync(connection.id);
+                            void handleDisconnectBank(connection.id);
                           }
                         }
                       ]
@@ -583,6 +620,45 @@ export default function SecuritySettingsScreen() {
               </View>
             ))
           )}
+
+          {attentionBankConnections.length > 0 ? (
+            <>
+              <Text style={styles.subSectionTitle}>Needs attention</Text>
+              <Text style={styles.hintText}>
+                These banks are no longer usable until they are reconnected. They are kept separate from active banks.
+              </Text>
+              {attentionBankConnections.map((connection) => (
+                <View key={connection.id} style={styles.bankRow}>
+                  <Text style={styles.sessionTitle}>
+                    {connection.providerDisplayName || connection.provider}
+                  </Text>
+                  <Text style={styles.metaLine}>Provider: {connection.provider}</Text>
+                  <Text style={styles.metaLine}>Connected: {formatDateTime(connection.createdUtc)}</Text>
+                  <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
+                  <SecondaryButton
+                    label={disconnectingConnectionId === connection.id ? "Disconnecting..." : "Remove bank"}
+                    onPress={() => {
+                      Alert.alert(
+                        "Remove bank",
+                        "This removes the stale bank link and all imported data that came from it.",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Remove",
+                            style: "destructive",
+                            onPress: () => {
+                              void handleDisconnectBank(connection.id);
+                            }
+                          }
+                        ]
+                      );
+                    }}
+                    disabled={disconnectMutation.isPending}
+                  />
+                </View>
+              ))}
+            </>
+          ) : null}
         </GlassCard>
 
         <View
@@ -890,3 +966,9 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong
   }
 });
+
+
+
+
+
+
