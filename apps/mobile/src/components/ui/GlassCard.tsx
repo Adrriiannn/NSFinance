@@ -28,7 +28,7 @@ export function GlassCard({ children, style, onPress }: GlassCardProps) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: surfaces.card,
-    borderRadius: radius.medium,
+    borderRadius: radius.large,
     borderWidth: 1,
     borderColor: palette.border,
     overflow: "hidden",

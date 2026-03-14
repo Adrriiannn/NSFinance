@@ -53,6 +53,23 @@ export const layout = {
   cardPadding: spacing[16]
 } as const;
 
+export const controls = {
+  primaryHeight: 52,
+  fieldHeight: 52,
+  iconButtonSize: 42,
+  compactRadius: 14,
+  fieldRadius: radius.medium,
+  buttonRadius: radius.medium,
+  controlSurface: "rgba(18,36,58,0.78)",
+  controlSurfaceMuted: "rgba(18,36,58,0.68)",
+  controlSurfaceStrong: "rgba(18,36,58,0.84)",
+  primaryFill: "rgba(47,107,255,0.92)",
+  primaryBorder: "rgba(127,174,255,0.4)",
+  activeFill: "rgba(47,107,255,0.26)",
+  activeBorder: "rgba(127,174,255,0.36)",
+  pressedScale: 0.985
+} as const;
+
 export const navigation = {
   floatingTabBarHeight: 74,
   floatingTabBarSideInset: 16,

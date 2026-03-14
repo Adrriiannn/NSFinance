@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
-import { palette, radius, spacing, typography } from "../../theme/tokens";
+import { controls, palette, spacing, typography } from "../../theme/tokens";
 
 type TextFieldProps = TextInputProps & {
   label: string;
@@ -57,26 +57,28 @@ const styles = StyleSheet.create({
   },
   label: {
     color: palette.textPrimary,
-    ...typography.caption
+    ...typography.caption,
+    fontWeight: "700"
   },
   input: {
-    minHeight: 50,
-    borderRadius: radius.small,
+    minHeight: controls.fieldHeight,
+    borderRadius: controls.fieldRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    paddingHorizontal: spacing[12],
-    backgroundColor: "transparent",
+    paddingHorizontal: spacing[16],
+    backgroundColor: controls.controlSurfaceMuted,
     color: palette.textPrimary,
     ...typography.body1
   },
   inputNormal: {
-    backgroundColor: palette.elevatedBackground
+    backgroundColor: controls.controlSurfaceMuted
   },
   inputSolid: {
-    backgroundColor: palette.elevatedBackground
+    backgroundColor: controls.controlSurfaceStrong
   },
   inputFocused: {
     borderColor: palette.primaryGlow,
+    backgroundColor: controls.controlSurfaceStrong,
     shadowColor: palette.primaryGlow,
     shadowOpacity: 0.18,
     shadowRadius: 8,

@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Pressable, StyleSheet } from "react-native";
-import { palette, radius, surfaces } from "../../theme/tokens";
+import { controls, palette } from "../../theme/tokens";
 
 type IconButtonProps = {
   icon: ReactNode;
@@ -20,17 +20,17 @@ export function IconButton({ icon, onPress }: IconButtonProps) {
 
 const styles = StyleSheet.create({
   button: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.small,
+    width: controls.iconButtonSize,
+    height: controls.iconButtonSize,
+    borderRadius: controls.compactRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.section,
+    backgroundColor: controls.controlSurfaceStrong,
     alignItems: "center",
     justifyContent: "center"
   },
   pressed: {
-    transform: [{ scale: 0.95 }],
-    opacity: 0.9
+    transform: [{ scale: controls.pressedScale }],
+    opacity: 0.92
   }
 });

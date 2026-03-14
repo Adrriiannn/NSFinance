@@ -288,7 +288,7 @@ export default function PlannerScreen() {
           </Pressable>
           <Pressable
             style={styles.sparkleButton}
-            onPress={() => router.push("/companion" as never)}
+            onPress={() => router.push("/companion?source=app&sourceTab=planner" as never)}
           >
             <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
           </Pressable>

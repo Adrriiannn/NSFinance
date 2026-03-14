@@ -311,7 +311,7 @@ export default function DashboardTabScreen() {
           <View style={styles.headerRightActions}>
             <Pressable
               style={styles.companionButton}
-              onPress={() => router.push("/companion" as never)}
+              onPress={() => router.push("/companion?source=app&sourceTab=index" as never)}
             >
               <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
             </Pressable>

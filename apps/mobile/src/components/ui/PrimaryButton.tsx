@@ -1,7 +1,6 @@
 import { ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { palette, radius, spacing, typography } from "../../theme/tokens";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { controls, palette, typography } from "../../theme/tokens";
 
 type PrimaryButtonProps = {
   label: string;
@@ -30,7 +29,7 @@ export function PrimaryButton({
         pressed ? styles.pressed : null
       ]}
     >
-      <LinearGradient colors={["#2E6BFF", "#3B79FF", "#2459EB"]} style={styles.button}>
+      <View style={styles.button}>
         {isLoading ? (
           <ActivityIndicator color={palette.textPrimary} />
         ) : (
@@ -39,31 +38,34 @@ export function PrimaryButton({
             <Text style={styles.label}>{label}</Text>
           </>
         )}
-      </LinearGradient>
+      </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   pressable: {
-    borderRadius: radius.medium
+    borderRadius: controls.buttonRadius
   },
   button: {
-    minHeight: 50,
-    borderRadius: radius.medium,
+    minHeight: controls.primaryHeight,
+    borderRadius: controls.buttonRadius,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: spacing[8],
-    paddingHorizontal: spacing[16]
+    gap: 8,
+    paddingHorizontal: 16,
+    backgroundColor: controls.primaryFill,
+    borderWidth: 1,
+    borderColor: controls.primaryBorder
   },
   label: {
     color: palette.textPrimary,
-    ...typography.button,
-    fontWeight: "600"
+    ...typography.bodyStrong,
+    fontWeight: "700"
   },
   pressed: {
-    transform: [{ scale: 0.985 }],
+    transform: [{ scale: controls.pressedScale }],
     opacity: 0.96
   },
   disabled: {

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { controls, palette, radius, spacing, typography } from "../../theme/tokens";
 
 export type ModalSelectOption = {
   label: string;
@@ -87,22 +87,23 @@ const styles = StyleSheet.create({
   },
   label: {
     color: palette.textPrimary,
-    ...typography.caption
+    ...typography.caption,
+    fontWeight: "700"
   },
   fieldButton: {
-    minHeight: 50,
-    borderRadius: 12,
+    minHeight: controls.fieldHeight,
+    borderRadius: controls.fieldRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: palette.elevatedBackground,
-    paddingHorizontal: spacing[12],
+    backgroundColor: controls.controlSurfaceMuted,
+    paddingHorizontal: spacing[16],
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing[8]
   },
   fieldButtonPressed: {
-    opacity: 0.9
+    opacity: 0.94
   },
   fieldButtonDisabled: {
     opacity: 0.6
@@ -114,12 +115,12 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.74)",
+    backgroundColor: palette.overlay,
     justifyContent: "flex-end"
   },
   sheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: radius.hero,
+    borderTopRightRadius: radius.hero,
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: "rgba(12,25,43,0.98)",
@@ -136,22 +137,24 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[8]
   },
   optionRow: {
-    minHeight: 46,
-    borderRadius: 12,
+    minHeight: 50,
+    borderRadius: controls.fieldRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: controls.controlSurface,
     justifyContent: "center",
-    paddingHorizontal: spacing[12]
+    paddingHorizontal: spacing[16]
   },
   optionRowActive: {
-    borderColor: palette.primaryGlow
+    borderColor: palette.primaryGlow,
+    backgroundColor: controls.activeFill
   },
   optionRowPressed: {
-    opacity: 0.9
+    opacity: 0.94
   },
   optionLabel: {
     color: palette.textPrimary,
-    ...typography.body2
+    ...typography.body2,
+    fontWeight: "600"
   }
 });

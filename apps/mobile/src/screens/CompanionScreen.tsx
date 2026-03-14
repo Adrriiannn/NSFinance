@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -17,8 +18,10 @@ import {
   TextInput,
   View
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { FloatingBottomNav } from "../components/layout/FloatingBottomNav";
+import { appBottomNavItems, expenseBottomNavItems } from "../components/layout/bottomNavConfigs";
 import { GlassCard } from "../components/ui/GlassCard";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconButton } from "../components/ui/IconButton";
 import { PrimaryButton } from "../components/ui/PrimaryButton";
 import { ScreenContainer } from "../components/ui/ScreenContainer";
@@ -31,15 +34,7 @@ import {
   setCompanionChats
 } from "../features/planner/chatHistory";
 import { getFloatingTabBarContentInset } from "../theme/insets";
-import {
-  navigation as navMetrics,
-  palette,
-  radius,
-  shadows,
-  spacing,
-  surfaces,
-  typography
-} from "../theme/tokens";
+import { palette, radius, spacing, typography } from "../theme/tokens";
 
 type PromptSeed = {
   text: string;
@@ -243,13 +238,6 @@ const sortChatsByPinAndRecency = (items: CompanionChat[]): CompanionChat[] => {
   });
 };
 
-const companionBottomNav = [
-  { key: "home", label: "Home", icon: "sparkles-outline", href: "/(tabs)" },
-  { key: "accounts", label: "Accounts", icon: "wallet-outline", href: "/(tabs)/accounts" },
-  { key: "activity", label: "Activity", icon: "swap-horizontal-outline", href: "/(tabs)/activity" },
-  { key: "planner", label: "Planner", icon: "calendar-outline", href: "/(tabs)/planner" }
-] as const;
-
 const createChat = (): CompanionChat => {
   const now = new Date().toISOString();
   return {
@@ -374,9 +362,54 @@ function rankPrompts(input: string) {
   return sorted.slice(0, 10).map((item) => item.prompt.text);
 }
 
-export default function PlannerCompanionScreen() {
+type CompanionScreenProps = {
+  sourceOverride?: "app" | "expense";
+  sourceTabOverride?: "index" | "accounts" | "activity" | "planner";
+};
+
+export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverride }: CompanionScreenProps = {}) {
+  const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourceExpenseTab?: string }>();
   const router = useRouter();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const source = sourceOverride ?? (params.source === "expense" ? "expense" : "app");
+  const sourceTab = sourceTabOverride ?? (
+    params.sourceTab === "index" || params.sourceTab === "accounts" || params.sourceTab === "activity" || params.sourceTab === "planner"
+      ? params.sourceTab
+      : "planner"
+  );
+  const bottomNavItems = source === "expense" ? expenseBottomNavItems : appBottomNavItems;
+  const activeBottomKey = source === "expense" ? "ai" : sourceTab;
+  const sourceExpenseTab = params.sourceExpenseTab === "overview" || params.sourceExpenseTab === "graphs" || params.sourceExpenseTab === "add"
+    ? params.sourceExpenseTab
+    : "overview";
+  const fallbackCompanionHref = source === "expense"
+    ? sourceExpenseTab === "graphs"
+      ? "/(tabs)/planner/expense-tracker/graphs"
+      : sourceExpenseTab === "add"
+        ? "/(tabs)/planner/expense-tracker/add"
+        : "/(tabs)/planner/expense-tracker/overview"
+    : sourceTab === "index"
+      ? "/(tabs)"
+      : sourceTab === "accounts"
+        ? "/(tabs)/accounts"
+        : sourceTab === "activity"
+          ? "/(tabs)/activity"
+          : "/(tabs)/planner";
+
+  const handleBackPress = () => {
+    if (source === "expense") {
+      router.replace(fallbackCompanionHref as never);
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+
+    router.replace(fallbackCompanionHref as never);
+  };
   const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
   const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
   const [isReady, setIsReady] = useState(false);
@@ -793,7 +826,7 @@ export default function PlannerCompanionScreen() {
       >
         <View style={styles.headerRow}>
           <IconButton
-            onPress={() => router.back()}
+            onPress={handleBackPress}
             icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
           />
           <Text style={styles.headerTitle}>NS Companion</Text>
@@ -926,28 +959,35 @@ export default function PlannerCompanionScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      <View pointerEvents="box-none" style={styles.bottomBarWrap}>
-        <View
-          style={[
-            styles.bottomBar,
-            { bottom: Math.max(insets.bottom, 8) + navMetrics.floatingTabBarOffset }
-          ]}
-        >
-          {companionBottomNav.map((item, index) => (
-            <View key={item.key} style={styles.bottomBarItemWrap}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => router.replace(item.href as never)}
-                style={({ pressed }) => [styles.bottomBarItem, pressed ? styles.bottomBarItemPressed : null]}
-              >
-                <Ionicons name={item.icon} size={18} color={palette.textSecondary} />
-                <Text style={styles.bottomBarLabel}>{item.label}</Text>
-              </Pressable>
-              {index < companionBottomNav.length - 1 ? <View style={styles.bottomBarSeparator} /> : null}
-            </View>
-          ))}
-        </View>
-      </View>
+      <FloatingBottomNav
+        items={bottomNavItems}
+        activeKey={activeBottomKey}
+        onPressItem={(item) => {
+          if (item.key === activeBottomKey) {
+            return;
+          }
+
+          const href = source === "expense"
+            ? {
+                overview: "/(tabs)/planner/expense-tracker/overview",
+                graphs: "/(tabs)/planner/expense-tracker/graphs",
+                add: "/(tabs)/planner/expense-tracker/add",
+                ai: "/companion/expense"
+              }[item.key]
+            : {
+                index: "/(tabs)",
+                accounts: "/(tabs)/accounts",
+                activity: "/(tabs)/activity",
+                planner: "/(tabs)/planner"
+              }[item.key];
+
+          if (!href) {
+            return;
+          }
+
+          router.replace(href as never);
+        }}
+      />
 
       <Modal visible={historyVisible} transparent animationType="fade" onRequestClose={() => setHistoryVisible(false)}>
         <Pressable style={styles.historyOverlay} onPress={() => setHistoryVisible(false)}>
@@ -1183,50 +1223,6 @@ const styles = StyleSheet.create({
   },
   keyboardWrap: {
     flex: 1
-  },
-  bottomBarWrap: {
-    ...StyleSheet.absoluteFillObject
-  },
-  bottomBar: {
-    position: "absolute",
-    left: navMetrics.floatingTabBarSideInset,
-    right: navMetrics.floatingTabBarSideInset,
-    minHeight: navMetrics.floatingTabBarHeight,
-    borderRadius: radius.large,
-    backgroundColor: surfaces.tabBar,
-    borderWidth: 1,
-    borderColor: "rgba(2, 8, 17, 0.95)",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: spacing[8],
-    paddingVertical: spacing[8],
-    ...shadows.floating
-  },
-  bottomBarItemWrap: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center"
-  },
-  bottomBarItem: {
-    flex: 1,
-    minHeight: 54,
-    borderRadius: radius.medium,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3
-  },
-  bottomBarItemPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.98 }]
-  },
-  bottomBarSeparator: {
-    width: 1,
-    height: 26,
-    backgroundColor: "rgba(226,236,255,0.04)"
-  },
-  bottomBarLabel: {
-    color: palette.textSecondary,
-    ...typography.caption
   },
   headerRow: {
     flexDirection: "row",
