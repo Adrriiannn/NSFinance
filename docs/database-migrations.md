@@ -73,6 +73,7 @@ If the migration bundle fails, the workflow stops and the API deploy does not co
 ## Notes on secrets
 
 - `PROD_DB_CONNECTION_STRING` is passed to the migration bundle as a workflow secret.
+- During bundle execution, GitHub Actions maps that secret into `NSFINANCE_DB_CONNECTION_STRING`, `NSFINTECH_DB_CONNECTION_STRING`, and `ConnectionStrings__DefaultConnection` so the API's runtime/design-time configuration can resolve it consistently.
 - Do not hardcode connection strings in the repository.
 - Do not print the connection string in workflow logs.
 - GitHub Actions masks secret values automatically, but workflow steps should still avoid echoing them.
