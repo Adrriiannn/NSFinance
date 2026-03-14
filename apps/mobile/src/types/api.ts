@@ -402,6 +402,10 @@ export type ConnectedBanksOverviewDto = {
   attentionConnections: BankConnectionDto[];
 };
 
+export type StartTrueLayerLinkRequest = {
+  appReturnUri?: string | null;
+};
+
 export type LinkedBankAccountDto = {
   id: string;
   connectionId: string;

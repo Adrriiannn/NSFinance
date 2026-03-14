@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from "react-native";
 import type { TransactionDto } from "../../types/api";
 import { palette, radius, spacing, surfaces, typography } from "../../theme/tokens";
 import { AmountText } from "../ui/AmountText";
@@ -14,16 +14,24 @@ type TransactionRowProps = {
   transaction: TransactionDto;
   index?: number;
   onPress?: () => void;
+  onLongPress?: () => void;
+  onPressOut?: () => void;
+  delayLongPress?: number;
   metadataOverride?: string;
   showTimestamp?: boolean;
+  rowStyle?: StyleProp<ViewStyle>;
 };
 
 export function TransactionRow({
   transaction,
   index = 0,
   onPress,
+  onLongPress,
+  onPressOut,
+  delayLongPress,
   metadataOverride,
-  showTimestamp = false
+  showTimestamp = false,
+  rowStyle
 }: TransactionRowProps) {
   const plannerStore = usePlannerStore();
   const opacity = useRef(new Animated.Value(0)).current;
@@ -55,8 +63,11 @@ export function TransactionRow({
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
       <Pressable
         onPress={onPress}
-        disabled={!onPress}
-        style={({ pressed }) => [styles.row, pressed ? styles.pressed : null]}
+        onLongPress={onLongPress}
+        onPressOut={onPressOut}
+        delayLongPress={delayLongPress}
+        disabled={!onPress && !onLongPress}
+        style={({ pressed }) => [styles.row, rowStyle, pressed ? styles.pressed : null]}
       >
         <View
           style={[

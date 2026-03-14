@@ -45,6 +45,29 @@ public class AuthAndTrustIntegrationTests
         Assert.Single(await harness.DbContext.Users.ToListAsync());
     }
 
+
+    [Fact]
+    public async Task RegistrationFlow_DefaultsProfileBioToEmpty()
+    {
+        await using var harness = new TestHarness();
+
+        var result = await harness.AuthService.RegisterAsync(
+            new RegisterRequest(
+                "register.empty-bio@test.local",
+                "ValidPassword123",
+                "Empty Bio User",
+                "UTC",
+                "en-US",
+                "EUR",
+                new DeviceContextDto("device-b", "Phone", "ios", "18", "1.0.0")),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+
+        var user = await harness.DbContext.Users.SingleAsync(x => x.NormalizedEmail == "register.empty-bio@test.local");
+        Assert.Null(user.ProfileSubtitle);
+    }
+
     [Fact]
     public async Task LoginFlow_HandlesValidAndInvalidCredentials()
     {

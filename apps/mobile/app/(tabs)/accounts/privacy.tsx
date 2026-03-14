@@ -19,6 +19,7 @@ import {
 import {
   useMyDeletionRequestsQuery
 } from "../../../src/features/support/useSupport";
+import { showFlashMessage } from "../../../src/lib/flashMessage";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
 
 type PrivacyFlags = {
@@ -61,7 +62,6 @@ export default function PrivacySettingsScreen() {
   const deletionRequestsQuery = useMyDeletionRequestsQuery();
 
   const [flags, setFlags] = useState<PrivacyFlags>(defaultFlags);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!preferencesQuery.data) {
@@ -96,34 +96,39 @@ export default function PrivacySettingsScreen() {
   );
 
   const saveFlags = async () => {
-    setSaveMessage(null);
+    try {
+      await updatePreferencesMutation.mutateAsync({
+        adviceTonePreference: preferencesQuery.data?.adviceTonePreference ?? "balanced",
+        digestFrequency: preferencesQuery.data?.digestFrequency ?? "weekly",
+        reminderPreference: preferencesQuery.data?.reminderPreference ?? "important_only",
+        notificationPreferencesJson: JSON.stringify({
+          personalizedNotificationsEnabled: flags.personalizedNotificationsEnabled
+        }),
+        privacyPreferencesJson: JSON.stringify({
+          aiAnalysisEnabled: flags.aiAnalysisEnabled,
+          aiSummariesEnabled: flags.aiSummariesEnabled,
+          aiSuggestionsEnabled: flags.aiSuggestionsEnabled,
+          personalizedInsightsEnabled: flags.personalizedInsightsEnabled,
+          analyticsEnabled: flags.analyticsEnabled
+        }),
+        essentialCategoryPreferencesJson: preferencesQuery.data?.essentialCategoryPreferencesJson ?? "{}",
+        futureGoalConfigurationJson: preferencesQuery.data?.futureGoalConfigurationJson ?? "{}"
+      });
 
-    await updatePreferencesMutation.mutateAsync({
-      adviceTonePreference: preferencesQuery.data?.adviceTonePreference ?? "balanced",
-      digestFrequency: preferencesQuery.data?.digestFrequency ?? "weekly",
-      reminderPreference: preferencesQuery.data?.reminderPreference ?? "important_only",
-      notificationPreferencesJson: JSON.stringify({
-        personalizedNotificationsEnabled: flags.personalizedNotificationsEnabled
-      }),
-      privacyPreferencesJson: JSON.stringify({
-        aiAnalysisEnabled: flags.aiAnalysisEnabled,
-        aiSummariesEnabled: flags.aiSummariesEnabled,
-        aiSuggestionsEnabled: flags.aiSuggestionsEnabled,
-        personalizedInsightsEnabled: flags.personalizedInsightsEnabled,
-        analyticsEnabled: flags.analyticsEnabled
-      }),
-      essentialCategoryPreferencesJson: preferencesQuery.data?.essentialCategoryPreferencesJson ?? "{}",
-      futureGoalConfigurationJson: preferencesQuery.data?.futureGoalConfigurationJson ?? "{}"
-    });
+      await updateConsentMutation.mutateAsync({
+        consentType: "marketing_communications",
+        status: flags.analyticsEnabled ? "granted" : "denied",
+        source: "privacy_settings",
+        metadataJson: JSON.stringify({ analyticsEnabled: flags.analyticsEnabled })
+      });
 
-    await updateConsentMutation.mutateAsync({
-      consentType: "marketing_communications",
-      status: flags.analyticsEnabled ? "granted" : "denied",
-      source: "privacy_settings",
-      metadataJson: JSON.stringify({ analyticsEnabled: flags.analyticsEnabled })
-    });
-
-    setSaveMessage("Privacy settings updated.");
+      showFlashMessage("Privacy settings updated.", { tone: "success" });
+    } catch (error) {
+      showFlashMessage(error instanceof Error ? error.message : "Could not update privacy settings.", {
+        tone: "error",
+        durationMs: 3200
+      });
+    }
   };
 
   return (
@@ -235,8 +240,6 @@ export default function PrivacySettingsScreen() {
             ))}
           </GlassCard>
 
-          {saveMessage ? <Text style={styles.saveText}>{saveMessage}</Text> : null}
-
           <PrimaryButton
             label="Save privacy settings"
             onPress={() => {
@@ -330,3 +333,5 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+
+

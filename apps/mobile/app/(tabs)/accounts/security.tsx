@@ -35,6 +35,7 @@ import {
   useDisconnectBankConnectionMutation
 } from "../../../src/features/banking/useBanking";
 import { ApiClientError, formatUnknownError } from "../../../src/lib/api/errors";
+import { showFlashMessage } from "../../../src/lib/flashMessage";
 import type { BankConnectionStatus } from "../../../src/types/api";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
 import {
@@ -140,7 +141,7 @@ export default function SecuritySettingsScreen() {
     },
     onError: async (error, _sessionId, context) => {
       if (isSessionNotFoundError(error)) {
-        setSecurityMessage("This session had already ended and was removed.");
+        showFlashMessage("This session had already ended and was removed.", { tone: "info" });
         await queryClient.invalidateQueries({ queryKey: sessionKey });
         return;
       }
@@ -149,10 +150,10 @@ export default function SecuritySettingsScreen() {
         queryClient.setQueryData(sessionKey, context.previousSessions);
       }
 
-      setSecurityMessage(formatUnknownError(error));
+      showFlashMessage(formatUnknownError(error), { tone: "error", durationMs: 2800 });
     },
     onSuccess: async () => {
-      setSecurityMessage("Session terminated.");
+      showFlashMessage("Session terminated.", { tone: "success" });
       await queryClient.invalidateQueries({ queryKey: sessionKey });
     }
   });
@@ -165,7 +166,6 @@ export default function SecuritySettingsScreen() {
   });
 
   const [biometricEnabled, setBiometricEnabled] = useState(false);
-  const [securityMessage, setSecurityMessage] = useState<string | null>(null);
   const [disconnectingConnectionId, setDisconnectingConnectionId] = useState<string | null>(null);
 
   const [passwordCodeModalVisible, setPasswordCodeModalVisible] = useState(false);
@@ -246,7 +246,7 @@ export default function SecuritySettingsScreen() {
       return uri;
     },
     onSuccess: (uri) => {
-      setSecurityMessage(`Export package ready at ${uri}`);
+      showFlashMessage(`Export package ready at ${uri}`, { tone: "success", durationMs: 2600 });
     },
     onError: async (error) => {
       if (
@@ -258,7 +258,7 @@ export default function SecuritySettingsScreen() {
           "This download has expired. Please generate the file again."
         );
       } else {
-        setSecurityMessage(formatUnknownError(error));
+        showFlashMessage(formatUnknownError(error), { tone: "error", durationMs: 2800 });
       }
 
       await queryClient.invalidateQueries({ queryKey: ["support", "export-requests"] });
@@ -347,22 +347,21 @@ export default function SecuritySettingsScreen() {
       primaryFinancialConcern: profileQuery.data.primaryFinancialConcern
     });
 
-    setSecurityMessage("Security settings updated.");
+    showFlashMessage("Security settings updated.", { tone: "success" });
   };
 
   const startPasswordChangeFlow = async () => {
     setPasswordCode("");
     setPasswordCodeError(null);
-    setSecurityMessage(null);
     try {
       const response = await requestPasswordChangeCode();
       setPasswordCodeModalVisible(true);
 
       if (response.debugToken) {
-        setSecurityMessage(`Dev code: ${response.debugToken}`);
+        showFlashMessage(`Dev code: ${response.debugToken}`, { tone: "info", durationMs: 5000 });
       }
     } catch (error) {
-      setSecurityMessage(error instanceof Error ? error.message : "Could not request password code.");
+      showFlashMessage(error instanceof Error ? error.message : "Could not request password code.", { tone: "error", durationMs: 3200 });
     }
   };
 
@@ -394,9 +393,9 @@ export default function SecuritySettingsScreen() {
       setNewPassword("");
       setConfirmNewPassword("");
       setVerifiedPasswordCode("");
-      setSecurityMessage("Password updated successfully.");
+      showFlashMessage("Password updated successfully.", { tone: "success" });
     } catch (error) {
-      setSecurityMessage(error instanceof Error ? error.message : "Could not update password.");
+      showFlashMessage(error instanceof Error ? error.message : "Could not update password.", { tone: "error", durationMs: 3200 });
     }
   };
 
@@ -413,10 +412,10 @@ export default function SecuritySettingsScreen() {
       setDeletionCodeModalVisible(true);
 
       if (response.debugToken) {
-        setSecurityMessage(`Dev deletion code: ${response.debugToken}`);
+        showFlashMessage(`Dev deletion code: ${response.debugToken}`, { tone: "info", durationMs: 5000 });
       }
     } catch (error) {
-      setSecurityMessage(error instanceof Error ? error.message : "Could not request deletion code.");
+      showFlashMessage(error instanceof Error ? error.message : "Could not request deletion code.", { tone: "error", durationMs: 3200 });
     }
   };
 
@@ -431,7 +430,7 @@ export default function SecuritySettingsScreen() {
       setDeletionCode("");
       setDeletionNote("");
       setDeletionConfirmationText("");
-      setSecurityMessage("Deletion request submitted.");
+      showFlashMessage("Deletion request submitted.", { tone: "success" });
     } catch {
       setDeletionCode("");
       setDeletionCodeError("The code is wrong.");
@@ -443,12 +442,11 @@ export default function SecuritySettingsScreen() {
 
   const handleDisconnectBank = async (connectionId: string) => {
     setDisconnectingConnectionId(connectionId);
-    setSecurityMessage(null);
     try {
       await disconnectMutation.mutateAsync(connectionId);
-      setSecurityMessage("Bank disconnected and imported data removed.");
+      showFlashMessage("Bank disconnected and imported data removed.", { tone: "success" });
     } catch (error) {
-      setSecurityMessage(formatUnknownError(error));
+      showFlashMessage(formatUnknownError(error), { tone: "error", durationMs: 2800 });
     } finally {
       setDisconnectingConnectionId(null);
     }
@@ -743,7 +741,6 @@ export default function SecuritySettingsScreen() {
           ))}
         </GlassCard>
 
-        {securityMessage ? <Text style={styles.successText}>{securityMessage}</Text> : null}
         {updateProfileMutation.isError ? (
           <Text style={styles.errorText}>{formatUnknownError(updateProfileMutation.error)}</Text>
         ) : null}
@@ -966,6 +963,8 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong
   }
 });
+
+
 
 
 

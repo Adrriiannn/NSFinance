@@ -1,8 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { subscribeToFlashMessages, type FlashMessagePayload } from "../../lib/flashMessage";
 import { palette, spacing, typography } from "../../theme/tokens";
+
+const toneStyles = {
+  success: {
+    borderColor: "rgba(28,197,131,0.5)",
+    backgroundColor: "rgba(10,58,40,0.92)"
+  },
+  error: {
+    borderColor: "rgba(255,120,120,0.54)",
+    backgroundColor: "rgba(71,22,22,0.94)"
+  },
+  info: {
+    borderColor: "rgba(127,174,255,0.52)",
+    backgroundColor: "rgba(12,34,68,0.94)"
+  }
+} as const;
 
 export function GlobalFlashToast() {
   const insets = useSafeAreaInsets();
@@ -63,6 +78,14 @@ export function GlobalFlashToast() {
     };
   }, []);
 
+  const toneStyle = useMemo(() => {
+    if (!payload) {
+      return toneStyles.success;
+    }
+
+    return toneStyles[payload.tone];
+  }, [payload]);
+
   if (!payload) {
     return null;
   }
@@ -72,6 +95,7 @@ export function GlobalFlashToast() {
       <Animated.View
         style={[
           styles.toast,
+          toneStyle,
           {
             marginTop: toastTopOffset,
             opacity: toastOpacity,
@@ -97,15 +121,15 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing[16],
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "rgba(28,197,131,0.5)",
-    backgroundColor: "rgba(10,58,40,0.92)",
     minHeight: 38,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    paddingHorizontal: spacing[16]
   },
   toastText: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "700",
+    textAlign: "center"
   }
 });

@@ -3,6 +3,7 @@ import type {
   BankConnectionDto,
   ConnectedBanksOverviewDto,
   LinkedBankAccountDto,
+  StartTrueLayerLinkRequest,
   StartTrueLayerLinkResponse,
   SyncConnectionResponse
 } from "../../types/api";
@@ -23,9 +24,10 @@ export function getLinkedBankAccounts(): Promise<LinkedBankAccountDto[]> {
   return apiRequest<LinkedBankAccountDto[]>("/api/banking/accounts");
 }
 
-export function startTrueLayerLink(): Promise<StartTrueLayerLinkResponse> {
+export function startTrueLayerLink(payload: StartTrueLayerLinkRequest): Promise<StartTrueLayerLinkResponse> {
   return apiRequest<StartTrueLayerLinkResponse>("/api/banking/truelayer/link", {
-    method: "POST"
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 

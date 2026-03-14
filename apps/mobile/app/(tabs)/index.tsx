@@ -21,6 +21,7 @@ import {
 import { useTransactionsQuery } from "../../src/features/transactions/useTransactions";
 import { useEntranceAnimation } from "../../src/hooks/useEntranceAnimation";
 import { useLocalClock } from "../../src/hooks/useLocalClock";
+import { useMainTabSwipeNavigation } from "../../src/components/layout/useHorizontalSiblingSwipe";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { usePlannerStore } from "../../src/providers/PlannerProvider";
 import { getFloatingTabBarContentInset } from "../../src/theme/insets";
@@ -44,6 +45,7 @@ type HeroCarouselItem = HeroCardItem & {
 
 export default function DashboardTabScreen() {
   const router = useRouter();
+  const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)");
   const insets = useSafeAreaInsets();
   const { session } = useAuthSession();
   const plannerStore = usePlannerStore();
@@ -69,9 +71,8 @@ export default function DashboardTabScreen() {
     (summaryQuery.isLoading && !summaryQuery.data) ||
     (accountsQuery.isLoading && !accountsQuery.data) ||
     (transactionsQuery.isLoading && !transactionsQuery.data);
-  const refreshing =
-    (summaryQuery.isRefetching || accountsQuery.isRefetching || transactionsQuery.isRefetching) &&
-    !isInitialLoading;
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const refreshing = isManualRefreshing && !isInitialLoading;
   const summaryData = summaryQuery.data;
   const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
   const heroScrollRef = useRef<ScrollView | null>(null);
@@ -182,20 +183,30 @@ export default function DashboardTabScreen() {
     spacing[8],
     getFloatingTabBarContentInset(insets.bottom, spacing[8])
   );
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(async () => {
+    setIsManualRefreshing(true);
     logHomeEvent("home_refresh_start", {
       summaryStale: summaryQuery.isStale,
       accountsStale: accountsQuery.isStale,
       transactionsStale: transactionsQuery.isStale
     });
-    void Promise.all([summaryQuery.refetch(), accountsQuery.refetch(), transactionsQuery.refetch()]).then(() => {
+
+    try {
+      await Promise.all([summaryQuery.refetch(), accountsQuery.refetch(), transactionsQuery.refetch()]);
       logHomeEvent("home_refresh_complete", {
         accountCount: accountsQuery.data?.length ?? 0,
         transactionCount: transactionsQuery.data?.length ?? 0,
         previewCount: summaryQuery.data?.accountCount ?? 0
       });
-    });
-  };
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  }, [
+    accountsQuery,
+    logHomeEvent,
+    summaryQuery,
+    transactionsQuery
+  ]);
   const loadError = summaryQuery.error ?? accountsQuery.error ?? transactionsQuery.error;
   const handleHeroPress = (item: HeroCardItem) => {
     if (!item.accountId) {
@@ -284,7 +295,9 @@ export default function DashboardTabScreen() {
     <ScreenContainer
       scrollable={false}
       contentStyle={styles.content}
+      gestureHandlers={gestureHandlers}
     >
+      <Animated.View style={[styles.tabStage, animatedStyle]}>
       <View style={styles.headerTopBar}>
         <View style={styles.headerRow}>
           <View>
@@ -499,6 +512,7 @@ export default function DashboardTabScreen() {
           </>
         ) : null}
       </ScrollView>
+      </Animated.View>
     </ScreenContainer>
   );
 }
@@ -518,6 +532,9 @@ const styles = StyleSheet.create({
   content: {
     paddingTop: layout.screenTopPadding,
     paddingBottom: 0
+  },
+  tabStage: {
+    flex: 1
   },
   scrollContent: {
     gap: spacing[16]
@@ -615,4 +632,3 @@ const styles = StyleSheet.create({
     gap: spacing[16]
   }
 });
-

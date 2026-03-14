@@ -9,6 +9,7 @@ import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { ApiClientError } from "../../../src/lib/api/errors";
+import { showFlashMessage } from "../../../src/lib/flashMessage";
 import {
   getSessions,
   logoutAll,
@@ -59,7 +60,10 @@ export default function SessionsScreen() {
     },
     onError: async (error, _sessionId, context) => {
       if (isSessionNotFoundError(error)) {
-        await queryClient.invalidateQueries({ queryKey: sessionKey });
+        showFlashMessage("That session was already gone.", { tone: "info" });
+        showFlashMessage("Session revoked.", { tone: "success" });
+      showFlashMessage("All other sessions logged out.", { tone: "success" });
+      await queryClient.invalidateQueries({ queryKey: sessionKey });
         return;
       }
 
@@ -180,3 +184,5 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+
+

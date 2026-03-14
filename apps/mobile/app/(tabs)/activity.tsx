@@ -16,6 +16,7 @@ import { TransactionRow } from "../../src/components/transactions/TransactionRow
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { FloatingActionButton } from "../../src/components/ui/FloatingActionButton";
 import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
+import { useMainTabSwipeNavigation } from "../../src/components/layout/useHorizontalSiblingSwipe";
 import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
 import {
@@ -30,9 +31,14 @@ import { layout, palette, spacing, typography } from "../../src/theme/tokens";
 import type { TransactionDto } from "../../src/types/api";
 
 const filters: ActivityFilter[] = ["All", "Income", "Expense", "Online", "In person"];
+const transactionSwipeHoldDelayMs = 1000;
 
 export default function ActivityTabScreen() {
   const router = useRouter();
+  const pageSwipeBlockedRef = useRef(false);
+  const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/activity", {
+    isBlockedRef: pageSwipeBlockedRef
+  });
   const params = useLocalSearchParams<{ focusTransactionId?: string; focusNonce?: string }>();
   const insets = useSafeAreaInsets();
   const plannerStore = usePlannerStore();
@@ -45,7 +51,8 @@ export default function ActivityTabScreen() {
   const handledFocusTransactionIdRef = useRef<string | null>(null);
   const transactionsQuery = useTransactionsQuery();
   const isInitialLoading = transactionsQuery.isLoading && !transactionsQuery.data;
-  const refreshing = transactionsQuery.isRefetching && !isInitialLoading;
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const refreshing = isManualRefreshing && !isInitialLoading;
   const focusTransactionId =
     typeof params.focusTransactionId === "string" ? params.focusTransactionId : "";
   const focusNonce = typeof params.focusNonce === "string" ? params.focusNonce : "";
@@ -55,6 +62,15 @@ export default function ActivityTabScreen() {
     spacing[12],
     getFloatingFabOffset(insets.bottom, -spacing[20])
   );
+
+  const handleRefresh = useCallback(async () => {
+    setIsManualRefreshing(true);
+    try {
+      await transactionsQuery.refetch();
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  }, [transactionsQuery]);
 
   const grouped = useMemo(() => {
     const data = applyActivityFilter(transactionsQuery.data ?? [], filter);
@@ -125,7 +141,9 @@ export default function ActivityTabScreen() {
     <ScreenContainer
       scrollable={false}
       contentStyle={styles.container}
+      gestureHandlers={gestureHandlers}
     >
+      <Animated.View style={[styles.tabStage, animatedStyle]}>
       <View style={styles.headerWrap}>
         <View style={styles.selectorRow}>
           <Pressable
@@ -226,7 +244,10 @@ export default function ActivityTabScreen() {
                   })
                 }
                 highlighted={item.id === highlightedTransactionId}
-            onMarkEssential={() =>
+                onSwipeArmChange={(isArmed) => {
+                  pageSwipeBlockedRef.current = isArmed;
+                }}
+                onMarkEssential={() =>
               plannerStore.saveAnnotation({
                 transactionId: item.id,
                 type: null,
@@ -252,7 +273,7 @@ export default function ActivityTabScreen() {
               <RefreshControl
                 refreshing={refreshing}
                 onRefresh={() => {
-                  void transactionsQuery.refetch();
+                  void handleRefresh();
                 }}
                 tintColor={palette.textSecondary}
               />
@@ -266,6 +287,7 @@ export default function ActivityTabScreen() {
         onPress={() => router.push("/modals/add-transaction")}
         icon={<Ionicons name="add" size={20} color={palette.textPrimary} />}
       />
+      </Animated.View>
     </ScreenContainer>
   );
 }
@@ -275,6 +297,7 @@ function SwipeableTransactionItem({
   index,
   onPress,
   highlighted = false,
+  onSwipeArmChange,
   onMarkEssential,
   onMarkOptional
 }: {
@@ -282,6 +305,7 @@ function SwipeableTransactionItem({
   index: number;
   onPress: () => void;
   highlighted?: boolean;
+  onSwipeArmChange?: (isArmed: boolean) => void;
   onMarkEssential: () => void;
   onMarkOptional: () => void;
 }) {
@@ -292,6 +316,9 @@ function SwipeableTransactionItem({
   >(
     null
   );
+  const [isSwipeArmed, setIsSwipeArmed] = useState(false);
+  const transactionSwipeArmedRef = useRef(false);
+  const armExpiryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isExpense = transaction.direction === "Expense";
 
   const rightLabelOpacity = useMemo(
@@ -312,6 +339,37 @@ function SwipeableTransactionItem({
       }),
     [translateX]
   );
+
+  const disarmTransactionSwipe = useCallback(() => {
+    if (armExpiryTimeoutRef.current) {
+      clearTimeout(armExpiryTimeoutRef.current);
+      armExpiryTimeoutRef.current = null;
+    }
+
+    transactionSwipeArmedRef.current = false;
+    onSwipeArmChange?.(false);
+    setIsSwipeArmed(false);
+  }, [onSwipeArmChange]);
+
+  const armTransactionSwipe = useCallback(() => {
+    if (!isExpense) {
+      return;
+    }
+
+    if (armExpiryTimeoutRef.current) {
+      clearTimeout(armExpiryTimeoutRef.current);
+    }
+
+    transactionSwipeArmedRef.current = true;
+    onSwipeArmChange?.(true);
+    setIsSwipeArmed(true);
+    armExpiryTimeoutRef.current = setTimeout(() => {
+      transactionSwipeArmedRef.current = false;
+      onSwipeArmChange?.(false);
+      setIsSwipeArmed(false);
+      armExpiryTimeoutRef.current = null;
+    }, 2500);
+  }, [isExpense, onSwipeArmChange]);
 
   const showFeedback = useCallback(
     (tone: "essential" | "optional" | "focus") => {
@@ -342,11 +400,21 @@ function SwipeableTransactionItem({
     showFeedback("focus");
   }, [highlighted, showFeedback]);
 
+  useEffect(() => () => {
+    if (armExpiryTimeoutRef.current) {
+      clearTimeout(armExpiryTimeoutRef.current);
+      armExpiryTimeoutRef.current = null;
+    }
+
+    disarmTransactionSwipe();
+  }, [disarmTransactionSwipe]);
+
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_event, gestureState) =>
           isExpense &&
+          transactionSwipeArmedRef.current &&
           Math.abs(gestureState.dx) > 14 &&
           Math.abs(gestureState.dx) > Math.abs(gestureState.dy),
         onPanResponderMove: (_event, gestureState) => {
@@ -367,6 +435,7 @@ function SwipeableTransactionItem({
             tension: 130,
             friction: 12
           }).start();
+          disarmTransactionSwipe();
         },
         onPanResponderTerminate: () => {
           Animated.spring(translateX, {
@@ -375,9 +444,10 @@ function SwipeableTransactionItem({
             tension: 130,
             friction: 12
           }).start();
+          disarmTransactionSwipe();
         }
       }),
-    [isExpense, onMarkEssential, onMarkOptional, showFeedback, translateX]
+    [disarmTransactionSwipe, isExpense, onMarkEssential, onMarkOptional, showFeedback, translateX]
   );
 
   if (!isExpense) {
@@ -412,11 +482,28 @@ function SwipeableTransactionItem({
           ]}
         />
       ) : null}
-      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
+      <Animated.View
+        style={[
+          styles.transactionSwipeWrap,
+          isSwipeArmed ? styles.transactionSwipeWrapArmed : null,
+          { transform: [{ translateX }] }
+        ]}
+        {...panResponder.panHandlers}
+      >
         <TransactionRow
           transaction={transaction}
           index={index}
-          onPress={onPress}
+          onPress={() => {
+            if (isSwipeArmed) {
+              disarmTransactionSwipe();
+              return;
+            }
+
+            onPress();
+          }}
+          onLongPress={armTransactionSwipe}
+          delayLongPress={transactionSwipeHoldDelayMs}
+          rowStyle={isSwipeArmed ? styles.transactionRowArmed : undefined}
           showTimestamp
         />
       </Animated.View>
@@ -428,6 +515,9 @@ const styles = StyleSheet.create({
   container: {
     paddingTop: layout.screenTopPadding,
     paddingBottom: 0
+  },
+  tabStage: {
+    flex: 1
   },
   headerWrap: {
     gap: spacing[12],
@@ -530,6 +620,20 @@ const styles = StyleSheet.create({
   swipeWrap: {
     position: "relative"
   },
+  transactionSwipeWrap: {
+    borderRadius: 16
+  },
+  transactionSwipeWrapArmed: {
+    shadowColor: "#6FD7FF",
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6
+  },
+  transactionRowArmed: {
+    borderColor: "rgba(111,215,255,0.58)",
+    backgroundColor: "rgba(24,48,76,0.96)"
+  },
   swipeBackdrop: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 16,
@@ -563,4 +667,6 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+
+
 

@@ -23,7 +23,7 @@ public class OpenBankingIntegrationTests
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.success@test.local");
-        var start = await harness.AuthService.StartLinkAsync(user.Id, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
@@ -56,7 +56,7 @@ public class OpenBankingIntegrationTests
             httpHandler: InvalidCodeHandler());
 
         var user = await harness.CreateUserAsync("bank.invalid-code@test.local");
-        var start = await harness.AuthService.StartLinkAsync(user.Id, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
@@ -72,6 +72,30 @@ public class OpenBankingIntegrationTests
         Assert.Equal(BankConnectionStatuses.ReauthRequired, connection.Status);
     }
 
+
+    [Fact]
+    public async Task CallbackFlow_PreservesCustomAppReturnUri_ForEnvironmentAwareReturn()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.return-uri@test.local");
+        const string appReturnUri = "exp://192.168.0.11:8081/--/modals/add-account";
+
+        var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-1", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+        Assert.NotNull(outcome.AppReturnUri);
+        Assert.StartsWith("exp://192.168.0.11:8081/--/modals/add-account", outcome.AppReturnUri, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task StartLink_InvalidConfiguration_ReturnsActionableError()
     {
@@ -83,7 +107,7 @@ public class OpenBankingIntegrationTests
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.invalid-config@test.local");
-        var result = await harness.AuthService.StartLinkAsync(user.Id, CancellationToken.None);
+        var result = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
 
         Assert.False(result.Succeeded);
         Assert.Equal("truelayer_not_configured", result.Error?.Code);
@@ -97,7 +121,7 @@ public class OpenBankingIntegrationTests
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.env-mismatch@test.local");
-        var start = await harness.AuthService.StartLinkAsync(user.Id, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var liveOptions = ValidSandboxOptions();

@@ -5,7 +5,8 @@ import {
   StyleProp,
   StyleSheet,
   View,
-  ViewStyle
+  ViewStyle,
+  type GestureResponderHandlers
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GlobalAppMenu } from "../layout/GlobalAppMenu";
@@ -20,6 +21,7 @@ type ScreenContainerProps = {
   onRefresh?: () => void;
   withBottomTabOffset?: boolean;
   bottomInsetOffset?: number;
+  gestureHandlers?: GestureResponderHandlers;
 };
 
 export function ScreenContainer({
@@ -29,7 +31,8 @@ export function ScreenContainer({
   refreshing = false,
   onRefresh,
   withBottomTabOffset = false,
-  bottomInsetOffset = 0
+  bottomInsetOffset = 0,
+  gestureHandlers
 }: ScreenContainerProps) {
   const insets = useSafeAreaInsets();
   const flattenedContentStyle = StyleSheet.flatten(contentStyle) ?? {};
@@ -44,7 +47,7 @@ export function ScreenContainer({
   const computedBottomInset = floatingTabInset + bottomInsetOffset;
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]} {...gestureHandlers}>
       <View pointerEvents="none" style={styles.backgroundGlowTop} />
       <View pointerEvents="none" style={styles.backgroundGlowBottom} />
       <GlobalAppMenu topOffset={menuAbsoluteTop} />

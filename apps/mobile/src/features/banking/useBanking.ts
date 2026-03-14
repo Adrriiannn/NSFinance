@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type { ConnectedBanksOverviewDto } from "../../types/api";
 import {
@@ -15,14 +16,16 @@ export function useBankConnectionsQuery(enabled = true) {
   return useQuery({
     queryKey: queryKeys.banking.connections,
     queryFn: getBankConnections,
-    enabled
+    enabled,
+    ...nearLiveFinanceQueryOptions
   });
 }
 
 export function useConnectedBanksQuery() {
   return useQuery({
     queryKey: queryKeys.banking.connectedBanks,
-    queryFn: getConnectedBanks
+    queryFn: getConnectedBanks,
+    ...nearLiveFinanceQueryOptions
   });
 }
 
@@ -30,14 +33,16 @@ export function useBankConnectionQuery(connectionId: string | null) {
   return useQuery({
     queryKey: connectionId ? queryKeys.banking.connection(connectionId) : queryKeys.banking.connections,
     queryFn: () => getBankConnection(connectionId as string),
-    enabled: Boolean(connectionId)
+    enabled: Boolean(connectionId),
+    ...nearLiveFinanceQueryOptions
   });
 }
 
 export function useLinkedBankAccountsQuery() {
   return useQuery({
     queryKey: queryKeys.banking.accounts,
-    queryFn: getLinkedBankAccounts
+    queryFn: getLinkedBankAccounts,
+    ...nearLiveFinanceQueryOptions
   });
 }
 

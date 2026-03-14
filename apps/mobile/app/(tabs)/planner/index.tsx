@@ -1,7 +1,8 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   Modal,
   Pressable,
   RefreshControl,
@@ -16,6 +17,7 @@ import { SpendTrendGraph } from "../../../src/components/planner/SpendTrendGraph
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
+import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
 import { useDashboardSummaryQuery } from "../../../src/features/dashboard/useDashboardSummaryQuery";
@@ -73,6 +75,7 @@ function splitAbsoluteMonth(absoluteMonth: number) {
 
 export default function PlannerScreen() {
   const router = useRouter();
+  const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/planner");
   const insets = useSafeAreaInsets();
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
@@ -91,6 +94,7 @@ export default function PlannerScreen() {
   const [pickerTarget, setPickerTarget] = useState<"current" | "previous" | null>(null);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
   const [pickerMonth, setPickerMonth] = useState(() => new Date().getMonth());
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [yearRailWidth, setYearRailWidth] = useState(0);
   const yearWheelRef = useRef<ScrollView | null>(null);
   const monthWheelRef = useRef<ScrollView | null>(null);
@@ -107,8 +111,7 @@ export default function PlannerScreen() {
   const isLoading =
     (dashboardQuery.isLoading && !dashboardQuery.data) ||
     (transactionsQuery.isLoading && !transactionsQuery.data);
-  const refreshing =
-    (dashboardQuery.isRefetching || transactionsQuery.isRefetching) && !isLoading;
+  const refreshing = isManualRefreshing && !isLoading;
   const error = dashboardQuery.error ?? transactionsQuery.error;
   const transactions = useMemo(() => transactionsQuery.data ?? [], [transactionsQuery.data]);
   const hasPlanningData = (dashboardQuery.data?.accountCount ?? 0) > 0 && transactions.length > 0;
@@ -116,6 +119,15 @@ export default function PlannerScreen() {
     spacing[12],
     getFloatingTabBarContentInset(insets.bottom, spacing[16])
   );
+  const handleRefresh = useCallback(async () => {
+    setIsManualRefreshing(true);
+    try {
+      await Promise.all([dashboardQuery.refetch(), transactionsQuery.refetch()]);
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  }, [dashboardQuery, transactionsQuery]);
+
   const yearOptions = useMemo(() => {
     const currentYear = clockNow.getFullYear();
     const minYear = Math.min(currentYear - 20, pickerYear - 8);
@@ -264,7 +276,8 @@ export default function PlannerScreen() {
   }, [pickerOpen, pickerYear, yearOptions, yearRailWidth]);
 
   return (
-    <ScreenContainer scrollable={false} contentStyle={styles.content}>
+    <ScreenContainer scrollable={false} contentStyle={styles.content} gestureHandlers={gestureHandlers}>
+      <Animated.View style={[styles.tabStage, animatedStyle]}>
       <View style={styles.topActionsBar}>
         <View style={styles.headerActionsRow}>
           <Pressable
@@ -566,6 +579,7 @@ export default function PlannerScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      </Animated.View>
     </ScreenContainer>
   );
 }
@@ -574,6 +588,9 @@ const styles = StyleSheet.create({
   content: {
     paddingTop: layout.screenTopPadding,
     paddingBottom: 0
+  },
+  tabStage: {
+    flex: 1
   },
   scrollContent: {
     gap: layout.sectionGap
@@ -868,4 +885,3 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   }
 });
-

@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
@@ -17,6 +18,7 @@ public sealed class TrueLayerAuthService(
 {
     public async Task<ServiceResult<StartTrueLayerLinkResponse>> StartLinkAsync(
         Guid userId,
+        string? appReturnUri,
         CancellationToken cancellationToken)
     {
         var configResult = configurationService.Resolve();
@@ -29,11 +31,22 @@ public sealed class TrueLayerAuthService(
         }
 
         var configuration = configResult.Value!;
+        var normalizedAppReturnUri = NormalizeAppReturnUri(appReturnUri);
         var connection = await bankConnectionService.CreateConnectionStartedAsync(
             userId,
             BankingProviders.TrueLayer,
             configuration.Environment,
             cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(normalizedAppReturnUri) && !string.IsNullOrWhiteSpace(connection.AuthStateNonce))
+        {
+            var callbackState = BuildCallbackState(connection.AuthStateNonce, normalizedAppReturnUri);
+            await bankConnectionService.UpdateAuthStateAsync(
+                connection,
+                callbackState,
+                connection.AuthStateExpiresUtc,
+                cancellationToken);
+        }
 
         var scopes = BuildScopes();
         var providers = BuildProviders(configuration.Environment);
@@ -67,9 +80,11 @@ public sealed class TrueLayerAuthService(
                 "callback_query_invalid",
                 "The callback query is invalid. Please restart the bank connection flow.",
                 StatusCodes.Status400BadRequest,
+                null,
                 null);
         }
 
+        var appReturnUri = ExtractAppReturnUri(query.State);
         var connection = await bankConnectionService.FindConnectionByStateAsync(query.State!, cancellationToken);
         if (connection is null)
         {
@@ -79,7 +94,8 @@ public sealed class TrueLayerAuthService(
                 "callback_state_invalid",
                 "The authorization state is invalid or expired. Restart connection from the app.",
                 StatusCodes.Status400BadRequest,
-                null);
+                null,
+                appReturnUri);
         }
 
         logger.LogInformation(
@@ -133,7 +149,8 @@ public sealed class TrueLayerAuthService(
                 "callback_provider_error",
                 "Bank consent was not completed. Please reconnect from the app.",
                 StatusCodes.Status400BadRequest,
-                connection.Id);
+                connection.Id,
+                appReturnUri);
         }
 
         var configResult = configurationService.Resolve();
@@ -151,7 +168,8 @@ public sealed class TrueLayerAuthService(
                 configResult.Error!.Code,
                 "Banking provider configuration is incomplete. Contact support.",
                 configResult.Error.StatusCode,
-                connection.Id);
+                connection.Id,
+                appReturnUri);
         }
 
         if (!string.Equals(connection.ProviderEnvironment, configResult.Value!.Environment, StringComparison.OrdinalIgnoreCase))
@@ -168,7 +186,8 @@ public sealed class TrueLayerAuthService(
                 "truelayer_environment_mismatch",
                 "Environment mismatch detected. Restart the connect flow in the active environment.",
                 StatusCodes.Status409Conflict,
-                connection.Id);
+                connection.Id,
+                appReturnUri);
         }
 
         await bankConnectionService.MarkConnectionStateAsync(
@@ -219,7 +238,8 @@ public sealed class TrueLayerAuthService(
                 tokenResult.Error!.Code,
                 "Authorization code could not be exchanged. Please reconnect from the app.",
                 tokenResult.Error.StatusCode,
-                connection.Id);
+                connection.Id,
+                appReturnUri);
         }
 
         logger.LogInformation(
@@ -242,7 +262,8 @@ public sealed class TrueLayerAuthService(
                 persistResult.Error!.Code,
                 "Bank linked, but secure token storage failed. Please reconnect from the app.",
                 persistResult.Error.StatusCode,
-                connection.Id);
+                connection.Id,
+                appReturnUri);
         }
 
         await bankConnectionService.MarkConnectionStateAsync(
@@ -287,7 +308,71 @@ public sealed class TrueLayerAuthService(
             BankConnectionStatuses.ConnectedPendingSync,
             "Bank linked successfully. Return to the app while we start the first sync.",
             StatusCodes.Status200OK,
-            connection.Id);
+            connection.Id,
+            appReturnUri);
+    }
+
+    private static string BuildCallbackState(string nonce, string appReturnUri)
+    {
+        return $"{nonce}.{WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(appReturnUri))}";
+    }
+
+    public static string? ExtractAppReturnUri(string? callbackState)
+    {
+        if (string.IsNullOrWhiteSpace(callbackState))
+        {
+            return null;
+        }
+
+        var separatorIndex = callbackState.IndexOf('.', StringComparison.Ordinal);
+        if (separatorIndex < 0 || separatorIndex == callbackState.Length - 1)
+        {
+            return null;
+        }
+
+        try
+        {
+            var encoded = callbackState[(separatorIndex + 1)..];
+            var decoded = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(encoded));
+            return NormalizeAppReturnUri(decoded);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? NormalizeAppReturnUri(string? appReturnUri)
+    {
+        if (string.IsNullOrWhiteSpace(appReturnUri))
+        {
+            return null;
+        }
+
+        if (!Uri.TryCreate(appReturnUri.Trim(), UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        var scheme = uri.Scheme.Trim().ToLowerInvariant();
+        var raw = uri.ToString();
+        var isSupportedScheme = scheme is "nsfinance" or "nsfinance-dev" or "exp+nsfinance-mobile" or "exp" or "exps";
+        if (!isSupportedScheme)
+        {
+            return null;
+        }
+
+        if (!raw.Contains("modals/add-account", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Fragment = string.Empty
+        };
+
+        return builder.Uri.ToString();
     }
 
     public static IReadOnlyList<string> BuildScopes()

@@ -5,4 +5,5 @@ public sealed record TrueLayerCallbackOutcome(
     string Code,
     string Message,
     int HttpStatusCode,
-    Guid? ConnectionId);
+    Guid? ConnectionId,
+    string? AppReturnUri);

@@ -339,6 +339,19 @@ public sealed class BankConnectionService(
             new PagedResponse<RawBankTransactionDto>(items, normalizedPage, normalizedPageSize, totalCount));
     }
 
+    public async Task UpdateAuthStateAsync(
+        OpenBankingConnection connection,
+        string authStateNonce,
+        DateTime? authStateExpiresUtc,
+        CancellationToken cancellationToken)
+    {
+        connection.AuthStateNonce = authStateNonce;
+        connection.AuthStateExpiresUtc = authStateExpiresUtc;
+        connection.UpdatedUtc = DateTime.UtcNow;
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task StoreTokenAsync(
         OpenBankingConnection connection,
         string encryptedRefreshToken,

@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.WebUtilities;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Services;
 
@@ -38,7 +39,7 @@ public static class TrueLayerCallbackEndpoint
         var message = WebUtility.HtmlEncode(outcome.Message);
         var statusCode = WebUtility.HtmlEncode(outcome.Code);
         var appResult = outcome.Succeeded ? "success" : "error";
-        var appReturnUrl = BuildAppReturnUrl(appResult, outcome.Code, outcome.ConnectionId);
+        var appReturnUrl = BuildAppReturnUrl(outcome.AppReturnUri, appResult, outcome.Code, outcome.ConnectionId);
         var appReturnUrlForHref = WebUtility.HtmlEncode(appReturnUrl);
         var appReturnUrlForScript = appReturnUrl.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
         var headingColor = outcome.Succeeded ? "#7ef0b8" : "#ff9f8d";
@@ -118,13 +119,23 @@ public static class TrueLayerCallbackEndpoint
                 """;
     }
 
-    private static string BuildAppReturnUrl(string result, string code, Guid? connectionId)
+    private static string BuildAppReturnUrl(string? appReturnUri, string result, string code, Guid? connectionId)
     {
-        var encodedResult = Uri.EscapeDataString(result);
-        var encodedCode = Uri.EscapeDataString(code);
-        var connectionIdFragment = connectionId.HasValue
-            ? $"&connectionId={Uri.EscapeDataString(connectionId.Value.ToString())}"
-            : string.Empty;
-        return $"nsfinance://modals/add-account?bankingResult={encodedResult}&code={encodedCode}{connectionIdFragment}";
+        var baseReturnUri = string.IsNullOrWhiteSpace(appReturnUri)
+            ? "nsfinance://modals/add-account"
+            : appReturnUri;
+
+        var parameters = new Dictionary<string, string?>
+        {
+            ["bankingResult"] = result,
+            ["code"] = code
+        };
+
+        if (connectionId.HasValue)
+        {
+            parameters["connectionId"] = connectionId.Value.ToString();
+        }
+
+        return QueryHelpers.AddQueryString(baseReturnUri, parameters);
     }
 }

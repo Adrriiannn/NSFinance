@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type {
   AccountDto,
@@ -11,7 +12,8 @@ import { createAccount, deleteAccount, getAccountById, getAccounts, updateAccoun
 export function useAccountsQuery() {
   return useQuery({
     queryKey: queryKeys.accounts.all,
-    queryFn: getAccounts
+    queryFn: getAccounts,
+    ...nearLiveFinanceQueryOptions
   });
 }
 
@@ -19,7 +21,8 @@ export function useAccountDetailQuery(accountId: string) {
   return useQuery({
     queryKey: queryKeys.accounts.detail(accountId),
     queryFn: () => getAccountById(accountId),
-    enabled: Boolean(accountId)
+    enabled: Boolean(accountId),
+    ...nearLiveFinanceQueryOptions
   });
 }
 

@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
+import * as ExpoLinking from "expo-linking";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, Linking, StyleSheet, Text, View } from "react-native";
+import { AppState, Linking as NativeLinking, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import {
   ConnectionStatusIndicator,
@@ -81,6 +82,10 @@ type PendingConsentLink = {
 };
 
 type BrowserPhase = "idle" | "opening_bank" | "awaiting_consent";
+
+function buildBankReturnUri() {
+  return ExpoLinking.createURL("/modals/add-account");
+}
 
 function formatDateAdded(createdUtc?: string | null) {
   if (!createdUtc) {
@@ -206,6 +211,9 @@ export default function AddAccountModalScreen() {
 
   const invalidatePortfolioQueries = useCallback(async () => {
     await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
       queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
       queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
@@ -343,12 +351,12 @@ export default function AddAccountModalScreen() {
   const launchConsentInBrowser = useCallback(
     async (url: string, connectionId?: string | null) => {
       logBankingEvent("browser_open_start", { connectionId: connectionId ?? pendingConnectionId });
-      const canOpen = await Linking.canOpenURL(url);
+      const canOpen = await NativeLinking.canOpenURL(url);
       if (!canOpen) {
         throw new Error("Could not open the bank consent page.");
       }
 
-      await Linking.openURL(url);
+      await NativeLinking.openURL(url);
       logBankingEvent("browser_open_complete", { connectionId: connectionId ?? pendingConnectionId });
     },
     [logBankingEvent, pendingConnectionId]
@@ -369,7 +377,8 @@ export default function AddAccountModalScreen() {
       processedDeepLinkRef.current = null;
       logBankingEvent("connect_start", {
         connectionId: response.connectionId,
-        expiresAtUtc: response.expiresAtUtc
+        expiresAtUtc: response.expiresAtUtc,
+        appReturnUri: buildBankReturnUri()
       });
       await launchConsentInBrowser(response.authorizationUrl, response.connectionId);
       setBrowserPhase("awaiting_consent");
@@ -381,7 +390,7 @@ export default function AddAccountModalScreen() {
   const handleConnectBank = async () => {
     try {
       setBrowserPhase("opening_bank");
-      const response = await startLinkMutation.mutateAsync();
+      const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankReturnUri() });
       await beginConsentSession(response);
     } catch (error) {
       setBrowserPhase("idle");
@@ -399,7 +408,7 @@ export default function AddAccountModalScreen() {
       return;
     }
 
-    const response = await startLinkMutation.mutateAsync();
+    const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankReturnUri() });
     await beginConsentSession(response);
   };
 

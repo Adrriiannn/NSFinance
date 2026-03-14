@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
   Modal,
   Pressable,
   ScrollView,
@@ -19,6 +20,7 @@ import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
+import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { SectionHeader } from "../../../src/components/ui/SectionHeader";
 import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
@@ -46,6 +48,7 @@ const accountTypeOptions: { label: string; value: AccountType }[] = [
 
 export default function AccountsTabScreen() {
   const router = useRouter();
+  const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/accounts");
   const params = useLocalSearchParams<{ selectedAccountId?: string; focusNonce?: string }>();
   const insets = useSafeAreaInsets();
   const accountsQuery = useAccountsQuery();
@@ -165,7 +168,9 @@ export default function AccountsTabScreen() {
     <ScreenContainer
       scrollable={false}
       contentStyle={styles.content}
+      gestureHandlers={gestureHandlers}
     >
+      <Animated.View style={[styles.tabStage, animatedStyle]}>
       {isInitialLoading ? (
         <View style={styles.loadingWrap}>
           <SkeletonBlock style={{ height: 54, borderRadius: 14 }} />
@@ -413,6 +418,7 @@ export default function AccountsTabScreen() {
         </Pressable>
       </Modal>
 
+      </Animated.View>
     </ScreenContainer>
   );
 }
@@ -438,6 +444,9 @@ const styles = StyleSheet.create({
   content: {
     paddingTop: layout.screenTopPadding,
     paddingBottom: 0
+  },
+  tabStage: {
+    flex: 1
   },
   scrollContent: {
     gap: spacing[16]
@@ -667,4 +676,3 @@ const styles = StyleSheet.create({
   },
   
 });
-
