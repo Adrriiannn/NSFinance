@@ -16,6 +16,11 @@ export const queryKeys = {
     connectedBanks: ["banking", "connected-banks"] as const,
     accounts: ["banking", "accounts"] as const
   },
+  expenseTracker: {
+    root: ["expense-tracker"] as const,
+    entries: ["expense-tracker", "entries"] as const,
+    detail: (id: string) => ["expense-tracker", "entries", id] as const
+  },
   transactions: {
     all: ["transactions"] as const,
     list: (accountId?: string) =>

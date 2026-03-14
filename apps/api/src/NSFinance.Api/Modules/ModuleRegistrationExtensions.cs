@@ -2,6 +2,7 @@ using NSFinance.Api.Modules.Accounts;
 using NSFinance.Api.Modules.Auth;
 using NSFinance.Api.Modules.Banking;
 using NSFinance.Api.Modules.Categories;
+using NSFinance.Api.Modules.ExpenseTracker;
 using NSFinance.Api.Modules.Insights;
 using NSFinance.Api.Modules.Policies;
 using NSFinance.Api.Modules.Support;
@@ -21,6 +22,7 @@ public static class ModuleRegistrationExtensions
         app.MapBankingModule();
         app.MapAccountsModule();
         app.MapTransactionsModule();
+        app.MapExpenseTrackerModule();
         app.MapCategoriesModule();
         app.MapInsightsModule();
         return app;

@@ -47,6 +47,41 @@ export type CreateTransactionRequest = {
   bookedAtUtc?: string | null;
 };
 
+export type ExpenseTrackerEntryStatus = "planned" | "completed";
+
+export type ExpenseTrackerEntryDto = {
+  id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  category: string;
+  paymentSource: string;
+  occurredAtUtc: string;
+  notes: string | null;
+  tags: string[];
+  status: ExpenseTrackerEntryStatus;
+  isRecurring: boolean;
+  merchant: string | null;
+  createdUtc: string;
+  updatedUtc: string;
+};
+
+export type CreateExpenseTrackerEntryRequest = {
+  title: string;
+  amount: number;
+  currency: string;
+  category: string;
+  paymentSource: string;
+  occurredAtUtc?: string | null;
+  notes?: string | null;
+  tags?: string[] | null;
+  status: ExpenseTrackerEntryStatus;
+  isRecurring: boolean;
+  merchant?: string | null;
+};
+
+export type UpdateExpenseTrackerEntryRequest = CreateExpenseTrackerEntryRequest;
+
 export type CategoryDto = {
   id: string;
   name: string;

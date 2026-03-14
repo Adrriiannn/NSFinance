@@ -282,6 +282,12 @@ export default function PlannerScreen() {
         <View style={styles.headerActionsRow}>
           <Pressable
             style={styles.sparkleButton}
+            onPress={() => router.push("/(tabs)/planner/expense-tracker" as never)}
+          >
+            <MaterialCommunityIcons name="notebook-edit-outline" size={20} color={palette.textPrimary} />
+          </Pressable>
+          <Pressable
+            style={styles.sparkleButton}
             onPress={() => router.push("/companion" as never)}
           >
             <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
@@ -298,7 +304,7 @@ export default function PlannerScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => {
-              void Promise.all([dashboardQuery.refetch(), transactionsQuery.refetch()]);
+              void handleRefresh();
             }}
             tintColor={palette.textSecondary}
           />

@@ -15,6 +15,7 @@ using NSFinance.Api.Modules.Accounts.Services;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Auth.Services;
 using NSFinance.Api.Modules.Banking.Services;
+using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.Insights.Services;
 using NSFinance.Api.Modules.Policies.Services;
@@ -210,6 +211,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();
         services.AddScoped<DashboardService>();
+        services.AddScoped<ExpenseTrackerService>();
         services.AddHttpClient<TrueLayerHttpClient>();
         services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
         services.AddScoped<TrueLayerConfigurationService>();

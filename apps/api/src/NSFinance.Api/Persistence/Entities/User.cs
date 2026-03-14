@@ -48,6 +48,7 @@ public class User
     public ICollection<ExportRequest> ExportRequests { get; set; } = [];
     public ICollection<EmailActionToken> EmailActionTokens { get; set; } = [];
     public ICollection<OpenBankingConnection> OpenBankingConnections { get; set; } = [];
+    public ICollection<ExpenseTrackerEntry> ExpenseTrackerEntries { get; set; } = [];
     public UserPreference? Preferences { get; set; }
     public PasswordCredential? PasswordCredential { get; set; }
 }

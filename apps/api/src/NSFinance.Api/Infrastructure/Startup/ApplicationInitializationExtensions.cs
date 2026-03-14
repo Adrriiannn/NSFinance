@@ -15,14 +15,21 @@ public static class ApplicationInitializationExtensions
         var dbContext = serviceProvider.GetRequiredService<AppDbContext>();
         var seeder = serviceProvider.GetRequiredService<DevelopmentDataSeeder>();
 
-        var applyMigrations = configuration.GetValue("Database:ApplyMigrationsOnStartup", true);
-        var seedDemoData = configuration.GetValue("Database:SeedDemoDataOnStartup", app.Environment.IsDevelopment());
+        var startupMigrationsEnabled = configuration.GetValue("Database:ApplyMigrationsOnStartup", true);
+        var applyMigrations = app.Environment.IsDevelopment() && startupMigrationsEnabled;
+        var seedDemoData = app.Environment.IsDevelopment() && configuration.GetValue("Database:SeedDemoDataOnStartup", true);
         var seedPolicyData = configuration.GetValue("Database:SeedPolicyDataOnStartup", true);
+
+        if (!app.Environment.IsDevelopment() && startupMigrationsEnabled)
+        {
+            logger.LogWarning(
+                "Database:ApplyMigrationsOnStartup is ignored outside Development. Apply schema changes through the CI/CD migration bundle workflow.");
+        }
 
         if (applyMigrations)
         {
             await dbContext.Database.MigrateAsync();
-            logger.LogInformation("Database migrations applied.");
+            logger.LogInformation("Database migrations applied during Development startup.");
         }
 
         if (seedPolicyData)

@@ -6,8 +6,10 @@ on:
       - main
     paths:
       - ".github/workflows/main_nsfinance-api.yml"
+      - ".config/dotnet-tools.json"
       - "apps/api/**"
       - "libs/shared/**"
+      - "docs/database-migrations.md"
   workflow_dispatch:
 
 permissions:
@@ -20,16 +22,17 @@ concurrency:
 
 env:
   DOTNET_VERSION: "10.0.x"
-  # Always publish the API project directly so repo-root content never reaches App Service.
+  # Always target the API project directly so repo-root content never reaches App Service.
   API_PROJECT_PATH: apps/api/src/NSFinance.Api/NSFinance.Api.csproj
   PUBLISH_OUTPUT_PATH: ${{ github.workspace }}/artifacts/api-publish
   DEPLOY_PACKAGE_PATH: ${{ github.workspace }}/artifacts/nsfinance-api.zip
+  MIGRATION_BUNDLE_PATH: ${{ github.workspace }}/artifacts/efbundle
   AZURE_WEBAPP_NAME: nsfinance-api
   AZURE_RESOURCE_GROUP: ${{ vars.AZURE_API_RESOURCE_GROUP }}
 
 jobs:
   deploy-api:
-    name: Build And Clean-Deploy API
+    name: Build, Migrate, And Clean-Deploy API
     runs-on: ubuntu-latest
 
     steps:
@@ -42,16 +45,33 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Validate workflow inputs
+        env:
+          PROD_DB_CONNECTION_STRING: ${{ secrets.PROD_DB_CONNECTION_STRING }}
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace("${{ env.AZURE_RESOURCE_GROUP }}")) {
             throw "Repository variable AZURE_API_RESOURCE_GROUP must be configured."
           }
 
+          if ([string]::IsNullOrWhiteSpace($env:PROD_DB_CONNECTION_STRING)) {
+            throw "GitHub secret PROD_DB_CONNECTION_STRING must be configured."
+          }
+
+      - name: Restore local .NET tools
+        shell: pwsh
+        run: |
+          dotnet tool restore
+          if ($LASTEXITCODE -ne 0) {
+            throw "dotnet tool restore failed."
+          }
+
       - name: Restore API dependencies
         shell: pwsh
         run: |
           dotnet restore $env:API_PROJECT_PATH
+          if ($LASTEXITCODE -ne 0) {
+            throw "dotnet restore failed for the API project."
+          }
 
       - name: Publish API project
         shell: pwsh
@@ -59,17 +79,61 @@ jobs:
           Remove-Item $env:PUBLISH_OUTPUT_PATH -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_PATH | Out-Null
 
-          # Publish the API project directly so the deployment artifact contains only app binaries.
+          # Publish the API project directly so the deployment artifact contains only the app output.
           dotnet publish $env:API_PROJECT_PATH `
             --configuration Release `
             --output $env:PUBLISH_OUTPUT_PATH `
             --no-restore
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish failed for the API project."
+          }
 
       - name: Show published files
         shell: pwsh
         run: |
           Write-Host "Published output path: $env:PUBLISH_OUTPUT_PATH"
           Get-ChildItem $env:PUBLISH_OUTPUT_PATH | Select-Object Name, Length, LastWriteTimeUtc
+
+      - name: Create EF Core migration bundle
+        shell: pwsh
+        run: |
+          Remove-Item $env:MIGRATION_BUNDLE_PATH -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path (Split-Path $env:MIGRATION_BUNDLE_PATH) | Out-Null
+
+          # Use an EF migration bundle in CI/CD so production schema changes happen before deploy,
+          # without depending on app-startup auto-migrations on Azure.
+          dotnet ef migrations bundle `
+            --project $env:API_PROJECT_PATH `
+            --startup-project $env:API_PROJECT_PATH `
+            --configuration Release `
+            --output $env:MIGRATION_BUNDLE_PATH
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "EF Core migration bundle creation failed."
+          }
+
+          if (-not (Test-Path $env:MIGRATION_BUNDLE_PATH)) {
+            throw "EF Core migration bundle was not created at $env:MIGRATION_BUNDLE_PATH"
+          }
+
+          Write-Host "Migration bundle path: $env:MIGRATION_BUNDLE_PATH"
+          Get-Item $env:MIGRATION_BUNDLE_PATH | Select-Object FullName, Length, LastWriteTimeUtc
+
+      - name: Run EF Core migrations against production database
+        env:
+          PROD_DB_CONNECTION_STRING: ${{ secrets.PROD_DB_CONNECTION_STRING }}
+        shell: pwsh
+        run: |
+          Write-Host "Starting EF Core migration bundle execution against the production database."
+          chmod +x $env:MIGRATION_BUNDLE_PATH
+          & $env:MIGRATION_BUNDLE_PATH --connection "$env:PROD_DB_CONNECTION_STRING"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "EF Core migration bundle execution failed. API deployment will not continue."
+          }
+
+          Write-Host "EF Core migration bundle completed successfully."
 
       - name: Archive published output
         shell: pwsh
@@ -95,6 +159,7 @@ jobs:
         run: |
           Write-Host "Deploying package to App Service: $env:AZURE_WEBAPP_NAME"
           Write-Host "Resource group: $env:AZURE_RESOURCE_GROUP"
+          Write-Host "GitHub Actions is the authoritative deployment path for this app."
 
       - name: Clean deploy published API artifact
         uses: azure/cli@v2
@@ -103,9 +168,9 @@ jobs:
             set -euo pipefail
 
             echo "Deploy package: $DEPLOY_PACKAGE_PATH"
-            echo "GitHub Actions is the authoritative deployment path for this app."
+            echo "EF Core migrations already ran successfully in CI/CD before this deploy step."
             echo "Using 'az webapp deploy --clean true' so the App Service content directory is replaced by the current publish output."
-            echo "Manual Kudu or zip deploys should not be used, because they can leave stale binaries behind."
+            echo "Manual Kudu or zip deploys should not be used, because they can leave stale binaries behind and bypass the migration workflow."
 
             az webapp deploy \
               --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -125,3 +190,5 @@ jobs:
               --name "$AZURE_WEBAPP_NAME" \
               --query "{name:name,state:state,defaultHostName:defaultHostName}" \
               --output table
+
+

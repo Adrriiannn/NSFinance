@@ -31,6 +31,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<LinkedBankAccount> LinkedBankAccounts => Set<LinkedBankAccount>();
     public DbSet<BankBalanceSnapshot> BankBalanceSnapshots => Set<BankBalanceSnapshot>();
     public DbSet<RawBankTransaction> RawBankTransactions => Set<RawBankTransaction>();
+    public DbSet<ExpenseTrackerEntry> ExpenseTrackerEntries => Set<ExpenseTrackerEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
