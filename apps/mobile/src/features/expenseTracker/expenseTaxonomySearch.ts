@@ -132,7 +132,7 @@ export function buildExpenseTaxonomySearchIndex(domains: ExpenseTaxonomyDomainDt
               ]);
               const normalizedName = normalizeExpenseTaxonomySearchText(subcategory.name);
               const normalizedKeywords = keywordVariants(keywords);
-              const pathLabel = `${category.name} â€¢ ${domain.name}`;
+              const pathLabel = `${category.name} • ${domain.name}`;
 
               return {
                 subcategoryId: subcategory.id,
@@ -308,4 +308,5 @@ export function searchExpenseTaxonomy(
     })
     .slice(0, limit);
 }
+
 

@@ -8,8 +8,8 @@ export const appBottomNavItems = [
 ] as const satisfies readonly FloatingBottomNavItem[];
 
 export const expenseBottomNavItems = [
-  { key: "overview", label: "Overview", icon: "home-outline" },
-  { key: "graphs", label: "Graphs", icon: "pie-chart-outline" },
-  { key: "add", label: "Add Expense", icon: "add-circle-outline" },
-  { key: "ai", label: "NSF AI", icon: "sparkles-outline" }
+  { key: "overview", label: "Plans", icon: "notebook-outline", iconFamily: "material" },
+  { key: "graphs", label: "Analytics", icon: "pie-chart-outline" },
+  { key: "add", label: "Categories", icon: "grid-outline" },
+  { key: "ai", label: "NS Companion", icon: "robot-happy-outline", iconFamily: "material" }
 ] as const satisfies readonly FloatingBottomNavItem[];

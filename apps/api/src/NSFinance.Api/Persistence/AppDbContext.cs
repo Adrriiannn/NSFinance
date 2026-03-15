@@ -32,6 +32,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<BankBalanceSnapshot> BankBalanceSnapshots => Set<BankBalanceSnapshot>();
     public DbSet<RawBankTransaction> RawBankTransactions => Set<RawBankTransaction>();
     public DbSet<ExpenseTrackerEntry> ExpenseTrackerEntries => Set<ExpenseTrackerEntry>();
+    public DbSet<ExpensePlan> ExpensePlans => Set<ExpensePlan>();
+    public DbSet<ExpensePlanLineItem> ExpensePlanLineItems => Set<ExpensePlanLineItem>();
+    public DbSet<ExpensePlanPublication> ExpensePlanPublications => Set<ExpensePlanPublication>();
+    public DbSet<ExpensePlanPublicationLike> ExpensePlanPublicationLikes => Set<ExpensePlanPublicationLike>();
+    public DbSet<ExpensePlanPublicationDownload> ExpensePlanPublicationDownloads => Set<ExpensePlanPublicationDownload>();
+    public DbSet<ExpensePlanPublicationReport> ExpensePlanPublicationReports => Set<ExpensePlanPublicationReport>();
+    public DbSet<ExpensePlanPublicationModerationEvent> ExpensePlanPublicationModerationEvents => Set<ExpensePlanPublicationModerationEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -39,3 +46,4 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         base.OnModelCreating(modelBuilder);
     }
 }
+

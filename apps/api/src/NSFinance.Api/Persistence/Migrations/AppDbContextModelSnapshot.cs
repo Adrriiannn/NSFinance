@@ -378,6 +378,487 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.ToTable("EmailActionTokens", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ActivatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ArchivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("CreatorDisplayNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("CreatorTagSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(90)
+                        .HasColumnType("character varying(90)");
+
+                    b.Property<string>("CurrencyCode")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1200)
+                        .HasColumnType("character varying(1200)");
+
+                    b.Property<DateTime>("EndDateUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("ExpectedIncomeTotal")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("ExpectedRemainingTotal")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("ExpectedSpendTotal")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("ImportedFromPublicPlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsRecurring")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsShared")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsTemplate")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastCalculatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LockedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("PlanOriginType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("PlanType")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<int>("PlanVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RecurrenceRuleJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("SharedIdentity")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("SharingMode")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<Guid?>("SourcePlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("StartDateUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("StatusReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("TagsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ImportedFromPublicPlanId");
+
+                    b.HasIndex("SharedIdentity");
+
+                    b.HasIndex("SourcePlanId");
+
+                    b.HasIndex("UserId", "UpdatedAtUtc");
+
+                    b.HasIndex("UserId", "Status", "StartDateUtc");
+
+                    b.ToTable("ExpensePlans", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanLineItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("DisplayNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<decimal>("ExpectedAmount")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("HierarchyPathSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(800)
+                        .HasColumnType("character varying(800)");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TaxonomyCategoryId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TaxonomyDomainId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("TaxonomySubcategoryId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TaxonomySubcategoryId");
+
+                    b.HasIndex("PlanId", "SortOrder");
+
+                    b.ToTable("ExpensePlanLineItems", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("CreatorDisplayNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("CreatorTagSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(90)
+                        .HasColumnType("character varying(90)");
+
+                    b.Property<Guid>("CreatorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CurrencyCode")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<int>("DownloadCount")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("ExpectedSpendTotal")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<bool>("IsRecurring")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsTemplate")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastModeratedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastReportedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastRescannedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("LikeCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ModerationStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ModerationSummary")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("PlanSnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("PlanType")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("PublicDescription")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("PublicTitle")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("PublicationStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RemovedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ReportCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SourcePlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SourcePlanVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TagsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<decimal>("TrendingScore")
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<DateTime?>("UnpublishedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourcePlanId");
+
+                    b.HasIndex("CreatorUserId", "CreatedAtUtc");
+
+                    b.HasIndex("PlanType", "PublicationStatus");
+
+                    b.HasIndex("PublicationStatus", "PublishedAtUtc");
+
+                    b.ToTable("ExpensePlanPublications", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationDownload", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<Guid>("CreatedPlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PublicationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicationId", "CreatedAtUtc");
+
+                    b.HasIndex("UserId", "CreatedAtUtc");
+
+                    b.ToTable("ExpensePlanPublicationDownloads", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationLike", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<Guid>("PublicationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("PublicationId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("ExpensePlanPublicationLikes", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationModerationEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("MatchedRulesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<Guid>("PublicationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ResultStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("TriggerType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicationId", "CreatedAtUtc");
+
+                    b.ToTable("ExpensePlanPublicationModerationEvents", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1200)
+                        .HasColumnType("character varying(1200)");
+
+                    b.Property<Guid>("PublicationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)");
+
+                    b.Property<Guid>("ReporterUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReporterUserId");
+
+                    b.HasIndex("Status", "CreatedAtUtc");
+
+                    b.HasIndex("PublicationId", "ReporterUserId", "Reason");
+
+                    b.ToTable("ExpensePlanPublicationReports", (string)null);
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpenseTrackerEntry", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1523,6 +2004,129 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlan", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", "ImportedFromPublicPlan")
+                        .WithMany("ImportedPlans")
+                        .HasForeignKey("ImportedFromPublicPlanId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlan", "SourcePlan")
+                        .WithMany("DerivedPlans")
+                        .HasForeignKey("SourcePlanId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
+                        .WithMany("ExpensePlans")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ImportedFromPublicPlan");
+
+                    b.Navigation("SourcePlan");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanLineItem", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlan", "Plan")
+                        .WithMany("LineItems")
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Plan");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "CreatorUser")
+                        .WithMany("ExpensePlanPublications")
+                        .HasForeignKey("CreatorUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlan", "SourcePlan")
+                        .WithMany("Publications")
+                        .HasForeignKey("SourcePlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CreatorUser");
+
+                    b.Navigation("SourcePlan");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationDownload", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", "Publication")
+                        .WithMany("Downloads")
+                        .HasForeignKey("PublicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
+                        .WithMany("ExpensePlanPublicationDownloads")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Publication");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationLike", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", "Publication")
+                        .WithMany("Likes")
+                        .HasForeignKey("PublicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
+                        .WithMany("ExpensePlanPublicationLikes")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Publication");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationModerationEvent", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", "Publication")
+                        .WithMany("ModerationEvents")
+                        .HasForeignKey("PublicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Publication");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublicationReport", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", "Publication")
+                        .WithMany("Reports")
+                        .HasForeignKey("PublicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "ReporterUser")
+                        .WithMany("ExpensePlanPublicationReports")
+                        .HasForeignKey("ReporterUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Publication");
+
+                    b.Navigation("ReporterUser");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpenseTrackerEntry", b =>
                 {
                     b.HasOne("NSFinance.Api.Persistence.Entities.ExpenseTrackerEntry", "LinkedOriginalEntry")
@@ -1753,6 +2357,28 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("Sessions");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlan", b =>
+                {
+                    b.Navigation("DerivedPlans");
+
+                    b.Navigation("LineItems");
+
+                    b.Navigation("Publications");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", b =>
+                {
+                    b.Navigation("Downloads");
+
+                    b.Navigation("ImportedPlans");
+
+                    b.Navigation("Likes");
+
+                    b.Navigation("ModerationEvents");
+
+                    b.Navigation("Reports");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpenseTrackerEntry", b =>
                 {
                     b.Navigation("LinkedAdjustments");
@@ -1808,6 +2434,16 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("Devices");
 
                     b.Navigation("EmailActionTokens");
+
+                    b.Navigation("ExpensePlanPublicationDownloads");
+
+                    b.Navigation("ExpensePlanPublicationLikes");
+
+                    b.Navigation("ExpensePlanPublicationReports");
+
+                    b.Navigation("ExpensePlanPublications");
+
+                    b.Navigation("ExpensePlans");
 
                     b.Navigation("ExpenseTrackerEntries");
 

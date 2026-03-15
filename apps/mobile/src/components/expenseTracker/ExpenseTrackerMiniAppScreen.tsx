@@ -4,9 +4,8 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState, type ReactNode, type RefObject } from "react";
-import { useExpenseTrackerPeriod } from "../../features/expenseTracker/ExpenseTrackerPeriodContext";
 import { layout, palette, radius, spacing, typography } from "../../theme/tokens";
-import { FloatingBottomNav } from "../layout/FloatingBottomNav";
+import { FloatingBottomNav, type FloatingBottomNavItem } from "../layout/FloatingBottomNav";
 import { IconButton } from "../ui/IconButton";
 import { expenseBottomNavItems } from "../layout/bottomNavConfigs";
 
@@ -17,7 +16,7 @@ const navItems = [
   { key: "ai", path: "/companion/expense", matchPath: "/companion/expense" }
 ] as const;
 
-const expenseNavMap = new Map(expenseBottomNavItems.map((item) => [item.key, item]));
+const expenseNavMap = new Map<string, FloatingBottomNavItem>(expenseBottomNavItems.map((item) => [item.key, item]));
 
 function buildExpenseAiCompanionHref(sourceExpenseTab: string) {
   return `/companion/expense?sourceExpenseTab=${sourceExpenseTab}` as never;
@@ -33,7 +32,6 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
   const router = useRouter();
   const navigation = useNavigation();
   const pathname = usePathname();
-  const { mode, setMode, period } = useExpenseTrackerPeriod();
   const [optionsSheetOpen, setOptionsSheetOpen] = useState(false);
 
   const currentNav = useMemo(() => {
@@ -41,11 +39,7 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
     return navItems.find((item) => normalizedPathname.startsWith(item.matchPath))?.key ?? navItems[0].key;
   }, [pathname]);
 
-  const hidePageTitle = title === "Overview" || title === "Graphs" || title === "Add Expense";
-  const periodHeadline = mode === "weekly" ? "Weekly" : "Monthly";
-  const periodSubheadline = mode === "weekly"
-    ? period.label
-    : period.end.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+  const hidePageTitle = title === "Plans" || title === "Analytics" || title === "Categories" || title === "Plan builder";
 
   const handleBackPress = () => {
     if (navigation.canGoBack()) {
@@ -67,19 +61,10 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
             onPress={handleBackPress}
             icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
           />
+          {title === "Plan builder" ? (
+            <Text style={styles.headerEyebrow}>Plan creator</Text>
+          ) : null}
           <View style={styles.headerActions}>
-            <Pressable
-              style={styles.periodButton}
-              onPress={() => setMode(mode === "weekly" ? "monthly" : "weekly")}
-            >
-              <View style={styles.periodButtonIconWrap}>
-                <MaterialCommunityIcons name="calendar-range-outline" size={18} color={palette.textPrimary} />
-              </View>
-              <View style={styles.periodButtonTextWrap}>
-                <Text style={styles.periodButtonLabel}>{periodHeadline}</Text>
-                <Text style={styles.periodButtonValue}>{periodSubheadline}</Text>
-              </View>
-            </Pressable>
             <Pressable style={styles.iconButton} onPress={() => setOptionsSheetOpen(true)}>
               <MaterialCommunityIcons name="menu" size={18} color={palette.textPrimary} />
             </Pressable>
@@ -109,7 +94,7 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
             return;
           }
 
-          const target = navItems.find((navItem) => navItem.key == item.key);
+          const target = navItems.find((navItem) => navItem.key === item.key);
           if (!target) {
             return;
           }
@@ -126,8 +111,8 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
       <Modal visible={optionsSheetOpen} transparent animationType="fade" onRequestClose={() => setOptionsSheetOpen(false)}>
         <Pressable style={styles.overlay} onPress={() => setOptionsSheetOpen(false)}>
           <Pressable style={styles.sheet} onPress={() => undefined}>
-            <Text style={styles.sheetTitle}>Expense options</Text>
-            <Text style={styles.sheetSubtitle}>Quick ways to move around your manual expense space.</Text>
+            <Text style={styles.sheetTitle}>Expense planning</Text>
+            <Text style={styles.sheetSubtitle}>Move between plans, analytics, categories, and NS Companion.</Text>
             <View style={styles.optionsList}>
               {navItems.map((item) => {
                 const navMeta = expenseNavMap.get(item.key);
@@ -151,7 +136,11 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
                       }
                     }}
                   >
-                    <Ionicons name={navMeta.icon} size={18} color={palette.textPrimary} />
+                    {navMeta.iconFamily === "material" ? (
+                      <MaterialCommunityIcons name={navMeta.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={palette.textPrimary} />
+                    ) : (
+                      <Ionicons name={navMeta.icon as keyof typeof Ionicons.glyphMap} size={18} color={palette.textPrimary} />
+                    )}
                     <Text style={styles.optionLabel}>{navMeta.label}</Text>
                   </Pressable>
                 );
@@ -216,43 +205,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing[8]
   },
-  periodButton: {
-    minHeight: 42,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
-    paddingLeft: 8,
-    paddingRight: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10
-  },
-  periodButtonIconWrap: {
-    width: 24,
-    height: 24,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(47,107,255,0.22)"
-  },
-  periodButtonTextWrap: {
-    gap: 2,
-    alignItems: "flex-end"
-  },
-  periodButtonLabel: {
-    color: palette.textPrimary,
-    ...typography.caption,
-    fontWeight: "700",
-    lineHeight: 14,
-    textAlign: "right"
-  },
-  periodButtonValue: {
-    color: palette.textSecondary,
-    ...typography.caption,
-    lineHeight: 14,
-    textAlign: "right"
-  },
   iconButton: {
     width: 42,
     height: 42,
@@ -266,6 +218,14 @@ const styles = StyleSheet.create({
   pageTitle: {
     color: palette.textPrimary,
     ...typography.title1
+  },
+  headerEyebrow: {
+    flex: 1,
+    color: palette.textSecondary,
+    ...typography.caption,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+    textTransform: "uppercase"
   },
   contentWrap: {
     flex: 1,
@@ -319,3 +279,4 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong
   }
 });
+

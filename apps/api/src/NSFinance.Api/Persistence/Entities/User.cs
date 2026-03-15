@@ -49,6 +49,12 @@ public class User
     public ICollection<EmailActionToken> EmailActionTokens { get; set; } = [];
     public ICollection<OpenBankingConnection> OpenBankingConnections { get; set; } = [];
     public ICollection<ExpenseTrackerEntry> ExpenseTrackerEntries { get; set; } = [];
+    public ICollection<ExpensePlan> ExpensePlans { get; set; } = [];
+    public ICollection<ExpensePlanPublication> ExpensePlanPublications { get; set; } = [];
+    public ICollection<ExpensePlanPublicationLike> ExpensePlanPublicationLikes { get; set; } = [];
+    public ICollection<ExpensePlanPublicationDownload> ExpensePlanPublicationDownloads { get; set; } = [];
+    public ICollection<ExpensePlanPublicationReport> ExpensePlanPublicationReports { get; set; } = [];
     public UserPreference? Preferences { get; set; }
     public PasswordCredential? PasswordCredential { get; set; }
 }
+

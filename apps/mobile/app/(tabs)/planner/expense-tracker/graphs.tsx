@@ -1,20 +1,31 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { LayoutAnimation, Platform, Pressable, StyleSheet, Text, UIManager, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { LayoutAnimation, PanResponder, Platform, Pressable, StyleSheet, Text, UIManager, View } from "react-native";
 import { ExpenseTrackerCategoryRadialChart } from "../../../../src/components/expenseTracker/ExpenseTrackerCategoryRadialChart";
 import { ExpenseTrackerMiniAppScreen } from "../../../../src/components/expenseTracker/ExpenseTrackerMiniAppScreen";
-import { ErrorState } from "../../../../src/components/feedback/ErrorState";
+import { ExpenseTrackerSegmentedControl } from "../../../../src/components/expenseTracker/ExpenseTrackerSegmentedControl";
 import { EmptyState } from "../../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../../src/components/ui/GlassCard";
+import { useExpensePlanning } from "../../../../src/features/expenseTracker/ExpensePlanningProvider";
+import { useExpenseTrackerEntriesQuery, useExpenseTrackerTaxonomyQuery } from "../../../../src/features/expenseTracker/useExpenseTracker";
 import {
-  buildExpenseTrackerCategoryBreakdown,
-  buildExpenseTrackerPeriodSummary
-} from "../../../../src/features/expenseTracker/expenseTrackerAnalytics";
-import { useExpenseTrackerPeriod } from "../../../../src/features/expenseTracker/ExpenseTrackerPeriodContext";
-import { useExpenseTrackerEntriesQuery } from "../../../../src/features/expenseTracker/useExpenseTracker";
-import { getExpenseTrackerEntrySubcategoryLabel, getExpenseTrackerVisual } from "../../../../src/features/expenseTracker/expenseTrackerModels";
+  buildExpensePlanCategoryMetrics,
+  buildExpensePlanComputed,
+  buildExpensePlanTaxonomyLookup,
+  formatExpensePlanPeriod
+} from "../../../../src/features/expenseTracker/expensePlanningUtils";
+import type { ExpenseAnalyticsMode } from "../../../../src/features/expenseTracker/expensePlanningTypes";
+import { getExpenseTrackerVisual } from "../../../../src/features/expenseTracker/expenseTrackerModels";
 import { palette, radius, spacing, typography } from "../../../../src/theme/tokens";
+
+const analyticsModes = [
+  { label: "Actual", value: "actual" },
+  { label: "Planned", value: "planned" },
+  { label: "Variance", value: "variance" }
+] as const;
+
+const analyticsModeOrder: ExpenseAnalyticsMode[] = ["actual", "planned", "variance"];
 
 function formatAmount(amount: number, currency: string) {
   return new Intl.NumberFormat("en-GB", {
@@ -23,34 +34,28 @@ function formatAmount(amount: number, currency: string) {
   }).format(amount);
 }
 
-function formatDateTime(occurredAtUtc: string) {
-  return new Date(occurredAtUtc).toLocaleString("en-GB", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
-}
-
-function tintColor(hex: string, alpha: number) {
-  const normalized = hex.replace("#", "");
-  if (normalized.length !== 6) {
-    return `rgba(226,236,255,${alpha})`;
+function getAnalyticsModeDescription(mode: ExpenseAnalyticsMode) {
+  if (mode === "planned") {
+    return "Your planned expenses.";
   }
 
-  const red = Number.parseInt(normalized.slice(0, 2), 16);
-  const green = Number.parseInt(normalized.slice(2, 4), 16);
-  const blue = Number.parseInt(normalized.slice(4, 6), 16);
-  return `rgba(${red},${green},${blue},${alpha})`;
+  if (mode === "variance") {
+    return "The gap between planned and actual spending.";
+  }
+
+  return "Your actual recorded expenses.";
 }
 
 export default function ExpenseTrackerGraphsScreen() {
   const router = useRouter();
-  const { period } = useExpenseTrackerPeriod();
   const entriesQuery = useExpenseTrackerEntriesQuery();
-  const entries = entriesQuery.data ?? [];
-  const currency = entries[0]?.currency ?? "EUR";
+  const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
+  const { plans } = useExpensePlanning();
+  const [mode, setMode] = useState<ExpenseAnalyticsMode>("actual");
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [planPickerOpen, setPlanPickerOpen] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const modeRef = useRef<ExpenseAnalyticsMode>("actual");
 
   useEffect(() => {
     if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -58,103 +63,220 @@ export default function ExpenseTrackerGraphsScreen() {
     }
   }, []);
 
-  const categoryBreakdown = useMemo(() => buildExpenseTrackerCategoryBreakdown(entries, period), [entries, period]);
-  const summary = useMemo(() => buildExpenseTrackerPeriodSummary(entries, period), [entries, period]);
-  const topLegendItems = categoryBreakdown.slice(0, 3);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    if (selectedPlanId) {
+      return;
+    }
+
+    setSelectedPlanId(plans.find((plan) => plan.status === "active")?.id ?? plans[0]?.id ?? null);
+  }, [plans, selectedPlanId]);
+
+  const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[0] ?? null;
+  const currency = entriesQuery.data?.[0]?.currency ?? "EUR";
+  const taxonomyLookup = useMemo(
+    () => buildExpensePlanTaxonomyLookup(taxonomyQuery.data?.domains ?? []),
+    [taxonomyQuery.data?.domains]
+  );
+  const computed = selectedPlan ? buildExpensePlanComputed(selectedPlan, entriesQuery.data ?? [], taxonomyLookup) : null;
+  const categoryMetrics = useMemo(
+    () => selectedPlan ? buildExpensePlanCategoryMetrics(selectedPlan, entriesQuery.data ?? [], taxonomyLookup, mode) : [],
+    [entriesQuery.data, mode, selectedPlan, taxonomyLookup]
+  );
+  const topLegendItems = categoryMetrics.slice(0, 3);
+  const totalLabel = mode === "planned"
+    ? computed?.expectedTotal ?? 0
+    : mode === "actual"
+      ? computed?.actualTotal ?? 0
+      : computed?.varianceAmount ?? 0;
+
+  const chartPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gestureState) =>
+          Math.abs(gestureState.dx) > 16 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.3,
+        onPanResponderRelease: (_event, gestureState) => {
+          if (Math.abs(gestureState.dx) < 42 || Math.abs(gestureState.dx) <= Math.abs(gestureState.dy) * 1.3) {
+            return;
+          }
+
+          const currentIndex = analyticsModeOrder.indexOf(modeRef.current);
+          if (currentIndex < 0) {
+            return;
+          }
+
+          // Swiping left advances the analytics mode; swiping right goes back.
+          if (gestureState.dx < 0 && currentIndex < analyticsModeOrder.length - 1) {
+            setMode(analyticsModeOrder[currentIndex + 1]);
+            return;
+          }
+
+          if (gestureState.dx > 0 && currentIndex > 0) {
+            setMode(analyticsModeOrder[currentIndex - 1]);
+          }
+        }
+      }),
+    []
+  );
 
   return (
-    <ExpenseTrackerMiniAppScreen title="Graphs">
-      {entriesQuery.isError ? (
-        <ErrorState
-          title="Could not load graphs"
-          message={entriesQuery.error.message}
-          onRetry={() => {
-            void entriesQuery.refetch();
-          }}
-        />
-      ) : null}
-
-      {categoryBreakdown.length === 0 ? (
+    <ExpenseTrackerMiniAppScreen title="Analytics">
+      {!selectedPlan ? (
         <EmptyState
-          title="No completed expenses in this period"
-          message="Once you log completed expenses, this page will break down your category mix and top spending drivers."
-          actionLabel="Add expense"
-          onActionPress={() => router.push("/(tabs)/planner/expense-tracker/add" as never)}
+          title="No plans to analyse yet"
+          message="Create a plan first, then this screen will compare actual, planned, and variance views." 
+          actionLabel="Create plan"
+          onActionPress={() => router.push("/(tabs)/planner/expense-tracker/plan-builder" as never)}
         />
       ) : (
         <>
-          <GlassCard style={styles.chartCard}>
-            <View style={styles.chartCardHeader}>
-              <View>
-                <Text style={styles.chartTitle}>Expense share</Text>
-                <Text style={styles.chartSubtitle}>Category mix for {period.label}</Text>
+          <View style={styles.planPickerWrap}>
+            <Pressable style={styles.planPickerTrigger} onPress={() => setPlanPickerOpen((current) => !current)}>
+              <View style={styles.planPickerTriggerText}>
+                <Text style={styles.planPickerEyebrow}>Current plan</Text>
+                <Text numberOfLines={1} style={styles.planPickerValue}>{selectedPlan.title}</Text>
               </View>
-            </View>
+              <Ionicons
+                name={planPickerOpen ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={palette.textPrimary}
+              />
+            </Pressable>
 
-            <View style={styles.chartBody}>
-              <ExpenseTrackerCategoryRadialChart data={categoryBreakdown} totalLabel={formatAmount(summary.completedTotal, currency)} />
-              <View style={styles.chartLegend}>
-                {topLegendItems.map((item) => {
-                  const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
+            {planPickerOpen ? (
+              <View style={styles.planPickerDropdown}>
+                {plans.map((plan) => {
+                  const isSelected = plan.id === selectedPlan.id;
                   return (
-                    <View key={`${item.categoryId ?? item.category}`} style={styles.legendRow}>
-                      <View style={styles.legendLabelWrap}>
-                        <View style={[styles.legendDot, { backgroundColor: visuals.color }]} />
-                        <Text style={styles.legendLabel}>{item.category}</Text>
+                    <Pressable
+                      key={plan.id}
+                      style={[styles.planPickerOption, isSelected ? styles.planPickerOptionSelected : null]}
+                      onPress={() => {
+                        setSelectedPlanId(plan.id);
+                        setPlanPickerOpen(false);
+                      }}
+                    >
+                      <View style={styles.planPickerOptionText}>
+                        <Text style={[styles.planPickerOptionTitle, isSelected ? styles.planPickerOptionTitleSelected : null]}>
+                          {plan.title}
+                        </Text>
+                        <Text style={styles.planPickerOptionMeta}>
+                          {formatExpensePlanPeriod(plan.startDate, plan.endDate)}
+                        </Text>
                       </View>
-                      <Text style={styles.legendValue}>{item.percentage.toFixed(1)}%</Text>
-                    </View>
+                      {isSelected ? <Ionicons name="checkmark" size={18} color={palette.primary} /> : null}
+                    </Pressable>
                   );
                 })}
               </View>
-            </View>
-          </GlassCard>
+            ) : null}
+          </View>
+
+          <ExpenseTrackerSegmentedControl
+            value={mode}
+            options={[...analyticsModes]}
+            onChange={setMode}
+          />
+
+          <View {...chartPanResponder.panHandlers}>
+            <GlassCard style={styles.chartCard}>
+              <View style={styles.chartCardHeader}>
+                <View>
+                  <Text style={styles.chartTitle}>{mode === "actual" ? "Actual spendings" : mode === "planned" ? "Planned allocation" : "Variance view"}</Text>
+                  <Text style={styles.chartSubtitle}>{getAnalyticsModeDescription(mode)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.chartBody}>
+                <ExpenseTrackerCategoryRadialChart
+                  data={categoryMetrics.map((item) => ({
+                    domainId: item.domainId,
+                    categoryId: item.categoryId,
+                    category: item.categoryName,
+                    total: item.amount,
+                    percentage: item.percentage
+                  }))}
+                  totalLabel={formatAmount(Math.abs(totalLabel), currency)}
+                  centerLabel={mode === "variance" ? "Variance" : mode === "planned" ? "Planned" : "Actual"}
+                />
+                <View style={styles.chartLegend}>
+                  {topLegendItems.map((item) => {
+                    const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
+                    return (
+                      <View key={item.key} style={styles.legendRow}>
+                        <View style={styles.legendLabelWrap}>
+                          <View style={[styles.legendDot, { backgroundColor: visuals.color }]} />
+                          <Text style={styles.legendLabel}>{item.categoryName}</Text>
+                        </View>
+                        <Text style={styles.legendValue}>{item.percentage.toFixed(1)}%</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            </GlassCard>
+          </View>
 
           <View style={styles.breakdownWrap}>
-            {categoryBreakdown.map((item) => {
+            {categoryMetrics.map((item) => {
               const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
-              const expanded = expandedCategory === item.category;
+              const expanded = expandedCategory === item.key;
               return (
-                <GlassCard key={`${item.categoryId ?? item.category}`} style={styles.categoryCard}>
+                <GlassCard key={item.key} style={styles.categoryCard}>
                   <Pressable
                     style={styles.categoryCardPressable}
                     onPress={() => {
                       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                      setExpandedCategory((current) => (current === item.category ? null : item.category));
+                      setExpandedCategory((current) => current === item.key ? null : item.key);
                     }}
                   >
                     <View style={styles.categoryMainRow}>
-                      <View style={[styles.categoryIconWrap, { backgroundColor: tintColor(visuals.color, 0.18) }]}>
+                      <View style={[styles.categoryIconWrap, { backgroundColor: `${visuals.color}22` }]}>
                         <Ionicons name={visuals.icon as keyof typeof Ionicons.glyphMap} size={18} color={visuals.color} />
                       </View>
 
                       <View style={styles.categoryContentColumn}>
-                        <Text style={styles.categoryName}>{item.category}</Text>
+                        <Text style={styles.categoryName}>{item.categoryName}</Text>
                         <View style={styles.progressTrackWrap}>
-                          <View style={[styles.progressTrack, { backgroundColor: tintColor(visuals.color, 0.18) }]}>
+                          <View style={[styles.progressTrack, { backgroundColor: `${visuals.color}22` }]}>
                             <View style={[styles.progressFill, { width: `${Math.max(item.percentage, 4)}%`, backgroundColor: visuals.color }]} />
                           </View>
                         </View>
                       </View>
 
                       <View style={styles.categoryMetricsColumn}>
-                        <Text style={styles.categoryMetricPrimary}>{item.count}</Text>
-                        <Text style={styles.categoryMetricSecondary}>{item.percentage.toFixed(1)}%</Text>
+                        <Text style={styles.categoryMetricPrimary}>{formatAmount(item.amount, currency)}</Text>
+                        <Text style={styles.categoryMetricSecondary}>{item.transactionCount} tx</Text>
                       </View>
                     </View>
                   </Pressable>
 
                   {expanded ? (
-                    <View style={styles.transactionList}>
-                      {item.entries.map((entry) => (
-                        <View key={entry.id} style={styles.transactionRow}>
-                          <View style={styles.transactionTextWrap}>
-                            <Text style={styles.transactionTitle}>{entry.merchant ?? entry.title}</Text>
-                            <Text style={styles.transactionMeta}>{getExpenseTrackerEntrySubcategoryLabel(entry)} | {formatDateTime(entry.occurredAtUtc)}</Text>
-                          </View>
-                          <Text style={styles.transactionAmount}>{formatAmount(entry.amount, entry.currency)}</Text>
+                    <View style={styles.subcategoryPreview}>
+                      {item.subcategories.slice(0, 4).map((subcategory) => (
+                        <View key={`${subcategory.subcategoryId ?? subcategory.subcategoryName}`} style={styles.subcategoryRow}>
+                          <Text style={styles.subcategoryName}>{subcategory.subcategoryName}</Text>
+                          <Text style={styles.subcategoryAmount}>{formatAmount(subcategory.amount, currency)}</Text>
                         </View>
                       ))}
+                      <Pressable
+                        style={styles.drillDownButton}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/(tabs)/planner/expense-tracker/category/[categoryId]",
+                            params: {
+                              categoryId: String(item.categoryId ?? item.key),
+                              planId: selectedPlan.id,
+                              mode
+                            }
+                          })
+                        }
+                      >
+                        <Text style={styles.drillDownLabel}>Open category drill-down</Text>
+                      </Pressable>
                     </View>
                   ) : null}
                 </GlassCard>
@@ -168,6 +290,74 @@ export default function ExpenseTrackerGraphsScreen() {
 }
 
 const styles = StyleSheet.create({
+  planPickerWrap: {
+    gap: spacing[8]
+  },
+  planPickerTrigger: {
+    minHeight: 50,
+    paddingHorizontal: spacing[12],
+    paddingVertical: spacing[8],
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(12,25,43,0.88)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[8]
+  },
+  planPickerTriggerText: {
+    flex: 1,
+    justifyContent: "center",
+    gap: 2
+  },
+  planPickerEyebrow: {
+    color: palette.textSecondary,
+    ...typography.caption,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+    textTransform: "uppercase"
+  },
+  planPickerValue: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "600"
+  },
+  planPickerDropdown: {
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(12,25,43,0.94)",
+    overflow: "hidden"
+  },
+  planPickerOption: {
+    minHeight: 46,
+    paddingHorizontal: spacing[12],
+    paddingVertical: spacing[8],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[12]
+  },
+  planPickerOptionSelected: {
+    backgroundColor: "rgba(47,107,255,0.12)"
+  },
+  planPickerOptionText: {
+    flex: 1,
+    gap: 0
+  },
+  planPickerOptionTitle: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "600"
+  },
+  planPickerOptionTitleSelected: {
+    color: palette.primary
+  },
+  planPickerOptionMeta: {
+    color: palette.textSecondary,
+    ...typography.caption,
+  },
   chartCard: {
     gap: spacing[16]
   },
@@ -256,61 +446,62 @@ const styles = StyleSheet.create({
   progressTrackWrap: {
     width: "72%"
   },
-  categoryMetricsColumn: {
-    width: 64,
-    alignItems: "flex-end",
-    gap: 2
-  },
-  categoryMetricPrimary: {
-    color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "700"
-  },
-  categoryMetricSecondary: {
-    color: palette.textSecondary,
-    ...typography.caption,
-    fontWeight: "700"
-  },
   progressTrack: {
     height: 10,
     borderRadius: 999,
     overflow: "hidden"
   },
   progressFill: {
-    height: 10,
+    height: "100%",
     borderRadius: 999
   },
-  transactionList: {
-    gap: 10,
-    paddingTop: spacing[4]
+  categoryMetricsColumn: {
+    width: 90,
+    alignItems: "flex-end",
+    gap: 2
   },
-  transactionRow: {
+  categoryMetricPrimary: {
+    color: palette.textPrimary,
+    ...typography.caption,
+    fontWeight: "700",
+    textAlign: "right"
+  },
+  categoryMetricSecondary: {
+    color: palette.textSecondary,
+    ...typography.caption,
+    textAlign: "right"
+  },
+  subcategoryPreview: {
+    gap: spacing[12]
+  },
+  subcategoryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: spacing[12],
-    borderRadius: radius.medium,
+    gap: spacing[12]
+  },
+  subcategoryName: {
+    color: palette.textSecondary,
+    ...typography.body2
+  },
+  subcategoryAmount: {
+    color: palette.textPrimary,
+    ...typography.caption,
+    fontWeight: "700"
+  },
+  drillDownButton: {
+    minHeight: 40,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.56)",
-    paddingHorizontal: spacing[12],
-    paddingVertical: 10
+    backgroundColor: "rgba(18,36,58,0.72)",
+    alignItems: "center",
+    justifyContent: "center"
   },
-  transactionTextWrap: {
-    flex: 1
-  },
-  transactionTitle: {
-    color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "600"
-  },
-  transactionMeta: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  transactionAmount: {
+  drillDownLabel: {
     color: palette.textPrimary,
     ...typography.caption,
     fontWeight: "700"
   }
 });
+

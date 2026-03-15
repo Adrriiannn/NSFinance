@@ -14,6 +14,7 @@ type ChartSlice = {
 type ExpenseTrackerCategoryRadialChartProps = {
   data: ChartSlice[];
   totalLabel: string;
+  centerLabel?: string;
 };
 
 const CHART_SIZE = 152;
@@ -22,7 +23,7 @@ const RADIUS = (CHART_SIZE - STROKE_WIDTH) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const CENTER = CHART_SIZE / 2;
 
-export function ExpenseTrackerCategoryRadialChart({ data, totalLabel }: ExpenseTrackerCategoryRadialChartProps) {
+export function ExpenseTrackerCategoryRadialChart({ data, totalLabel, centerLabel = "Spent" }: ExpenseTrackerCategoryRadialChartProps) {
   const slices = buildSlices(data);
   let accumulated = 0;
 
@@ -64,7 +65,7 @@ export function ExpenseTrackerCategoryRadialChart({ data, totalLabel }: ExpenseT
         </Svg>
 
         <View style={styles.centerBubble}>
-          <Text style={styles.centerLabel}>Spent</Text>
+          <Text style={styles.centerLabel}>{centerLabel}</Text>
           <Text style={styles.centerValue}>{totalLabel}</Text>
         </View>
       </View>

@@ -213,6 +213,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DashboardService>();
         services.AddScoped<ExpenseTaxonomyService>();
         services.AddScoped<ExpenseTrackerService>();
+        services.AddScoped<ExpensePlanService>();
+        services.AddScoped<ExpensePlanCommunityService>();
         services.AddHttpClient<TrueLayerHttpClient>();
         services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
         services.AddScoped<TrueLayerConfigurationService>();
@@ -434,4 +436,5 @@ public static class ServiceCollectionExtensions
         return configuration[legacyKey];
     }
 }
+
 

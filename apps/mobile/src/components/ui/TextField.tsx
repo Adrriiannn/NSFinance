@@ -8,6 +8,7 @@ type TextFieldProps = TextInputProps & {
   showLabel?: boolean;
   forceFocused?: boolean;
   surfaceMode?: "normal" | "solid";
+  leadingText?: string;
 };
 
 export function TextField({
@@ -17,6 +18,7 @@ export function TextField({
   showLabel = true,
   forceFocused = false,
   surfaceMode = "normal",
+  leadingText,
   ...props
 }: TextFieldProps) {
   const [isFocused, setIsFocused] = useState(false);
@@ -24,25 +26,29 @@ export function TextField({
   return (
     <View style={[styles.wrapper, !showLabel ? styles.wrapperCompact : null]}>
       {showLabel ? <Text style={styles.label}>{label}</Text> : null}
-      <TextInput
-        {...props}
-        onFocus={(event) => {
-          setIsFocused(true);
-          props.onFocus?.(event);
-        }}
-        onBlur={(event) => {
-          setIsFocused(false);
-          props.onBlur?.(event);
-        }}
-        placeholderTextColor={palette.textSecondary}
-        style={[
-          styles.input,
-          surfaceMode === "solid" ? styles.inputSolid : styles.inputNormal,
-          isFocused || forceFocused ? styles.inputFocused : null,
-          error ? styles.inputError : null,
-          style
-        ]}
-      />
+      <View style={styles.inputWrap}>
+        {leadingText ? <Text style={styles.leadingText}>{leadingText}</Text> : null}
+        <TextInput
+          {...props}
+          onFocus={(event) => {
+            setIsFocused(true);
+            props.onFocus?.(event);
+          }}
+          onBlur={(event) => {
+            setIsFocused(false);
+            props.onBlur?.(event);
+          }}
+          placeholderTextColor={palette.textSecondary}
+          style={[
+            styles.input,
+            surfaceMode === "solid" ? styles.inputSolid : styles.inputNormal,
+            isFocused || forceFocused ? styles.inputFocused : null,
+            error ? styles.inputError : null,
+            leadingText ? styles.inputWithLeadingText : null,
+            style
+          ]}
+        />
+      </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
@@ -60,6 +66,10 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: "700"
   },
+  inputWrap: {
+    position: "relative",
+    justifyContent: "center"
+  },
   input: {
     minHeight: controls.fieldHeight,
     borderRadius: controls.fieldRadius,
@@ -69,6 +79,16 @@ const styles = StyleSheet.create({
     backgroundColor: controls.controlSurfaceMuted,
     color: palette.textPrimary,
     ...typography.body1
+  },
+  inputWithLeadingText: {
+    paddingLeft: spacing[40]
+  },
+  leadingText: {
+    position: "absolute",
+    left: spacing[16],
+    color: palette.textSecondary,
+    ...typography.body1,
+    zIndex: 1
   },
   inputNormal: {
     backgroundColor: controls.controlSurfaceMuted
