@@ -60,9 +60,9 @@ export const controls = {
   compactRadius: 14,
   fieldRadius: radius.medium,
   buttonRadius: radius.medium,
-  controlSurface: "rgba(18,36,58,0.78)",
-  controlSurfaceMuted: "rgba(18,36,58,0.68)",
-  controlSurfaceStrong: "rgba(18,36,58,0.84)",
+  controlSurface: "#12243A",
+  controlSurfaceMuted: "#13263D",
+  controlSurfaceStrong: "#162D48",
   primaryFill: "rgba(47,107,255,0.92)",
   primaryBorder: "rgba(127,174,255,0.4)",
   activeFill: "rgba(47,107,255,0.26)",
@@ -182,3 +182,4 @@ export const gradients = {
   hero: ["#1E4DD9", "#295FED", "#122A4E"] as const,
   accountCard: ["rgba(127,174,255,0.14)", "rgba(111,215,255,0.06)"] as const
 };
+

@@ -7,7 +7,10 @@ using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.ExpenseTracker.Services;
 
-public sealed class ExpenseTrackerService(AppDbContext dbContext, ICurrentUserProvider currentUserProvider)
+public sealed class ExpenseTrackerService(
+    AppDbContext dbContext,
+    ICurrentUserProvider currentUserProvider,
+    ExpenseTaxonomyService expenseTaxonomyService)
 {
     public async Task<IReadOnlyList<ExpenseTrackerEntryDto>> GetEntriesAsync(CancellationToken cancellationToken)
     {
@@ -37,6 +40,10 @@ public sealed class ExpenseTrackerService(AppDbContext dbContext, ICurrentUserPr
         CancellationToken cancellationToken)
     {
         var utcNow = DateTime.UtcNow;
+        var resolvedSubcategory = expenseTaxonomyService.GetUserSelectableSubcategory(request.SubcategoryId)
+            ?? throw new InvalidOperationException($"Taxonomy sub-category {request.SubcategoryId} is not available for manual entry.");
+        var resolvedCategoryName = expenseTaxonomyService.GetCategoryName(resolvedSubcategory.CategoryId) ?? resolvedSubcategory.Name;
+
         var entry = new ExpenseTrackerEntry
         {
             Id = Guid.NewGuid(),
@@ -44,7 +51,10 @@ public sealed class ExpenseTrackerService(AppDbContext dbContext, ICurrentUserPr
             Title = request.Title.Trim(),
             Amount = decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero),
             Currency = NormalizeCurrency(request.Currency),
-            Category = NormalizeLabel(request.Category, "Other"),
+            Category = resolvedCategoryName,
+            TaxonomyDomainId = resolvedSubcategory.DomainId,
+            TaxonomyCategoryId = resolvedSubcategory.CategoryId,
+            TaxonomySubcategoryId = resolvedSubcategory.Id,
             PaymentSource = NormalizeLabel(request.PaymentSource, "Other"),
             OccurredAtUtc = request.OccurredAtUtc?.ToUniversalTime() ?? utcNow,
             Notes = NormalizeOptionalText(request.Notes),
@@ -76,10 +86,17 @@ public sealed class ExpenseTrackerService(AppDbContext dbContext, ICurrentUserPr
             return null;
         }
 
+        var resolvedSubcategory = expenseTaxonomyService.GetUserSelectableSubcategory(request.SubcategoryId)
+            ?? throw new InvalidOperationException($"Taxonomy sub-category {request.SubcategoryId} is not available for manual entry.");
+        var resolvedCategoryName = expenseTaxonomyService.GetCategoryName(resolvedSubcategory.CategoryId) ?? resolvedSubcategory.Name;
+
         entry.Title = request.Title.Trim();
         entry.Amount = decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero);
         entry.Currency = NormalizeCurrency(request.Currency);
-        entry.Category = NormalizeLabel(request.Category, "Other");
+        entry.Category = resolvedCategoryName;
+        entry.TaxonomyDomainId = resolvedSubcategory.DomainId;
+        entry.TaxonomyCategoryId = resolvedSubcategory.CategoryId;
+        entry.TaxonomySubcategoryId = resolvedSubcategory.Id;
         entry.PaymentSource = NormalizeLabel(request.PaymentSource, "Other");
         entry.OccurredAtUtc = request.OccurredAtUtc?.ToUniversalTime() ?? entry.OccurredAtUtc;
         entry.Notes = NormalizeOptionalText(request.Notes);
@@ -110,14 +127,24 @@ public sealed class ExpenseTrackerService(AppDbContext dbContext, ICurrentUserPr
         return true;
     }
 
-    private static ExpenseTrackerEntryDto ToDto(ExpenseTrackerEntry entry)
+    private ExpenseTrackerEntryDto ToDto(ExpenseTrackerEntry entry)
     {
+        var domainName = expenseTaxonomyService.GetDomainName(entry.TaxonomyDomainId);
+        var categoryName = expenseTaxonomyService.GetCategoryName(entry.TaxonomyCategoryId) ?? entry.Category;
+        var subcategoryName = expenseTaxonomyService.GetSubcategoryName(entry.TaxonomySubcategoryId) ?? entry.Category;
+
         return new ExpenseTrackerEntryDto(
             entry.Id,
             entry.Title,
             entry.Amount,
             entry.Currency,
-            entry.Category,
+            entry.TaxonomyDomainId,
+            domainName,
+            entry.TaxonomyCategoryId,
+            categoryName,
+            entry.TaxonomySubcategoryId,
+            subcategoryName,
+            entry.TaxonomySubcategoryId.HasValue ? null : entry.Category,
             entry.PaymentSource,
             entry.OccurredAtUtc,
             entry.Notes,

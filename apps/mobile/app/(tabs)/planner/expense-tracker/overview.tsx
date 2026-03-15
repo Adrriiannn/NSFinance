@@ -15,14 +15,14 @@ import {
 import { groupExpenseTrackerEntries } from "../../../../src/features/expenseTracker/expenseTrackerUtils";
 import { useExpenseTrackerEntriesQuery } from "../../../../src/features/expenseTracker/useExpenseTracker";
 import { useExpenseTrackerPeriod } from "../../../../src/features/expenseTracker/ExpenseTrackerPeriodContext";
-import { palette, radius, spacing, typography } from "../../../../src/theme/tokens";
+import { palette, spacing, typography } from "../../../../src/theme/tokens";
 
 const shortcuts = [
   { label: "Add expense", icon: "add-circle-outline", route: "/(tabs)/planner/expense-tracker/add" },
   { label: "Planned", icon: "time-outline", route: "/(tabs)/planner/expense-tracker/add?defaultStatus=planned" },
-  { label: "Subscriptions", icon: "repeat-outline", route: "/(tabs)/planner/expense-tracker/add?category=Subscriptions&recurring=true" },
+  { label: "Subscriptions", icon: "repeat-outline", route: "/(tabs)/planner/expense-tracker/add?focusDomainId=280&recurring=true" },
   { label: "Categories", icon: "grid-outline", route: "/(tabs)/planner/expense-tracker/graphs" },
-  { label: "Bills", icon: "receipt-outline", route: "/(tabs)/planner/expense-tracker/add?category=Bills" },
+  { label: "Bills", icon: "receipt-outline", route: "/(tabs)/planner/expense-tracker/add?focusDomainId=140" },
   { label: "Recurring", icon: "refresh-outline", route: "/(tabs)/planner/expense-tracker/add?recurring=true" }
 ] as const;
 
@@ -49,10 +49,7 @@ export default function ExpenseTrackerOverviewScreen() {
   const entries = entriesQuery.data ?? [];
   const currency = entries[0]?.currency ?? "EUR";
 
-  const comparison = useMemo(
-    () => buildExpenseTrackerPeriodComparison(entries, period),
-    [entries, period]
-  );
+  const comparison = useMemo(() => buildExpenseTrackerPeriodComparison(entries, period), [entries, period]);
   const recentEntries = useMemo(
     () => filterEntriesForPeriod(entries, period).sort((left, right) => new Date(right.occurredAtUtc).getTime() - new Date(left.occurredAtUtc).getTime()),
     [entries, period]
@@ -98,10 +95,18 @@ export default function ExpenseTrackerOverviewScreen() {
               style={[styles.periodValue, comparison.currentTotal > comparison.previousTotal ? styles.periodValueNegative : null]}
               baseColor={comparison.currentTotal > comparison.previousTotal ? palette.negative : palette.textPrimary}
             />
-            <Text style={[styles.differenceText, comparison.difference > 0 ? styles.differenceTextNegative : comparison.difference < 0 ? styles.differenceTextPositive : null]}>{formatComparisonIndicator(comparison.difference, currency)}</Text>
+            <Text
+              style={[
+                styles.differenceText,
+                comparison.difference > 0 ? styles.differenceTextNegative : comparison.difference < 0 ? styles.differenceTextPositive : null
+              ]}
+            >
+              {formatComparisonIndicator(comparison.difference, currency)}
+            </Text>
           </View>
         </View>
       </GlassCard>
+
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shortcutRail}>
         {shortcuts.map((shortcut) => (
           <Pressable key={shortcut.label} style={styles.shortcutCard} onPress={() => router.push(shortcut.route as never)}>

@@ -9,9 +9,10 @@ public static class CreateExpenseTrackerEntryEndpoint
     public static async Task<IResult> HandleAsync(
         CreateExpenseTrackerEntryRequest request,
         ExpenseTrackerService expenseTrackerService,
+        ExpenseTaxonomyService expenseTaxonomyService,
         CancellationToken cancellationToken)
     {
-        var errors = ExpenseTrackerEntryRequestValidator.Validate(request);
+        var errors = ExpenseTrackerEntryRequestValidator.Validate(request, expenseTaxonomyService);
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);

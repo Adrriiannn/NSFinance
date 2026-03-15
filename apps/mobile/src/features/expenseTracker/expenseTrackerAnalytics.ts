@@ -1,4 +1,5 @@
 import type { ExpenseTrackerEntryDto } from "../../types/api";
+import { getExpenseTrackerEntryCategoryLabel } from "./expenseTrackerModels";
 
 export type ExpenseTrackerPeriodMode = "weekly" | "monthly";
 
@@ -13,6 +14,8 @@ export type ExpenseTrackerPeriodRange = {
 };
 
 export type ExpenseTrackerCategoryBreakdown = {
+  domainId: number | null;
+  categoryId: number | null;
   category: string;
   total: number;
   count: number;
@@ -58,6 +61,14 @@ function formatDate(date: Date) {
 }
 
 function formatRange(start: Date, end: Date) {
+  if (
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate()
+  ) {
+    return formatDate(end);
+  }
+
   const separator = "\u2013";
   const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
   const sameYear = start.getFullYear() === end.getFullYear();
@@ -131,10 +142,7 @@ export function buildExpenseTrackerPeriodRange(
   };
 }
 
-export function filterEntriesForPeriod(
-  entries: ExpenseTrackerEntryDto[],
-  period: ExpenseTrackerPeriodRange
-) {
+export function filterEntriesForPeriod(entries: ExpenseTrackerEntryDto[], period: ExpenseTrackerPeriodRange) {
   const start = period.start.getTime();
   const end = period.end.getTime();
 
@@ -144,10 +152,7 @@ export function filterEntriesForPeriod(
   });
 }
 
-export function filterComparisonEntriesForPeriod(
-  entries: ExpenseTrackerEntryDto[],
-  period: ExpenseTrackerPeriodRange
-) {
+export function filterComparisonEntriesForPeriod(entries: ExpenseTrackerEntryDto[], period: ExpenseTrackerPeriodRange) {
   const start = period.comparisonStart.getTime();
   const end = period.comparisonEnd.getTime();
 
@@ -217,15 +222,19 @@ export function buildExpenseTrackerCategoryBreakdown(
   const grouped = new Map<string, ExpenseTrackerEntryDto[]>();
 
   currentEntries.forEach((entry) => {
-    const bucket = grouped.get(entry.category) ?? [];
+    const key = `${entry.categoryId ?? 0}|${getExpenseTrackerEntryCategoryLabel(entry)}`;
+    const bucket = grouped.get(key) ?? [];
     bucket.push(entry);
-    grouped.set(entry.category, bucket);
+    grouped.set(key, bucket);
   });
 
   return Array.from(grouped.entries())
-    .map(([category, categoryEntries]) => {
+    .map(([key, categoryEntries]) => {
+      const [rawCategoryId, category] = key.split("|");
       const categoryTotal = sumCompleted(categoryEntries);
       return {
+        domainId: categoryEntries[0]?.domainId ?? null,
+        categoryId: rawCategoryId === "0" ? null : Number(rawCategoryId),
         category,
         total: categoryTotal,
         count: categoryEntries.length,

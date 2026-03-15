@@ -1,0 +1,1133 @@
+# NSFinance Canonical Taxonomy
+
+Version: `2026-03-14-v1`
+
+## Purpose
+- Manual expense tracking in the expense mini-app
+- Future transaction categorization in Activity
+- Financial analytics, charts, summaries, and comparisons
+- Future AI categorization and internal system mapping
+
+## ID Pattern
+- Domain: `100`
+- Category: `10010`, `10020`, `10030`
+- Sub-category: `100101`, `100102`, `100103`
+- Category ids increment by `10` within a domain
+- Sub-category ids increment by `1` within a category
+- IDs are immutable machine-facing anchors
+
+## Visibility Rules
+- Manual expense entry only surfaces user-visible domains
+- System/background domains `900`, `910`, and `920` stay hidden from manual selection
+- The expense picker stores the final selected canonical sub-category id
+
+## Refunds, Reimbursements & Adjustments
+- Domain `900` is system-only
+- It exists so future entries can link back to an original expense entry
+- That supports partial refunds, multiple reimbursements against one original expense, and original-period net spend analytics while preserving event-date cashflow truth
+
+## Developer Usage Guidance
+- Add future categories with the next available `+10` slot under the correct domain
+- Add future sub-categories with the next available `+1` slot under the correct category
+- Do not repurpose ids; names may evolve, ids should not
+- Keep hidden/system domains out of manual pickers by default
+
+## Tree
+
+### 100 Housing (user-visible)
+- Housing and property costs tied to shelter, structural home function, and living arrangements.
+- Note: Structural/home-function repairs remain under Housing.
+
+- `10010` Rent & Mortgage
+  - `100101` Rent
+  - `100102` Mortgage Principal
+  - `100103` Mortgage Interest
+  - `100104` Mortgage Insurance
+  - `100105` Ground Rent / Leasehold Charges
+  - `100106` Rent Deposit
+  - `100107` Housing Association Payments
+  - `100108` Room / Shared Housing Payments
+- `10020` Property Taxes & Fees
+  - `100201` Property Taxes
+  - `100202` Local Property Tax / Council Tax
+  - `100203` HOA / Condo Fees
+  - `100204` Building Management Fees
+  - `100205` Registration / Land Fees
+  - `100206` Housing Permits & Inspection Fees
+- `10030` Home Maintenance & Repairs
+  - `100301` General Repairs
+  - `100302` Plumbing Repairs
+  - `100303` Electrical Repairs
+  - `100304` Roofing Repairs
+  - `100305` Appliance Repairs
+  - `100306` Locksmith
+  - `100307` Pest Control Services
+  - `100308` Handyman Services
+  - `100309` Home Cleaning Services
+  - `100310` Emergency Repairs
+- `10040` Home Improvements & Renovation
+  - `100401` Painting & Decorating
+  - `100402` Flooring
+  - `100403` Kitchen Renovation
+  - `100404` Bathroom Renovation
+  - `100405` Carpentry / Joinery
+  - `100406` Windows & Doors
+  - `100407` Insulation
+  - `100408` Smart Home Installation
+  - `100409` Accessibility Upgrades
+  - `100410` Contractor / Labor Costs
+- `10050` Furniture & Appliances
+  - `100501` Furniture
+  - `100502` Mattresses & Bedding
+  - `100503` Large Appliances
+  - `100504` Small Appliances
+  - `100505` Home Office Furniture
+  - `100506` Décor & Furnishings
+  - `100507` Curtains / Blinds
+  - `100508` Rugs & Carpets
+- `10060` Moving & Temporary Housing
+  - `100601` Moving Company
+  - `100602` Van Rental
+  - `100603` Packing Supplies
+  - `100604` Storage Unit
+  - `100605` Temporary Accommodation
+  - `100606` New Home Setup Costs
+- `10070` Security & Home Services
+  - `100701` Home Security System
+  - `100702` Monitoring Fees
+  - `100703` CCTV / Cameras
+  - `100704` Alarm Maintenance
+  - `100705` Key Cutting
+  - `100706` Concierge / Building Services
+- `10080` Other Housing
+  - `100801` Housing Miscellaneous
+  - `100802` Housing Fines / Penalties
+  - `100803` Unclassified Housing Expense
+
+### 110 Home & Garden (user-visible)
+- Home supplies, décor, DIY materials, and garden or outdoor upkeep outside core housing structure costs.
+
+- `11010` Home Supplies & Consumables
+  - `110101` Cleaning Supplies
+  - `110102` Paper Products
+  - `110103` Laundry Supplies
+  - `110104` Kitchen Consumables
+  - `110105` Storage & Organization
+  - `110106` Light Bulbs & Batteries
+  - `110107` Home Safety Supplies
+  - `110108` Pest Control Supplies
+- `11020` Home Décor & Furnishings
+  - `110201` Artwork
+  - `110202` Decorative Items
+  - `110203` Candles
+  - `110204` Seasonal Decorations
+  - `110205` Wall Fixtures
+  - `110206` Soft Furnishings
+  - `110207` Decorative Lighting
+- `11030` DIY & Improvement Supplies
+  - `110301` Paint
+  - `110302` Hardware
+  - `110303` Power Tools
+  - `110304` Building Materials
+  - `110305` Lighting Fixtures
+  - `110306` Bathroom Fixtures
+  - `110307` Kitchen Fixtures
+  - `110308` Adhesives / Sealants
+  - `110309` Fasteners / Fixings
+- `11040` Garden & Outdoor
+  - `110401` Plants
+  - `110402` Soil / Compost
+  - `110403` Seeds
+  - `110404` Garden Tools
+  - `110405` Lawn Care
+  - `110406` Outdoor Furniture
+  - `110407` BBQ / Patio Supplies
+  - `110408` Pots / Planters
+  - `110409` Watering Systems
+- `11050` Seasonal & Outdoor Maintenance
+  - `110501` Snow Removal Supplies
+  - `110502` Gutter Cleaning Supplies
+  - `110503` Tree Trimming Services
+  - `110504` Landscaping
+  - `110505` Pool Maintenance
+  - `110506` Outdoor Cleaning
+  - `110507` Fence / Shed Upkeep
+- `11060` Workshop & Projects
+  - `110601` DIY Projects
+  - `110602` Home Workshop Supplies
+  - `110603` Craft / Build Materials for Home Use
+  - `110604` Repairs Tools
+  - `110605` Utility Tool Replacements
+- `11070` Other Home & Garden
+  - `110701` Home & Garden Miscellaneous
+  - `110702` Unclassified Home & Garden Expense
+
+### 120 Transportation (user-visible)
+- Everyday transport, vehicle ownership, public transit, long-distance transport, and driving administration.
+- Note: Driving & Licensing includes lessons, tests, permits, and renewals.
+
+- `12010` Public Transport
+  - `120101` Bus
+  - `120102` Train
+  - `120103` Tram / Metro / Luas
+  - `120104` Subway
+  - `120105` Ferry
+  - `120106` Transit Passes
+  - `120107` Park & Ride
+  - `120108` Taxi / Ride-hailing
+- `12020` Fuel & Charging
+  - `120201` Petrol / Gasoline
+  - `120202` Diesel
+  - `120203` EV Charging
+  - `120204` AdBlue / Fluids
+  - `120205` Fuel Station Convenience Purchases
+- `12030` Car Ownership
+  - `120301` Car Loan
+  - `120302` Lease Payment
+  - `120303` Registration
+  - `120304` Road Tax / Motor Tax
+  - `120305` Vehicle Inspection / NCT / MOT
+  - `120306` Parking Permits
+  - `120307` Toll Tags / Devices
+- `12040` Car Maintenance & Repairs
+  - `120401` Routine Service
+  - `120402` Tires
+  - `120403` Brakes
+  - `120404` Oil Change
+  - `120405` Battery Replacement
+  - `120406` Bodywork
+  - `120407` Windshield / Glass
+  - `120408` Breakdown / Roadside Assistance
+  - `120409` Parts & Accessories
+  - `120410` Car Wash / Valeting
+- `12050` Parking & Tolls
+  - `120501` Street Parking
+  - `120502` Garage / Car Park
+  - `120503` Tolls
+  - `120504` Congestion Charges
+  - `120505` Traffic Fines
+  - `120506` Clamping / Towing Fees
+- `12060` Cycling & Micro-Mobility
+  - `120601` Bicycle Purchase
+  - `120602` Bicycle Repairs
+  - `120603` Bicycle Accessories
+  - `120604` Bike Share
+  - `120605` Scooter Rental
+  - `120606` Scooter Purchase / Repairs
+  - `120607` Helmet / Safety Gear
+- `12070` Driving & Licensing
+  - `120701` Driving Lessons
+  - `120702` Theory Test Fees
+  - `120703` Driving Test Fees
+  - `120704` Learner Permit
+  - `120705` License Renewal
+  - `120706` Driving School Materials
+  - `120707` Vehicle Licensing Admin Fees
+- `12080` Long-Distance Transport
+  - `120801` Flights
+  - `120802` Intercity Rail
+  - `120803` Coach / Long-Distance Bus
+  - `120804` Car Rental
+  - `120805` Airport Transfers
+  - `120806` Baggage Fees
+  - `120807` Seat Selection / Travel Add-ons
+- `12090` Other Transportation
+  - `120901` Transportation Miscellaneous
+  - `120902` Unclassified Transport Expense
+
+### 130 Food & Dining (user-visible)
+- Groceries, dining out, drinks, dietary needs, and meal-related spending.
+
+- `13010` Groceries
+  - `130101` Supermarket
+  - `130102` Convenience Store
+  - `130103` Fresh Produce
+  - `130104` Meat & Seafood
+  - `130105` Dairy & Eggs
+  - `130106` Bakery
+  - `130107` Frozen Foods
+  - `130108` Pantry Staples
+  - `130109` Snacks
+  - `130110` Beverages
+  - `130111` Household-Grocery Mixed Basket
+- `13020` Dining Out
+  - `130201` Restaurant
+  - `130202` Café
+  - `130203` Fast Food
+  - `130204` Takeaway / Carryout
+  - `130205` Delivery
+  - `130206` Food Court
+  - `130207` Fine Dining
+  - `130208` Work Lunches
+- `13030` Drinks & Social Food
+  - `130301` Coffee Shops
+  - `130302` Tea / Juice Bars
+  - `130303` Alcohol at Bars / Pubs
+  - `130304` Cocktails
+  - `130305` Nightlife Food & Drinks
+  - `130306` Happy Hour
+  - `130307` Club Entry with Drinks
+- `13040` Special Dietary Spending
+  - `130401` Vegan / Vegetarian Specialty
+  - `130402` Gluten-Free Specialty
+  - `130403` Organic Specialty
+  - `130404` Sports Nutrition / Protein
+  - `130405` Baby Food
+  - `130406` Medical Diet Foods
+- `13050` Meal Services
+  - `130501` Meal Kits
+  - `130502` Prepared Meal Subscriptions
+  - `130503` Office Catering
+  - `130504` Personal Chef / Catering
+  - `130505` Group Food Orders
+- `13060` Other Food & Dining
+  - `130601` Tips / Gratuities
+  - `130602` Food Delivery Fees
+  - `130603` Corkage / Service Charges
+  - `130604` Vending Machines
+  - `130605` Other Food Expense
+
+### 140 Utilities & Communications (user-visible)
+- Essential household utilities plus communication services like broadband and mobile phone bills.
+- Note: Mobile phone bills stay here, not under Subscriptions.
+
+- `14010` Electricity
+  - `140101` Electricity Bill
+  - `140102` Prepay Electricity
+  - `140103` Meter Top-up
+  - `140104` Electricity Arrears
+- `14020` Gas & Heating
+  - `140201` Gas Bill
+  - `140202` Heating Oil
+  - `140203` Propane
+  - `140204` Solid Fuel / Firewood / Pellets
+  - `140205` Boiler Service Fees
+- `14030` Water & Waste
+  - `140301` Water Bill
+  - `140302` Sewer / Wastewater
+  - `140303` Bin / Refuse Collection
+  - `140304` Recycling Fees
+  - `140305` Septic Tank Service
+- `14040` Internet & Communications
+  - `140401` Home Internet
+  - `140402` Broadband Installation
+  - `140403` Landline
+  - `140404` Mobile Phone Bill
+  - `140405` Mobile Top-up
+  - `140406` Family Phone Plan
+  - `140407` International Calling
+- `14050` TV & Media Utilities
+  - `140501` Cable TV
+  - `140502` Satellite TV
+  - `140503` TV License / Broadcast License
+  - `140504` Home Phone-TV Bundles
+- `14060` Utility Setup & Service Fees
+  - `140601` Utility Deposit
+  - `140602` Reconnection Fee
+  - `140603` Installation Fee
+  - `140604` Late Payment Fee
+  - `140605` Service Transfer Fee
+- `14070` Other Utilities & Communications
+  - `140701` Utilities Miscellaneous
+  - `140702` Shared Utility Contribution
+
+### 150 Insurance (user-visible)
+- Premiums, deductibles, and insurance-related costs across health, life, home, vehicle, travel, and pets.
+- Note: Pet Insurance belongs in Insurance, not Pets.
+
+- `15010` Health Insurance
+  - `150101` Health Insurance Premium
+  - `150102` Dental Insurance
+  - `150103` Vision Insurance
+  - `150104` Supplemental Medical Insurance
+  - `150105` Travel Medical Insurance
+- `15020` Life & Disability
+  - `150201` Life Insurance
+  - `150202` Disability Insurance
+  - `150203` Income Protection
+  - `150204` Critical Illness Cover
+  - `150205` Funeral Insurance
+- `15030` Home & Property Insurance
+  - `150301` Homeowners Insurance
+  - `150302` Renters Insurance
+  - `150303` Landlord Insurance
+  - `150304` Contents Insurance
+  - `150305` Flood Insurance
+  - `150306` Disaster Insurance
+- `15040` Vehicle Insurance
+  - `150401` Car Insurance
+  - `150402` Motorcycle Insurance
+  - `150403` Commercial Vehicle Insurance
+  - `150404` Breakdown Cover
+  - `150405` Windscreen Cover
+- `15050` Travel & Event Insurance
+  - `150501` Travel Insurance
+  - `150502` Flight Insurance
+  - `150503` Event Insurance
+  - `150504` Wedding Insurance
+  - `150505` Ticket Protection
+- `15060` Pet & Other Insurance
+  - `150601` Pet Insurance
+  - `150602` Gadget / Device Insurance
+  - `150603` Identity Theft Protection
+  - `150604` Legal Protection Insurance
+- `15070` Other Insurance
+  - `150701` Insurance Deductibles
+  - `150702` Insurance Co-pays
+  - `150703` Other Insurance Costs
+
+### 160 Healthcare (user-visible)
+- Medical care, medications, equipment, hospital costs, wellness, and accessibility-related healthcare spending.
+
+- `16010` Primary Care & Specialists
+  - `160101` General Practitioner Visits
+  - `160102` Pediatrician
+  - `160103` Obstetrician / Gynecologist
+  - `160104` Dermatologist
+  - `160105` Cardiologist
+  - `160106` Neurologist
+  - `160107` Gastroenterologist
+  - `160108` Endocrinologist
+  - `160109` Psychiatrist
+  - `160110` Psychologist / Therapist
+  - `160111` Chiropractor
+  - `160112` Physical Therapist
+  - `160113` Occupational Therapist
+  - `160114` Speech Therapist
+- `16020` Dental Care
+  - `160201` Routine Checkups & Cleanings
+  - `160202` Fillings & Extractions
+  - `160203` Root Canals
+  - `160204` Crowns & Bridges
+  - `160205` Dentures
+  - `160206` Orthodontics
+  - `160207` Teeth Whitening
+  - `160208` Oral Surgery
+- `16030` Vision & Eye Care
+  - `160301` Eye Exams
+  - `160302` Eyeglasses
+  - `160303` Contact Lenses
+  - `160304` Prescription Sunglasses
+  - `160305` LASIK / Vision Correction Surgery
+  - `160306` Eye Medications
+  - `160307` Eye Patches & Supplies
+- `16040` Prescriptions & Medications
+  - `160401` Prescription Drugs
+  - `160402` Mail-Order Prescriptions
+  - `160403` Insulin & Diabetic Supplies
+  - `160404` Birth Control
+  - `160405` Allergy Medications
+  - `160406` Mental Health Medications
+  - `160407` Pain Relievers
+  - `160408` Antibiotics
+- `16050` Medical Equipment & Supplies
+  - `160501` Hearing Aids & Batteries
+  - `160502` Crutches / Walkers / Wheelchairs
+  - `160503` Blood Pressure Monitors
+  - `160504` Glucose Meters & Test Strips
+  - `160505` CPAP Machines & Supplies
+  - `160506` Nebulizers & Inhalers
+  - `160507` Prosthetics & Orthotics
+  - `160508` Compression Stockings
+  - `160509` Ostomy Supplies
+  - `160510` Catheters & Urological Supplies
+- `16060` Hospital & Surgery
+  - `160601` Hospital Stays
+  - `160602` Emergency Room Visits
+  - `160603` Outpatient Surgery
+  - `160604` Anesthesia Fees
+  - `160605` Diagnostic Procedures
+  - `160606` Ambulance & Emergency Transport
+  - `160607` Lab Tests & Blood Work
+  - `160608` X-Rays / MRIs / CT Scans
+- `16070` Mental & Behavioral Health
+  - `160701` Therapy Sessions
+  - `160702` Counseling Services
+  - `160703` Addiction Treatment Programs
+  - `160704` Rehab Facility Stays
+  - `160705` Smoking Cessation Programs
+  - `160706` Eating Disorder Treatment
+  - `160707` Autism & ADHD Assessments
+- `16080` Preventive & Wellness
+  - `160801` Vaccinations
+  - `160802` Cancer Screenings
+  - `160803` STD Testing
+  - `160804` Genetic Testing
+  - `160805` Weight-Loss Programs
+  - `160806` Fertility Treatments & IVF
+  - `160807` Prenatal Classes & Supplies
+- `16090` Travel & Accessibility
+  - `160901` Mileage to Medical Appointments
+  - `160902` Public Transit for Medical Visits
+  - `160903` Lodging for Out-of-Town Treatment
+  - `160904` Home Modifications
+  - `160905` Service Animals & Training
+  - `160906` Special Transportation Services
+- `16100` Other Medical Expenses
+  - `161001` Over-the-Counter Medications
+  - `161002` Menstrual Care Products
+  - `161003` Lactation Supplies
+  - `161004` Medical Alert Devices
+  - `161005` Lead-Based Paint Removal
+  - `161006` Special Diets
+
+### 170 Debt & Loans (user-visible)
+- Debt servicing, loan repayments, interest, arrears, and borrowing-related costs.
+
+- `17010` Credit Cards
+  - `170101` Credit Card Payment
+  - `170102` Credit Card Interest
+  - `170103` Late Fees
+  - `170104` Cash Advance Fees
+  - `170105` Balance Transfer Fees
+- `17020` Personal Loans
+  - `170201` Personal Loan Repayment
+  - `170202` Personal Loan Interest
+  - `170203` Payday Loan
+  - `170204` Buy Now Pay Later Repayment
+  - `170205` Installment Plan Payment
+- `17030` Student Loans
+  - `170301` Student Loan Repayment
+  - `170302` Student Loan Interest
+  - `170303` Tuition Financing
+  - `170304` Loan Servicing Fees
+- `17040` Auto & Vehicle Loans
+  - `170401` Car Loan Payment
+  - `170402` Motorcycle Loan Payment
+  - `170403` Vehicle Loan Interest
+- `17050` Mortgage & Property Debt
+  - `170501` Mortgage Principal
+  - `170502` Mortgage Interest
+  - `170503` Refinancing Fees
+  - `170504` Home Equity Loan Payment
+  - `170505` Home Equity Line Payment
+- `17060` Family & Informal Debt
+  - `170601` Loan Repayment to Family
+  - `170602` Loan Repayment to Friends
+  - `170603` Informal Borrowing Fees
+- `17070` Collections & Penalties
+  - `170701` Debt Collection Payment
+  - `170702` Settlement Payment
+  - `170703` Arrears Payment
+  - `170704` Court-ordered Debt Payment
+- `17080` Other Debt & Loans
+  - `170801` Debt Consolidation Payment
+  - `170802` Loan Application Fees
+  - `170803` Other Loan Costs
+
+### 180 Savings & Investments (user-visible)
+- Cash savings, retirement, investing, and future-oriented contribution activity.
+
+- `18010` Cash Savings
+  - `180101` Emergency Fund Contribution
+  - `180102` General Savings Transfer
+  - `180103` Sinking Fund Contribution
+  - `180104` Holiday Savings
+  - `180105` Down Payment Savings
+- `18020` Retirement
+  - `180201` Pension Contribution
+  - `180202` Retirement Account Contribution
+  - `180203` Employer Match Top-up
+  - `180204` Retirement Fees
+- `18030` Brokerage & Investing
+  - `180301` Brokerage Contribution
+  - `180302` ETF Purchase
+  - `180303` Stock Purchase
+  - `180304` Mutual Fund Purchase
+  - `180305` Bond Purchase
+  - `180306` Crypto Purchase
+  - `180307` Robo-advisor Contribution
+- `18040` Investment Costs
+  - `180401` Trading Fees
+  - `180402` Platform Fees
+  - `180403` Custody Fees
+  - `180404` Advisory Fees
+  - `180405` Fund Management Fees
+- `18050` Education & Future Funds
+  - `180501` College Savings
+  - `180502` Child Savings Account
+  - `180503` Trust Fund Contribution
+- `18060` Other Savings & Investments
+  - `180601` Gold / Precious Metals
+  - `180602` Collectibles as Investment
+  - `180603` Investment Tax Payments
+  - `180604` Other Investment Transfers
+
+### 190 Personal Care (user-visible)
+- Personal upkeep, beauty, hygiene, fitness, and self-care spending.
+
+- `19010` Grooming & Beauty
+  - `190101` Haircuts / Barber
+  - `190102` Salon Services
+  - `190103` Skincare
+  - `190104` Makeup
+  - `190105` Nail Services
+  - `190106` Waxing / Threading
+  - `190107` Spa Treatments
+- `19020` Hygiene & Toiletries
+  - `190201` Toothpaste / Oral Hygiene
+  - `190202` Soap / Body Wash
+  - `190203` Shampoo / Conditioner
+  - `190204` Deodorant
+  - `190205` Feminine Hygiene
+  - `190206` Shaving Supplies
+  - `190207` Toiletry Refills
+- `19030` Clothing Care
+  - `190301` Dry Cleaning
+  - `190302` Laundry Services
+  - `190303` Tailoring / Alterations
+  - `190304` Shoe Repair
+- `19040` Fitness & Wellness
+  - `190401` Gym Membership
+  - `190402` Yoga / Pilates
+  - `190403` Fitness Classes
+  - `190404` Personal Trainer
+  - `190405` Massage
+  - `190406` Supplements / Vitamins
+  - `190407` Wellness Apps
+- `19050` Other Personal Care
+  - `190501` Fragrances
+  - `190502` Tanning
+  - `190503` Cosmetic Procedures
+  - `190504` Other Self-care Spending
+
+### 200 Family & Childcare (user-visible)
+- Childcare, dependent care, child essentials, activities, and broader family support spending.
+- Note: Dependent Care is a dedicated category here.
+
+- `20010` Childcare
+  - `200101` Daycare
+  - `200102` Nanny / Babysitter
+  - `200103` After-school Care
+  - `200104` Preschool
+  - `200105` Summer Camp Childcare
+  - `200106` Childminder
+- `20020` Child Essentials
+  - `200201` Diapers & Wipes
+  - `200202` Formula
+  - `200203` Baby Gear
+  - `200204` School Lunches
+  - `200205` School Supplies
+  - `200206` Kids Clothing
+  - `200207` Baby Furniture
+- `20030` Child Activities
+  - `200301` Sports Fees
+  - `200302` Music Lessons
+  - `200303` Dance Lessons
+  - `200304` Tutoring
+  - `200305` Clubs / Scouts
+  - `200306` Kids Entertainment
+  - `200307` Birthday Parties
+- `20040` Dependent Care
+  - `200401` Elder Care
+  - `200402` Assisted Living Support
+  - `200403` Respite Care
+  - `200404` In-home Support Services
+  - `200405` Caregiver Support
+  - `200406` Adult Day Care
+- `20050` Family Events & Support
+  - `200501` Family Celebrations
+  - `200502` School Events
+  - `200503` Family Travel
+  - `200504` Children's Gifts
+  - `200505` Child Maintenance / Support
+  - `200506` Adoption / Foster Costs
+  - `200507` Family Legal Support
+
+### 210 Entertainment & Hobbies (user-visible)
+- Entertainment, hobbies, leisure activities, events, games, and recreational purchases.
+
+- `21010` Events & Outings
+  - `210101` Cinema
+  - `210102` Concerts
+  - `210103` Theatre
+  - `210104` Museums
+  - `210105` Theme Parks
+  - `210106` Festivals
+  - `210107` Sports Events
+- `21020` Gaming
+  - `210201` Video Games
+  - `210202` In-Game Purchases
+  - `210203` Consoles
+  - `210204` Gaming Accessories
+  - `210205` Online Gaming Subscriptions
+- `21030` Arts & Crafts
+  - `210301` Art Supplies
+  - `210302` Craft Supplies
+  - `210303` Sewing / Knitting
+  - `210304` Photography Hobby
+  - `210305` Pottery / Ceramics
+  - `210306` DIY Hobby Kits
+- `21040` Sports & Recreation
+  - `210401` Sports Equipment
+  - `210402` Club Fees
+  - `210403` Outdoor Gear
+  - `210404` Camping Gear
+  - `210405` Fishing / Hunting
+  - `210406` Climbing
+  - `210407` Swimming / Pool Fees
+- `21050` Media & Leisure
+  - `210501` Books
+  - `210502` eBooks / Audiobooks
+  - `210503` Magazines
+  - `210504` Music Purchases
+  - `210505` Instrument Purchases
+  - `210506` Instrument Lessons
+- `21060` Collecting & Specialty Hobbies
+  - `210601` Trading Cards
+  - `210602` Comics
+  - `210603` Memorabilia
+  - `210604` Model Building
+  - `210605` Collectibles
+- `21070` Other Entertainment & Hobbies
+  - `210701` Hobby Classes
+  - `210702` Workshops
+  - `210703` Other Leisure Spending
+
+### 220 Travel (user-visible)
+- Travel transport, lodging, travel food, planning, and trip-specific costs.
+
+- `22010` Transport
+  - `220101` Flights
+  - `220102` Trains
+  - `220103` Buses
+  - `220104` Car Rental
+  - `220105` Ferries
+  - `220106` Airport Transfers
+  - `220107` Baggage Fees
+- `22020` Lodging
+  - `220201` Hotels
+  - `220202` Hostels
+  - `220203` Vacation Rentals
+  - `220204` Camping Fees
+  - `220205` Resort Fees
+  - `220206` Deposits
+- `22030` Food & Spending While Traveling
+  - `220301` Restaurants While Traveling
+  - `220302` Snacks While Traveling
+  - `220303` Local Transport
+  - `220304` Tips
+  - `220305` Currency Exchange Fees
+- `22040` Trip Planning & Admin
+  - `220401` Passports
+  - `220402` Visas
+  - `220403` Travel Insurance
+  - `220404` Tour Bookings
+  - `220405` Attraction Tickets
+  - `220406` Travel SIM / Roaming
+- `22050` Business Travel
+  - `220501` Work Flights
+  - `220502` Work Lodging
+  - `220503` Meal Reimbursements Pending
+  - `220504` Conference Travel
+  - `220505` Mileage
+- `22060` Other Travel
+  - `220601` Souvenirs
+  - `220602` Travel Gear
+  - `220603` Travel Laundry
+  - `220604` Other Trip Costs
+
+### 230 Personal Shopping (user-visible)
+- Personal retail spending across clothing, accessories, electronics, and other discretionary shopping.
+- Note: Shopping is standardized as Personal Shopping.
+
+- `23010` Clothing
+  - `230101` Everyday Clothing
+  - `230102` Formalwear
+  - `230103` Workwear
+  - `230104` Sportswear
+  - `230105` Underwear / Sleepwear
+  - `230106` Maternity Wear
+  - `230107` Children's Clothing
+- `23020` Shoes & Accessories
+  - `230201` Shoes
+  - `230202` Bags
+  - `230203` Belts
+  - `230204` Wallets
+  - `230205` Jewelry
+  - `230206` Watches
+  - `230207` Sunglasses
+- `23030` Electronics
+  - `230301` Phones
+  - `230302` Tablets
+  - `230303` Laptops
+  - `230304` Accessories
+  - `230305` Smartwatches
+  - `230306` Headphones
+  - `230307` Smart Home Devices for Personal Use
+- `23040` Household Retail Purchases
+  - `230401` Home Décor Retail
+  - `230402` Kitchenware
+  - `230403` Bedding
+  - `230404` Storage
+  - `230405` Seasonal Decorations
+  - `230406` Office Supplies for Personal Use
+- `23050` Luxury & Specialty Purchases
+  - `230501` Designer Goods
+  - `230502` Premium Collectibles
+  - `230503` Specialty Boutique Purchases
+  - `230504` Limited Edition Goods
+- `23060` Other Personal Shopping
+  - `230601` Department Store
+  - `230602` Marketplace Purchases
+  - `230603` Misc Retail
+  - `230604` Impulse Purchases
+
+### 240 Gifts & Donations (user-visible)
+- Personal gifts, celebrations, charitable giving, and informal support for others.
+- Note: Personal/family gifts belong here; corporate/client gifts belong in Business Expenses.
+
+- `24010` Personal Gifts
+  - `240101` Birthday Gifts
+  - `240102` Wedding Gifts
+  - `240103` Holiday Gifts
+  - `240104` Baby Shower Gifts
+  - `240105` Graduation Gifts
+  - `240106` Anniversary Gifts
+  - `240107` Personal Occasion Gifts
+- `24020` Celebrations & Gift Support
+  - `240201` Party Supplies
+  - `240202` Greeting Cards
+  - `240203` Gift Wrap
+  - `240204` Event Contributions
+  - `240205` Shared Group Gifts
+- `24030` Charitable Giving
+  - `240301` Charitable Donations
+  - `240302` Crowdfunding Support
+  - `240303` Nonprofit Contributions
+  - `240304` Sponsored Events
+  - `240305` Volunteer-related Donations
+- `24040` Other Giving
+  - `240401` Community Support
+  - `240402` Informal Financial Help
+  - `240403` Other Giving Expense
+
+### 250 Pets (user-visible)
+- Pet food, care, boarding, adoption, and other pet-related spending excluding pet insurance.
+
+- `25010` Pet Food & Supplies
+  - `250101` Pet Food
+  - `250102` Treats
+  - `250103` Litter / Bedding
+  - `250104` Toys
+  - `250105` Grooming Supplies
+  - `250106` Cages / Tanks / Accessories
+- `25020` Veterinary Care
+  - `250201` Routine Checkups
+  - `250202` Vaccinations
+  - `250203` Medication
+  - `250204` Surgery
+  - `250205` Emergency Vet
+  - `250206` Dental for Pets
+- `25030` Grooming & Boarding
+  - `250301` Grooming
+  - `250302` Boarding
+  - `250303` Pet Sitting
+  - `250304` Dog Walking
+  - `250305` Daycare
+- `25040` Pet Purchase & Adoption
+  - `250401` Adoption Fees
+  - `250402` Purchase Costs
+  - `250403` Licensing / Registration
+  - `250404` Training Classes
+- `25050` Other Pet Costs
+  - `250501` Travel with Pets
+  - `250502` Memorial Costs
+  - `250503` Other Pet Expense
+
+### 260 Education (user-visible)
+- Tuition, learning materials, training, and other educational costs.
+
+- `26010` Tuition & Fees
+  - `260101` School Tuition
+  - `260102` University Tuition
+  - `260103` Registration Fees
+  - `260104` Lab Fees
+  - `260105` Exam Fees
+  - `260106` Graduation Fees
+- `26020` Learning Materials
+  - `260201` Textbooks
+  - `260202` Stationery
+  - `260203` Online Courses
+  - `260204` Software for Study
+  - `260205` School Uniforms
+  - `260206` Supplies
+- `26030` Lessons & Training
+  - `260301` Language Classes
+  - `260302` Music Lessons
+  - `260303` Coding Courses
+  - `260304` Professional Certifications
+  - `260305` Trade Training
+- `26040` Student Living Costs
+  - `260401` Dorm Fees
+  - `260402` Meal Plan
+  - `260403` Student Travel
+  - `260404` Campus Fees
+- `26050` Other Education
+  - `260501` Tutoring
+  - `260502` Test Prep
+  - `260503` Study Abroad Costs
+  - `260504` Other Learning Expenses
+
+### 270 Taxes (user-visible)
+- Income, property, vehicle, VAT, and other tax payments and filing support.
+
+- `27010` Income Taxes
+  - `270101` Income Tax Payment
+  - `270102` Estimated Tax Payment
+  - `270103` Underpayment Penalties
+  - `270104` Tax Settlement
+- `27020` Property & Local Taxes
+  - `270201` Property Tax
+  - `270202` Local Tax
+  - `270203` Council Tax
+  - `270204` Stamp Duty / Transfer Tax
+- `27030` Vehicle & Usage Taxes
+  - `270301` Motor Tax
+  - `270302` Registration Tax
+  - `270303` Road Use Tax
+- `27040` Sales / VAT / Business Taxes
+  - `270401` VAT Payment
+  - `270402` Sales Tax Payment
+  - `270403` Business Tax Payment
+  - `270404` Payroll Tax
+- `27050` Tax Services
+  - `270501` Tax Filing Software
+  - `270502` Accountant / Tax Preparer
+  - `270503` Filing Fees
+  - `270504` Audit Support
+- `27060` Other Taxes
+  - `270601` Import Duties
+  - `270602` Customs Charges
+  - `270603` Tax Penalties
+  - `270604` Other Government Tax Charges
+
+### 280 Subscriptions (user-visible)
+- Recurring subscriptions, memberships, software, streaming, and recurring delivery plans.
+- Note: Utilities & Communications still owns mobile phone service.
+
+- `28010` Streaming & Media
+  - `280101` Netflix
+  - `280102` Spotify
+  - `280103` YouTube Premium
+  - `280104` Disney+
+  - `280105` Audible
+  - `280106` Other Streaming Services
+- `28020` Software & Digital Tools
+  - `280201` Microsoft 365
+  - `280202` Google One
+  - `280203` Adobe
+  - `280204` Cloud Storage
+  - `280205` Antivirus
+  - `280206` Productivity Apps
+- `28030` Memberships
+  - `280301` Gym Membership
+  - `280302` Warehouse Club Membership
+  - `280303` Professional Association
+  - `280304` Loyalty / Premium Membership
+  - `280305` Club Membership
+- `28040` Recurring Plans & Boxes
+  - `280401` Meal Subscription
+  - `280402` Regular Delivery Boxes
+  - `280403` App Subscription
+  - `280404` Gaming Subscription
+  - `280405` Dating App Subscription
+- `28050` Other Subscriptions
+  - `280501` Premium News
+  - `280502` Subscription Boxes
+  - `280503` Other Recurring Service Subscription
+
+### 290 Business Expenses (user-visible)
+- Business operating costs including Home Office, software, marketing, services, compliance, and client expenses.
+- Note: Business Expenses includes Home Office and corporate/client gifts.
+
+- `29010` Office & Admin
+  - `290101` Office Supplies
+  - `290102` Printing
+  - `290103` Stationery
+  - `290104` Coworking Space
+  - `290105` Office Rent
+  - `290106` PO Box
+- `29020` Home Office
+  - `290201` Desk / Chair
+  - `290202` Monitors / Peripherals
+  - `290203` Printer / Ink / Paper
+  - `290204` Workspace Furnishing
+  - `290205` Internet / Utility Allocation
+  - `290206` Home Office Supplies
+- `29030` Software & Services
+  - `290301` Accounting Software
+  - `290302` CRM
+  - `290303` Design Tools
+  - `290304` Cloud Services
+  - `290305` Website Hosting
+  - `290306` Email Services
+  - `290307` Domain Names
+- `29040` Marketing & Sales
+  - `290401` Advertising
+  - `290402` Social Media Ads
+  - `290403` Branding
+  - `290404` Business Cards
+  - `290405` Events / Trade Shows
+  - `290406` Client Gifts
+  - `290407` Lead Generation
+- `29050` Professional Services
+  - `290501` Accountant
+  - `290502` Bookkeeper
+  - `290503` Lawyer
+  - `290504` Consultant
+  - `290505` Virtual Assistant
+  - `290506` Contractor Payments
+- `29060` Equipment & Operations
+  - `290601` Computer Equipment
+  - `290602` Camera / Audio Equipment
+  - `290603` Office Furniture
+  - `290604` Tools / Machinery
+  - `290605` Repairs & Maintenance
+  - `290606` Shipping & Postage
+- `29070` Travel & Client Costs
+  - `290701` Client Meals
+  - `290702` Business Travel
+  - `290703` Mileage
+  - `290704` Conferences
+  - `290705` Lodging
+  - `290706` Taxis
+- `29080` Taxes & Compliance
+  - `290801` Business Registration Fees
+  - `290802` Licenses & Permits
+  - `290803` VAT / Sales Tax
+  - `290804` Payroll Services
+  - `290805` Insurance
+- `29090` Other Business Expenses
+  - `290901` Bank Fees
+  - `290902` Merchant Fees
+  - `290903` Chargebacks / Refund Losses
+  - `290904` Miscellaneous Business Costs
+
+### 300 Religious Or Spiritual Giving (user-visible)
+- Religious or spiritual giving, ceremonies, educational support, and community contributions.
+
+- `30010` Regular Giving
+  - `300101` Tithes
+  - `300102` Weekly / Monthly Offerings
+  - `300103` Temple / Mosque / Church Contributions
+  - `300104` Community Support
+- `30020` Ceremonies & Events
+  - `300201` Weddings
+  - `300202` Baptisms / Christenings
+  - `300203` Funerals
+  - `300204` Festivals / Holy Days
+  - `300205` Pilgrimage Costs
+- `30030` Educational & Community Support
+  - `300301` Religious Education
+  - `300302` Retreats
+  - `300303` Youth Programs
+  - `300304` Mission Support
+  - `300305` Spiritual Counseling
+- `30040` Other Spiritual Spending
+  - `300401` Books / Materials
+  - `300402` Ritual Supplies
+  - `300403` Donations to Spiritual Organizations
+
+### 310 Legal & Professional Fees (user-visible)
+- Legal representation, advisory fees, identity/document compliance, and other professional services.
+- Note: Keeps legal/professional fees distinct from broader Business Expenses.
+
+- `31010` Legal Services
+  - `310101` Solicitor / Attorney Fees
+  - `310102` Court Fees
+  - `310103` Notary Fees
+  - `310104` Document Filing Fees
+  - `310105` Mediation
+  - `310106` Immigration Services
+  - `310107` Estate / Probate Services
+- `31020` Financial & Advisory
+  - `310201` Financial Planner
+  - `310202` Investment Advisor
+  - `310203` Tax Advisor
+  - `310204` Insurance Broker
+  - `310205` Mortgage Broker
+- `31030` Identity / Compliance / Documents
+  - `310301` Passport Fees
+  - `310302` ID Renewal
+  - `310303` Background Checks
+  - `310304` Certification / Authentication Fees
+- `31040` Other Professional Fees
+  - `310401` Translation Services
+  - `310402` Resume / Career Coaching
+  - `310403` Licensing Help
+  - `310404` Expert Consultations
+
+### 900 Refunds, Reimbursements & Adjustments (system hidden)
+- System-only domain for refunds, reimbursements, credits, and adjustments that may offset original expenses.
+- Note: Future entries in this domain must support linkage to original expense entries for original-period net spend analytics, partial refunds, and multiple offset records.
+
+- `90010` Refunds
+  - `900101` Merchant Refund
+  - `900102` Partial Refund
+  - `900103` Return Refund
+  - `900104` Deposit Return
+  - `900105` Charge Reversal
+- `90020` Reimbursements
+  - `900201` Employer Reimbursement
+  - `900202` Shared Expense Repayment
+  - `900203` Insurance Reimbursement
+  - `900204` Family Reimbursement
+  - `900205` Benefit / Grant Reimbursement
+- `90030` Credits & Adjustments
+  - `900301` Bill Credit
+  - `900302` Promotional Credit
+  - `900303` Cashback Credit
+  - `900304` Manual Balance Adjustment
+
+### 910 Income (system hidden)
+- System-only domain for income and other inflows that should not appear in manual expense entry.
+
+- `91010` Employment Income
+  - `910101` Salary
+  - `910102` Bonus
+  - `910103` Overtime
+  - `910104` Commission
+  - `910105` Employer Allowance
+- `91020` Self-Employment & Business Income
+  - `910201` Freelance Income
+  - `910202` Business Revenue
+  - `910203` Contract Work Payment
+  - `910204` Client Payment
+- `91030` Investment & Finance Income
+  - `910301` Interest
+  - `910302` Dividends
+  - `910303` Capital Gain Distribution
+  - `910304` Investment Payout
+- `91040` Government & Benefit Income
+  - `910401` Tax Refund
+  - `910402` Social Benefits
+  - `910403` Unemployment Support
+  - `910404` Child Benefit
+  - `910405` Pension Income
+- `91050` Personal Inflows
+  - `910501` Gift Received
+  - `910502` Family Support Received
+  - `910503` Rental Income
+  - `910504` Miscellaneous Income
+
+### 920 Transfers (system hidden)
+- System-only domain for internal transfers and money movement that should stay hidden from manual expense selection.
+
+- `92010` Internal Transfers
+  - `920101` Bank Account Transfer
+  - `920102` Savings Transfer
+  - `920103` Investment Transfer
+  - `920104` Wallet Transfer
+- `92020` Liability & Card Transfers
+  - `920201` Credit Card Payment Transfer
+  - `920202` Loan Account Transfer
+  - `920203` Debt Consolidation Transfer
+- `92030` Cash Movement
+  - `920301` Cash Withdrawal
+  - `920302` Cash Deposit
+  - `920303` ATM Withdrawal Transfer
+- `92040` Other Transfers
+  - `920401` Brokerage Funding Transfer
+  - `920402` Currency Transfer
+  - `920403` Other Internal Money Movement

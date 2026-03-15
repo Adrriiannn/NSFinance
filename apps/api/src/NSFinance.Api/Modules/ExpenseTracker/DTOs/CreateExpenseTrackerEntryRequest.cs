@@ -4,7 +4,7 @@ public sealed record CreateExpenseTrackerEntryRequest(
     string Title,
     decimal Amount,
     string Currency,
-    string Category,
+    int SubcategoryId,
     string PaymentSource,
     DateTime? OccurredAtUtc,
     string? Notes,

@@ -1,9 +1,14 @@
 import { apiRequest } from "../../lib/api/client";
 import type {
   CreateExpenseTrackerEntryRequest,
+  ExpenseTaxonomyResponseDto,
   ExpenseTrackerEntryDto,
   UpdateExpenseTrackerEntryRequest
 } from "../../types/api";
+
+export function getExpenseTrackerTaxonomy() {
+  return apiRequest<ExpenseTaxonomyResponseDto>("/api/expense-tracker/taxonomy");
+}
 
 export function getExpenseTrackerEntries() {
   return apiRequest<ExpenseTrackerEntryDto[]>("/api/expense-tracker/entries");

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type {
   CreateExpenseTrackerEntryRequest,
+  ExpenseTaxonomyResponseDto,
   ExpenseTrackerEntryDto,
   UpdateExpenseTrackerEntryRequest
 } from "../../types/api";
@@ -10,6 +11,7 @@ import {
   deleteExpenseTrackerEntry,
   getExpenseTrackerEntryById,
   getExpenseTrackerEntries,
+  getExpenseTrackerTaxonomy,
   updateExpenseTrackerEntry
 } from "./expenseTrackerApi";
 
@@ -37,6 +39,17 @@ function upsertEntry(
   return copy.sort(
     (left, right) => new Date(right.occurredAtUtc).getTime() - new Date(left.occurredAtUtc).getTime()
   );
+}
+
+export function useExpenseTrackerTaxonomyQuery() {
+  return useQuery({
+    queryKey: queryKeys.expenseTracker.taxonomy,
+    queryFn: getExpenseTrackerTaxonomy,
+    staleTime: 60_000,
+    refetchOnMount: "always" as const,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: true
+  });
 }
 
 export function useExpenseTrackerEntriesQuery() {

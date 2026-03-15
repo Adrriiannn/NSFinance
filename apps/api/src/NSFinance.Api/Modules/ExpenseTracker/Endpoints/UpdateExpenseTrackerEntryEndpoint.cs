@@ -10,9 +10,10 @@ public static class UpdateExpenseTrackerEntryEndpoint
         Guid id,
         UpdateExpenseTrackerEntryRequest request,
         ExpenseTrackerService expenseTrackerService,
+        ExpenseTaxonomyService expenseTaxonomyService,
         CancellationToken cancellationToken)
     {
-        var errors = ExpenseTrackerEntryRequestValidator.Validate(request);
+        var errors = ExpenseTrackerEntryRequestValidator.Validate(request, expenseTaxonomyService);
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);

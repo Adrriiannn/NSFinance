@@ -19,7 +19,7 @@ public class ExpenseTrackerIntegrationTests
                 "Weekly groceries",
                 76.25m,
                 "eur",
-                "Groceries",
+                130111,
                 "AIB",
                 new DateTime(2026, 03, 14, 19, 30, 0, DateTimeKind.Utc),
                 "Bought dinner supplies",
@@ -32,13 +32,18 @@ public class ExpenseTrackerIntegrationTests
         Assert.Equal("Weekly groceries", created.Title);
         Assert.Equal(76.25m, created.Amount);
         Assert.Equal("EUR", created.Currency);
-        Assert.Equal("Groceries", created.Category);
+        Assert.Equal(130, created.DomainId);
+        Assert.Equal(13010, created.CategoryId);
+        Assert.Equal(130111, created.SubcategoryId);
+        Assert.Equal("Groceries", created.CategoryName);
+        Assert.Equal("Household-Grocery Mixed Basket", created.SubcategoryName);
         Assert.Equal("AIB", created.PaymentSource);
         Assert.Equal("completed", created.Status);
         Assert.Equal(["home", "food"], created.Tags);
 
         var stored = await harness.DbContext.ExpenseTrackerEntries.SingleAsync();
         Assert.Equal(harness.CurrentUserProvider.UserId, stored.UserId);
+        Assert.Equal(130111, stored.TaxonomySubcategoryId);
     }
 
     [Fact]
@@ -50,7 +55,7 @@ public class ExpenseTrackerIntegrationTests
                 "Cinema",
                 18m,
                 "EUR",
-                "Entertainment",
+                210101,
                 "Cash",
                 new DateTime(2026, 03, 14, 20, 0, 0, DateTimeKind.Utc),
                 null,
@@ -66,7 +71,7 @@ public class ExpenseTrackerIntegrationTests
                 "Cinema and snacks",
                 24.50m,
                 "EUR",
-                "Entertainment",
+                210101,
                 "Credit Card",
                 new DateTime(2026, 03, 15, 20, 0, 0, DateTimeKind.Utc),
                 "Added popcorn",
@@ -83,6 +88,8 @@ public class ExpenseTrackerIntegrationTests
         Assert.Equal("completed", updated.Status);
         Assert.True(updated.IsRecurring);
         Assert.Equal("Odeon", updated.Merchant);
+        Assert.Equal(21010, updated.CategoryId);
+        Assert.Equal("Events & Outings", updated.CategoryName);
     }
 
     [Fact]
@@ -94,7 +101,7 @@ public class ExpenseTrackerIntegrationTests
                 "Bus fare",
                 3.40m,
                 "EUR",
-                "Transport",
+                120101,
                 "Cash",
                 DateTime.UtcNow,
                 null,
@@ -119,7 +126,7 @@ public class ExpenseTrackerIntegrationTests
                 "Older entry",
                 12m,
                 "EUR",
-                "Bills",
+                140701,
                 "AIB",
                 new DateTime(2026, 03, 10, 9, 0, 0, DateTimeKind.Utc),
                 null,
@@ -133,7 +140,7 @@ public class ExpenseTrackerIntegrationTests
                 "Latest entry",
                 20m,
                 "EUR",
-                "Shopping",
+                230603,
                 "Revolut",
                 new DateTime(2026, 03, 14, 9, 0, 0, DateTimeKind.Utc),
                 null,
@@ -177,11 +184,13 @@ public class ExpenseTrackerIntegrationTests
                 .Options;
 
             DbContext = new AppDbContext(options);
-            Service = new ExpenseTrackerService(DbContext, CurrentUserProvider);
+            TaxonomyService = new ExpenseTaxonomyService();
+            Service = new ExpenseTrackerService(DbContext, CurrentUserProvider, TaxonomyService);
         }
 
         public AppDbContext DbContext { get; }
         public MutableCurrentUserProvider CurrentUserProvider { get; }
+        public ExpenseTaxonomyService TaxonomyService { get; }
         public ExpenseTrackerService Service { get; }
 
         public ValueTask DisposeAsync()

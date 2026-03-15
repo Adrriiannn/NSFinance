@@ -13,7 +13,7 @@ import {
 } from "../../../../src/features/expenseTracker/expenseTrackerAnalytics";
 import { useExpenseTrackerPeriod } from "../../../../src/features/expenseTracker/ExpenseTrackerPeriodContext";
 import { useExpenseTrackerEntriesQuery } from "../../../../src/features/expenseTracker/useExpenseTracker";
-import { expenseTrackerCategoryOptions } from "../../../../src/features/expenseTracker/expenseTrackerModels";
+import { getExpenseTrackerEntrySubcategoryLabel, getExpenseTrackerVisual } from "../../../../src/features/expenseTracker/expenseTrackerModels";
 import { palette, radius, spacing, typography } from "../../../../src/theme/tokens";
 
 function formatAmount(amount: number, currency: string) {
@@ -58,14 +58,8 @@ export default function ExpenseTrackerGraphsScreen() {
     }
   }, []);
 
-  const categoryBreakdown = useMemo(
-    () => buildExpenseTrackerCategoryBreakdown(entries, period),
-    [entries, period]
-  );
-  const summary = useMemo(
-    () => buildExpenseTrackerPeriodSummary(entries, period),
-    [entries, period]
-  );
+  const categoryBreakdown = useMemo(() => buildExpenseTrackerCategoryBreakdown(entries, period), [entries, period]);
+  const summary = useMemo(() => buildExpenseTrackerPeriodSummary(entries, period), [entries, period]);
   const topLegendItems = categoryBreakdown.slice(0, 3);
 
   return (
@@ -98,17 +92,14 @@ export default function ExpenseTrackerGraphsScreen() {
             </View>
 
             <View style={styles.chartBody}>
-              <ExpenseTrackerCategoryRadialChart
-                data={categoryBreakdown}
-                totalLabel={formatAmount(summary.completedTotal, currency)}
-              />
+              <ExpenseTrackerCategoryRadialChart data={categoryBreakdown} totalLabel={formatAmount(summary.completedTotal, currency)} />
               <View style={styles.chartLegend}>
                 {topLegendItems.map((item) => {
-                  const categoryOption = expenseTrackerCategoryOptions.find((option) => option.value === item.category);
+                  const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
                   return (
-                    <View key={item.category} style={styles.legendRow}>
+                    <View key={`${item.categoryId ?? item.category}`} style={styles.legendRow}>
                       <View style={styles.legendLabelWrap}>
-                        <View style={[styles.legendDot, { backgroundColor: categoryOption?.color ?? palette.primaryGlow }]} />
+                        <View style={[styles.legendDot, { backgroundColor: visuals.color }]} />
                         <Text style={styles.legendLabel}>{item.category}</Text>
                       </View>
                       <Text style={styles.legendValue}>{item.percentage.toFixed(1)}%</Text>
@@ -121,11 +112,10 @@ export default function ExpenseTrackerGraphsScreen() {
 
           <View style={styles.breakdownWrap}>
             {categoryBreakdown.map((item) => {
-              const categoryOption = expenseTrackerCategoryOptions.find((option) => option.value === item.category);
-              const categoryColor = categoryOption?.color ?? palette.primaryGlow;
+              const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
               const expanded = expandedCategory === item.category;
               return (
-                <GlassCard key={item.category} style={styles.categoryCard}>
+                <GlassCard key={`${item.categoryId ?? item.category}`} style={styles.categoryCard}>
                   <Pressable
                     style={styles.categoryCardPressable}
                     onPress={() => {
@@ -134,32 +124,16 @@ export default function ExpenseTrackerGraphsScreen() {
                     }}
                   >
                     <View style={styles.categoryMainRow}>
-                      <View style={[styles.categoryIconWrap, { backgroundColor: tintColor(categoryColor, 0.18) }]}>
-                        <Ionicons
-                          name={(categoryOption?.icon ?? "ellipse-outline") as keyof typeof Ionicons.glyphMap}
-                          size={18}
-                          color={categoryColor}
-                        />
+                      <View style={[styles.categoryIconWrap, { backgroundColor: tintColor(visuals.color, 0.18) }]}>
+                        <Ionicons name={visuals.icon as keyof typeof Ionicons.glyphMap} size={18} color={visuals.color} />
                       </View>
 
                       <View style={styles.categoryContentColumn}>
                         <Text style={styles.categoryName}>{item.category}</Text>
-                        <View style={styles.progressTrack}>
-                          <View
-                            style={[
-                              styles.progressTrackTint,
-                              { backgroundColor: tintColor(categoryColor, 0.18) }
-                            ]}
-                          />
-                          <View
-                            style={[
-                              styles.progressFill,
-                              {
-                                width: `${Math.max(item.percentage, 4)}%`,
-                                backgroundColor: categoryColor
-                              }
-                            ]}
-                          />
+                        <View style={styles.progressTrackWrap}>
+                          <View style={[styles.progressTrack, { backgroundColor: tintColor(visuals.color, 0.18) }]}>
+                            <View style={[styles.progressFill, { width: `${Math.max(item.percentage, 4)}%`, backgroundColor: visuals.color }]} />
+                          </View>
                         </View>
                       </View>
 
@@ -176,7 +150,7 @@ export default function ExpenseTrackerGraphsScreen() {
                         <View key={entry.id} style={styles.transactionRow}>
                           <View style={styles.transactionTextWrap}>
                             <Text style={styles.transactionTitle}>{entry.merchant ?? entry.title}</Text>
-                            <Text style={styles.transactionMeta}>{formatDateTime(entry.occurredAtUtc)}</Text>
+                            <Text style={styles.transactionMeta}>{getExpenseTrackerEntrySubcategoryLabel(entry)} | {formatDateTime(entry.occurredAtUtc)}</Text>
                           </View>
                           <Text style={styles.transactionAmount}>{formatAmount(entry.amount, entry.currency)}</Text>
                         </View>
@@ -271,13 +245,16 @@ const styles = StyleSheet.create({
   },
   categoryContentColumn: {
     flex: 1,
-    gap: 10,
+    gap: 8,
     justifyContent: "center"
   },
   categoryName: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
     fontWeight: "700"
+  },
+  progressTrackWrap: {
+    width: "72%"
   },
   categoryMetricsColumn: {
     width: 64,
@@ -297,12 +274,7 @@ const styles = StyleSheet.create({
   progressTrack: {
     height: 10,
     borderRadius: 999,
-    overflow: "hidden",
-    position: "relative"
-  },
-  progressTrackTint: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 999
+    overflow: "hidden"
   },
   progressFill: {
     height: 10,

@@ -211,6 +211,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();
         services.AddScoped<DashboardService>();
+        services.AddScoped<ExpenseTaxonomyService>();
         services.AddScoped<ExpenseTrackerService>();
         services.AddHttpClient<TrueLayerHttpClient>();
         services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();

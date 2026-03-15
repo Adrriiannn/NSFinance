@@ -1,7 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { useEntranceAnimation } from "../../hooks/useEntranceAnimation";
-import { expenseTrackerCategoryOptions } from "../../features/expenseTracker/expenseTrackerModels";
+import {
+  getExpenseTrackerEntryCategoryLabel,
+  getExpenseTrackerEntrySubcategoryLabel,
+  getExpenseTrackerVisual
+} from "../../features/expenseTracker/expenseTrackerModels";
 import { palette, radius, spacing, typography } from "../../theme/tokens";
 import type { ExpenseTrackerEntryDto } from "../../types/api";
 
@@ -27,19 +31,19 @@ type ExpenseTrackerJournalItemProps = {
 };
 
 export function ExpenseTrackerJournalItem({ entry, onPress }: ExpenseTrackerJournalItemProps) {
-  const categoryOption = expenseTrackerCategoryOptions.find((option) => option.value === entry.category);
+  const visuals = getExpenseTrackerVisual({ domainId: entry.domainId, categoryId: entry.categoryId });
   const animationStyle = useEntranceAnimation();
   const isPlanned = entry.status === "planned";
 
   return (
     <Animated.View style={animationStyle}>
       <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed ? styles.cardPressed : null]}>
-        <View style={[styles.leftAccent, { backgroundColor: categoryOption?.color ?? palette.primaryGlow }]} />
-        <View style={[styles.iconWrap, { backgroundColor: `${categoryOption?.color ?? palette.primaryGlow}22` }]}> 
+        <View style={[styles.leftAccent, { backgroundColor: visuals.color }]} />
+        <View style={[styles.iconWrap, { backgroundColor: `${visuals.color}22` }]}> 
           <Ionicons
-            name={(categoryOption?.icon ?? "ellipse-outline") as keyof typeof Ionicons.glyphMap}
+            name={visuals.icon as keyof typeof Ionicons.glyphMap}
             size={18}
-            color={categoryOption?.color ?? palette.primaryGlow}
+            color={visuals.color}
           />
         </View>
         <View style={styles.contentWrap}>
@@ -56,9 +60,9 @@ export function ExpenseTrackerJournalItem({ entry, onPress }: ExpenseTrackerJour
           </View>
           <View style={styles.bottomRow}>
             <View style={styles.categoryPill}>
-              <Text style={styles.categoryLabel}>{entry.category}</Text>
+              <Text style={styles.categoryLabel}>{getExpenseTrackerEntrySubcategoryLabel(entry)}</Text>
             </View>
-            <Text style={styles.statusLabel}>{isPlanned ? "Planned" : "Completed"}</Text>
+            <Text style={styles.statusLabel}>{isPlanned ? getExpenseTrackerEntryCategoryLabel(entry) : getExpenseTrackerEntryCategoryLabel(entry)}</Text>
           </View>
         </View>
       </Pressable>
@@ -140,7 +144,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(127,174,255,0.16)",
     backgroundColor: "rgba(127,174,255,0.1)",
     paddingHorizontal: spacing[8],
-    paddingVertical: 4
+    paddingVertical: 4,
+    flexShrink: 1
   },
   categoryLabel: {
     color: palette.textPrimary,

@@ -18,6 +18,7 @@ export const queryKeys = {
   },
   expenseTracker: {
     root: ["expense-tracker"] as const,
+    taxonomy: ["expense-tracker", "taxonomy"] as const,
     entries: ["expense-tracker", "entries"] as const,
     detail: (id: string) => ["expense-tracker", "entries", id] as const
   },

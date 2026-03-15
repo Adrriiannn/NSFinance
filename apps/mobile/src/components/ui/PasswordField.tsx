@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
-import { palette, radius, spacing, typography } from "../../theme/tokens";
+import { controls, palette, spacing, typography } from "../../theme/tokens";
 
 type PasswordFieldProps = Omit<TextInputProps, "secureTextEntry"> & {
   label: string;
@@ -107,21 +107,21 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   inputWrap: {
-    minHeight: 50,
-    borderRadius: radius.small,
+    minHeight: controls.fieldHeight,
+    borderRadius: controls.fieldRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    paddingLeft: spacing[12],
+    paddingLeft: spacing[16],
     paddingRight: spacing[8],
     flexDirection: "row",
     alignItems: "center",
     gap: spacing[8]
   },
   inputWrapNormal: {
-    backgroundColor: palette.elevatedBackground
+    backgroundColor: controls.controlSurfaceMuted
   },
   inputWrapSolid: {
-    backgroundColor: palette.elevatedBackground
+    backgroundColor: controls.controlSurfaceStrong
   },
   input: {
     flex: 1,
@@ -130,10 +130,10 @@ const styles = StyleSheet.create({
     ...typography.body1
   },
   inputNormal: {
-    backgroundColor: palette.elevatedBackground
+    backgroundColor: controls.controlSurfaceMuted
   },
   inputSolid: {
-    backgroundColor: palette.elevatedBackground
+    backgroundColor: controls.controlSurfaceStrong
   },
   eyeButton: {
     width: 34,
@@ -161,3 +161,4 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+

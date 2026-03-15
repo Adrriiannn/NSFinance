@@ -49,12 +49,74 @@ export type CreateTransactionRequest = {
 
 export type ExpenseTrackerEntryStatus = "planned" | "completed";
 
+export type ExpenseTaxonomySubcategoryDto = {
+  id: number;
+  domainId: number;
+  categoryId: number;
+  name: string;
+  description: string;
+  isUserSelectable: boolean;
+  sortOrder: number;
+  isActive: boolean;
+  aliases: string[];
+  keywords: string[];
+  merchantHints: string[];
+  isLikelyRecurring: boolean;
+  isLikelyRefundable: boolean;
+  notes: string | null;
+};
+
+export type ExpenseTaxonomyCategoryDto = {
+  id: number;
+  domainId: number;
+  name: string;
+  description: string;
+  isUserSelectable: boolean;
+  sortOrder: number;
+  isActive: boolean;
+  aliases: string[];
+  keywords: string[];
+  merchantHints: string[];
+  isLikelyRecurring: boolean;
+  isLikelyRefundable: boolean;
+  notes: string | null;
+  subcategories: ExpenseTaxonomySubcategoryDto[];
+};
+
+export type ExpenseTaxonomyDomainDto = {
+  id: number;
+  name: string;
+  description: string;
+  isUserSelectable: boolean;
+  isSystemDomain: boolean;
+  sortOrder: number;
+  isActive: boolean;
+  aliases: string[];
+  keywords: string[];
+  merchantHints: string[];
+  isLikelyRecurring: boolean;
+  isLikelyRefundable: boolean;
+  notes: string | null;
+  categories: ExpenseTaxonomyCategoryDto[];
+};
+
+export type ExpenseTaxonomyResponseDto = {
+  version: string;
+  domains: ExpenseTaxonomyDomainDto[];
+};
+
 export type ExpenseTrackerEntryDto = {
   id: string;
   title: string;
   amount: number;
   currency: string;
-  category: string;
+  domainId: number | null;
+  domainName: string | null;
+  categoryId: number | null;
+  categoryName: string | null;
+  subcategoryId: number | null;
+  subcategoryName: string | null;
+  legacyCategoryLabel: string | null;
   paymentSource: string;
   occurredAtUtc: string;
   notes: string | null;
@@ -70,7 +132,7 @@ export type CreateExpenseTrackerEntryRequest = {
   title: string;
   amount: number;
   currency: string;
-  category: string;
+  subcategoryId: number;
   paymentSource: string;
   occurredAtUtc?: string | null;
   notes?: string | null;

@@ -8,6 +8,9 @@ public class ExpenseTrackerEntry
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "EUR";
     public string Category { get; set; } = "Other";
+    public int? TaxonomyDomainId { get; set; }
+    public int? TaxonomyCategoryId { get; set; }
+    public int? TaxonomySubcategoryId { get; set; }
     public string PaymentSource { get; set; } = "Other";
     public DateTime OccurredAtUtc { get; set; }
     public string? Notes { get; set; }
@@ -15,8 +18,12 @@ public class ExpenseTrackerEntry
     public string Status { get; set; } = "completed";
     public bool IsRecurring { get; set; }
     public string? Merchant { get; set; }
+    public Guid? LinkedOriginalEntryId { get; set; }
+    public decimal? LinkedOriginalOffsetAmount { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 
     public User? User { get; set; }
+    public ExpenseTrackerEntry? LinkedOriginalEntry { get; set; }
+    public ICollection<ExpenseTrackerEntry> LinkedAdjustments { get; set; } = [];
 }

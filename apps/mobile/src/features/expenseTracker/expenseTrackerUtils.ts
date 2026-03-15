@@ -1,4 +1,8 @@
 import type { ExpenseTrackerEntryDto, ExpenseTrackerEntryStatus } from "../../types/api";
+import {
+  getExpenseTrackerEntryCategoryLabel,
+  getExpenseTrackerEntrySubcategoryLabel
+} from "./expenseTrackerModels";
 import type { ExpenseTrackerQuickRange, ExpenseTrackerSortOrder } from "./expenseTrackerModels";
 
 export type ExpenseTrackerFilters = {
@@ -49,10 +53,7 @@ function currencyAmount(entry: ExpenseTrackerEntryDto) {
   return entry.status === "completed" ? entry.amount : 0;
 }
 
-export function buildExpenseTrackerSummary(
-  entries: ExpenseTrackerEntryDto[],
-  now: Date = new Date()
-): ExpenseTrackerSummary {
+export function buildExpenseTrackerSummary(entries: ExpenseTrackerEntryDto[], now: Date = new Date()): ExpenseTrackerSummary {
   const dayStart = startOfDay(now).getTime();
   const weekStart = startOfWeek(now).getTime();
   const monthStart = startOfMonth(now).getTime();
@@ -113,7 +114,7 @@ export function filterExpenseTrackerEntries(
       if (filters.quickRange === "month" && occurredAt < monthStart) {
         return false;
       }
-      if (filters.category && entry.category !== filters.category) {
+      if (filters.category && getExpenseTrackerEntryCategoryLabel(entry) !== filters.category) {
         return false;
       }
       if (filters.paymentSource && entry.paymentSource !== filters.paymentSource) {
@@ -126,7 +127,15 @@ export function filterExpenseTrackerEntries(
         return true;
       }
 
-      const haystack = [entry.title, entry.notes ?? "", entry.merchant ?? "", entry.category, entry.paymentSource, ...entry.tags]
+      const haystack = [
+        entry.title,
+        entry.notes ?? "",
+        entry.merchant ?? "",
+        getExpenseTrackerEntryCategoryLabel(entry),
+        getExpenseTrackerEntrySubcategoryLabel(entry),
+        entry.paymentSource,
+        ...entry.tags
+      ]
         .join(" ")
         .toLowerCase();
       return haystack.includes(search);
@@ -145,10 +154,7 @@ export function filterExpenseTrackerEntries(
     });
 }
 
-export function groupExpenseTrackerEntries(
-  entries: ExpenseTrackerEntryDto[],
-  now: Date = new Date()
-): ExpenseTrackerSection[] {
+export function groupExpenseTrackerEntries(entries: ExpenseTrackerEntryDto[], now: Date = new Date()): ExpenseTrackerSection[] {
   const sections = new Map<string, ExpenseTrackerEntryDto[]>();
 
   entries.forEach((entry) => {
@@ -159,35 +165,35 @@ export function groupExpenseTrackerEntries(
     sections.set(key, bucket);
   });
 
-  return Array.from(sections.entries()).map(([dateKey, items]) => {
-    const date = new Date(dateKey);
-    const today = startOfDay(now);
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const sameWeek = date >= startOfWeek(now);
+  return Array.from(sections.entries())
+    .map(([dateKey, items]) => {
+      const date = new Date(dateKey);
+      const today = startOfDay(now);
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const sameWeek = date >= startOfWeek(now);
 
-    let title = date.toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric"
-    });
+      let title = date.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric"
+      });
 
-    if (isSameDay(date, today)) {
-      title = "Today";
-    } else if (isSameDay(date, yesterday)) {
-      title = "Yesterday";
-    } else if (sameWeek) {
-      title = date.toLocaleDateString("en-GB", { weekday: "long" });
-    }
+      if (isSameDay(date, today)) {
+        title = "Today";
+      } else if (isSameDay(date, yesterday)) {
+        title = "Yesterday";
+      } else if (sameWeek) {
+        title = date.toLocaleDateString("en-GB", { weekday: "long" });
+      }
 
-    const total = items.reduce((sum, item) => sum + currencyAmount(item), 0);
+      const total = items.reduce((sum, item) => sum + currencyAmount(item), 0);
 
-    return {
-      title,
-      total: Number(total.toFixed(2)),
-      data: items.sort(
-        (left, right) => new Date(right.occurredAtUtc).getTime() - new Date(left.occurredAtUtc).getTime()
-      )
-    };
-  }).sort((left, right) => new Date(right.data[0].occurredAtUtc).getTime() - new Date(left.data[0].occurredAtUtc).getTime());
+      return {
+        title,
+        total: Number(total.toFixed(2)),
+        data: items.sort((left, right) => new Date(right.occurredAtUtc).getTime() - new Date(left.occurredAtUtc).getTime())
+      };
+    })
+    .sort((left, right) => new Date(right.data[0].occurredAtUtc).getTime() - new Date(left.data[0].occurredAtUtc).getTime());
 }

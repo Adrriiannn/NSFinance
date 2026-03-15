@@ -10,6 +10,9 @@ public static class ExpenseTrackerModule
             .WithTags("Expense Tracker")
             .RequireAuthorization();
 
+        group.MapGet("/taxonomy", GetExpenseTrackerTaxonomyEndpoint.Handle)
+            .WithName("GetExpenseTrackerTaxonomy");
+
         group.MapGet("/entries", GetExpenseTrackerEntriesEndpoint.HandleAsync)
             .WithName("GetExpenseTrackerEntries");
 

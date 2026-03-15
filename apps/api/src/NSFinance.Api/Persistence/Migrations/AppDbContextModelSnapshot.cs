@@ -405,6 +405,12 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Property<bool>("IsRecurring")
                         .HasColumnType("boolean");
 
+                    b.Property<Guid?>("LinkedOriginalEntryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("LinkedOriginalOffsetAmount")
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<string>("Merchant")
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
@@ -432,6 +438,15 @@ namespace NSFinance.Api.Persistence.Migrations
                         .HasColumnType("jsonb")
                         .HasDefaultValueSql("'[]'::jsonb");
 
+                    b.Property<int?>("TaxonomyCategoryId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("TaxonomyDomainId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("TaxonomySubcategoryId")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -446,6 +461,10 @@ namespace NSFinance.Api.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("LinkedOriginalEntryId");
+
+                    b.HasIndex("TaxonomySubcategoryId");
 
                     b.HasIndex("UserId", "OccurredAtUtc");
 
@@ -1506,11 +1525,18 @@ namespace NSFinance.Api.Persistence.Migrations
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpenseTrackerEntry", b =>
                 {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ExpenseTrackerEntry", "LinkedOriginalEntry")
+                        .WithMany("LinkedAdjustments")
+                        .HasForeignKey("LinkedOriginalEntryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
                         .WithMany("ExpenseTrackerEntries")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("LinkedOriginalEntry");
 
                     b.Navigation("User");
                 });
@@ -1725,6 +1751,11 @@ namespace NSFinance.Api.Persistence.Migrations
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.Device", b =>
                 {
                     b.Navigation("Sessions");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpenseTrackerEntry", b =>
+                {
+                    b.Navigation("LinkedAdjustments");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.FinancialAccount", b =>

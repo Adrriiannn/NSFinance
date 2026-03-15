@@ -1,4 +1,5 @@
 using NSFinance.Api.Modules.ExpenseTracker.DTOs;
+using NSFinance.Api.Modules.ExpenseTracker.Services;
 
 namespace NSFinance.Api.Modules.ExpenseTracker.Validators;
 
@@ -10,47 +11,50 @@ public static class ExpenseTrackerEntryRequestValidator
         "completed"
     };
 
-    public static Dictionary<string, string[]> Validate(CreateExpenseTrackerEntryRequest request)
+    public static Dictionary<string, string[]> Validate(CreateExpenseTrackerEntryRequest request, ExpenseTaxonomyService taxonomyService)
     {
         return ValidateCore(
             request.Title,
             request.Amount,
             request.Currency,
-            request.Category,
+            request.SubcategoryId,
             request.PaymentSource,
             request.OccurredAtUtc,
             request.Notes,
             request.Tags,
             request.Status,
-            request.Merchant);
+            request.Merchant,
+            taxonomyService);
     }
 
-    public static Dictionary<string, string[]> Validate(UpdateExpenseTrackerEntryRequest request)
+    public static Dictionary<string, string[]> Validate(UpdateExpenseTrackerEntryRequest request, ExpenseTaxonomyService taxonomyService)
     {
         return ValidateCore(
             request.Title,
             request.Amount,
             request.Currency,
-            request.Category,
+            request.SubcategoryId,
             request.PaymentSource,
             request.OccurredAtUtc,
             request.Notes,
             request.Tags,
             request.Status,
-            request.Merchant);
+            request.Merchant,
+            taxonomyService);
     }
 
     private static Dictionary<string, string[]> ValidateCore(
         string title,
         decimal amount,
         string currency,
-        string category,
+        int subcategoryId,
         string paymentSource,
         DateTime? occurredAtUtc,
         string? notes,
         IReadOnlyList<string>? tags,
         string status,
-        string? merchant)
+        string? merchant,
+        ExpenseTaxonomyService taxonomyService)
     {
         var errors = new Dictionary<string, string[]>();
 
@@ -73,9 +77,9 @@ public static class ExpenseTrackerEntryRequestValidator
             errors[nameof(currency)] = ["Currency must be a 3-letter code."];
         }
 
-        if (string.IsNullOrWhiteSpace(category) || category.Trim().Length > 80)
+        if (subcategoryId <= 0 || taxonomyService.GetUserSelectableSubcategory(subcategoryId) is null)
         {
-            errors[nameof(category)] = ["Category is required and must be 80 characters or fewer."];
+            errors[nameof(subcategoryId)] = ["Select a valid user-visible taxonomy sub-category."];
         }
 
         if (string.IsNullOrWhiteSpace(paymentSource) || paymentSource.Trim().Length > 80)

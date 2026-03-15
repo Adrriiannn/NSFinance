@@ -1,9 +1,11 @@
 import { StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, G } from "react-native-svg";
-import { expenseTrackerCategoryOptions } from "../../features/expenseTracker/expenseTrackerModels";
+import { getExpenseTrackerVisual } from "../../features/expenseTracker/expenseTrackerModels";
 import { palette, typography } from "../../theme/tokens";
 
 type ChartSlice = {
+  domainId: number | null;
+  categoryId: number | null;
   category: string;
   total: number;
   percentage: number;
@@ -45,11 +47,11 @@ export function ExpenseTrackerCategoryRadialChart({ data, totalLabel }: ExpenseT
 
               return (
                 <Circle
-                  key={slice.category}
+                  key={`${slice.categoryId ?? slice.category}`}
                   cx={CENTER}
                   cy={CENTER}
                   r={RADIUS}
-                  stroke={resolveCategoryColor(slice.category)}
+                  stroke={getExpenseTrackerVisual({ domainId: slice.domainId, categoryId: slice.categoryId }).color}
                   strokeWidth={STROKE_WIDTH}
                   strokeLinecap="butt"
                   strokeDasharray={`${dashLength} ${dashGap}`}
@@ -73,7 +75,7 @@ export function ExpenseTrackerCategoryRadialChart({ data, totalLabel }: ExpenseT
 function buildSlices(data: ChartSlice[]) {
   const nonZero = data.filter((item) => item.percentage > 0);
   if (!nonZero.length) {
-    return [{ category: "Other", total: 0, percentage: 100 }];
+    return [{ domainId: null, categoryId: null, category: "Other", total: 0, percentage: 100 }];
   }
 
   const normalizedTotal = nonZero.reduce((sum, item) => sum + item.percentage, 0);
@@ -92,10 +94,6 @@ function buildSlices(data: ChartSlice[]) {
 
     return item;
   });
-}
-
-function resolveCategoryColor(category: string) {
-  return expenseTrackerCategoryOptions.find((option) => option.value === category)?.color ?? palette.primaryGlow;
 }
 
 const styles = StyleSheet.create({
