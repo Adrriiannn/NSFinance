@@ -1,7 +1,7 @@
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { usePathname } from "expo-router";
-import { FloatingBottomNav } from "./FloatingBottomNav";
+import { usePathname, useRouter } from "expo-router";
 import { appBottomNavItems } from "./bottomNavConfigs";
+import { FloatingBottomNav } from "./FloatingBottomNav";
 
 const rootTabScreens: Record<string, string | undefined> = {
   accounts: "index",
@@ -10,6 +10,7 @@ const rootTabScreens: Record<string, string | undefined> = {
 
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const hidden = pathname?.includes("/planner/expense-tracker") || pathname?.startsWith("/companion");
   const activeKey = state.routes[state.index]?.name.split("/")[0] ?? "index";
 
@@ -18,6 +19,15 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
       items={appBottomNavItems}
       activeKey={activeKey}
       hidden={hidden}
+      switcherAction={{
+        label: "Planning Hub",
+        icon: "notebook-outline",
+        iconFamily: "material",
+        accessibilityLabel: "Open planning hub",
+        onPress: () => {
+          router.replace("/(tabs)/planner/expense-tracker/overview" as never);
+        }
+      }}
       onPressItem={(item) => {
         const routeIndex = state.routes.findIndex((route) => route.name.split("/")[0] === item.key);
         if (routeIndex === -1) {

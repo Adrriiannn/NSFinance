@@ -34,7 +34,7 @@ import {
   setCompanionChats
 } from "../features/planner/chatHistory";
 import { getFloatingTabBarContentInset } from "../theme/insets";
-import { palette, radius, spacing, typography } from "../theme/tokens";
+import { controls, palette, radius, sizing, spacing, surfaces, typography } from "../theme/tokens";
 
 type PromptSeed = {
   text: string;
@@ -380,7 +380,7 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
   );
   const bottomNavItems = source === "expense" ? expenseBottomNavItems : appBottomNavItems;
   const activeBottomKey = source === "expense" ? "ai" : sourceTab;
-  const sourceExpenseTab = params.sourceExpenseTab === "overview" || params.sourceExpenseTab === "graphs" || params.sourceExpenseTab === "add"
+  const sourceExpenseTab = params.sourceExpenseTab === "overview" || params.sourceExpenseTab === "graphs" || params.sourceExpenseTab === "add" || params.sourceExpenseTab === "calendar"
     ? params.sourceExpenseTab
     : "overview";
   const fallbackCompanionHref = source === "expense"
@@ -388,6 +388,8 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
       ? "/(tabs)/planner/expense-tracker/graphs"
       : sourceExpenseTab === "add"
         ? "/(tabs)/planner/expense-tracker/add"
+        : sourceExpenseTab === "calendar"
+          ? "/(tabs)/planner/expense-tracker/calendar"
         : "/(tabs)/planner/expense-tracker/overview"
     : sourceTab === "index"
       ? "/(tabs)"
@@ -972,6 +974,7 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
                 overview: "/(tabs)/planner/expense-tracker/overview",
                 graphs: "/(tabs)/planner/expense-tracker/graphs",
                 add: "/(tabs)/planner/expense-tracker/add",
+                calendar: "/(tabs)/planner/expense-tracker/calendar",
                 ai: "/companion/expense"
               }[item.key]
             : {
@@ -1313,13 +1316,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2
   },
   promptChip: {
-    borderRadius: 12,
+    minHeight: sizing.chip.heights.standard,
+    borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: "rgba(220,232,255,0.2)",
-    backgroundColor: "rgba(18,44,74,0.95)",
+    backgroundColor: surfaces.fieldStrong,
     justifyContent: "center",
-    paddingHorizontal: 11,
-    paddingVertical: 5
+    paddingHorizontal: sizing.chip.horizontalPadding.standard
   },
   promptChipPressed: {
     opacity: 0.9,
@@ -1331,16 +1334,16 @@ const styles = StyleSheet.create({
     lineHeight: 15
   },
   inputBar: {
-    borderRadius: 16,
+    borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(14,30,50,0.9)",
+    backgroundColor: surfaces.field,
     flexDirection: "row",
     alignItems: "flex-end",
     paddingLeft: spacing[12],
     paddingRight: spacing[8],
     paddingVertical: spacing[8],
-    minHeight: 50,
+    minHeight: controls.fieldHeight,
     gap: spacing[8]
   },
   input: {
@@ -1351,9 +1354,9 @@ const styles = StyleSheet.create({
     paddingBottom: 6
   },
   sendButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
+    width: sizing.button.heights.compact,
+    height: sizing.button.heights.compact,
+    borderRadius: radius.small,
     backgroundColor: palette.primaryGlow,
     alignItems: "center",
     justifyContent: "center",
@@ -1365,15 +1368,15 @@ const styles = StyleSheet.create({
   },
   historyOverlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.74)",
+    backgroundColor: palette.overlay,
     justifyContent: "flex-end"
   },
   historySheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: radius.hero,
+    borderTopRightRadius: radius.hero,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.99)",
+    backgroundColor: surfaces.sheet,
     padding: spacing[16],
     gap: spacing[12],
     maxHeight: "72%"
@@ -1392,10 +1395,10 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[8]
   },
   historyItem: {
-    borderRadius: 14,
+    borderRadius: radius.small,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgb(18,36,58)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     flexDirection: "row",
@@ -1412,22 +1415,22 @@ const styles = StyleSheet.create({
     gap: spacing[4]
   },
   historyEditButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
+    width: sizing.chip.heights.large,
+    height: sizing.chip.heights.large,
+    borderRadius: radius.small,
     borderWidth: 1,
     borderColor: "rgba(161,190,230,0.35)",
-    backgroundColor: "rgba(34,56,84,0.52)",
+    backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center"
   },
   historyPinButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
+    width: sizing.chip.heights.large,
+    height: sizing.chip.heights.large,
+    borderRadius: radius.small,
     borderWidth: 1,
     borderColor: "rgba(161,190,230,0.35)",
-    backgroundColor: "rgba(34,56,84,0.52)",
+    backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -1436,9 +1439,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(26,52,91,0.76)"
   },
   historyDeleteButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
+    width: sizing.chip.heights.large,
+    height: sizing.chip.heights.large,
+    borderRadius: radius.small,
     borderWidth: 1,
     borderColor: "rgba(244,104,119,0.35)",
     backgroundColor: "rgba(90,16,30,0.24)",
@@ -1478,10 +1481,10 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   editSheet: {
-    borderRadius: 18,
+    borderRadius: radius.large,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.99)",
+    backgroundColor: surfaces.sheet,
     marginHorizontal: spacing[20],
     padding: spacing[16],
     gap: spacing[12]
@@ -1495,11 +1498,11 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   editInput: {
-    minHeight: 46,
-    borderRadius: 12,
+    minHeight: controls.fieldHeight,
+    borderRadius: radius.small,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.82)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     color: palette.textPrimary,
     ...typography.body1
@@ -1510,14 +1513,14 @@ const styles = StyleSheet.create({
     gap: spacing[8]
   },
   colorSwatchButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: sizing.button.heights.compact,
+    height: sizing.button.heights.compact,
+    borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: "rgba(134,154,184,0.42)",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(18,36,58,0.7)"
+    backgroundColor: surfaces.field
   },
   colorSwatchButtonSelected: {
     borderColor: palette.textPrimary,
@@ -1535,12 +1538,12 @@ const styles = StyleSheet.create({
     gap: spacing[12]
   },
   editCancelButton: {
-    minHeight: 44,
+    minHeight: sizing.button.heights.standard,
     minWidth: 94,
-    borderRadius: 12,
+    borderRadius: radius.small,
     borderWidth: 1,
     borderColor: "rgba(161,190,230,0.35)",
-    backgroundColor: "rgba(34,56,84,0.52)",
+    backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12]

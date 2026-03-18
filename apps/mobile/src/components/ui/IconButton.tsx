@@ -1,36 +1,20 @@
-import { ReactNode } from "react";
-import { Pressable, StyleSheet } from "react-native";
-import { controls, palette } from "../../theme/tokens";
+import type { ReactNode } from "react";
+import { IconButton as BaseIconButton } from "./buttons/IconButton";
 
 type IconButtonProps = {
   icon: ReactNode;
   onPress: () => void;
+  disabled?: boolean;
+  accessibilityLabel?: string;
 };
 
-export function IconButton({ icon, onPress }: IconButtonProps) {
+export function IconButton({ icon, onPress, disabled = false, accessibilityLabel }: IconButtonProps) {
   return (
-    <Pressable
+    <BaseIconButton
+      icon={icon}
       onPress={onPress}
-      style={({ pressed }) => [styles.button, pressed ? styles.pressed : null]}
-    >
-      {icon}
-    </Pressable>
+      disabled={disabled}
+      accessibilityLabel={accessibilityLabel}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  button: {
-    width: controls.iconButtonSize,
-    height: controls.iconButtonSize,
-    borderRadius: controls.compactRadius,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: controls.controlSurfaceStrong,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  pressed: {
-    transform: [{ scale: controls.pressedScale }],
-    opacity: 0.92
-  }
-});

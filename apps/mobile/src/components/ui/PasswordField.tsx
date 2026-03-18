@@ -1,7 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
-import { controls, palette, spacing, typography } from "../../theme/tokens";
+import { Pressable, TextInput, View } from "react-native";
+import type { TextInputProps } from "react-native";
+import { palette } from "../../theme/tokens";
+import { FieldError } from "./forms/FieldError";
+import { AppText } from "./text/AppText";
+import { fieldPresets } from "./fields/field.presets";
 
 type PasswordFieldProps = Omit<TextInputProps, "secureTextEntry"> & {
   label: string;
@@ -40,15 +44,15 @@ export function PasswordField({
   };
 
   return (
-    <View style={[styles.wrapper, !showLabel ? styles.wrapperCompact : null]}>
-      {showLabel ? <Text style={styles.label}>{label}</Text> : null}
+    <View style={fieldPresets.wrapper}>
+      {showLabel ? <AppText preset="fieldLabel">{label}</AppText> : null}
       <Pressable
         onPress={() => inputRef.current?.focus()}
         style={[
-          styles.inputWrap,
-          surfaceMode === "solid" ? styles.inputWrapSolid : styles.inputWrapNormal,
-          forceFocused ? styles.inputFocused : null,
-          error ? styles.inputError : null
+          fieldPresets.container,
+          surfaceMode === "solid" ? { backgroundColor: "#162D48" } : null,
+          forceFocused ? fieldPresets.containerFocused : null,
+          error ? fieldPresets.containerError : null
         ]}
       >
         <TextInput
@@ -60,7 +64,9 @@ export function PasswordField({
           autoComplete={props.autoComplete ?? "off"}
           textContentType={props.textContentType ?? "none"}
           importantForAutofill={props.importantForAutofill ?? "no"}
-          onFocus={props.onFocus}
+          onFocus={(event) => {
+            props.onFocus?.(event);
+          }}
           onBlur={(event) => {
             if (autoHideOnBlur) {
               setVisible(false);
@@ -68,11 +74,7 @@ export function PasswordField({
             props.onBlur?.(event);
           }}
           placeholderTextColor={palette.textSecondary}
-          style={[
-            styles.input,
-            surfaceMode === "solid" ? styles.inputSolid : styles.inputNormal,
-            style
-          ]}
+          style={[fieldPresets.input, style]}
         />
         <Pressable
           accessibilityRole="button"
@@ -81,7 +83,10 @@ export function PasswordField({
             setVisible(!visible);
             inputRef.current?.focus();
           }}
-          style={({ pressed }) => [styles.eyeButton, pressed ? styles.eyeButtonPressed : null]}
+          style={({ pressed }) => [
+            fieldPresets.action,
+            pressed ? { opacity: 0.75 } : null
+          ]}
         >
           <Ionicons
             name={visible ? "eye-outline" : "eye-off-outline"}
@@ -90,75 +95,7 @@ export function PasswordField({
           />
         </Pressable>
       </Pressable>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <FieldError>{error}</FieldError> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  wrapper: {
-    gap: spacing[8]
-  },
-  wrapperCompact: {
-    gap: 0
-  },
-  label: {
-    color: palette.textPrimary,
-    ...typography.caption
-  },
-  inputWrap: {
-    minHeight: controls.fieldHeight,
-    borderRadius: controls.fieldRadius,
-    borderWidth: 1,
-    borderColor: palette.border,
-    paddingLeft: spacing[16],
-    paddingRight: spacing[8],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  inputWrapNormal: {
-    backgroundColor: controls.controlSurfaceMuted
-  },
-  inputWrapSolid: {
-    backgroundColor: controls.controlSurfaceStrong
-  },
-  input: {
-    flex: 1,
-    backgroundColor: "transparent",
-    color: palette.textPrimary,
-    ...typography.body1
-  },
-  inputNormal: {
-    backgroundColor: controls.controlSurfaceMuted
-  },
-  inputSolid: {
-    backgroundColor: controls.controlSurfaceStrong
-  },
-  eyeButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  eyeButtonPressed: {
-    opacity: 0.75
-  },
-  inputFocused: {
-    borderColor: palette.primaryGlow,
-    shadowColor: palette.primaryGlow,
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2
-  },
-  inputError: {
-    borderColor: palette.negative
-  },
-  error: {
-    color: palette.negative,
-    ...typography.caption
-  }
-});
-

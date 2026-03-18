@@ -11,15 +11,15 @@ import {
   Text,
   View
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { SpendTrendGraph } from "../../../src/components/planner/SpendTrendGraph";
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
+import { AdaptiveHeader } from "../../../src/layout/adaptive/AdaptiveHeader";
+import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
 import { useDashboardSummaryQuery } from "../../../src/features/dashboard/useDashboardSummaryQuery";
 import {
   buildPlannerGraphModel,
@@ -28,7 +28,6 @@ import {
 } from "../../../src/features/planner/forecasting";
 import { buildPlannerSuggestions } from "../../../src/features/planner/plannerInsights";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
-import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
 
 function formatCountdown(daysUntilDue: number) {
@@ -76,7 +75,6 @@ function splitAbsoluteMonth(absoluteMonth: number) {
 export default function PlannerScreen() {
   const router = useRouter();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/planner");
-  const insets = useSafeAreaInsets();
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -115,10 +113,6 @@ export default function PlannerScreen() {
   const error = dashboardQuery.error ?? transactionsQuery.error;
   const transactions = useMemo(() => transactionsQuery.data ?? [], [transactionsQuery.data]);
   const hasPlanningData = (dashboardQuery.data?.accountCount ?? 0) > 0 && transactions.length > 0;
-  const listBottomInset = Math.max(
-    spacing[12],
-    getFloatingTabBarContentInset(insets.bottom, spacing[16])
-  );
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
     try {
@@ -276,28 +270,27 @@ export default function PlannerScreen() {
   }, [pickerOpen, pickerYear, yearOptions, yearRailWidth]);
 
   return (
-    <ScreenContainer scrollable={false} contentStyle={styles.content} gestureHandlers={gestureHandlers}>
+    <AdaptiveScreen contentStyle={styles.content} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
-      <View style={styles.topActionsBar}>
-        <View style={styles.headerActionsRow}>
-          <Pressable
-            style={styles.sparkleButton}
-            onPress={() => router.push("/(tabs)/planner/expense-tracker" as never)}
-          >
-            <MaterialCommunityIcons name="notebook-edit-outline" size={20} color={palette.textPrimary} />
-          </Pressable>
-          <Pressable
-            style={styles.sparkleButton}
-            onPress={() => router.push("/companion?source=app&sourceTab=planner" as never)}
-          >
-            <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
-          </Pressable>
-          <View style={styles.headerRightSpacer} />
-        </View>
-      </View>
+        <AdaptiveHeader
+          title="Planner"
+          subtitle="Compare monthly spend and keep upcoming payments in view."
+          leftAction={
+            <Pressable
+              style={styles.sparkleButton}
+              onPress={() => router.push("/(tabs)/planner/expense-tracker" as never)}
+            >
+              <MaterialCommunityIcons
+                name="notebook-edit-outline"
+                size={20}
+                color={palette.textPrimary}
+              />
+            </Pressable>
+          }
+        />
 
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: listBottomInset }]}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         bounces={false}
         refreshControl={
@@ -586,35 +579,20 @@ export default function PlannerScreen() {
         </Pressable>
       </Modal>
       </Animated.View>
-    </ScreenContainer>
+    </AdaptiveScreen>
   );
 }
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: layout.screenTopPadding,
-    paddingBottom: 0
+    flex: 1
   },
   tabStage: {
     flex: 1
   },
   scrollContent: {
-    gap: layout.sectionGap
-  },
-  topActionsBar: {
-    marginBottom: spacing[16],
-    alignItems: "flex-end",
-    zIndex: 20,
-    elevation: 20
-  },
-  headerActionsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  headerRightSpacer: {
-    width: 42,
-    height: 42
+    gap: layout.sectionGap,
+    paddingBottom: spacing[8]
   },
   sparkleButton: {
     width: 42,

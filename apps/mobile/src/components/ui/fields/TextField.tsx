@@ -1,0 +1,95 @@
+import { forwardRef, useRef, useState, type ReactNode } from "react";
+import type { StyleProp, TextInputProps, TextStyle, ViewStyle } from "react-native";
+import { Pressable, TextInput, View } from "react-native";
+import { FieldError } from "../forms/FieldError";
+import { FieldHint } from "../forms/FieldHint";
+import { AppText } from "../text/AppText";
+import { fieldPresets } from "./field.presets";
+
+type SharedTextFieldProps = TextInputProps & {
+  label?: string;
+  helper?: string;
+  error?: string;
+  dense?: boolean;
+  leading?: ReactNode;
+  trailing?: ReactNode;
+  containerStyle?: StyleProp<ViewStyle>;
+  inputStyle?: StyleProp<TextStyle>;
+  showLabel?: boolean;
+};
+
+export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function TextField(
+  {
+    label,
+    helper,
+    error,
+    dense = false,
+    leading,
+    trailing,
+    containerStyle,
+    inputStyle,
+    showLabel = true,
+    multiline,
+    onFocus,
+    onBlur,
+    ...props
+  },
+  ref
+) {
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef<TextInput | null>(null);
+
+  const assignRef = (node: TextInput | null) => {
+    inputRef.current = node;
+
+    if (!ref) {
+      return;
+    }
+
+    if (typeof ref === "function") {
+      ref(node);
+      return;
+    }
+
+    ref.current = node;
+  };
+
+  return (
+    <View style={[fieldPresets.wrapper, !showLabel ? fieldPresets.wrapperCompact : null]}>
+      {showLabel && label ? <AppText preset="fieldLabel">{label}</AppText> : null}
+      <Pressable
+        onPress={() => inputRef.current?.focus()}
+        style={[
+          fieldPresets.container,
+          dense ? fieldPresets.containerDense : null,
+          focused ? fieldPresets.containerFocused : null,
+          error ? fieldPresets.containerError : null,
+          containerStyle
+        ]}
+      >
+        {leading}
+        <TextInput
+          {...props}
+          ref={assignRef}
+          multiline={multiline}
+          onFocus={(event) => {
+            setFocused(true);
+            onFocus?.(event);
+          }}
+          onBlur={(event) => {
+            setFocused(false);
+            onBlur?.(event);
+          }}
+          placeholderTextColor="#A7B6D1"
+          style={[
+            fieldPresets.input,
+            multiline ? fieldPresets.multilineInput : null,
+            inputStyle
+          ]}
+        />
+        {trailing}
+      </Pressable>
+      {error ? <FieldError>{error}</FieldError> : helper ? <FieldHint>{helper}</FieldHint> : null}
+    </View>
+  );
+});

@@ -2,12 +2,11 @@
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
-import { ExpenseTrackerMiniAppScreen } from "../../../../src/components/expenseTracker/ExpenseTrackerMiniAppScreen";
-import { ErrorState } from "../../../../src/components/feedback/ErrorState";
-import { EmptyState } from "../../../../src/components/ui/EmptyState";
-import { GlassCard } from "../../../../src/components/ui/GlassCard";
-import { useExpensePlanning } from "../../../../src/features/expenseTracker/ExpensePlanningProvider";
-import { useExpenseTrackerTaxonomyQuery, useExpenseTrackerEntriesQuery } from "../../../../src/features/expenseTracker/useExpenseTracker";
+import { ErrorState } from "../../../../../src/components/feedback/ErrorState";
+import { EmptyState } from "../../../../../src/components/ui/EmptyState";
+import { GlassCard } from "../../../../../src/components/ui/GlassCard";
+import { useExpensePlanning } from "../../../../../src/features/expenseTracker/ExpensePlanningProvider";
+import { useExpenseTrackerTaxonomyQuery, useExpenseTrackerEntriesQuery } from "../../../../../src/features/expenseTracker/useExpenseTracker";
 import {
   buildExpensePlanCategoryMetrics,
   buildExpensePlanComputed,
@@ -15,9 +14,9 @@ import {
   filterExpensePlans,
   formatExpensePlanPeriod,
   getExpensePlanStatusMeta
-} from "../../../../src/features/expenseTracker/expensePlanningUtils";
-import type { ExpensePlanStatus } from "../../../../src/features/expenseTracker/expensePlanningTypes";
-import { layout, palette, radius, spacing, typography } from "../../../../src/theme/tokens";
+} from "../../../../../src/features/expenseTracker/expensePlanningUtils";
+import type { ExpensePlanStatus } from "../../../../../src/features/expenseTracker/expensePlanningTypes";
+import { layout, palette, radius, spacing, typography } from "../../../../../src/theme/tokens";
 
 const quickActionConfig = [
   { key: "new", label: "New plan", icon: "add-circle-outline" },
@@ -168,7 +167,7 @@ export default function ExpenseTrackerOverviewScreen() {
   };
 
   return (
-    <ExpenseTrackerMiniAppScreen title="Plans">
+    <>
       {entriesQuery.isError ? (
         <ErrorState
           title="Could not load plans"
@@ -427,7 +426,7 @@ export default function ExpenseTrackerOverviewScreen() {
           </View>
         )}
       </View>
-    </ExpenseTrackerMiniAppScreen>
+    </>
   );
 }
 

@@ -1,6 +1,5 @@
-import { ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { controls, palette, typography } from "../../theme/tokens";
+import type { ReactNode } from "react";
+import { Button } from "./buttons/Button";
 
 type PrimaryButtonProps = {
   label: string;
@@ -17,58 +16,14 @@ export function PrimaryButton({
   isLoading = false,
   disabled = false
 }: PrimaryButtonProps) {
-  const isDisabled = disabled || isLoading;
-
   return (
-    <Pressable
+    <Button
+      label={label}
       onPress={onPress}
-      disabled={isDisabled}
-      style={({ pressed }) => [
-        styles.pressable,
-        isDisabled ? styles.disabled : null,
-        pressed ? styles.pressed : null
-      ]}
-    >
-      <View style={styles.button}>
-        {isLoading ? (
-          <ActivityIndicator color={palette.textPrimary} />
-        ) : (
-          <>
-            {icon}
-            <Text style={styles.label}>{label}</Text>
-          </>
-        )}
-      </View>
-    </Pressable>
+      icon={icon}
+      isLoading={isLoading}
+      disabled={disabled}
+      variant="primary"
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  pressable: {
-    borderRadius: controls.buttonRadius
-  },
-  button: {
-    minHeight: controls.primaryHeight,
-    borderRadius: controls.buttonRadius,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 16,
-    backgroundColor: controls.primaryFill,
-    borderWidth: 1,
-    borderColor: controls.primaryBorder
-  },
-  label: {
-    color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "700"
-  },
-  pressed: {
-    transform: [{ scale: controls.pressedScale }],
-    opacity: 0.96
-  },
-  disabled: {
-    opacity: 0.58
-  }
-});

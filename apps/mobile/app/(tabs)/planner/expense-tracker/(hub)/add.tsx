@@ -3,25 +3,25 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { LayoutAnimation, Platform, Pressable, StyleSheet, Text, UIManager, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ExpenseTrackerMiniAppScreen } from "../../../../src/components/expenseTracker/ExpenseTrackerMiniAppScreen";
-import { ErrorState } from "../../../../src/components/feedback/ErrorState";
-import { GlassCard } from "../../../../src/components/ui/GlassCard";
-import { PrimaryButton } from "../../../../src/components/ui/PrimaryButton";
-import { TextField } from "../../../../src/components/ui/TextField";
-import { useExpensePlanning } from "../../../../src/features/expenseTracker/ExpensePlanningProvider";
+import { ExpenseTrackerMiniAppScreen } from "../../../../../src/components/expenseTracker/ExpenseTrackerMiniAppScreen";
+import { ErrorState } from "../../../../../src/components/feedback/ErrorState";
+import { GlassCard } from "../../../../../src/components/ui/GlassCard";
+import { PrimaryButton } from "../../../../../src/components/ui/PrimaryButton";
+import { TextField } from "../../../../../src/components/ui/TextField";
+import { useExpensePlanning } from "../../../../../src/features/expenseTracker/ExpensePlanningProvider";
 import {
   flattenVisibleExpenseTaxonomy,
   getExpenseTrackerSubcategoryVisual,
   getExpenseTrackerVisual
-} from "../../../../src/features/expenseTracker/expenseTrackerModels";
+} from "../../../../../src/features/expenseTracker/expenseTrackerModels";
 import {
   buildExpenseTaxonomySearchIndex,
   normalizeExpenseTaxonomySearchText,
   searchExpenseTaxonomy
-} from "../../../../src/features/expenseTracker/expenseTaxonomySearch";
-import { useExpenseTrackerTaxonomyQuery } from "../../../../src/features/expenseTracker/useExpenseTracker";
-import { getFloatingTabBarInset } from "../../../../src/theme/insets";
-import { palette, radius, spacing, typography } from "../../../../src/theme/tokens";
+} from "../../../../../src/features/expenseTracker/expenseTaxonomySearch";
+import { useExpenseTrackerTaxonomyQuery } from "../../../../../src/features/expenseTracker/useExpenseTracker";
+import { getFloatingTabBarInset } from "../../../../../src/theme/insets";
+import { palette, radius, spacing, typography } from "../../../../../src/theme/tokens";
 
 export default function ExpenseTrackerAddScreen() {
   const router = useRouter();
@@ -91,9 +91,8 @@ export default function ExpenseTrackerAddScreen() {
     router.back();
   };
 
-  return (
-    <View style={styles.screenWrap}>
-      <ExpenseTrackerMiniAppScreen title={selectionMode ? "Select category" : "Categories"}>
+  const content = (
+    <>
         {taxonomyQuery.isError ? (
           <ErrorState
             title="Could not load categories"
@@ -269,7 +268,18 @@ export default function ExpenseTrackerAddScreen() {
             )}
           </GlassCard>
         </View>
-      </ExpenseTrackerMiniAppScreen>
+    </>
+  );
+
+  return (
+    <View style={styles.screenWrap}>
+      {selectionMode ? (
+        <ExpenseTrackerMiniAppScreen title="Select category">
+          {content}
+        </ExpenseTrackerMiniAppScreen>
+      ) : (
+        content
+      )}
 
       {selectionMode ? (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>

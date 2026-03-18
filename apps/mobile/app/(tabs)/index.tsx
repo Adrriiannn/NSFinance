@@ -1,14 +1,12 @@
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard";
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
 import { GlassCard } from "../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
-import { ScreenContainer } from "../../src/components/ui/ScreenContainer";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
@@ -22,10 +20,11 @@ import { useTransactionsQuery } from "../../src/features/transactions/useTransac
 import { useEntranceAnimation } from "../../src/hooks/useEntranceAnimation";
 import { useLocalClock } from "../../src/hooks/useLocalClock";
 import { useMainTabSwipeNavigation } from "../../src/components/layout/useHorizontalSiblingSwipe";
+import { AdaptiveHeader } from "../../src/layout/adaptive/AdaptiveHeader";
+import { AdaptiveScreen } from "../../src/layout/adaptive/AdaptiveScreen";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { usePlannerStore } from "../../src/providers/PlannerProvider";
-import { getFloatingTabBarContentInset } from "../../src/theme/insets";
-import { layout, palette, spacing, typography } from "../../src/theme/tokens";
+import { palette, spacing, typography } from "../../src/theme/tokens";
 
 type HeroCardItem = {
   key: string;
@@ -46,7 +45,6 @@ type HeroCarouselItem = HeroCardItem & {
 export default function DashboardTabScreen() {
   const router = useRouter();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)");
-  const insets = useSafeAreaInsets();
   const { session } = useAuthSession();
   const plannerStore = usePlannerStore();
   const summaryQuery = useDashboardSummaryQuery();
@@ -179,10 +177,6 @@ export default function DashboardTabScreen() {
     transactions,
     annotations: plannerStore.annotations
   }).slice(0, 2);
-  const listBottomInset = Math.max(
-    spacing[8],
-    getFloatingTabBarContentInset(insets.bottom, spacing[8])
-  );
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
     logHomeEvent("home_refresh_start", {
@@ -292,228 +286,207 @@ export default function DashboardTabScreen() {
   }, [getInitialPhysicalIndex, heroItems.length, heroWidth]);
 
   return (
-    <ScreenContainer
-      scrollable={false}
-      contentStyle={styles.content}
-      gestureHandlers={gestureHandlers}
-    >
+    <AdaptiveScreen contentStyle={styles.content} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
-      <View style={styles.headerTopBar}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.greeting}>
-              {greeting}, {firstName}
-            </Text>
-            <Text style={styles.subGreeting}>
-              {dateLabel} | {timeLabel}
-            </Text>
-          </View>
-          <View style={styles.headerRightActions}>
-            <Pressable
-              style={styles.companionButton}
-              onPress={() => router.push("/companion?source=app&sourceTab=index" as never)}
-            >
-              <MaterialCommunityIcons name="robot-happy-outline" size={20} color="#4FE3D5" />
-            </Pressable>
-            <View style={styles.headerRightSpacer} />
-          </View>
-        </View>
-      </View>
+        <AdaptiveHeader
+          title={`${greeting}, ${firstName}`}
+          subtitle={`${dateLabel} | ${timeLabel}`}
+        />
 
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: listBottomInset }]}
-        showsVerticalScrollIndicator={false}
-        bounces={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={palette.textSecondary}
-          />
-        }
-      >
-        {isInitialLoading ? (
-          <DashboardLoading />
-        ) : loadError ? (
-          <ErrorState
-            title="Unable to load home"
-            message={loadError.message}
-            onRetry={() => {
-              void handleRefresh();
-            }}
-          />
-        ) : accounts.length === 0 ? (
-          <TabEmptyStateCard
-            title="No connected accounts"
-            subtitle="Connect your bank to start tracking balances and spending."
-            ctaLabel="Connect bank"
-            onCtaPress={() => router.push("/modals/add-account")}
-            verticalSpacingMode="tab-aligned"
-          />
-        ) : heroTotals ? (
-          <>
-            <Animated.View style={heroAnimation}>
-              <View
-                style={styles.heroPagerWrap}
-                onLayout={(event) => setHeroWidth(event.nativeEvent.layout.width)}
-              >
-                <ScrollView
-                  ref={heroScrollRef}
-                  horizontal
-                  pagingEnabled
-                  showsHorizontalScrollIndicator={false}
-                  bounces={false}
-                  scrollEnabled={carouselItems.length > 1}
-                  onMomentumScrollEnd={(event) => {
-                    const width = event.nativeEvent.layoutMeasurement.width;
-                    if (width <= 0) {
-                      return;
-                    }
-
-                    const logicalCount = heroItems.length;
-                    if (logicalCount === 0) {
-                      setHeroIndex(0);
-                      return;
-                    }
-
-                    let physicalIndex = Math.round(event.nativeEvent.contentOffset.x / width);
-                    let logicalIndex = physicalIndex;
-
-                    if (logicalCount > 1) {
-                      if (physicalIndex === 0) {
-                        physicalIndex = logicalCount;
-                        logicalIndex = logicalCount - 1;
-                        requestAnimationFrame(() => {
-                          heroScrollRef.current?.scrollTo({
-                            x: width * physicalIndex,
-                            y: 0,
-                            animated: false
-                          });
-                        });
-                      } else if (physicalIndex === logicalCount + 1) {
-                        physicalIndex = 1;
-                        logicalIndex = 0;
-                        requestAnimationFrame(() => {
-                          heroScrollRef.current?.scrollTo({
-                            x: width * physicalIndex,
-                            y: 0,
-                            animated: false
-                          });
-                        });
-                      } else {
-                        logicalIndex = physicalIndex - 1;
-                      }
-                    } else {
-                      logicalIndex = 0;
-                    }
-
-                    heroPhysicalIndexRef.current = physicalIndex;
-                    setHeroIndex(logicalIndex);
-                  }}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor={palette.textSecondary}
+            />
+          }
+        >
+          {isInitialLoading ? (
+            <DashboardLoading />
+          ) : loadError ? (
+            <ErrorState
+              title="Unable to load home"
+              message={loadError.message}
+              onRetry={() => {
+                void handleRefresh();
+              }}
+            />
+          ) : accounts.length === 0 ? (
+            <TabEmptyStateCard
+              title="No connected accounts"
+              subtitle="Connect your bank to start tracking balances and spending."
+              ctaLabel="Connect bank"
+              onCtaPress={() => router.push("/modals/add-account")}
+              verticalSpacingMode="tab-aligned"
+            />
+          ) : heroTotals ? (
+            <>
+              <Animated.View style={heroAnimation}>
+                <View
+                  style={styles.heroPagerWrap}
+                  onLayout={(event) => setHeroWidth(event.nativeEvent.layout.width)}
                 >
-                  {carouselItems.map((item) => (
-                    <Pressable
-                      key={item.renderKey}
-                      style={[styles.heroPage, heroWidth > 0 ? { width: heroWidth } : null]}
-                      onPress={() => handleHeroPress(item)}
-                    >
-                      <BalanceHeroCard
-                        totalBalance={item.balance}
-                        currency={item.currency}
-                        title={item.title}
-                        badgeLabel={item.badgeLabel}
-                        subtitleOverride={item.subtitle}
-                        currencyNote={item.currencyNote}
+                  <ScrollView
+                    ref={heroScrollRef}
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    bounces={false}
+                    scrollEnabled={carouselItems.length > 1}
+                    onMomentumScrollEnd={(event) => {
+                      const width = event.nativeEvent.layoutMeasurement.width;
+                      if (width <= 0) {
+                        return;
+                      }
+
+                      const logicalCount = heroItems.length;
+                      if (logicalCount === 0) {
+                        setHeroIndex(0);
+                        return;
+                      }
+
+                      let physicalIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+                      let logicalIndex = physicalIndex;
+
+                      if (logicalCount > 1) {
+                        if (physicalIndex === 0) {
+                          physicalIndex = logicalCount;
+                          logicalIndex = logicalCount - 1;
+                          requestAnimationFrame(() => {
+                            heroScrollRef.current?.scrollTo({
+                              x: width * physicalIndex,
+                              y: 0,
+                              animated: false
+                            });
+                          });
+                        } else if (physicalIndex === logicalCount + 1) {
+                          physicalIndex = 1;
+                          logicalIndex = 0;
+                          requestAnimationFrame(() => {
+                            heroScrollRef.current?.scrollTo({
+                              x: width * physicalIndex,
+                              y: 0,
+                              animated: false
+                            });
+                          });
+                        } else {
+                          logicalIndex = physicalIndex - 1;
+                        }
+                      } else {
+                        logicalIndex = 0;
+                      }
+
+                      heroPhysicalIndexRef.current = physicalIndex;
+                      setHeroIndex(logicalIndex);
+                    }}
+                  >
+                    {carouselItems.map((item) => (
+                      <Pressable
+                        key={item.renderKey}
+                        style={[styles.heroPage, heroWidth > 0 ? { width: heroWidth } : null]}
+                        onPress={() => handleHeroPress(item)}
+                      >
+                        <BalanceHeroCard
+                          totalBalance={item.balance}
+                          currency={item.currency}
+                          title={item.title}
+                          badgeLabel={item.badgeLabel}
+                          subtitleOverride={item.subtitle}
+                          currencyNote={item.currencyNote}
+                        />
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                  <View style={styles.heroPagerDots}>
+                    {heroItems.map((item, index) => (
+                      <View
+                        key={`dot-${item.key}`}
+                        style={[styles.heroPagerDot, index === heroIndex ? styles.heroPagerDotActive : null]}
                       />
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <View style={styles.heroPagerDots}>
-                  {heroItems.map((item, index) => (
-                    <View
-                      key={`dot-${item.key}`}
-                      style={[styles.heroPagerDot, index === heroIndex ? styles.heroPagerDotActive : null]}
-                    />
-                  ))}
+                    ))}
+                  </View>
+                </View>
+              </Animated.View>
+
+              <View style={styles.quickActionRow}>
+                <View style={styles.quickActionPrimary}>
+                  <PrimaryButton
+                    label="Add transaction"
+                    onPress={() => router.push("/modals/add-transaction")}
+                    icon={
+                      <Ionicons
+                        name="swap-horizontal-outline"
+                        size={18}
+                        color={palette.textPrimary}
+                      />
+                    }
+                  />
+                </View>
+                <View style={styles.quickActionSecondary}>
+                  <SecondaryButton
+                    label="Connect bank"
+                    onPress={() => router.push("/modals/add-account")}
+                  />
                 </View>
               </View>
-            </Animated.View>
 
-            <View style={styles.quickActionRow}>
-              <View style={styles.quickActionPrimary}>
-                <PrimaryButton
-                  label="Add transaction"
-                  onPress={() => router.push("/modals/add-transaction")}
-                  icon={
-                    <Ionicons
-                      name="swap-horizontal-outline"
-                      size={18}
-                      color={palette.textPrimary}
-                    />
-                  }
+              <Animated.View style={sectionAnimation}>
+                <SectionHeader
+                  title="Key insights"
+                  actionLabel="Planner"
+                  onActionPress={() => router.push("/(tabs)/planner" as never)}
                 />
-              </View>
-              <View style={styles.quickActionSecondary}>
-                <SecondaryButton
-                  label="Connect bank"
-                  onPress={() => router.push("/modals/add-account")}
-                />
-              </View>
-            </View>
-
-            <Animated.View style={sectionAnimation}>
-              <SectionHeader
-                title="Key insights"
-                actionLabel="Planner"
-                onActionPress={() => router.push("/(tabs)/planner" as never)}
-              />
-              <View style={styles.suggestionsWrap}>
-                {suggestions.length > 0 ? (
-                  suggestions.map((item) => (
-                    <GlassCard key={item.id} style={styles.suggestionCard}>
-                      <Text style={styles.suggestionTitle}>{item.title}</Text>
-                      <Text style={styles.suggestionBody}>{item.message}</Text>
+                <View style={styles.suggestionsWrap}>
+                  {suggestions.length > 0 ? (
+                    suggestions.map((item) => (
+                      <GlassCard key={item.id} style={styles.suggestionCard}>
+                        <Text style={styles.suggestionTitle}>{item.title}</Text>
+                        <Text style={styles.suggestionBody}>{item.message}</Text>
+                      </GlassCard>
+                    ))
+                  ) : (
+                    <GlassCard style={styles.suggestionCard}>
+                      <Text style={styles.suggestionBody}>
+                        More guidance will appear as spending patterns become clearer.
+                      </Text>
                     </GlassCard>
-                  ))
-                ) : (
-                  <GlassCard style={styles.suggestionCard}>
-                    <Text style={styles.suggestionBody}>
-                      More guidance will appear as spending patterns become clearer.
-                    </Text>
-                  </GlassCard>
-                )}
+                  )}
+                </View>
+              </Animated.View>
+
+              <SectionHeader
+                title="Recent activity"
+                actionLabel="View all"
+                onActionPress={() => router.push("/(tabs)/activity")}
+              />
+
+              <View style={styles.transactionsWrap}>
+                {recentTransactions.map((transaction, index) => (
+                  <TransactionRow
+                    key={transaction.id}
+                    transaction={transaction}
+                    index={index}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/(tabs)/activity",
+                        params: {
+                          focusTransactionId: transaction.id,
+                          focusNonce: Date.now().toString()
+                        }
+                      })
+                    }
+                  />
+                ))}
               </View>
-            </Animated.View>
-
-            <SectionHeader
-              title="Recent activity"
-              actionLabel="View all"
-              onActionPress={() => router.push("/(tabs)/activity")}
-            />
-
-            <View style={styles.transactionsWrap}>
-              {recentTransactions.map((transaction, index) => (
-                <TransactionRow
-                  key={transaction.id}
-                  transaction={transaction}
-                  index={index}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/(tabs)/activity",
-                      params: {
-                        focusTransactionId: transaction.id,
-                        focusNonce: Date.now().toString()
-                      }
-                    })
-                  }
-                />
-              ))}
-            </View>
-          </>
-        ) : null}
-      </ScrollView>
+            </>
+          ) : null}
+        </ScrollView>
       </Animated.View>
-    </ScreenContainer>
+    </AdaptiveScreen>
   );
 }
 
@@ -530,53 +503,14 @@ function DashboardLoading() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: layout.screenTopPadding,
-    paddingBottom: 0
+    flex: 1
   },
   tabStage: {
     flex: 1
   },
   scrollContent: {
-    gap: spacing[16]
-  },
-  headerTopBar: {
-    marginBottom: spacing[16],
-    backgroundColor: "transparent",
-    zIndex: 20,
-    elevation: 20
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between"
-  },
-  headerRightSpacer: {
-    width: 42,
-    height: 42
-  },
-  headerRightActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  companionButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  greeting: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  subGreeting: {
-    marginTop: spacing[4],
-    color: palette.textSecondary,
-    ...typography.body2
+    gap: spacing[16],
+    paddingBottom: spacing[8]
   },
   quickActionRow: {
     flexDirection: "row",

@@ -2,22 +2,21 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LayoutAnimation, PanResponder, Platform, Pressable, StyleSheet, Text, UIManager, View } from "react-native";
-import { ExpenseTrackerCategoryRadialChart } from "../../../../src/components/expenseTracker/ExpenseTrackerCategoryRadialChart";
-import { ExpenseTrackerMiniAppScreen } from "../../../../src/components/expenseTracker/ExpenseTrackerMiniAppScreen";
-import { ExpenseTrackerSegmentedControl } from "../../../../src/components/expenseTracker/ExpenseTrackerSegmentedControl";
-import { EmptyState } from "../../../../src/components/ui/EmptyState";
-import { GlassCard } from "../../../../src/components/ui/GlassCard";
-import { useExpensePlanning } from "../../../../src/features/expenseTracker/ExpensePlanningProvider";
-import { useExpenseTrackerEntriesQuery, useExpenseTrackerTaxonomyQuery } from "../../../../src/features/expenseTracker/useExpenseTracker";
+import { ExpenseTrackerCategoryRadialChart } from "../../../../../src/components/expenseTracker/ExpenseTrackerCategoryRadialChart";
+import { ExpenseTrackerSegmentedControl } from "../../../../../src/components/expenseTracker/ExpenseTrackerSegmentedControl";
+import { EmptyState } from "../../../../../src/components/ui/EmptyState";
+import { GlassCard } from "../../../../../src/components/ui/GlassCard";
+import { useExpensePlanning } from "../../../../../src/features/expenseTracker/ExpensePlanningProvider";
+import { useExpenseTrackerEntriesQuery, useExpenseTrackerTaxonomyQuery } from "../../../../../src/features/expenseTracker/useExpenseTracker";
 import {
   buildExpensePlanCategoryMetrics,
   buildExpensePlanComputed,
   buildExpensePlanTaxonomyLookup,
   formatExpensePlanPeriod
-} from "../../../../src/features/expenseTracker/expensePlanningUtils";
-import type { ExpenseAnalyticsMode } from "../../../../src/features/expenseTracker/expensePlanningTypes";
-import { getExpenseTrackerVisual } from "../../../../src/features/expenseTracker/expenseTrackerModels";
-import { palette, radius, spacing, typography } from "../../../../src/theme/tokens";
+} from "../../../../../src/features/expenseTracker/expensePlanningUtils";
+import type { ExpenseAnalyticsMode } from "../../../../../src/features/expenseTracker/expensePlanningTypes";
+import { getExpenseTrackerVisual } from "../../../../../src/features/expenseTracker/expenseTrackerModels";
+import { palette, radius, spacing, typography } from "../../../../../src/theme/tokens";
 
 const analyticsModes = [
   { label: "Actual", value: "actual" },
@@ -123,7 +122,7 @@ export default function ExpenseTrackerGraphsScreen() {
   );
 
   return (
-    <ExpenseTrackerMiniAppScreen title="Analytics">
+    <>
       {!selectedPlan ? (
         <EmptyState
           title="No plans to analyse yet"
@@ -285,7 +284,7 @@ export default function ExpenseTrackerGraphsScreen() {
           </View>
         </>
       )}
-    </ExpenseTrackerMiniAppScreen>
+    </>
   );
 }
 

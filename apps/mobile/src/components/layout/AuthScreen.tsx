@@ -11,9 +11,7 @@ import {
   View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { PasswordField } from "../ui/PasswordField";
-import { TextField } from "../ui/TextField";
-import { layout, palette, radius, spacing, typography } from "../../theme/tokens";
+import { controls, layout, palette, radius, spacing, surfaces, typography } from "../../theme/tokens";
 
 export type AuthKeyboardMirrorField = {
   key: string;
@@ -46,6 +44,25 @@ type AuthScreenProps = {
   keyboardMirrorRequirements?: AuthKeyboardMirrorRequirements | null;
 };
 
+function KeyboardMirrorField({ field }: { field: AuthKeyboardMirrorField }) {
+  const hasValue = field.value.length > 0;
+  const displayValue =
+    field.secureTextEntry && !field.passwordVisible
+      ? "\u2022".repeat(field.value.length)
+      : field.value;
+
+  return (
+    <View style={styles.mirrorField}>
+      <Text
+        numberOfLines={1}
+        style={[styles.mirrorFieldText, !hasValue ? styles.mirrorFieldPlaceholder : null]}
+      >
+        {hasValue ? displayValue : (field.placeholder ?? field.label)}
+      </Text>
+    </View>
+  );
+}
+
 export function AuthScreen({
   children,
   keyboardMirrorField = null,
@@ -71,7 +88,7 @@ export function AuthScreen({
   }, [hideEvent, showEvent]);
 
   const shouldShowMirror = useMemo(
-    () => keyboardHeight > 0 && keyboardMirrorField !== null,
+    () => keyboardHeight > 0 && keyboardMirrorField?.secureTextEntry === true,
     [keyboardHeight, keyboardMirrorField]
   );
   const shouldShowMirrorRequirements = Boolean(
@@ -115,7 +132,7 @@ export function AuthScreen({
         </ScrollView>
 
         {shouldShowMirror && keyboardMirrorField ? (
-          <View style={[styles.keyboardMirrorWrap, { bottom: keyboardHeight + spacing[8] }]}>
+          <View pointerEvents="none" style={[styles.keyboardMirrorWrap, { bottom: keyboardHeight + spacing[8] }]}>
             {shouldShowMirrorRequirements && keyboardMirrorRequirements ? (
               <View style={styles.mirrorRulesWrap}>
                 <View
@@ -141,36 +158,7 @@ export function AuthScreen({
               </View>
             ) : null}
 
-            {keyboardMirrorField.secureTextEntry ? (
-              <PasswordField
-                key={keyboardMirrorField.key}
-                label={keyboardMirrorField.label}
-                value={keyboardMirrorField.value}
-                onChangeText={keyboardMirrorField.onChangeText}
-                placeholder={keyboardMirrorField.placeholder}
-                showLabel={false}
-                forceFocused
-                surfaceMode="solid"
-                isPasswordVisible={keyboardMirrorField.passwordVisible}
-                onPasswordVisibilityChange={keyboardMirrorField.onPasswordVisibilityChange}
-                autoHideOnBlur={false}
-                autoFocus
-              />
-            ) : (
-              <TextField
-                key={keyboardMirrorField.key}
-                label={keyboardMirrorField.label}
-                value={keyboardMirrorField.value}
-                onChangeText={keyboardMirrorField.onChangeText}
-                placeholder={keyboardMirrorField.placeholder}
-                keyboardType={keyboardMirrorField.keyboardType}
-                autoCapitalize={keyboardMirrorField.autoCapitalize}
-                showLabel={false}
-                forceFocused
-                surfaceMode="solid"
-                autoFocus
-              />
-            )}
+            <KeyboardMirrorField key={keyboardMirrorField.key} field={keyboardMirrorField} />
           </View>
         ) : null}
       </KeyboardAvoidingView>
@@ -196,6 +184,26 @@ const styles = StyleSheet.create({
     left: layout.screenHorizontalPadding,
     right: layout.screenHorizontalPadding,
     zIndex: 50
+  },
+  mirrorField: {
+    minHeight: controls.fieldHeight,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    borderColor: palette.primaryGlow,
+    backgroundColor: surfaces.fieldStrong,
+    paddingLeft: spacing[16],
+    paddingRight: spacing[8],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  mirrorFieldText: {
+    flex: 1,
+    color: palette.textPrimary,
+    ...typography.body1
+  },
+  mirrorFieldPlaceholder: {
+    color: palette.textSecondary
   },
   mirrorRulesWrap: {
     marginBottom: spacing[16],

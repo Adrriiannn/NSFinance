@@ -1,7 +1,8 @@
-import { ReactNode } from "react";
-import { StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../theme/tokens";
+import type { ReactNode } from "react";
+import { View } from "react-native";
+import { spacing } from "../../theme/tokens";
 import { TertiaryButton } from "./TertiaryButton";
+import { AppText } from "./text/AppText";
 
 type SectionHeaderProps = {
   title: string;
@@ -19,10 +20,10 @@ export function SectionHeader({
   trailing
 }: SectionHeaderProps) {
   return (
-    <View style={styles.row}>
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing[12] }}>
       <View>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        <AppText preset="sectionTitle">{title}</AppText>
+        {subtitle ? <AppText preset="secondary">{subtitle}</AppText> : null}
       </View>
 
       {trailing}
@@ -33,21 +34,3 @@ export function SectionHeader({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: spacing[12]
-  },
-  title: {
-    ...typography.title2,
-    color: palette.textPrimary
-  },
-  subtitle: {
-    marginTop: spacing[4],
-    color: palette.textSecondary,
-    ...typography.body2
-  }
-});

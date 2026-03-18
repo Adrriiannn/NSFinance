@@ -1,6 +1,8 @@
-import { StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { View } from "react-native";
+import { FieldError } from "./forms/FieldError";
+import { AppText } from "./text/AppText";
 import { Chip } from "./Chip";
+import { spacing } from "../../theme/tokens";
 
 export type SelectOption = {
   label: string;
@@ -25,9 +27,9 @@ export function SelectField({
   compact = false
 }: SelectFieldProps) {
   return (
-    <View style={styles.wrapper}>
-      <Text style={styles.label}>{label}</Text>
-      <View style={[styles.optionWrap, compact ? styles.optionWrapCompact : null]}>
+    <View style={{ gap: spacing[8] }}>
+      <AppText preset="fieldLabel">{label}</AppText>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: compact ? 6 : spacing[8] }}>
         {options.map((option) => (
           <Chip
             key={option.value}
@@ -38,29 +40,7 @@ export function SelectField({
           />
         ))}
       </View>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <FieldError>{error}</FieldError> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  wrapper: {
-    gap: spacing[8]
-  },
-  label: {
-    color: palette.textPrimary,
-    ...typography.caption
-  },
-  optionWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing[8]
-  },
-  optionWrapCompact: {
-    gap: 6
-  },
-  error: {
-    color: palette.negative,
-    ...typography.caption
-  }
-});

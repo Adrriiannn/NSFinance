@@ -1,6 +1,6 @@
-import { StyleProp, StyleSheet, Text, TextStyle } from "react-native";
+import type { StyleProp, TextStyle } from "react-native";
 import { formatCurrency } from "../../lib/format";
-import { palette, typography } from "../../theme/tokens";
+import { AppText } from "./text/AppText";
 
 type AmountTextProps = {
   amount: number;
@@ -9,19 +9,11 @@ type AmountTextProps = {
 };
 
 export function AmountText({ amount, currency = "EUR", style }: AmountTextProps) {
-  const color = amount < 0 ? palette.negative : palette.success;
+  const preset = amount < 0 ? "negativeMoney" : "positiveMoney";
 
   return (
-    <Text style={[styles.text, { color }, style]}>
+    <AppText preset={preset} style={[{ fontVariant: ["tabular-nums"] }, style]}>
       {formatCurrency(amount, currency)}
-    </Text>
+    </AppText>
   );
 }
-
-const styles = StyleSheet.create({
-  text: {
-    ...typography.body1,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"]
-  }
-});

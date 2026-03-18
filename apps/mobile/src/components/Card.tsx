@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 import { GlassCard } from "./ui/GlassCard";
 
 type CardProps = {

@@ -1,7 +1,8 @@
-import { StyleSheet, Text } from "react-native";
+import { View } from "react-native";
 import { PrimaryButton } from "../ui/PrimaryButton";
 import { GlassCard } from "../ui/GlassCard";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { Banner } from "../ui/feedback/Banner";
+import { AppText } from "../ui/text/AppText";
 
 type ErrorStateProps = {
   title?: string;
@@ -23,29 +24,16 @@ export function ErrorState({
   const shouldShowDebug = Boolean(debugDetail) && (showDebugDetail ?? __DEV__);
 
   return (
-    <GlassCard style={styles.card}>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.message}>{message}</Text>
-      {shouldShowDebug ? <Text style={styles.debug}>{debugDetail}</Text> : null}
+    <GlassCard style={{ gap: 12 }}>
+      <Banner title={title} message={message} tone="error" />
+      {shouldShowDebug ? (
+        <View>
+          <AppText preset="caption" tone="accent">
+            {debugDetail}
+          </AppText>
+        </View>
+      ) : null}
       {onRetry ? <PrimaryButton label={retryLabel} onPress={onRetry} /> : null}
     </GlassCard>
   );
 }
-
-const styles = StyleSheet.create({
-  card: {
-    gap: spacing[12]
-  },
-  title: {
-    color: palette.textPrimary,
-    ...typography.sectionTitle
-  },
-  message: {
-    color: palette.textSecondary,
-    ...typography.body
-  },
-  debug: {
-    color: palette.caution,
-    ...typography.caption
-  }
-});

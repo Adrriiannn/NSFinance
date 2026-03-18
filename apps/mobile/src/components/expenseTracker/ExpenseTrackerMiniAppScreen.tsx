@@ -1,6 +1,6 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { usePathname, useRouter } from "expo-router";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState, type ReactNode, type RefObject } from "react";
@@ -8,11 +8,14 @@ import { layout, palette, radius, spacing, typography } from "../../theme/tokens
 import { FloatingBottomNav, type FloatingBottomNavItem } from "../layout/FloatingBottomNav";
 import { IconButton } from "../ui/IconButton";
 import { expenseBottomNavItems } from "../layout/bottomNavConfigs";
+import { ModalSheet } from "../ui/surfaces/ModalSheet";
+import { ListRow } from "../ui/rows/ListRow";
 
 const navItems = [
   { key: "overview", path: "/(tabs)/planner/expense-tracker/overview", matchPath: "/planner/expense-tracker/overview" },
   { key: "graphs", path: "/(tabs)/planner/expense-tracker/graphs", matchPath: "/planner/expense-tracker/graphs" },
   { key: "add", path: "/(tabs)/planner/expense-tracker/add", matchPath: "/planner/expense-tracker/add" },
+  { key: "calendar", path: "/(tabs)/planner/expense-tracker/calendar", matchPath: "/planner/expense-tracker/calendar" },
   { key: "ai", path: "/companion/expense", matchPath: "/companion/expense" }
 ] as const;
 
@@ -65,9 +68,11 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
             <Text style={styles.headerEyebrow}>Plan creator</Text>
           ) : null}
           <View style={styles.headerActions}>
-            <Pressable style={styles.iconButton} onPress={() => setOptionsSheetOpen(true)}>
-              <MaterialCommunityIcons name="menu" size={18} color={palette.textPrimary} />
-            </Pressable>
+            <IconButton
+              onPress={() => setOptionsSheetOpen(true)}
+              accessibilityLabel="Open expense navigation"
+              icon={<MaterialCommunityIcons name="menu" size={18} color={palette.textPrimary} />}
+            />
           </View>
         </View>
 
@@ -108,57 +113,54 @@ export function ExpenseTrackerMiniAppScreen({ title, children, scrollViewRef }: 
         }}
       />
 
-      <Modal visible={optionsSheetOpen} transparent animationType="fade" onRequestClose={() => setOptionsSheetOpen(false)}>
-        <Pressable style={styles.overlay} onPress={() => setOptionsSheetOpen(false)}>
-          <Pressable style={styles.sheet} onPress={() => undefined}>
-            <Text style={styles.sheetTitle}>Expense planning</Text>
-            <Text style={styles.sheetSubtitle}>Move between plans, analytics, categories, and NS Companion.</Text>
-            <View style={styles.optionsList}>
-              {navItems.map((item) => {
-                const navMeta = expenseNavMap.get(item.key);
-                if (!navMeta) {
-                  return null;
-                }
+      <ModalSheet
+        visible={optionsSheetOpen}
+        onClose={() => setOptionsSheetOpen(false)}
+        title="Expense planning"
+        subtitle="Move between plans, analytics, categories, and NS Companion."
+      >
+        <View style={styles.optionsList}>
+          {navItems.map((item) => {
+            const navMeta = expenseNavMap.get(item.key);
+            if (!navMeta) {
+              return null;
+            }
 
-                return (
-                  <Pressable
-                    key={item.path}
-                    style={styles.optionRow}
-                    onPress={() => {
-                      setOptionsSheetOpen(false);
-                      if (currentNav === item.key) {
-                        return;
-                      }
-                      if (item.key === "ai") {
-                        router.replace(buildExpenseAiCompanionHref(currentNav));
-                      } else {
-                        router.navigate(item.path as never);
-                      }
-                    }}
-                  >
-                    {navMeta.iconFamily === "material" ? (
-                      <MaterialCommunityIcons name={navMeta.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={palette.textPrimary} />
-                    ) : (
-                      <Ionicons name={navMeta.icon as keyof typeof Ionicons.glyphMap} size={18} color={palette.textPrimary} />
-                    )}
-                    <Text style={styles.optionLabel}>{navMeta.label}</Text>
-                  </Pressable>
-                );
-              })}
-              <Pressable
-                style={styles.optionRow}
+            return (
+              <ListRow
+                key={item.path}
+                title={navMeta.label}
+                leading={
+                  navMeta.iconFamily === "material" ? (
+                    <MaterialCommunityIcons name={navMeta.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={palette.textPrimary} />
+                  ) : (
+                    <Ionicons name={navMeta.icon as keyof typeof Ionicons.glyphMap} size={18} color={palette.textPrimary} />
+                  )
+                }
                 onPress={() => {
                   setOptionsSheetOpen(false);
-                  router.replace("/(tabs)/planner" as never);
+                  if (currentNav === item.key) {
+                    return;
+                  }
+                  if (item.key === "ai") {
+                    router.replace(buildExpenseAiCompanionHref(currentNav));
+                  } else {
+                    router.navigate(item.path as never);
+                  }
                 }}
-              >
-                <Ionicons name="grid-outline" size={18} color={palette.textPrimary} />
-                <Text style={styles.optionLabel}>Back to Planner</Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+              />
+            );
+          })}
+          <ListRow
+            title="Back to Planner"
+            leading={<Ionicons name="grid-outline" size={18} color={palette.textPrimary} />}
+            onPress={() => {
+              setOptionsSheetOpen(false);
+              router.replace("/(tabs)/planner" as never);
+            }}
+          />
+        </View>
+      </ModalSheet>
     </SafeAreaView>
   );
 }
@@ -205,16 +207,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing[8]
   },
-  iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)"
-  },
   pageTitle: {
     color: palette.textPrimary,
     ...typography.title1
@@ -236,47 +228,8 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
     gap: layout.sectionGap
   },
-  overlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(4,11,23,0.72)"
-  },
-  sheet: {
-    borderTopLeftRadius: radius.hero,
-    borderTopRightRadius: radius.hero,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
-    paddingHorizontal: spacing[20],
-    paddingTop: spacing[20],
-    paddingBottom: spacing[24],
-    gap: spacing[16]
-  },
-  sheetTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  sheetSubtitle: {
-    color: palette.textSecondary,
-    ...typography.body2
-  },
   optionsList: {
     gap: 10
-  },
-  optionRow: {
-    minHeight: 50,
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[12],
-    paddingHorizontal: spacing[16]
-  },
-  optionLabel: {
-    color: palette.textPrimary,
-    ...typography.bodyStrong
   }
 });
 
