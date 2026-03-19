@@ -13,17 +13,24 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
   const router = useRouter();
   const hidden = pathname?.includes("/planner/expense-tracker") || pathname?.startsWith("/companion");
   const activeKey = state.routes[state.index]?.name.split("/")[0] ?? "index";
+  const autoPeekEligiblePath = pathname === "/" || pathname === "/accounts" || pathname === "/activity" || pathname === "/planner";
+
+  if (hidden) {
+    return null;
+  }
 
   return (
     <FloatingBottomNav
       items={appBottomNavItems}
       activeKey={activeKey}
-      hidden={hidden}
       switcherAction={{
         label: "Planning Hub",
         icon: "notebook-outline",
         iconFamily: "material",
         accessibilityLabel: "Open planning hub",
+        behavior: "peek",
+        autoPeekEnabled: autoPeekEligiblePath,
+        sharedRevealKey: "hub-switcher",
         onPress: () => {
           router.replace("/(tabs)/planner/expense-tracker/overview" as never);
         }

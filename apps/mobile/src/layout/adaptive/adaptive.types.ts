@@ -61,6 +61,8 @@ export type AdaptiveLayoutContextValue = {
   metrics: AdaptiveLayoutMetrics;
   shellFrame: AdaptiveShellFrame | null;
   setShellFrame: (frame: AdaptiveShellFrame | null) => void;
+  markInteraction: () => void;
+  getLastInteractionAt: () => number;
 };
 
 export type AdaptiveScreenProps = {

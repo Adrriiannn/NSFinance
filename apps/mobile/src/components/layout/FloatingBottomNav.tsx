@@ -1,8 +1,18 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
-import { borders, palette, radius, spacing, typography } from "../../theme/tokens";
+import { palette, radius, spacing, typography } from "../../theme/tokens";
+import { PlanningHubPeekButton } from "../../layout/adaptive/PlanningHubPeekButton";
+import { useOptionalAdaptiveShell } from "../../layout/adaptive/adaptive.hooks";
+import {
+  PEEK_GESTURE_MAX_HORIZONTAL_DRIFT,
+  PEEK_GESTURE_THRESHOLD,
+  PEEK_REVEALED_OPACITY,
+  PEEK_REVEALED_SCALE,
+  PEEK_REVEALED_TRANSLATE_Y
+} from "../../layout/adaptive/planningHubPeek.constants";
+import { usePlanningHubPeek } from "../../layout/adaptive/planningHubPeek.hooks";
 import { TabBarShell } from "../ui/surfaces/TabBarShell";
 import { surfacePresets } from "../ui/surfaces/surface.presets";
 
@@ -25,6 +35,9 @@ type FloatingBottomNavProps = {
     iconFamily?: "ionicons" | "material";
     onPress: () => void;
     accessibilityLabel?: string;
+    behavior?: "visible" | "peek";
+    autoPeekEnabled?: boolean;
+    sharedRevealKey?: string;
   };
 };
 
@@ -37,19 +50,6 @@ const navHighlightCache = new Map<string, NavLayoutCache>();
 const HIGHLIGHT_ANIMATION_DURATION = 240;
 const TAB_BAR_SEAM_COLOR = "#263142";
 const SWITCHER_WIDTH = 272;
-const SWITCHER_HEIGHT = 70;
-const SWITCHER_VISIBLE_WIDTH = 152;
-const SWITCHER_BOTTOM_CROP = 0.5;
-const SWITCHER_BUTTON_WIDTH = 108;
-const SWITCHER_BUTTON_HEIGHT = 56;
-const SWITCHER_FILL_INSET = 34;
-const SWITCHER_FILL_BASELINE = 64;
-const SWITCHER_STROKE_HEIGHT = 64;
-const SWITCHER_SIDE_CROP = (SWITCHER_WIDTH - SWITCHER_VISIBLE_WIDTH) / 2;
-const SWITCHER_SHAPE_STROKE_PATH =
-  "M0 70 C36 70 58 69 72 58 C82 50 88 40 92 24 C96 10 102 4 114 4 L158 4 C170 4 176 10 180 24 C184 40 190 50 200 58 C214 69 236 70 272 70";
-const SWITCHER_SHAPE_FILL_PATH = `${SWITCHER_SHAPE_STROKE_PATH} L${SWITCHER_WIDTH - SWITCHER_FILL_INSET} ${SWITCHER_FILL_BASELINE} L${SWITCHER_FILL_INSET} ${SWITCHER_FILL_BASELINE} Z`;
-const SWITCHER_SEAM_PATH = `M${SWITCHER_SIDE_CROP} ${SWITCHER_FILL_BASELINE} H${SWITCHER_WIDTH - SWITCHER_SIDE_CROP}`;
 
 function renderNavIcon(
   item: Pick<FloatingBottomNavItem, "icon" | "iconFamily">,
@@ -77,8 +77,10 @@ export function FloatingBottomNav({
   suppressActiveStateForKeys = [],
   switcherAction
 }: FloatingBottomNavProps) {
+  const adaptiveShell = useOptionalAdaptiveShell();
   const shellContentPaddingBottom = spacing[8];
-  const switcherContentColor = palette.textSecondary;
+  const tabBarBottomOffset = -2;
+  const [tabBarHeight, setTabBarHeight] = useState(0);
   const [itemLayouts, setItemLayouts] = useState<Partial<Record<string, { x: number; width: number }>>>({});
   const highlightLeft = useRef(new Animated.Value(0)).current;
   const highlightWidth = useRef(new Animated.Value(0)).current;
@@ -89,6 +91,39 @@ export function FloatingBottomNav({
   const switcherLeft = centerItemLayout
     ? centerItemLayout.x + centerItemLayout.width / 2 - SWITCHER_WIDTH / 2
     : null;
+  const switcherBehavior = switcherAction?.behavior ?? "visible";
+  const shouldUsePeekBehavior = switcherAction !== undefined && switcherBehavior === "peek";
+  const planningHubPeek = usePlanningHubPeek({
+    enabled:
+      shouldUsePeekBehavior &&
+      !hidden &&
+      (switcherAction?.autoPeekEnabled ?? false),
+    getLastInteractionAt: adaptiveShell?.getLastInteractionAt ?? null,
+    sharedRevealKey: switcherAction?.sharedRevealKey ?? null
+  });
+  const {
+    isVisible: isPlanningHubPeekVisible,
+    peekSource,
+    translateY: planningHubTranslateY,
+    opacity: planningHubOpacity,
+    scale: planningHubScale,
+    revealPeek,
+    hidePeek,
+    handleButtonPress
+  } = planningHubPeek;
+
+  const visibleTranslateY = switcherBehavior === "peek"
+    ? planningHubTranslateY
+    : new Animated.Value(PEEK_REVEALED_TRANSLATE_Y);
+  const visibleOpacity = switcherBehavior === "peek"
+    ? planningHubOpacity
+    : new Animated.Value(PEEK_REVEALED_OPACITY);
+  const visibleScale = switcherBehavior === "peek"
+    ? planningHubScale
+    : new Animated.Value(PEEK_REVEALED_SCALE);
+  const switcherBottomOffset = Math.max(tabBarHeight + tabBarBottomOffset, 0);
+  const manualRevealTriggeredRef = useRef(false);
+  const previousActiveKeyRef = useRef(activeKey);
 
   useEffect(() => {
     const layout = itemLayouts[activeKey];
@@ -153,83 +188,117 @@ export function FloatingBottomNav({
     });
   }, [activeKey, itemLayouts, navCacheKey]);
 
+  useEffect(() => {
+    if (shouldUsePeekBehavior && previousActiveKeyRef.current !== activeKey) {
+      hidePeek("tab-change");
+    }
+    previousActiveKeyRef.current = activeKey;
+  }, [activeKey, hidePeek, shouldUsePeekBehavior]);
+
+  const tabBarPanResponder = useRef(
+    PanResponder.create({
+      onPanResponderGrant: () => {
+        manualRevealTriggeredRef.current = false;
+      },
+      onMoveShouldSetPanResponderCapture: (_event, gestureState) =>
+        shouldUsePeekBehavior &&
+        Math.abs(gestureState.dy) > PEEK_GESTURE_THRESHOLD &&
+        Math.abs(gestureState.dx) < PEEK_GESTURE_MAX_HORIZONTAL_DRIFT &&
+        Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+      onMoveShouldSetPanResponder: (_event, gestureState) =>
+        shouldUsePeekBehavior &&
+        Math.abs(gestureState.dy) > PEEK_GESTURE_THRESHOLD &&
+        Math.abs(gestureState.dx) < PEEK_GESTURE_MAX_HORIZONTAL_DRIFT &&
+        Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_event, gestureState) => {
+        if (!shouldUsePeekBehavior || manualRevealTriggeredRef.current) {
+          return;
+        }
+
+        if (gestureState.dy <= -PEEK_GESTURE_THRESHOLD) {
+          manualRevealTriggeredRef.current = true;
+          revealPeek("manual");
+        }
+      },
+      onPanResponderRelease: (_event, gestureState) => {
+        if (!shouldUsePeekBehavior) {
+          return;
+        }
+
+        if (manualRevealTriggeredRef.current) {
+          manualRevealTriggeredRef.current = false;
+          return;
+        }
+
+        if (gestureState.dy >= PEEK_GESTURE_THRESHOLD) {
+          hidePeek("swipe-down");
+        }
+      },
+      onPanResponderTerminate: () => {
+        manualRevealTriggeredRef.current = false;
+      }
+    })
+  ).current;
+
   if (hidden) {
     return null;
   }
 
   return (
     <View pointerEvents="box-none" style={styles.wrapper}>
+      {switcherAction && shouldUsePeekBehavior ? (
+        <PlanningHubPeekButton
+          action={{
+            ...switcherAction,
+            onPress: () => {
+              handleButtonPress(switcherAction.onPress);
+            }
+          }}
+          left={switcherLeft}
+          translateY={visibleTranslateY}
+          opacity={visibleOpacity}
+          scale={visibleScale}
+          interactive={isPlanningHubPeekVisible && peekSource === "manual"}
+          placement="under"
+          bottomOffset={switcherBottomOffset}
+        />
+      ) : null}
       <TabBarShell
         style={[
           surfacePresets.tabBarDocked,
           {
             borderColor: TAB_BAR_SEAM_COLOR,
-            bottom: -2,
+            bottom: tabBarBottomOffset,
             paddingBottom: shellContentPaddingBottom
           }
         ]}
+        onLayout={(event) => {
+          const { height } = event.nativeEvent.layout;
+          setTabBarHeight((current) => (current === height ? current : height));
+        }}
+        {...(shouldUsePeekBehavior ? tabBarPanResponder.panHandlers : {})}
       >
-        {switcherAction ? (
-          <View
-            pointerEvents="box-none"
-            style={[
-              styles.switcherMount,
-              switcherLeft !== null
-                ? { left: switcherLeft, marginLeft: 0 }
-                : null
-            ]}
-          >
-            <View pointerEvents="none" style={styles.switcherShape}>
-              <Svg
-                width={SWITCHER_WIDTH}
-                height={SWITCHER_HEIGHT + 1}
-                viewBox={`0 0 ${SWITCHER_WIDTH} ${SWITCHER_HEIGHT + 1}`}
-                style={styles.switcherSvg}
-              >
-                <Path
-                  d={SWITCHER_SHAPE_FILL_PATH}
-                  fill={palette.tabBarSurface}
-                />
-              </Svg>
-              <View style={styles.switcherStrokeCrop}>
-                <Svg
-                  width={SWITCHER_WIDTH}
-                  height={SWITCHER_HEIGHT + 1}
-                  viewBox={`0 0 ${SWITCHER_WIDTH} ${SWITCHER_HEIGHT + 1}`}
-                  style={styles.switcherSvg}
-                >
-                  <Path
-                    d={SWITCHER_SHAPE_STROKE_PATH}
-                    fill="none"
-                    stroke={TAB_BAR_SEAM_COLOR}
-                    strokeWidth={borders.width.thin}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <Path
-                    d={SWITCHER_SEAM_PATH}
-                    fill="none"
-                    stroke={TAB_BAR_SEAM_COLOR}
-                    strokeWidth={borders.width.thin}
-                    strokeLinecap="butt"
-                  />
-                </Svg>
-              </View>
-            </View>
+        {switcherAction && !shouldUsePeekBehavior ? (
+          <PlanningHubPeekButton
+            action={{
+              ...switcherAction,
+              onPress: () => {
+                if (shouldUsePeekBehavior) {
+                  handleButtonPress(switcherAction.onPress);
+                  return;
+                }
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={switcherAction.accessibilityLabel ?? switcherAction.label}
-              onPress={switcherAction.onPress}
-              style={({ pressed }) => [
-                styles.switcherButton,
-                pressed ? styles.switcherButtonPressed : null
-              ]}
-            >
-              {renderNavIcon(switcherAction, switcherContentColor, 18)}
-              <Text style={[styles.switcherLabel, { color: switcherContentColor }]}>{switcherAction.label}</Text>
-            </Pressable>
-          </View>
+                switcherAction.onPress();
+              }
+            }}
+            left={switcherLeft}
+            translateY={visibleTranslateY}
+            opacity={visibleOpacity}
+            scale={visibleScale}
+            interactive
+            placement="above"
+          />
         ) : null}
         {itemLayouts[activeKey] && !suppressActiveStateForKeys.includes(activeKey) ? (
           <Animated.View
@@ -338,63 +407,6 @@ export function FloatingBottomNav({
 const styles = StyleSheet.create({
   wrapper: {
     ...StyleSheet.absoluteFillObject
-  },
-  switcherMount: {
-    position: "absolute",
-    bottom: "100%",
-    left: "50%",
-    marginLeft: -SWITCHER_WIDTH / 2,
-    width: SWITCHER_WIDTH,
-    height: SWITCHER_HEIGHT,
-    alignItems: "center",
-    justifyContent: "flex-start",
-    zIndex: 3,
-    transform: [{ translateY: -9.7 }]
-  },
-  switcherShape: {
-    position: "absolute",
-    bottom: 0,
-    left: "50%",
-    marginLeft: -SWITCHER_VISIBLE_WIDTH / 2,
-    width: SWITCHER_VISIBLE_WIDTH,
-    height: SWITCHER_HEIGHT + 1 - SWITCHER_BOTTOM_CROP,
-    overflow: "hidden"
-  },
-  switcherSvg: {
-    marginLeft: -SWITCHER_SIDE_CROP
-  },
-  switcherStrokeCrop: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    height: SWITCHER_STROKE_HEIGHT,
-    overflow: "hidden"
-  },
-  switcherButton: {
-    position: "absolute",
-    top: spacing[10],
-    left: "50%",
-    marginLeft: -SWITCHER_BUTTON_WIDTH / 2,
-    width: SWITCHER_BUTTON_WIDTH,
-    minHeight: SWITCHER_BUTTON_HEIGHT,
-    paddingHorizontal: spacing[10],
-    paddingTop: spacing[0],
-    paddingBottom: spacing[8],
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing[4],
-    borderRadius: radius.hero
-  },
-  switcherButtonPressed: {
-    opacity: 0.74,
-    transform: [{ scale: 0.98 }]
-  },
-  switcherLabel: {
-    color: palette.textPrimary,
-    ...typography.caption,
-    fontWeight: "700",
-    textAlign: "center"
   },
   activeHighlight: {
     position: "absolute",

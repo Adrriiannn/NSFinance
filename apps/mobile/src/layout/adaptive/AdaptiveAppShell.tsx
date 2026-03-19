@@ -1,5 +1,5 @@
 import { usePathname, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { surfaces } from "../../theme/tokens";
 import { FloatingAssistantDock } from "./FloatingAssistantDock";
@@ -29,14 +29,23 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [shellFrame, setShellFrame] = useState<AdaptiveShellFrame | null>(null);
+  const lastInteractionAtRef = useRef(Date.now());
+
+  const markInteraction = useCallback(() => {
+    lastInteractionAtRef.current = Date.now();
+  }, []);
+
+  const getLastInteractionAt = useCallback(() => lastInteractionAtRef.current, []);
 
   const contextValue = useMemo(
     () => ({
       metrics,
       shellFrame,
-      setShellFrame
+      setShellFrame,
+      markInteraction,
+      getLastInteractionAt
     }),
-    [metrics, shellFrame]
+    [getLastInteractionAt, markInteraction, metrics, shellFrame]
   );
 
   const showAssistantDock = ROOT_TAB_PATHS.has(pathname ?? "");
@@ -44,7 +53,7 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
 
   return (
     <AdaptiveLayoutContext.Provider value={contextValue}>
-      <View style={styles.root}>
+      <View style={styles.root} onTouchStart={markInteraction} onTouchMove={markInteraction}>
         <View pointerEvents="none" style={styles.backgroundGlowTop} />
         <View pointerEvents="none" style={styles.backgroundGlowBottom} />
         {children}

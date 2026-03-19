@@ -108,3 +108,7 @@ export function useAdaptiveShell() {
 
   return context;
 }
+
+export function useOptionalAdaptiveShell() {
+  return useContext(AdaptiveLayoutContext);
+}

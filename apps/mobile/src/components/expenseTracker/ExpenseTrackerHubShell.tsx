@@ -92,6 +92,9 @@ export function ExpenseTrackerHubShell({ title, children }: ExpenseTrackerHubShe
           label: "Finance Hub",
           icon: "wallet-outline",
           accessibilityLabel: "Return to finance tracking",
+          behavior: "peek",
+          autoPeekEnabled: currentNav !== "add",
+          sharedRevealKey: "hub-switcher",
           onPress: () => {
             router.replace("/(tabs)" as never);
           }
