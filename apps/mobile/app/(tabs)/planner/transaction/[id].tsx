@@ -1,17 +1,16 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../../src/components/ui/SecondaryButton";
 import { SkeletonBlock } from "../../../../src/components/ui/SkeletonBlock";
+import { HeaderShell } from "../../../../src/layout/appHeader";
 import { useTransactionDetailQuery } from "../../../../src/features/transactions/useTransactions";
 import { formatCurrency, formatDate, formatTime } from "../../../../src/lib/format";
 import { usePlannerStore } from "../../../../src/providers/PlannerProvider";
-import { layout, palette, spacing, typography } from "../../../../src/theme/tokens";
+import { palette, spacing, typography } from "../../../../src/theme/tokens";
 
 export default function PlannerTransactionDetailScreen() {
   const router = useRouter();
@@ -23,14 +22,7 @@ export default function PlannerTransactionDetailScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Transaction detail</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Transaction detail" />
 
       {!transactionId ? (
         <ErrorState
@@ -103,18 +95,7 @@ function DetailLine({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingTop: layout.screenTopPadding
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.sectionTitle
-  },
+  content: {},
   heroCard: {
     gap: spacing[8]
   },

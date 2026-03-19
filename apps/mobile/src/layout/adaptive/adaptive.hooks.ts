@@ -64,7 +64,7 @@ export function useAdaptiveLayoutMetrics(): AdaptiveLayoutMetrics {
   const floatingAssistantRightMargin = ADAPTIVE_TOKENS.fab.rightMargin[widthClass];
   const floatingAssistantGapAboveTabBar = ADAPTIVE_TOKENS.fab.gapAboveTabBar;
   const floatingAssistantBottomOffset =
-    tabBarMargins.bottom + tabBarHeight + floatingAssistantGapAboveTabBar;
+    ADAPTIVE_TOKENS.tabBar.baseHeight + floatingAssistantGapAboveTabBar;
   const contentBottomInset =
     Math.max(safeAreaInsets.bottom, 8) +
     ADAPTIVE_TOKENS.tabBar.baseHeight +
@@ -95,6 +95,9 @@ export function useAdaptiveLayoutMetrics(): AdaptiveLayoutMetrics {
     floatingAssistantRightMargin,
     floatingAssistantGapAboveTabBar,
     floatingAssistantBottomOffset,
+    floatingAssistantDockedVisibleWidth: ADAPTIVE_TOKENS.fab.dockedVisibleWidth,
+    floatingAssistantDockAnimationDurationMs: ADAPTIVE_TOKENS.fab.dockAnimationDurationMs,
+    floatingAssistantSwipeToDockThreshold: ADAPTIVE_TOKENS.fab.swipeToDockThreshold,
     contentBottomInset
   };
 }

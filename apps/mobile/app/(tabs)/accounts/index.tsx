@@ -11,6 +11,7 @@ import {
   Text,
   View
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendingsCard";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
@@ -24,8 +25,12 @@ import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
 import { TextField } from "../../../src/components/ui/TextField";
-import { AdaptiveHeader } from "../../../src/layout/adaptive/AdaptiveHeader";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
+import { HeaderActionButton, HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
+import {
+  CONTENT_FRAME_HEADER_GAP,
+  getDockAwareContentBottomInset
+} from "../../../src/layout/contentFrame";
 import {
   useAccountsQuery,
   useDeleteAccountMutation,
@@ -47,6 +52,7 @@ const accountTypeOptions: { label: string; value: AccountType }[] = [
 
 export default function AccountsTabScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/accounts");
   const params = useLocalSearchParams<{ selectedAccountId?: string; focusNonce?: string }>();
   const accountsQuery = useAccountsQuery();
@@ -160,18 +166,25 @@ export default function AccountsTabScreen() {
   return (
     <AdaptiveScreen contentStyle={styles.content} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
-      <AdaptiveHeader
-        title={!selectedAccount ? "Accounts" : undefined}
-        subtitle={!selectedAccount ? "Connect a bank to start tracking balances and spending." : undefined}
-        centerContent={
-          selectedAccount ? (
-            <Pressable style={styles.accountSelector} onPress={() => setSelectorVisible(true)}>
-              <Text style={styles.accountSelectorText} numberOfLines={1}>
-                {selectedAccount.name}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={palette.textSecondary} />
-            </Pressable>
-          ) : undefined
+      <HeaderShell
+        preset="primaryTwoRowSelector"
+        includeTopInset
+        title="Accounts"
+          secondRow={
+            <>
+              <HeaderActionButton
+                icon={<Ionicons name="link-outline" size={18} color={palette.textPrimary} />}
+                accessibilityLabel="Connect bank"
+                onPress={() => router.push("/modals/add-account")}
+                style={styles.headerIconAction}
+              />
+              <HeaderDropdownSlot
+                title="Select account"
+                value={selectedAccount?.name ?? null}
+                placeholder="Select account"
+              onPress={() => setSelectorVisible(true)}
+            />
+          </>
         }
       />
 
@@ -199,7 +212,13 @@ export default function AccountsTabScreen() {
         />
       ) : (
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: CONTENT_FRAME_HEADER_GAP,
+              paddingBottom: getDockAwareContentBottomInset(insets.bottom)
+            }
+          ]}
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
@@ -414,27 +433,13 @@ const styles = StyleSheet.create({
     flex: 1
   },
   scrollContent: {
-    gap: spacing[16],
-    paddingBottom: spacing[8]
+    gap: spacing[16]
   },
-  accountSelector: {
-    width: "100%",
-    minHeight: 42,
-    maxHeight: 42,
+  headerIconAction: {
+    width: 36,
+    height: 36,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing[12]
-  },
-  accountSelectorText: {
-    flex: 1,
-    marginRight: spacing[8],
-    color: palette.textPrimary,
-    ...typography.title2
+    backgroundColor: "rgba(18,36,58,0.92)"
   },
   heroCard: {
     gap: spacing[8]

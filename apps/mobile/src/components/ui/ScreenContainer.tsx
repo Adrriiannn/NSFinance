@@ -10,7 +10,12 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { GlobalAppMenu } from "../layout/GlobalAppMenu";
-import { getFloatingTabBarInset } from "../../theme/insets";
+import { useOptionalAdaptiveShell } from "../../layout/adaptive/adaptive.hooks";
+import {
+  CONTENT_FRAME_HORIZONTAL_PADDING,
+  getDockAwareContentBottomInset,
+  getPlainContentBottomInset
+} from "../../layout/contentFrame";
 import { layout, palette, spacing, surfaces } from "../../theme/tokens";
 
 type ScreenContainerProps = {
@@ -21,6 +26,7 @@ type ScreenContainerProps = {
   onRefresh?: () => void;
   withBottomTabOffset?: boolean;
   bottomInsetOffset?: number;
+  includeBottomSafeArea?: boolean;
   gestureHandlers?: GestureResponderHandlers;
 };
 
@@ -32,25 +38,29 @@ export function ScreenContainer({
   onRefresh,
   withBottomTabOffset = false,
   bottomInsetOffset = 0,
+  includeBottomSafeArea = !withBottomTabOffset,
   gestureHandlers
 }: ScreenContainerProps) {
   const insets = useSafeAreaInsets();
+  const adaptiveShell = useOptionalAdaptiveShell();
   const flattenedContentStyle = StyleSheet.flatten(contentStyle) ?? {};
   const menuTopOffset =
     typeof flattenedContentStyle.paddingTop === "number"
       ? flattenedContentStyle.paddingTop
       : spacing[8];
   const menuAbsoluteTop = insets.top + menuTopOffset;
-  const floatingTabInset = withBottomTabOffset
-    ? getFloatingTabBarInset(insets.bottom)
-    : 0;
-  const computedBottomInset = floatingTabInset + bottomInsetOffset;
+  const computedBottomInset =
+    (withBottomTabOffset
+      ? getDockAwareContentBottomInset(insets.bottom)
+      : getPlainContentBottomInset(insets.bottom)) + bottomInsetOffset;
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]} {...gestureHandlers}>
-      <View pointerEvents="none" style={styles.backgroundGlowTop} />
-      <View pointerEvents="none" style={styles.backgroundGlowBottom} />
-      <GlobalAppMenu topOffset={menuAbsoluteTop} />
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={includeBottomSafeArea ? ["top", "left", "right", "bottom"] : ["top", "left", "right"]}
+      {...gestureHandlers}
+    >
+      {!adaptiveShell ? <GlobalAppMenu topOffset={menuAbsoluteTop} showTrigger={false} /> : null}
 
       {scrollable ? (
         <ScrollView
@@ -93,31 +103,13 @@ const styles = StyleSheet.create({
     backgroundColor: surfaces.app
   },
   scrollContent: {
-    paddingHorizontal: layout.screenHorizontalPadding,
-    paddingBottom: spacing[32],
+    paddingHorizontal: CONTENT_FRAME_HORIZONTAL_PADDING,
+    paddingBottom: 0,
     gap: layout.sectionGap
   },
   fixedContent: {
     flex: 1,
-    paddingHorizontal: layout.screenHorizontalPadding,
-    paddingBottom: spacing[24]
-  },
-  backgroundGlowTop: {
-    position: "absolute",
-    top: -100,
-    right: -60,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "rgba(47,107,255,0.09)"
-  },
-  backgroundGlowBottom: {
-    position: "absolute",
-    bottom: -160,
-    left: -100,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "rgba(111,215,255,0.04)"
+    paddingHorizontal: CONTENT_FRAME_HORIZONTAL_PADDING,
+    paddingBottom: 0
   }
 });

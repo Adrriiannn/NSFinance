@@ -6,7 +6,7 @@ export default function ExpenseTrackerEntryRedirect() {
   return (
     <Redirect
       href={{
-        pathname: "/(tabs)/planner/expense-tracker/add",
+        pathname: "/planner/expense-tracker/add",
         params
       }}
     />

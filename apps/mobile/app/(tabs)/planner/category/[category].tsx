@@ -1,15 +1,14 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { TransactionRow } from "../../../../src/components/transactions/TransactionRow";
 import { EmptyState } from "../../../../src/components/ui/EmptyState";
-import { IconButton } from "../../../../src/components/ui/IconButton";
 import { ScreenContainer } from "../../../../src/components/ui/ScreenContainer";
+import { HeaderShell } from "../../../../src/layout/appHeader";
 import { useTransactionsQuery } from "../../../../src/features/transactions/useTransactions";
 import { formatCurrency, formatDate } from "../../../../src/lib/format";
 import { usePlannerStore } from "../../../../src/providers/PlannerProvider";
-import { layout, palette, spacing, typography } from "../../../../src/theme/tokens";
+import { palette, spacing, typography } from "../../../../src/theme/tokens";
 
 export default function PlannerCategoryDetailScreen() {
   const router = useRouter();
@@ -38,14 +37,7 @@ export default function PlannerCategoryDetailScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>{category}</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title={category} />
 
       <Text style={styles.subHeader}>
         {transactions.length} transaction{transactions.length === 1 ? "" : "s"} |{" "}
@@ -80,18 +72,7 @@ export default function PlannerCategoryDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingTop: layout.screenTopPadding
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.sectionTitle
-  },
+  content: {},
   subHeader: {
     color: palette.textSecondary,
     ...typography.body2

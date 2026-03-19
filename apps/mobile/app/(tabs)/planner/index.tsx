@@ -11,6 +11,7 @@ import {
   Text,
   View
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { SpendTrendGraph } from "../../../src/components/planner/SpendTrendGraph";
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
@@ -18,8 +19,12 @@ import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
-import { AdaptiveHeader } from "../../../src/layout/adaptive/AdaptiveHeader";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
+import { HeaderShell } from "../../../src/layout/appHeader";
+import {
+  CONTENT_FRAME_HEADER_GAP,
+  getDockAwareContentBottomInset
+} from "../../../src/layout/contentFrame";
 import { useDashboardSummaryQuery } from "../../../src/features/dashboard/useDashboardSummaryQuery";
 import {
   buildPlannerGraphModel,
@@ -74,6 +79,7 @@ function splitAbsoluteMonth(absoluteMonth: number) {
 
 export default function PlannerScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/planner");
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
@@ -272,25 +278,16 @@ export default function PlannerScreen() {
   return (
     <AdaptiveScreen contentStyle={styles.content} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
-        <AdaptiveHeader
-          title="Planner"
-          subtitle="Compare monthly spend and keep upcoming payments in view."
-          leftAction={
-            <Pressable
-              style={styles.sparkleButton}
-              onPress={() => router.push("/(tabs)/planner/expense-tracker" as never)}
-            >
-              <MaterialCommunityIcons
-                name="notebook-edit-outline"
-                size={20}
-                color={palette.textPrimary}
-              />
-            </Pressable>
-          }
-        />
+        <HeaderShell preset="primaryDefault" includeTopInset title="Cashflow" />
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: CONTENT_FRAME_HEADER_GAP,
+            paddingBottom: getDockAwareContentBottomInset(insets.bottom)
+          }
+        ]}
         showsVerticalScrollIndicator={false}
         bounces={false}
         refreshControl={
@@ -591,18 +588,7 @@ const styles = StyleSheet.create({
     flex: 1
   },
   scrollContent: {
-    gap: layout.sectionGap,
-    paddingBottom: spacing[8]
-  },
-  sparkleButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
-    alignItems: "center",
-    justifyContent: "center"
+    gap: layout.sectionGap
   },
   graphCard: {
     gap: spacing[12]

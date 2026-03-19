@@ -1,10 +1,8 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../feedback/ErrorState";
-import { IconButton } from "../ui/IconButton";
 import { ScreenContainer } from "../ui/ScreenContainer";
 import { SkeletonBlock } from "../ui/SkeletonBlock";
+import { HeaderShell } from "../../layout/appHeader";
 import { palette, spacing, typography } from "../../theme/tokens";
 import type { PolicyVersionDto } from "../../types/api";
 
@@ -30,18 +28,9 @@ export function PolicyDocumentScreen({
   errorMessage,
   onRetry
 }: PolicyDocumentScreenProps) {
-  const router = useRouter();
-
   return (
-    <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>{title}</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+    <ScreenContainer contentStyle={styles.content} scrollable={false}>
+      <HeaderShell preset="secondaryDetail" title={title} />
 
       {errorMessage ? (
         <ErrorState
@@ -105,22 +94,7 @@ export function PolicyDocumentScreen({
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingTop: spacing[16]
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: spacing[16]
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  headerSpacer: {
-    width: 42
-  },
+  content: {},
   loadingWrap: {
     gap: spacing[8]
   },

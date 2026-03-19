@@ -49,6 +49,9 @@ export type AdaptiveLayoutMetrics = {
   floatingAssistantRightMargin: number;
   floatingAssistantGapAboveTabBar: number;
   floatingAssistantBottomOffset: number;
+  floatingAssistantDockedVisibleWidth: number;
+  floatingAssistantDockAnimationDurationMs: number;
+  floatingAssistantSwipeToDockThreshold: number;
   contentBottomInset: number;
 };
 

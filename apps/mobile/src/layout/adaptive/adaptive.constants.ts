@@ -13,9 +13,9 @@ export const ADAPTIVE_HEIGHT_BREAKPOINTS = {
 
 export const ADAPTIVE_TOKENS = {
   contentPaddingX: {
-    compact: spacing[16],
-    regular: spacing[20],
-    expanded: spacing[24]
+    compact: spacing[12],
+    regular: spacing[12],
+    expanded: spacing[12]
   } as Record<AdaptiveWidthClass, number>,
   maxContentWidth: {
     compact: 480,
@@ -77,7 +77,10 @@ export const ADAPTIVE_TOKENS = {
       regular: spacing[16],
       expanded: spacing[20]
     } as Record<AdaptiveWidthClass, number>,
-    gapAboveTabBar: spacing[12]
+    gapAboveTabBar: spacing[12],
+    dockedVisibleWidth: 24,
+    dockAnimationDurationMs: 220,
+    swipeToDockThreshold: 28
   },
   contentReserve: {
     comfortSpacing: spacing[16]

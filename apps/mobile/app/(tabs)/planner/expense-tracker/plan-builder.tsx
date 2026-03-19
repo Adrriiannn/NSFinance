@@ -1,4 +1,4 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
@@ -207,7 +207,7 @@ export default function ExpensePlanBuilderScreen() {
                     onPress={() => {
                       setSelectionLineItemId(lineItem.id);
                       router.push({
-                        pathname: "/(tabs)/planner/expense-tracker/add",
+                        pathname: "/planner/expense-tracker/add",
                         params: { selectionMode: "true", lineItemId: lineItem.id }
                       });
                     }}

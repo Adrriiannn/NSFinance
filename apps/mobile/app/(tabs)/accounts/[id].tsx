@@ -1,4 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -9,11 +8,11 @@ import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SectionHeader } from "../../../src/components/ui/SectionHeader";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
 import { useBankConnectionsQuery } from "../../../src/features/banking/useBanking";
 import { useAccountTransactionsQuery } from "../../../src/features/transactions/useTransactions";
@@ -183,14 +182,7 @@ export default function AccountDetailsScreen() {
   return (
     <ScreenContainer scrollable={false} contentStyle={styles.content}>
       <View style={styles.headerTopBar}>
-        <View style={styles.headerRow}>
-          <IconButton
-            onPress={() => router.back()}
-            icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-          />
-          <Text style={styles.headerTitle}>Account details</Text>
-          <View style={{ width: 42 }} />
-        </View>
+        <HeaderShell preset="secondaryDetail" title="Account details" />
       </View>
 
       <ScrollView

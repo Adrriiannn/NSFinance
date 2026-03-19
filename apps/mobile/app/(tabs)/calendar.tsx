@@ -1,16 +1,13 @@
 import { StyleSheet, View } from "react-native";
 import { EmptyState } from "../../src/components/ui/EmptyState";
-import { AdaptiveHeader } from "../../src/layout/adaptive/AdaptiveHeader";
 import { AdaptiveScreen } from "../../src/layout/adaptive/AdaptiveScreen";
+import { HeaderShell } from "../../src/layout/appHeader";
 import { spacing } from "../../src/theme/tokens";
 
 export default function CalendarPlaceholderScreen() {
   return (
     <AdaptiveScreen contentStyle={styles.content}>
-      <AdaptiveHeader
-        title="Calendar"
-        subtitle="Upcoming timeline and planning views will land here."
-      />
+      <HeaderShell preset="primaryDefault" includeTopInset title="Calendar" />
       <View style={styles.center}>
         <EmptyState
           title="Calendar placeholder"

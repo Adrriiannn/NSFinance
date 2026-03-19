@@ -27,3 +27,27 @@
 - Row presets: `apps/mobile/src/components/ui/rows/row.presets.ts`
 - Feedback presets: `apps/mobile/src/components/ui/feedback/feedback.presets.ts`
 - Surface presets: `apps/mobile/src/components/ui/surfaces/surface.presets.ts`
+
+## Header System
+
+- Global header sizes, slot widths, row spacing, sticky divider behavior, title sizing, subtitle sizing, and row-2 control sizing live in `apps/mobile/src/layout/header/header.constants.ts`.
+- Header preset definitions and page-level header variant mapping live in `apps/mobile/src/layout/header/header.presets.ts`.
+- Shared header building blocks live in `apps/mobile/src/layout/header/`.
+- Menu and back button sizing are controlled through `HeaderActionButton.tsx` and `header.constants.ts`.
+- Shared selector/search controls used in headers live in `HeaderDropdownSlot.tsx` and `HeaderSearchSlot.tsx`.
+
+### Primary Page Mapping
+
+- `Home` -> `primaryGreeting`
+- `Accounts` -> `primaryTwoRowSelector`
+- `Activity` -> `primaryTwoRowSelector`
+- `Cashflow` -> `primaryDefault`
+- `Calendar` -> `primaryDefault`
+- `NS Companion` -> `primaryDefault`
+- `Plans` -> `primaryDefault`
+- `Analytics` -> `primaryTwoRowSelector`
+- `Categories` -> `primaryTwoRowSearch`
+
+### Secondary Pages
+
+- All menu pages, legal/policy pages, transaction detail pages, account detail pages, and other routed non-primary pages should use `secondaryDetail`.

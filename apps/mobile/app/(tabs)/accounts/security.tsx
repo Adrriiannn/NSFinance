@@ -1,6 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -15,11 +14,11 @@ import {
 import * as Sharing from "expo-sharing";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { TextField } from "../../../src/components/ui/TextField";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   getGoogleAuthOptions,
   getSessions,
@@ -110,7 +109,6 @@ function formatBankConnectionStatus(status: BankConnectionStatus) {
 }
 
 export default function SecuritySettingsScreen() {
-  const router = useRouter();
   const params = useLocalSearchParams<{ focus?: string }>();
   const queryClient = useQueryClient();
   const profileQuery = useUserProfileQuery();
@@ -454,14 +452,7 @@ export default function SecuritySettingsScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Security</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Security" />
 
       <ScrollView
         ref={securityScrollRef}
@@ -847,7 +838,7 @@ export default function SecuritySettingsScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[16]
+    paddingTop: 0
   },
   headerRow: {
     flexDirection: "row",
@@ -864,6 +855,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     gap: spacing[12],
+    paddingTop: spacing[10],
     paddingBottom: spacing[12]
   },
   sectionCard: {

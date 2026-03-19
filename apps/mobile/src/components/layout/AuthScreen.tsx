@@ -1,4 +1,3 @@
-import { LinearGradient } from "expo-linear-gradient";
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Keyboard,
@@ -116,9 +115,6 @@ export function AuthScreen({
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
-      <LinearGradient colors={["#061020", "#050D19", "#040B16"]} style={StyleSheet.absoluteFill} />
-      <View style={styles.glowTop} />
-      <View style={styles.glowBottom} />
       <KeyboardAvoidingView
         style={styles.keyboardWrap}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -254,23 +250,5 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 10,
     ...typography.caption
-  },
-  glowTop: {
-    position: "absolute",
-    top: -90,
-    right: -30,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: "rgba(47,107,255,0.1)"
-  },
-  glowBottom: {
-    position: "absolute",
-    bottom: -120,
-    left: -80,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "rgba(111,215,255,0.05)"
   }
 });

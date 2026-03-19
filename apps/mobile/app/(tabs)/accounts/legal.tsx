@@ -2,8 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   useAiDisclosurePolicyQuery,
   useDataRightsPolicyQuery,
@@ -65,14 +65,7 @@ export default function LegalScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Legal</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Legal" />
 
       <Text style={styles.subtitle}>
         Review current legal documents and disclosures. Drafts are production-shaped and pending external legal review.
@@ -96,24 +89,11 @@ export default function LegalScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[16],
     gap: spacing[12]
   },
   listContent: {
     gap: spacing[12],
     paddingBottom: spacing[4]
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  headerSpacer: {
-    width: 42
   },
   subtitle: {
     color: palette.textSecondary,

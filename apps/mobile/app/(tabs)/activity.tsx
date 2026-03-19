@@ -4,20 +4,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   PanResponder,
-  Pressable,
   RefreshControl,
   SectionList,
   StyleSheet,
   Text,
   View
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { useMainTabSwipeNavigation } from "../../src/components/layout/useHorizontalSiblingSwipe";
 import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
-import { AdaptiveHeader } from "../../src/layout/adaptive/AdaptiveHeader";
 import { AdaptiveScreen } from "../../src/layout/adaptive/AdaptiveScreen";
+import { HeaderActionButton, HeaderDropdownSlot, HeaderShell } from "../../src/layout/appHeader";
+import {
+  CONTENT_FRAME_HEADER_GAP,
+  getDockAwareContentBottomInset
+} from "../../src/layout/contentFrame";
 import {
   type ActivityFilter,
   applyActivityFilter,
@@ -33,6 +37,7 @@ const transactionSwipeHoldDelayMs = 1000;
 
 export default function ActivityTabScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const pageSwipeBlockedRef = useRef(false);
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/activity", {
     isBlockedRef: pageSwipeBlockedRef
@@ -40,7 +45,6 @@ export default function ActivityTabScreen() {
   const params = useLocalSearchParams<{ focusTransactionId?: string; focusNonce?: string }>();
   const plannerStore = usePlannerStore();
   const [filter, setFilter] = useState<ActivityFilter>("All");
-  const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [highlightedTransactionId, setHighlightedTransactionId] = useState<string | null>(
     null
   );
@@ -132,59 +136,27 @@ export default function ActivityTabScreen() {
   return (
     <AdaptiveScreen contentStyle={styles.container} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
-        <AdaptiveHeader
-          leftAction={
-            <Pressable
-              style={styles.headerActionButton}
-              onPress={() => router.push("/modals/add-transaction")}
-            >
-              <Ionicons name="add" size={20} color={palette.textPrimary} />
-            </Pressable>
-          }
-          centerContent={
-            <Pressable
-              style={styles.filterSelector}
-              onPress={() => setFilterDropdownOpen((current) => !current)}
-            >
-              <Text style={styles.filterSelectorText} numberOfLines={1}>
-                {filter}
-              </Text>
-              <Ionicons
-                name={filterDropdownOpen ? "chevron-up" : "chevron-down"}
-                size={16}
-                color={palette.textSecondary}
+        <HeaderShell
+          preset="primaryTwoRowSelector"
+          includeTopInset
+          title="Activity"
+          secondRow={
+            <>
+              <HeaderActionButton
+                icon={<Ionicons name="add" size={18} color={palette.textPrimary} />}
+                accessibilityLabel="Add transaction"
+                onPress={() => router.push("/modals/add-transaction")}
+                style={styles.headerIconAction}
               />
-            </Pressable>
+              <HeaderDropdownSlot
+                title="Transactions filter"
+                value={filter}
+                options={filters.map((item) => ({ label: item, value: item }))}
+                onChange={(value) => setFilter(value as ActivityFilter)}
+              />
+            </>
           }
         />
-
-        {filterDropdownOpen ? (
-          <View style={styles.filterDropdown}>
-            {filters.map((item) => (
-              <Pressable
-                key={item}
-                style={({ pressed }) => [
-                  styles.filterDropdownItem,
-                  filter === item ? styles.filterDropdownItemActive : null,
-                  pressed ? styles.filterDropdownItemPressed : null
-                ]}
-                onPress={() => {
-                  setFilter(item);
-                  setFilterDropdownOpen(false);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.filterDropdownItemText,
-                    filter === item ? styles.filterDropdownItemTextActive : null
-                  ]}
-                >
-                  {item}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
 
         <View style={styles.feedWrap}>
           {isInitialLoading ? (
@@ -252,7 +224,13 @@ export default function ActivityTabScreen() {
                   }
                 />
               )}
-              contentContainerStyle={styles.listContent}
+              contentContainerStyle={[
+                styles.listContent,
+                {
+                  paddingTop: CONTENT_FRAME_HEADER_GAP,
+                  paddingBottom: getDockAwareContentBottomInset(insets.bottom)
+                }
+              ]}
               SectionSeparatorComponent={() => <View style={{ height: spacing[12] }} />}
               ItemSeparatorComponent={() => <View style={{ height: spacing[12] }} />}
               showsVerticalScrollIndicator={false}
@@ -499,63 +477,11 @@ const styles = StyleSheet.create({
   tabStage: {
     flex: 1
   },
-  headerActionButton: {
-    width: 42,
-    height: 42,
+  headerIconAction: {
+    width: 36,
+    height: 36,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  filterSelector: {
-    width: "100%",
-    minHeight: 42,
-    maxHeight: 42,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing[12]
-  },
-  filterSelectorText: {
-    flex: 1,
-    marginRight: spacing[8],
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  filterDropdown: {
-    gap: spacing[8],
-    marginBottom: spacing[12],
-    zIndex: 21,
-    elevation: 21
-  },
-  filterDropdownItem: {
-    minHeight: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.75)",
-    justifyContent: "center",
-    paddingHorizontal: spacing[12]
-  },
-  filterDropdownItemActive: {
-    borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.2)"
-  },
-  filterDropdownItemPressed: {
-    opacity: 0.88
-  },
-  filterDropdownItemText: {
-    color: palette.textPrimary,
-    ...typography.body1
-  },
-  filterDropdownItemTextActive: {
-    fontWeight: "700"
+    backgroundColor: "rgba(18,36,58,0.92)"
   },
   feedWrap: {
     flex: 1
@@ -566,8 +492,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing[8]
   },
   listContent: {
-    paddingTop: 0,
-    paddingBottom: spacing[8]
+    paddingTop: 0
   },
   loadingList: {
     gap: spacing[12]

@@ -16,11 +16,11 @@ import {
 } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { TextField } from "../../../src/components/ui/TextField";
+import { HeaderActionButton, HeaderShell } from "../../../src/layout/appHeader";
 import {
   countryCodeToFlag,
   findCountryByCode,
@@ -844,14 +844,17 @@ export default function ProfileSettingsScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={handleBack}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Profile</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      <HeaderShell
+        preset="secondaryDetail"
+        title="Profile"
+        leadingAction={
+          <HeaderActionButton
+            icon={<Ionicons name="arrow-back" size={20} color={palette.textPrimary} />}
+            onPress={handleBack}
+            accessibilityLabel="Go back"
+          />
+        }
+      />
 
       {profileQuery.isError ? (
         <ErrorState
@@ -1174,10 +1177,11 @@ export default function ProfileSettingsScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[16]
+    paddingTop: 0
   },
   scrollContent: {
     gap: spacing[12],
+    paddingTop: spacing[10],
     paddingBottom: spacing[12]
   },
   headerRow: {

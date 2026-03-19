@@ -5,12 +5,12 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import * as ImagePicker from "expo-image-picker";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { TextField } from "../../../src/components/ui/TextField";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery
@@ -263,14 +263,7 @@ export default function AccountSupportScreen() {
       bottomInsetOffset={spacing[12]}
       scrollable={false}
     >
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Support</Text>
-        <View style={{ width: 42 }} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Support" />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         {createSupportMutation.isError ? (
@@ -413,10 +406,11 @@ export default function AccountSupportScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[16]
+    paddingTop: 0
   },
   scrollContent: {
-    gap: spacing[12]
+    gap: spacing[12],
+    paddingTop: spacing[10]
   },
   headerRow: {
     flexDirection: "row",

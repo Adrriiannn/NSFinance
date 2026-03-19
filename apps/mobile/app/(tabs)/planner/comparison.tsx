@@ -1,17 +1,14 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { useMemo } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text } from "react-native";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { getMonthComparison } from "../../../src/features/planner/plannerInsights";
 import { formatCurrency } from "../../../src/lib/format";
-import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography } from "../../../src/theme/tokens";
 
 export default function PlannerComparisonScreen() {
-  const router = useRouter();
   const transactionsQuery = useTransactionsQuery();
   const comparison = useMemo(
     () => getMonthComparison(transactionsQuery.data ?? []),
@@ -20,14 +17,7 @@ export default function PlannerComparisonScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Monthly comparison</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Monthly comparison" />
 
       <GlassCard style={styles.card}>
         <Text style={styles.label}>This month</Text>
@@ -64,18 +54,7 @@ export default function PlannerComparisonScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingTop: layout.screenTopPadding
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
+  content: {},
   card: {
     gap: spacing[8]
   },

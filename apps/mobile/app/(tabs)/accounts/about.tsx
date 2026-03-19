@@ -1,26 +1,16 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text } from "react-native";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
 
 export default function AboutScreen() {
-  const router = useRouter();
   const appVersion = process.env.EXPO_PUBLIC_APP_VERSION || "0.1.0";
   const environment = process.env.EXPO_PUBLIC_APP_ENV || "development";
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>About</Text>
-        <View style={{ width: 42 }} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="About" />
 
       <GlassCard style={styles.card}>
         <Text style={styles.title}>NSFinance</Text>
@@ -59,17 +49,7 @@ export default function AboutScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[16],
     gap: spacing[12]
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
   },
   card: {
     gap: spacing[8]

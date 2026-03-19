@@ -52,7 +52,7 @@ export const radius = {
 } as const;
 
 export const layout = {
-  screenHorizontalPadding: spacing[20],
+  screenHorizontalPadding: spacing[12],
   screenTopPadding: spacing[20],
   sectionGap: spacing[20],
   listGap: spacing[12],

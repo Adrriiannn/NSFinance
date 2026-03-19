@@ -1,13 +1,11 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import { ApiClientError } from "../../../src/lib/api/errors";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import {
@@ -37,7 +35,6 @@ function isSessionNotFoundError(error: unknown) {
 }
 
 export default function SessionsScreen() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const sessionsQuery = useQuery({
     queryKey: sessionKey,
@@ -85,14 +82,7 @@ export default function SessionsScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Sessions & Devices</Text>
-        <View style={{ width: 42 }} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Sessions & Devices" />
 
       {sessionsQuery.isError ? (
         <ErrorState
@@ -153,7 +143,7 @@ export default function SessionsScreen() {
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[16],
+    paddingTop: 0,
     gap: spacing[16]
   },
   headerRow: {
@@ -166,7 +156,8 @@ const styles = StyleSheet.create({
     ...typography.title2
   },
   list: {
-    gap: spacing[12]
+    gap: spacing[12],
+    marginTop: spacing[10]
   },
   sessionCard: {
     gap: spacing[8]

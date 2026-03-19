@@ -1,9 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { LayoutAnimation, Platform, Pressable, StyleSheet, Text, UIManager, View } from "react-native";
+import { LayoutAnimation, Platform, Pressable, ScrollView, StyleSheet, Text, UIManager, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ExpenseTrackerMiniAppScreen } from "../../../../../src/components/expenseTracker/ExpenseTrackerMiniAppScreen";
+import {
+  EXPENSE_HUB_CONTENT_PADDING_X,
+  EXPENSE_HUB_CONTENT_TOP_GAP,
+  getExpenseHubContentBottomInset
+} from "../../../../../src/components/expenseTracker/expenseHubLayout";
 import { ErrorState } from "../../../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../../../src/components/ui/PrimaryButton";
@@ -20,6 +25,7 @@ import {
   searchExpenseTaxonomy
 } from "../../../../../src/features/expenseTracker/expenseTaxonomySearch";
 import { useExpenseTrackerTaxonomyQuery } from "../../../../../src/features/expenseTracker/useExpenseTracker";
+import { HeaderSearchSlot, HeaderShell } from "../../../../../src/layout/appHeader";
 import { getFloatingTabBarInset } from "../../../../../src/theme/insets";
 import { palette, radius, spacing, typography } from "../../../../../src/theme/tokens";
 
@@ -104,15 +110,17 @@ export default function ExpenseTrackerAddScreen() {
         ) : null}
 
         <View style={styles.categoryPickerSection}>
-          <View style={styles.categorySearchWrap}>
-            <TextField
-              label="Search categories"
-              showLabel={false}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder="Search categories, keywords, or brands"
-            />
-          </View>
+          {selectionMode ? (
+            <View style={styles.categorySearchWrap}>
+              <TextField
+                label="Search categories"
+                showLabel={false}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Search categories, keywords, or brands"
+              />
+            </View>
+          ) : null}
 
           <GlassCard style={styles.categoryLauncherCard}>
             {hasSearchQuery ? (
@@ -278,7 +286,35 @@ export default function ExpenseTrackerAddScreen() {
           {content}
         </ExpenseTrackerMiniAppScreen>
       ) : (
-        content
+        <View style={styles.primaryScreen}>
+          <HeaderShell
+            preset="primaryTwoRowSearch"
+            includeTopInset
+            bleedHorizontal={EXPENSE_HUB_CONTENT_PADDING_X}
+            title="Categories"
+            secondRow={
+              <HeaderSearchSlot
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                onClear={() => setSearchQuery("")}
+                placeholder="Search categories, keywords, or brands"
+                containerStyle={styles.primarySearchSlot}
+              />
+            }
+          />
+          <ScrollView
+            contentContainerStyle={[
+              styles.primaryScrollContent,
+              {
+                paddingTop: EXPENSE_HUB_CONTENT_TOP_GAP,
+                paddingBottom: getExpenseHubContentBottomInset(insets.bottom)
+              }
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {content}
+          </ScrollView>
+        </View>
       )}
 
       {selectionMode ? (
@@ -295,6 +331,15 @@ export default function ExpenseTrackerAddScreen() {
 const styles = StyleSheet.create({
   screenWrap: {
     flex: 1
+  },
+  primaryScreen: {
+    flex: 1
+  },
+  primaryScrollContent: {
+    gap: spacing[16]
+  },
+  primarySearchSlot: {
+    width: "100%"
   },
   categoryPickerSection: {
     gap: spacing[8]
@@ -484,7 +529,7 @@ const styles = StyleSheet.create({
   },
   confirmBar: {
     position: "absolute",
-    left: spacing[20],
-    right: spacing[20]
+    left: 0,
+    right: 0
   }
 });

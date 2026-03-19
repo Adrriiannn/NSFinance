@@ -1,6 +1,7 @@
 import { usePathname, useRouter } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
+import { GlobalAppMenu } from "../../components/layout/GlobalAppMenu";
 import { surfaces } from "../../theme/tokens";
 import { FloatingAssistantDock } from "./FloatingAssistantDock";
 import { AdaptiveLayoutContext, useAdaptiveLayoutMetrics } from "./adaptive.hooks";
@@ -54,8 +55,10 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
   return (
     <AdaptiveLayoutContext.Provider value={contextValue}>
       <View style={styles.root} onTouchStart={markInteraction} onTouchMove={markInteraction}>
-        <View pointerEvents="none" style={styles.backgroundGlowTop} />
-        <View pointerEvents="none" style={styles.backgroundGlowBottom} />
+        <GlobalAppMenu
+          topOffset={metrics.safeAreaInsets.top + metrics.headerTopGap}
+          showTrigger={false}
+        />
         {children}
         {showAssistantDock ? (
           <FloatingAssistantDock
@@ -74,23 +77,5 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: surfaces.app
-  },
-  backgroundGlowTop: {
-    position: "absolute",
-    top: -100,
-    right: -60,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "rgba(47,107,255,0.09)"
-  },
-  backgroundGlowBottom: {
-    position: "absolute",
-    bottom: -160,
-    left: -100,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "rgba(111,215,255,0.04)"
   }
 });

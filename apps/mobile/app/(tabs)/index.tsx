@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard";
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
@@ -20,8 +21,12 @@ import { useTransactionsQuery } from "../../src/features/transactions/useTransac
 import { useEntranceAnimation } from "../../src/hooks/useEntranceAnimation";
 import { useLocalClock } from "../../src/hooks/useLocalClock";
 import { useMainTabSwipeNavigation } from "../../src/components/layout/useHorizontalSiblingSwipe";
-import { AdaptiveHeader } from "../../src/layout/adaptive/AdaptiveHeader";
 import { AdaptiveScreen } from "../../src/layout/adaptive/AdaptiveScreen";
+import { HeaderShell } from "../../src/layout/appHeader";
+import {
+  CONTENT_FRAME_HEADER_GAP,
+  getDockAwareContentBottomInset
+} from "../../src/layout/contentFrame";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { usePlannerStore } from "../../src/providers/PlannerProvider";
 import { palette, spacing, typography } from "../../src/theme/tokens";
@@ -44,6 +49,7 @@ type HeroCarouselItem = HeroCardItem & {
 
 export default function DashboardTabScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)");
   const { session } = useAuthSession();
   const plannerStore = usePlannerStore();
@@ -288,13 +294,21 @@ export default function DashboardTabScreen() {
   return (
     <AdaptiveScreen contentStyle={styles.content} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
-        <AdaptiveHeader
+        <HeaderShell
+          preset="primaryGreeting"
+          includeTopInset
           title={`${greeting}, ${firstName}`}
           subtitle={`${dateLabel} | ${timeLabel}`}
         />
 
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: CONTENT_FRAME_HEADER_GAP,
+              paddingBottom: getDockAwareContentBottomInset(insets.bottom)
+            }
+          ]}
           showsVerticalScrollIndicator={false}
           bounces={false}
           refreshControl={
@@ -509,8 +523,7 @@ const styles = StyleSheet.create({
     flex: 1
   },
   scrollContent: {
-    gap: spacing[16],
-    paddingBottom: spacing[8]
+    gap: spacing[16]
   },
   quickActionRow: {
     flexDirection: "row",

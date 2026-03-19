@@ -1,6 +1,5 @@
 import { ScrollView, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { GlobalAppMenu } from "../../components/layout/GlobalAppMenu";
 import { surfaces } from "../../theme/tokens";
 import { useAdaptiveShell } from "./adaptive.hooks";
 import type { AdaptiveScreenProps } from "./adaptive.types";
@@ -19,15 +18,13 @@ export function AdaptiveScreen({
   const outerPadding = {
     paddingHorizontal: metrics.contentHorizontalPadding
   };
-  const menuTopOffset = metrics.safeAreaInsets.top + metrics.headerTopGap;
 
   return (
     <SafeAreaView
       style={styles.safeArea}
-      edges={["left", "right", "bottom"]}
+      edges={["left", "right"]}
       {...gestureHandlers}
     >
-      <GlobalAppMenu topOffset={menuTopOffset} />
       {scrollable ? (
         <ScrollView
           style={styles.flex}

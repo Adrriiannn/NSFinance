@@ -1,12 +1,19 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../../../src/components/feedback/ErrorState";
 import { EmptyState } from "../../../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../../../src/components/ui/GlassCard";
+import {
+  EXPENSE_HUB_CONTENT_PADDING_X,
+  EXPENSE_HUB_CONTENT_TOP_GAP,
+  getExpenseHubContentBottomInset
+} from "../../../../../src/components/expenseTracker/expenseHubLayout";
 import { useExpensePlanning } from "../../../../../src/features/expenseTracker/ExpensePlanningProvider";
 import { useExpenseTrackerTaxonomyQuery, useExpenseTrackerEntriesQuery } from "../../../../../src/features/expenseTracker/useExpenseTracker";
+import { HeaderShell } from "../../../../../src/layout/appHeader";
 import {
   buildExpensePlanCategoryMetrics,
   buildExpensePlanComputed,
@@ -59,6 +66,7 @@ function formatPaceLabel(value: ReturnType<typeof buildExpensePlanComputed>["pac
 
 export default function ExpenseTrackerOverviewScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const entriesQuery = useExpenseTrackerEntriesQuery();
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const { width: windowWidth } = useWindowDimensions();
@@ -73,7 +81,7 @@ export default function ExpenseTrackerOverviewScreen() {
   );
   const activePlans = useMemo(() => plans.filter((plan) => plan.status === "active"), [plans]);
   const listPlans = useMemo(() => filterExpensePlans(plans, listMode), [plans, listMode]);
-  const heroCardWidth = Math.max(windowWidth - layout.screenHorizontalPadding * 2, 280);
+  const heroCardWidth = Math.max(windowWidth - EXPENSE_HUB_CONTENT_PADDING_X * 2, 280);
   const statusCounts = useMemo(
     () => ({
       active: plans.filter((plan) => plan.status === "active").length,
@@ -167,7 +175,24 @@ export default function ExpenseTrackerOverviewScreen() {
   };
 
   return (
-    <>
+    <View style={styles.screen}>
+      <HeaderShell
+        preset="primaryDefault"
+        title="Your plans"
+        includeTopInset
+        bleedHorizontal={EXPENSE_HUB_CONTENT_PADDING_X}
+      />
+      
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: EXPENSE_HUB_CONTENT_TOP_GAP,
+            paddingBottom: getExpenseHubContentBottomInset(insets.bottom)
+          }
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
       {entriesQuery.isError ? (
         <ErrorState
           title="Could not load plans"
@@ -426,11 +451,18 @@ export default function ExpenseTrackerOverviewScreen() {
           </View>
         )}
       </View>
-    </>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1
+  },
+  scrollContent: {
+    gap: layout.sectionGap
+  },
   sectionWrap: {
     gap: spacing[12]
   },

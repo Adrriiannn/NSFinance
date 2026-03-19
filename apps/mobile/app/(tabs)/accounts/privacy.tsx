@@ -1,13 +1,12 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   useConsentsQuery,
   useUpdateConsentMutation
@@ -133,14 +132,7 @@ export default function PrivacySettingsScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Privacy</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Privacy" />
 
       {preferencesQuery.isError || consentsQuery.isError ? (
         <ErrorState
@@ -277,7 +269,7 @@ function ToggleRow({
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[16]
+    paddingTop: 0
   },
   headerRow: {
     flexDirection: "row",
@@ -294,6 +286,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     gap: spacing[12],
+    paddingTop: spacing[10],
     paddingBottom: spacing[12]
   },
   sectionCard: {

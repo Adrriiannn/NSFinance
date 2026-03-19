@@ -1,11 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutAnimation, PanResponder, Platform, Pressable, StyleSheet, Text, UIManager, View } from "react-native";
+import { LayoutAnimation, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, UIManager, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ExpenseTrackerCategoryRadialChart } from "../../../../../src/components/expenseTracker/ExpenseTrackerCategoryRadialChart";
 import { ExpenseTrackerSegmentedControl } from "../../../../../src/components/expenseTracker/ExpenseTrackerSegmentedControl";
 import { EmptyState } from "../../../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../../../src/components/ui/GlassCard";
+import {
+  EXPENSE_HUB_CONTENT_PADDING_X,
+  EXPENSE_HUB_CONTENT_TOP_GAP,
+  getExpenseHubContentBottomInset
+} from "../../../../../src/components/expenseTracker/expenseHubLayout";
 import { useExpensePlanning } from "../../../../../src/features/expenseTracker/ExpensePlanningProvider";
 import { useExpenseTrackerEntriesQuery, useExpenseTrackerTaxonomyQuery } from "../../../../../src/features/expenseTracker/useExpenseTracker";
 import {
@@ -16,7 +22,8 @@ import {
 } from "../../../../../src/features/expenseTracker/expensePlanningUtils";
 import type { ExpenseAnalyticsMode } from "../../../../../src/features/expenseTracker/expensePlanningTypes";
 import { getExpenseTrackerVisual } from "../../../../../src/features/expenseTracker/expenseTrackerModels";
-import { palette, radius, spacing, typography } from "../../../../../src/theme/tokens";
+import { HeaderDropdownSlot, HeaderShell } from "../../../../../src/layout/appHeader";
+import { palette, spacing, typography } from "../../../../../src/theme/tokens";
 
 const analyticsModes = [
   { label: "Actual", value: "actual" },
@@ -47,12 +54,12 @@ function getAnalyticsModeDescription(mode: ExpenseAnalyticsMode) {
 
 export default function ExpenseTrackerGraphsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const entriesQuery = useExpenseTrackerEntriesQuery();
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const { plans } = useExpensePlanning();
   const [mode, setMode] = useState<ExpenseAnalyticsMode>("actual");
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const [planPickerOpen, setPlanPickerOpen] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const modeRef = useRef<ExpenseAnalyticsMode>("actual");
 
@@ -122,7 +129,36 @@ export default function ExpenseTrackerGraphsScreen() {
   );
 
   return (
-    <>
+    <View style={styles.screen}>
+      <HeaderShell
+        preset="primaryTwoRowSelector"
+        includeTopInset
+        bleedHorizontal={EXPENSE_HUB_CONTENT_PADDING_X}
+        title="Analytics"
+        secondRow={
+          <HeaderDropdownSlot
+            title="Current plan"
+            value={selectedPlan?.title ?? null}
+            placeholder="Select plan"
+            containerStyle={styles.planHeaderDropdown}
+            options={plans.map((plan) => ({
+              label: `${plan.title} • ${formatExpensePlanPeriod(plan.startDate, plan.endDate)}`,
+              value: plan.id
+            }))}
+            onChange={(value) => setSelectedPlanId(value)}
+          />
+        }
+      />
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: EXPENSE_HUB_CONTENT_TOP_GAP,
+            paddingBottom: getExpenseHubContentBottomInset(insets.bottom)
+          }
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
       {!selectedPlan ? (
         <EmptyState
           title="No plans to analyse yet"
@@ -132,48 +168,6 @@ export default function ExpenseTrackerGraphsScreen() {
         />
       ) : (
         <>
-          <View style={styles.planPickerWrap}>
-            <Pressable style={styles.planPickerTrigger} onPress={() => setPlanPickerOpen((current) => !current)}>
-              <View style={styles.planPickerTriggerText}>
-                <Text style={styles.planPickerEyebrow}>Current plan</Text>
-                <Text numberOfLines={1} style={styles.planPickerValue}>{selectedPlan.title}</Text>
-              </View>
-              <Ionicons
-                name={planPickerOpen ? "chevron-up" : "chevron-down"}
-                size={18}
-                color={palette.textPrimary}
-              />
-            </Pressable>
-
-            {planPickerOpen ? (
-              <View style={styles.planPickerDropdown}>
-                {plans.map((plan) => {
-                  const isSelected = plan.id === selectedPlan.id;
-                  return (
-                    <Pressable
-                      key={plan.id}
-                      style={[styles.planPickerOption, isSelected ? styles.planPickerOptionSelected : null]}
-                      onPress={() => {
-                        setSelectedPlanId(plan.id);
-                        setPlanPickerOpen(false);
-                      }}
-                    >
-                      <View style={styles.planPickerOptionText}>
-                        <Text style={[styles.planPickerOptionTitle, isSelected ? styles.planPickerOptionTitleSelected : null]}>
-                          {plan.title}
-                        </Text>
-                        <Text style={styles.planPickerOptionMeta}>
-                          {formatExpensePlanPeriod(plan.startDate, plan.endDate)}
-                        </Text>
-                      </View>
-                      {isSelected ? <Ionicons name="checkmark" size={18} color={palette.primary} /> : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
-            ) : null}
-          </View>
-
           <ExpenseTrackerSegmentedControl
             value={mode}
             options={[...analyticsModes]}
@@ -284,78 +278,20 @@ export default function ExpenseTrackerGraphsScreen() {
           </View>
         </>
       )}
-    </>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  planPickerWrap: {
-    gap: spacing[8]
+  screen: {
+    flex: 1
   },
-  planPickerTrigger: {
-    minHeight: 50,
-    paddingHorizontal: spacing[12],
-    paddingVertical: spacing[8],
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.88)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing[8]
+  scrollContent: {
+    gap: spacing[16]
   },
-  planPickerTriggerText: {
-    flex: 1,
-    justifyContent: "center",
-    gap: 2
-  },
-  planPickerEyebrow: {
-    color: palette.textSecondary,
-    ...typography.caption,
-    fontWeight: "800",
-    letterSpacing: 1.1,
-    textTransform: "uppercase"
-  },
-  planPickerValue: {
-    color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "600"
-  },
-  planPickerDropdown: {
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.94)",
-    overflow: "hidden"
-  },
-  planPickerOption: {
-    minHeight: 46,
-    paddingHorizontal: spacing[12],
-    paddingVertical: spacing[8],
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing[12]
-  },
-  planPickerOptionSelected: {
-    backgroundColor: "rgba(47,107,255,0.12)"
-  },
-  planPickerOptionText: {
-    flex: 1,
-    gap: 0
-  },
-  planPickerOptionTitle: {
-    color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "600"
-  },
-  planPickerOptionTitleSelected: {
-    color: palette.primary
-  },
-  planPickerOptionMeta: {
-    color: palette.textSecondary,
-    ...typography.caption,
+  planHeaderDropdown: {
+    width: "100%"
   },
   chartCard: {
     gap: spacing[16]

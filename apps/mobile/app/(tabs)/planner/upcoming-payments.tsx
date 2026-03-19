@@ -1,14 +1,12 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { IconButton } from "../../../src/components/ui/IconButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
+import { HeaderShell } from "../../../src/layout/appHeader";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { buildRecurringPaymentForecast } from "../../../src/features/planner/forecasting";
-import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography } from "../../../src/theme/tokens";
 
 function formatCountdown(daysUntilDue: number) {
   if (daysUntilDue <= 0) {
@@ -19,7 +17,6 @@ function formatCountdown(daysUntilDue: number) {
 }
 
 export default function PlannerUpcomingPaymentsScreen() {
-  const router = useRouter();
   const transactionsQuery = useTransactionsQuery();
   const [clockNow, setClockNow] = useState(() => new Date());
 
@@ -42,14 +39,7 @@ export default function PlannerUpcomingPaymentsScreen() {
       withBottomTabOffset
       bottomInsetOffset={spacing[12]}
     >
-      <View style={styles.headerRow}>
-        <IconButton
-          onPress={() => router.back()}
-          icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-        />
-        <Text style={styles.headerTitle}>Upcoming payments</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <HeaderShell preset="secondaryDetail" title="Upcoming payments" />
 
       <GlassCard style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Next 7 days</Text>
@@ -99,18 +89,7 @@ export default function PlannerUpcomingPaymentsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingTop: layout.screenTopPadding
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.sectionTitle
-  },
+  content: {},
   summaryCard: {
     gap: spacing[8]
   },

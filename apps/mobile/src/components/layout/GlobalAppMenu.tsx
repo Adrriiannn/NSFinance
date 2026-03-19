@@ -19,7 +19,16 @@ import { layout, palette, spacing, typography } from "../../theme/tokens";
 
 type GlobalAppMenuProps = {
   topOffset?: number;
+  showTrigger?: boolean;
 };
+
+type GlobalMenuListener = () => void;
+
+const globalMenuListeners = new Set<GlobalMenuListener>();
+
+export function requestOpenGlobalAppMenu() {
+  globalMenuListeners.forEach((listener) => listener());
+}
 
 const menuItems = [
   { label: "Profile", path: "/(tabs)/accounts/profile", icon: "person-outline" },
@@ -69,7 +78,7 @@ function formatNsTag(rawValue?: string | null) {
   return normalized ? `@${normalized}` : "@member";
 }
 
-export function GlobalAppMenu({ topOffset = 8 }: GlobalAppMenuProps) {
+export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMenuProps) {
   const router = useRouter();
   const pathname = usePathname();
   const { isAuthenticated, session, logout } = useAuthSession();
@@ -80,6 +89,15 @@ export function GlobalAppMenu({ topOffset = 8 }: GlobalAppMenuProps) {
   useEffect(() => {
     setIsOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    const listener = () => setIsOpen(true);
+    globalMenuListeners.add(listener);
+
+    return () => {
+      globalMenuListeners.delete(listener);
+    };
+  }, []);
 
   useEffect(() => {
     Animated.timing(slideProgress, {
@@ -119,14 +137,16 @@ export function GlobalAppMenu({ topOffset = 8 }: GlobalAppMenuProps) {
   return (
     <>
       <View style={[styles.triggerWrap, { top: topOffset }]}> 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open settings menu"
-          onPress={() => setIsOpen(true)}
-          style={({ pressed }) => [styles.trigger, pressed ? styles.triggerPressed : null]}
-        >
-          <Ionicons name="menu-outline" size={20} color={palette.textPrimary} />
-        </Pressable>
+        {showTrigger ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open settings menu"
+            onPress={() => setIsOpen(true)}
+            style={({ pressed }) => [styles.trigger, pressed ? styles.triggerPressed : null]}
+          >
+            <Ionicons name="menu-outline" size={20} color={palette.textPrimary} />
+          </Pressable>
+        ) : null}
       </View>
 
       <Modal

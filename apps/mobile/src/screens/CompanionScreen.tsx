@@ -1,12 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
+  type KeyboardEvent,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -21,6 +21,7 @@ import {
 import { FloatingBottomNav } from "../components/layout/FloatingBottomNav";
 import { appBottomNavItems, expenseBottomNavItems } from "../components/layout/bottomNavConfigs";
 import { GlassCard } from "../components/ui/GlassCard";
+import { HeaderActionButton, HeaderShell } from "../layout/appHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconButton } from "../components/ui/IconButton";
 import { PrimaryButton } from "../components/ui/PrimaryButton";
@@ -33,8 +34,7 @@ import {
   getCompanionChats,
   setCompanionChats
 } from "../features/planner/chatHistory";
-import { getFloatingTabBarContentInset } from "../theme/insets";
-import { controls, palette, radius, sizing, spacing, surfaces, typography } from "../theme/tokens";
+import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography } from "../theme/tokens";
 
 type PromptSeed = {
   text: string;
@@ -370,7 +370,6 @@ type CompanionScreenProps = {
 export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverride }: CompanionScreenProps = {}) {
   const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourceExpenseTab?: string }>();
   const router = useRouter();
-  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const source = sourceOverride ?? (params.source === "expense" ? "expense" : "app");
   const sourceTab = sourceTabOverride ?? (
@@ -380,38 +379,6 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
   );
   const bottomNavItems = source === "expense" ? expenseBottomNavItems : appBottomNavItems;
   const activeBottomKey = source === "expense" ? "ai" : sourceTab;
-  const sourceExpenseTab = params.sourceExpenseTab === "overview" || params.sourceExpenseTab === "graphs" || params.sourceExpenseTab === "add" || params.sourceExpenseTab === "calendar"
-    ? params.sourceExpenseTab
-    : "overview";
-  const fallbackCompanionHref = source === "expense"
-    ? sourceExpenseTab === "graphs"
-      ? "/(tabs)/planner/expense-tracker/graphs"
-      : sourceExpenseTab === "add"
-        ? "/(tabs)/planner/expense-tracker/add"
-        : sourceExpenseTab === "calendar"
-          ? "/(tabs)/planner/expense-tracker/calendar"
-        : "/(tabs)/planner/expense-tracker/overview"
-    : sourceTab === "index"
-      ? "/(tabs)"
-      : sourceTab === "accounts"
-        ? "/(tabs)/accounts"
-        : sourceTab === "activity"
-          ? "/(tabs)/activity"
-          : "/(tabs)/planner";
-
-  const handleBackPress = () => {
-    if (source === "expense") {
-      router.replace(fallbackCompanionHref as never);
-      return;
-    }
-
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-
-    router.replace(fallbackCompanionHref as never);
-  };
   const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
   const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
   const [isReady, setIsReady] = useState(false);
@@ -420,6 +387,7 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
   const [input, setInput] = useState("");
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [editChatVisible, setEditChatVisible] = useState(false);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
@@ -495,8 +463,17 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
   );
 
   useEffect(() => {
-    const showSubscription = Keyboard.addListener(showEvent, () => setIsKeyboardVisible(true));
-    const hideSubscription = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false));
+    const handleKeyboardShow = (event: KeyboardEvent) => {
+      setIsKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates.height);
+    };
+    const handleKeyboardHide = () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    };
+
+    const showSubscription = Keyboard.addListener(showEvent, handleKeyboardShow);
+    const hideSubscription = Keyboard.addListener(hideEvent, handleKeyboardHide);
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
@@ -677,7 +654,7 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
   const pinnedChats = useMemo(() => chats.filter((chat) => chat.isPinned), [chats]);
   const regularChats = useMemo(() => chats.filter((chat) => !chat.isPinned), [chats]);
 
-  const showPrompts = isInputFocused || input.trim().length > 0;
+  const showPrompts = isKeyboardVisible && (isInputFocused || input.trim().length > 0);
   const promptSuggestions = useMemo(() => {
     if (!showPrompts) {
       return [];
@@ -689,16 +666,19 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
 
     return rankPrompts(input);
   }, [defaultPromptSet, input, showPrompts]);
-  const closedInputBottomInset = Math.max(
-    spacing[8],
-    getFloatingTabBarContentInset(insets.bottom, spacing[8])
-  );
-  const inputBottomInset = isKeyboardVisible ? spacing[20] : closedInputBottomInset;
-  const chatBottomPadding =
+  const closedInputBottomInset = navigation.floatingTabBarHeight + spacing[4];
+  const keyboardInputBottomInset =
+    Platform.OS === "android"
+      ? Math.max(spacing[8], keyboardHeight - Math.max(insets.bottom, 0) + spacing[8])
+      : Math.max(spacing[20], insets.bottom + spacing[8]);
+  const inputBottomInset = isKeyboardVisible
+    ? keyboardInputBottomInset
+    : closedInputBottomInset;
+  const chatViewportInset =
     inputBottomInset +
     inputBarHeight +
-    spacing[12] +
-    (showPrompts ? promptLayerHeight + spacing[8] : spacing[4]);
+    spacing[2] +
+    (showPrompts ? promptLayerHeight + spacing[2] : 0);
 
   useEffect(() => {
     const hasMeaningfulInput = input.trim().length > 0;
@@ -816,41 +796,37 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
     <ScreenContainer
       scrollable={false}
       contentStyle={styles.content}
+      includeBottomSafeArea={false}
     >
       <KeyboardAvoidingView
         style={styles.keyboardWrap}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={
-          Platform.OS === "ios"
-            ? 8 + Math.max(insets.bottom, 0)
-            : 16 + Math.max(insets.bottom, 0)
-        }
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 + Math.max(insets.bottom, 0) : 0}
       >
-        <View style={styles.headerRow}>
-          <IconButton
-            onPress={handleBackPress}
-            icon={<Ionicons name="arrow-back" size={18} color={palette.textPrimary} />}
-          />
-          <Text style={styles.headerTitle}>NS Companion</Text>
-          <View style={styles.headerSpacer} />
-        </View>
-        <View style={styles.chatsActionRow}>
-          <Pressable
-            onPress={() => setHistoryVisible(true)}
-            style={({ pressed }) => [styles.chatsAction, pressed ? styles.chatsActionPressed : null]}
-          >
-            <Ionicons name="chatbubbles-outline" size={14} color={palette.textPrimary} />
-            <Text style={styles.chatsActionText}>Chats</Text>
-          </Pressable>
-        </View>
+        <HeaderShell
+          preset="primaryDefault"
+          includeTopInset
+          bleedHorizontal={layout.screenHorizontalPadding}
+          title="NS Companion"
+          style={{
+            marginTop: -insets.top,
+          }}
+          trailingAction={
+            <HeaderActionButton
+              icon={<Ionicons name="chatbubbles-outline" size={18} color={palette.textPrimary} />}
+              onPress={() => setHistoryVisible(true)}
+              accessibilityLabel="Open chats"
+            />
+          }
+        />
 
-        <View style={styles.chatWrap}>
+        <View style={[styles.chatWrap, { marginBottom: chatViewportInset }]}>
           {activeChat?.messages.length ? (
             <FlatList
               ref={messageListRef}
               data={activeChat.messages}
               keyExtractor={(item) => item.id}
-              contentContainerStyle={[styles.chatList, { paddingBottom: chatBottomPadding }]}
+              contentContainerStyle={styles.chatList}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               onLayout={(event) => {
@@ -872,15 +848,21 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
                 chatScrollTimersRef.current.push(settleTimer);
               }}
               renderItem={({ item }) => (
-                <GlassCard
+                <View
                   style={[
-                    styles.chatBubble,
-                    item.role === "assistant" ? styles.assistantBubble : styles.userBubble
+                    styles.chatRow,
+                    item.role === "assistant" ? styles.assistantRow : styles.userRow
                   ]}
                 >
-                  <Text style={styles.chatRole}>{item.role === "assistant" ? "Companion" : "You"}</Text>
-                  <Text style={styles.chatText}>{item.text}</Text>
-                </GlassCard>
+                  <GlassCard
+                    style={[
+                      styles.chatBubble,
+                      item.role === "assistant" ? styles.assistantBubble : styles.userBubble
+                    ]}
+                  >
+                    <Text style={styles.chatText}>{item.text}</Text>
+                  </GlassCard>
+                </View>
               )}
             />
           ) : (
@@ -1221,73 +1203,51 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
 
 const styles = StyleSheet.create({
   content: {
-    paddingTop: spacing[20],
     paddingBottom: 0
   },
   keyboardWrap: {
     flex: 1
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  headerTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  headerSpacer: {
-    width: 42
-  },
-  chatsActionRow: {
-    marginTop: spacing[8],
-    alignItems: "flex-start"
-  },
-  chatsAction: {
-    minHeight: 30,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
-    paddingHorizontal: spacing[12],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  chatsActionPressed: {
-    opacity: 0.86
-  },
-  chatsActionText: {
-    color: palette.textPrimary,
-    ...typography.caption,
-    fontWeight: "600"
-  },
   chatWrap: {
     flex: 1,
-    marginTop: spacing[12]
+    marginTop: 0
   },
   chatList: {
     gap: spacing[12],
-    paddingTop: spacing[12],
+    paddingTop: 0,
     flexGrow: 1,
     justifyContent: "flex-end"
   },
+  chatRow: {
+    width: "100%"
+  },
+  assistantRow: {
+    alignItems: "flex-start"
+  },
+  userRow: {
+    alignItems: "flex-end"
+  },
   chatBubble: {
-    gap: spacing[8]
+    gap: spacing[6],
+    maxWidth: "70%",
+    minHeight: 0,
+    width: "auto",
+    paddingHorizontal: spacing[16],
+    paddingVertical: spacing[12]
   },
   userBubble: {
-    borderColor: "rgba(47,107,255,0.46)"
+    borderColor: "rgba(82,140,255,0.46)",
+    backgroundColor: "rgba(26,43,70,0.9)"
   },
   assistantBubble: {
-    borderColor: "rgba(111,215,255,0.34)"
-  },
-  chatRole: {
-    color: palette.accent,
-    ...typography.caption
+    borderColor: "rgba(111,215,255,0.3)",
+    backgroundColor: surfaces.card
   },
   chatText: {
     color: palette.textPrimary,
-    ...typography.body1
+    ...typography.body2,
+    fontWeight: "400",
+    lineHeight: 20
   },
   emptyWrap: {
     flex: 1,
