@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { usePathname, useRouter } from "expo-router";
+import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -77,9 +77,24 @@ function formatNsTag(rawValue?: string | null) {
   return normalized ? `@${normalized}` : "@member";
 }
 
+function resolveHubContext(pathname: string, source?: string | null): "finance" | "planning" {
+  if (pathname.startsWith("/planning")) {
+    return "planning";
+  }
+
+  if (pathname.startsWith("/calendar") || pathname.startsWith("/companion")) {
+    if (source === "planningHub" || source === "expense") {
+      return "planning";
+    }
+  }
+
+  return "finance";
+}
+
 export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMenuProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const params = useGlobalSearchParams<{ source?: string }>();
   const { isAuthenticated, session, logout } = useAuthSession();
   const profileQuery = useUserProfileQuery();
   const [isOpen, setIsOpen] = useState(false);
@@ -108,6 +123,15 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   }, [isOpen, slideProgress]);
 
   const activePath = useMemo(() => pathname || "", [pathname]);
+  const sourceContext = typeof params.source === "string" ? params.source : null;
+  const hubContext = useMemo(
+    () => resolveHubContext(activePath, sourceContext),
+    [activePath, sourceContext]
+  );
+  const highlightFinanceHub = hubContext === "planning";
+  const highlightPlanningHub = hubContext === "finance";
+  const canSwitchToFinanceHub = highlightFinanceHub;
+  const canSwitchToPlanningHub = highlightPlanningHub;
 
   const profile = profileQuery.data;
   const fullName = profile?.fullName || session?.user.fullName || session?.user.displayName || "NSFinance user";
@@ -215,46 +239,82 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
               })}
             </View>
 
-            <View style={styles.footer}>
-              <Pressable
-                onPress={() => {
-                  setIsOpen(false);
-                  void logout();
-                }}
-                style={({ pressed }) => [styles.logoutButton, pressed ? styles.menuItemPressed : null]}
-              >
-                <Ionicons name="log-out-outline" size={16} color={palette.textPrimary} />
-                <Text style={styles.logoutText}>Log Out</Text>
-              </Pressable>
-
-              <View style={styles.linkIconRow}>
+            <View style={styles.bottomCluster}>
+              <View style={styles.hubSwitcherRow}>
                 <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Instagram"
-                  disabled={!externalLinks.instagram}
+                  disabled={!canSwitchToFinanceHub}
                   onPress={() => {
-                    if (externalLinks.instagram) {
-                      void Linking.openURL(externalLinks.instagram);
-                    }
+                    setIsOpen(false);
+                    router.push("/(tabs)" as never);
                   }}
                   style={({ pressed }) => [
-                    styles.linkIconButton,
-                    !externalLinks.instagram ? styles.linkIconDisabled : null,
-                    pressed ? styles.menuItemPressed : null
+                    styles.hubButton,
+                    styles.financeHubButton,
+                    highlightFinanceHub ? styles.hubButtonHighlighted : styles.hubButtonDimmed,
+                    pressed && canSwitchToFinanceHub ? styles.menuItemPressed : null
                   ]}
                 >
-                  <Ionicons name="logo-instagram" size={18} color={palette.textPrimary} />
+                  <Text style={styles.hubButtonText}>Finance Hub</Text>
                 </Pressable>
+
                 <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Website"
+                  disabled={!canSwitchToPlanningHub}
                   onPress={() => {
-                    void Linking.openURL(externalLinks.website);
+                    setIsOpen(false);
+                    router.push("/(tabs)/planning" as never);
                   }}
-                  style={({ pressed }) => [styles.linkIconButton, pressed ? styles.menuItemPressed : null]}
+                  style={({ pressed }) => [
+                    styles.hubButton,
+                    styles.planningHubButton,
+                    highlightPlanningHub ? styles.hubButtonHighlighted : styles.hubButtonDimmed,
+                    pressed && canSwitchToPlanningHub ? styles.menuItemPressed : null
+                  ]}
                 >
-                  <Ionicons name="globe-outline" size={18} color={palette.textPrimary} />
+                  <Text style={styles.hubButtonText}>Planning Hub</Text>
                 </Pressable>
+              </View>
+
+              <View style={styles.footer}>
+                <Pressable
+                  onPress={() => {
+                    setIsOpen(false);
+                    void logout();
+                  }}
+                  style={({ pressed }) => [styles.logoutButton, pressed ? styles.menuItemPressed : null]}
+                >
+                  <Ionicons name="log-out-outline" size={16} color={palette.textPrimary} />
+                  <Text style={styles.logoutText}>Log Out</Text>
+                </Pressable>
+
+                <View style={styles.linkIconRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Instagram"
+                    disabled={!externalLinks.instagram}
+                    onPress={() => {
+                      if (externalLinks.instagram) {
+                        void Linking.openURL(externalLinks.instagram);
+                      }
+                    }}
+                    style={({ pressed }) => [
+                      styles.linkIconButton,
+                      !externalLinks.instagram ? styles.linkIconDisabled : null,
+                      pressed ? styles.menuItemPressed : null
+                    ]}
+                  >
+                    <Ionicons name="logo-instagram" size={18} color={palette.textPrimary} />
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Website"
+                    onPress={() => {
+                      void Linking.openURL(externalLinks.website);
+                    }}
+                    style={({ pressed }) => [styles.linkIconButton, pressed ? styles.menuItemPressed : null]}
+                  >
+                    <Ionicons name="globe-outline" size={18} color={palette.textPrimary} />
+                  </Pressable>
+                </View>
               </View>
             </View>
           </Animated.View>
@@ -379,8 +439,44 @@ const styles = StyleSheet.create({
   menuItemPressed: {
     opacity: 0.86
   },
-  footer: {
+  bottomCluster: {
     marginTop: "auto",
+    gap: spacing[8]
+  },
+  hubSwitcherRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  hubButton: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing[10]
+  },
+  financeHubButton: {
+    borderColor: "rgba(118, 156, 218, 0.6)",
+    backgroundColor: "rgba(18, 37, 70, 0.94)"
+  },
+  planningHubButton: {
+    borderColor: "rgba(135, 230, 235, 0.68)",
+    backgroundColor: "rgba(43, 125, 144, 0.9)"
+  },
+  hubButtonHighlighted: {
+    opacity: 1
+  },
+  hubButtonDimmed: {
+    opacity: 0.38
+  },
+  hubButtonText: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "700"
+  },
+  footer: {
     paddingTop: spacing[12],
     borderTopWidth: 1,
     borderTopColor: "rgba(220,232,255,0.12)",
