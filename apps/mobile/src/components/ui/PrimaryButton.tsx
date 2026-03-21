@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { StyleProp, ViewStyle } from "react-native";
 import { Button } from "./buttons/Button";
 
 type PrimaryButtonProps = {
@@ -7,6 +8,7 @@ type PrimaryButtonProps = {
   icon?: ReactNode;
   isLoading?: boolean;
   disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
 };
 
 export function PrimaryButton({
@@ -14,7 +16,8 @@ export function PrimaryButton({
   onPress,
   icon,
   isLoading = false,
-  disabled = false
+  disabled = false,
+  style
 }: PrimaryButtonProps) {
   return (
     <Button
@@ -24,6 +27,7 @@ export function PrimaryButton({
       isLoading={isLoading}
       disabled={disabled}
       variant="primary"
+      style={style}
     />
   );
 }

@@ -35,6 +35,9 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   card: {
+    alignSelf: "center",
+    width: "88%",
+    maxWidth: 360,
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,

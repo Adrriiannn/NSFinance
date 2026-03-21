@@ -14,6 +14,7 @@ export function TextField({
   label,
   error,
   style,
+  containerStyle,
   showLabel = true,
   forceFocused = false,
   surfaceMode = "normal",
@@ -30,7 +31,8 @@ export function TextField({
       leading={leadingText ? <AppText preset="secondary">{leadingText}</AppText> : undefined}
       containerStyle={[
         surfaceMode === "solid" ? { backgroundColor: "#162D48" } : null,
-        forceFocused ? { borderColor: "#7FAEFF", backgroundColor: "#162D48" } : null
+        forceFocused ? { borderColor: "#7FAEFF", backgroundColor: "#162D48" } : null,
+        containerStyle
       ]}
     />
   );

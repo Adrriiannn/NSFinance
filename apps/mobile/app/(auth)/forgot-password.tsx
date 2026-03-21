@@ -48,6 +48,9 @@ export default function ForgotPasswordScreen() {
           autoCapitalize="none"
           keyboardType="email-address"
           placeholder="you@example.com"
+          dense
+          containerStyle={styles.authFieldContainer}
+          style={styles.authFieldInput}
         />
       </View>
 
@@ -83,6 +86,14 @@ const styles = StyleSheet.create({
   form: {
     marginTop: spacing[20],
     gap: spacing[12]
+  },
+  authFieldContainer: {
+    minHeight: 36,
+    borderRadius: 12,
+    paddingHorizontal: 12
+  },
+  authFieldInput: {
+    paddingVertical: 8
   },
   message: {
     marginTop: spacing[16],

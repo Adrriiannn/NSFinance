@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
@@ -33,41 +33,6 @@ export default function LoginScreen() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const authApiDebugDetail = getAuthApiDebugDetail();
-
-  useEffect(() => {
-    if (focusedField !== "password") {
-      setPasswordVisible(false);
-    }
-  }, [focusedField]);
-
-  const keyboardMirrorField = useMemo(() => {
-    if (focusedField === "email") {
-      return {
-        key: "email",
-        label: "Email",
-        value: email,
-        onChangeText: setEmail,
-        placeholder: "you@example.com",
-        keyboardType: "email-address" as const,
-        autoCapitalize: "none" as const
-      };
-    }
-
-    if (focusedField === "password") {
-      return {
-        key: "password",
-        label: "Password",
-        value: password,
-        onChangeText: setPassword,
-        placeholder: "Password",
-        secureTextEntry: true,
-        passwordVisible,
-        onPasswordVisibilityChange: setPasswordVisible
-      };
-    }
-
-    return null;
-  }, [email, focusedField, password, passwordVisible]);
 
   const canSubmit = useMemo(
     () => email.trim().length > 0 && password.length > 0 && captchaVerified,
@@ -122,7 +87,7 @@ export default function LoginScreen() {
   };
 
   return (
-    <AuthScreen keyboardMirrorField={keyboardMirrorField}>
+    <AuthScreen>
       <View style={styles.topRow}>
         <View style={styles.headerTextWrap}>
           <Text style={styles.title}>Welcome back</Text>
@@ -133,40 +98,52 @@ export default function LoginScreen() {
 
       <View style={styles.centerWrap}>
         {loginMutation.isError ? (
-          <ErrorState
-            title="Sign-in failed"
-            message={formatUnknownError(loginMutation.error)}
-            onRetry={handleLogin}
-            retryLabel="Try again"
-            debugDetail={authApiDebugDetail}
-            showDebugDetail={authApiRouteDiagnostics.enabled}
-          />
+          <View style={styles.narrowBlock}>
+            <ErrorState
+              title="Sign-in failed"
+              message={formatUnknownError(loginMutation.error)}
+              onRetry={handleLogin}
+              retryLabel="Try again"
+              debugDetail={authApiDebugDetail}
+              showDebugDetail={authApiRouteDiagnostics.enabled}
+            />
+          </View>
         ) : null}
 
         <View style={styles.form}>
-          <TextField
-            label="Email"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
+          <View style={styles.narrowBlock}>
+            <TextField
+              label="Email"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
             placeholder="you@example.com"
+            dense
+            containerStyle={styles.authFieldContainer}
+            style={styles.authFieldInput}
             error={errors.email}
             onFocus={() => setFocusedField("email")}
             forceFocused={focusedField === "email"}
-          />
+            />
+          </View>
+          <View style={styles.narrowBlock}>
           <PasswordField
             label="Password"
             value={password}
             onChangeText={setPassword}
-            placeholder="Password"
+            placeholder="B4dM3m0ry_H3lp!"
+            dense
+            containerStyle={styles.authFieldContainer}
+            style={styles.authFieldInput}
             error={errors.password}
             onFocus={() => setFocusedField("password")}
             forceFocused={focusedField === "password"}
-            isPasswordVisible={passwordVisible}
-            onPasswordVisibilityChange={setPasswordVisible}
-            autoHideOnBlur={false}
-          />
+              isPasswordVisible={passwordVisible}
+              onPasswordVisibilityChange={setPasswordVisible}
+              autoHideOnBlur={false}
+            />
+          </View>
           <CaptchaGate
             isVerified={captchaVerified}
             onVerify={() => setCaptchaVerified((current) => !current)}
@@ -174,19 +151,23 @@ export default function LoginScreen() {
           />
         </View>
 
-        <View style={styles.ctaGroup}>
-          <PrimaryButton
-            label="Sign in"
-            onPress={() => void handleLogin()}
-            isLoading={loginMutation.isPending}
-            disabled={!canSubmit}
-          />
+        <View style={[styles.ctaGroup, styles.narrowBlock]}>
+          <View style={styles.primaryAuthRow}>
+            <PrimaryButton
+              label="Log in"
+              onPress={() => void handleLogin()}
+              isLoading={loginMutation.isPending}
+              disabled={!canSubmit}
+              style={styles.primaryAuthButton}
+            />
 
-          <SecondaryButton
-            label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
-            onPress={() => void handleGoogleSignIn()}
-            disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
-          />
+            <SecondaryButton
+              label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
+              onPress={() => void handleGoogleSignIn()}
+              disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
+              style={styles.primaryAuthButton}
+            />
+          </View>
           {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
 
           <View style={styles.forgotWrap}>
@@ -194,13 +175,14 @@ export default function LoginScreen() {
               onPress={() => router.push("/forgot-password" as never)}
               style={({ pressed }) => [pressed ? styles.linkPressed : null]}
             >
-              <Text style={styles.forgotLink}>Forgot Password</Text>
+              <Text style={styles.forgotLink}>Forgot your password?</Text>
             </Pressable>
           </View>
 
-          <AuthDivider widthPercent={70} />
-
-          <SecondaryButton label="Create account" onPress={() => router.push("/register" as never)} />
+          <View style={styles.createAccountSection}>
+            <AuthDivider widthPercent={70} />
+            <SecondaryButton label="Create account" onPress={() => router.push("/register" as never)} />
+          </View>
         </View>
       </View>
 
@@ -235,16 +217,38 @@ const styles = StyleSheet.create({
   centerWrap: {
     flex: 1,
     justifyContent: "center",
-    gap: spacing[24]
+    gap: spacing[40]
+  },
+  narrowBlock: {
+    alignSelf: "center",
+    width: "88%",
+    maxWidth: 360
   },
   form: {
     gap: spacing[16]
   },
+  authFieldContainer: {
+    minHeight: 36,
+    borderRadius: 12,
+    paddingHorizontal: 12
+  },
+  authFieldInput: {
+    paddingVertical: 8
+  },
   ctaGroup: {
     gap: spacing[12]
   },
+  primaryAuthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[10]
+  },
+  primaryAuthButton: {
+    flex: 1
+  },
   forgotWrap: {
-    alignItems: "flex-end"
+    alignItems: "center"
   },
   forgotLink: {
     color: palette.primaryGlow,
@@ -256,6 +260,10 @@ const styles = StyleSheet.create({
   googleError: {
     color: palette.negative,
     ...typography.caption
+  },
+  createAccountSection: {
+    marginTop: spacing[16],
+    gap: spacing[28]
   }
 });
 

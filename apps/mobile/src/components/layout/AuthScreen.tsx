@@ -1,162 +1,257 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  findNodeHandle,
   Keyboard,
   KeyboardAvoidingView,
+  NativeSyntheticEvent,
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInputProps,
-  View
+  TextInput,
+  UIManager,
+  useWindowDimensions,
+  type NativeScrollEvent,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { controls, layout, palette, radius, spacing, surfaces, typography } from "../../theme/tokens";
-
-export type AuthKeyboardMirrorField = {
-  key: string;
-  label: string;
-  value: string;
-  onChangeText: (value: string) => void;
-  secureTextEntry?: boolean;
-  passwordVisible?: boolean;
-  onPasswordVisibilityChange?: (isVisible: boolean) => void;
-  placeholder?: string;
-  keyboardType?: TextInputProps["keyboardType"];
-  autoCapitalize?: TextInputProps["autoCapitalize"];
-};
-
-export type AuthKeyboardMirrorRequirement = {
-  key: string;
-  label: string;
-  isMet: boolean;
-};
-
-export type AuthKeyboardMirrorRequirements = {
-  items: AuthKeyboardMirrorRequirement[];
-  showSuccessWhenAllMet?: boolean;
-  successText?: string;
-};
+import { layout, palette, spacing } from "../../theme/tokens";
 
 type AuthScreenProps = {
   children: ReactNode;
-  keyboardMirrorField?: AuthKeyboardMirrorField | null;
-  keyboardMirrorRequirements?: AuthKeyboardMirrorRequirements | null;
+  focusedInputExtraClearance?: number;
 };
 
-function KeyboardMirrorField({ field }: { field: AuthKeyboardMirrorField }) {
-  const hasValue = field.value.length > 0;
-  const displayValue =
-    field.secureTextEntry && !field.passwordVisible
-      ? "\u2022".repeat(field.value.length)
-      : field.value;
-
-  return (
-    <View style={styles.mirrorField}>
-      <Text
-        numberOfLines={1}
-        style={[styles.mirrorFieldText, !hasValue ? styles.mirrorFieldPlaceholder : null]}
-      >
-        {hasValue ? displayValue : (field.placeholder ?? field.label)}
-      </Text>
-    </View>
-  );
-}
-
-export function AuthScreen({
-  children,
-  keyboardMirrorField = null,
-  keyboardMirrorRequirements = null
-}: AuthScreenProps) {
+export function AuthScreen({ children, focusedInputExtraClearance = 0 }: AuthScreenProps) {
+  const normalizedFocusedExtraClearance = Math.max(focusedInputExtraClearance, 0);
+  const { height: windowHeight } = useWindowDimensions();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [extraBottomSpacer, setExtraBottomSpacer] = useState(0);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const keyboardTopRef = useRef<number | null>(null);
+  const extraBottomSpacerRef = useRef(0);
+  const clearSpacerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearanceAdjustTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollOffsetYRef = useRef(0);
+  const keyboardSessionBaseOffsetRef = useRef<number>(0);
+  const keyboardSessionActiveRef = useRef(false);
+  const previousFocusedExtraClearanceRef = useRef(normalizedFocusedExtraClearance);
   const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
   const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+  const baseBottomPadding = spacing[24];
+  const fieldKeyboardClearance = spacing[32] + spacing[8];
+
+  useEffect(() => {
+    extraBottomSpacerRef.current = extraBottomSpacer;
+  }, [extraBottomSpacer]);
+
+  useEffect(() => {
+    return () => {
+      if (clearSpacerTimeoutRef.current) {
+        clearTimeout(clearSpacerTimeoutRef.current);
+        clearSpacerTimeoutRef.current = null;
+      }
+      if (clearanceAdjustTimeoutRef.current) {
+        clearTimeout(clearanceAdjustTimeoutRef.current);
+        clearanceAdjustTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  const scrollFocusedInputIntoView = useCallback((
+    animated = true,
+    options?: {
+      keyboardHeightOverride?: number;
+      keyboardTopOverride?: number;
+    }
+  ) => {
+    const effectiveKeyboardHeight = options?.keyboardHeightOverride ?? keyboardHeight;
+    if (effectiveKeyboardHeight <= 0) {
+      return;
+    }
+
+    const scrollView = scrollViewRef.current;
+    if (!scrollView) {
+      return;
+    }
+
+    const focusedInput = TextInput.State.currentlyFocusedInput?.();
+    if (!focusedInput) {
+      return;
+    }
+
+    const nodeHandle = findNodeHandle(focusedInput as unknown as Parameters<typeof findNodeHandle>[0]);
+    if (!nodeHandle) {
+      return;
+    }
+
+    UIManager.measureInWindow(nodeHandle, (_x, y, _width, height) => {
+      const keyboardTop =
+        options?.keyboardTopOverride ??
+        keyboardTopRef.current ??
+        (windowHeight - effectiveKeyboardHeight);
+      const desiredFieldBottom =
+        keyboardTop - fieldKeyboardClearance - normalizedFocusedExtraClearance;
+      const overlap = Math.ceil(y + height - desiredFieldBottom);
+
+      if (overlap <= 0) {
+        return;
+      }
+
+      const requiredSpacer =
+        effectiveKeyboardHeight + spacing[24] + normalizedFocusedExtraClearance;
+      if (requiredSpacer > extraBottomSpacerRef.current) {
+        setExtraBottomSpacer(requiredSpacer);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            scrollFocusedInputIntoView(animated, options);
+          });
+        });
+        return;
+      }
+
+      const currentOffsetY = scrollOffsetYRef.current;
+      const targetOffsetY = currentOffsetY + overlap;
+      scrollView.scrollTo({ y: targetOffsetY, animated });
+    });
+  }, [fieldKeyboardClearance, keyboardHeight, normalizedFocusedExtraClearance, windowHeight]);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener(showEvent, (event) => {
-      setKeyboardHeight(event.endCoordinates.height);
+      if (!keyboardSessionActiveRef.current) {
+        keyboardSessionBaseOffsetRef.current = scrollOffsetYRef.current;
+        keyboardSessionActiveRef.current = true;
+      }
+
+      const nextKeyboardHeight = event.endCoordinates.height;
+      const nextKeyboardTop = event.endCoordinates.screenY;
+      setKeyboardHeight(nextKeyboardHeight);
+      keyboardTopRef.current = nextKeyboardTop;
+      requestAnimationFrame(() => {
+        scrollFocusedInputIntoView(true, {
+          keyboardHeightOverride: nextKeyboardHeight,
+          keyboardTopOverride: nextKeyboardTop
+        });
+      });
+      setTimeout(() => {
+        scrollFocusedInputIntoView(true, {
+          keyboardHeightOverride: nextKeyboardHeight,
+          keyboardTopOverride: nextKeyboardTop
+        });
+      }, 70);
     });
 
     const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      const restoreOffsetY = Math.max(keyboardSessionBaseOffsetRef.current, 0);
+      scrollViewRef.current?.scrollTo({ y: restoreOffsetY, animated: true });
       setKeyboardHeight(0);
+      keyboardTopRef.current = null;
+      keyboardSessionActiveRef.current = false;
+      keyboardSessionBaseOffsetRef.current = restoreOffsetY;
+      previousFocusedExtraClearanceRef.current = 0;
+      if (clearanceAdjustTimeoutRef.current) {
+        clearTimeout(clearanceAdjustTimeoutRef.current);
+        clearanceAdjustTimeoutRef.current = null;
+      }
+
+      if (clearSpacerTimeoutRef.current) {
+        clearTimeout(clearSpacerTimeoutRef.current);
+      }
+
+      clearSpacerTimeoutRef.current = setTimeout(() => {
+        setExtraBottomSpacer(0);
+        clearSpacerTimeoutRef.current = null;
+      }, 180);
     });
 
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [hideEvent, showEvent]);
+  }, [hideEvent, scrollFocusedInputIntoView, showEvent]);
 
-  const shouldShowMirror = useMemo(
-    () => keyboardHeight > 0 && keyboardMirrorField?.secureTextEntry === true,
-    [keyboardHeight, keyboardMirrorField]
-  );
-  const shouldShowMirrorRequirements = Boolean(
-    shouldShowMirror &&
-      keyboardMirrorField?.secureTextEntry &&
-      keyboardMirrorRequirements &&
-      keyboardMirrorRequirements.items.length > 0
-  );
-  const allMirrorRequirementsMet = useMemo(
-    () =>
-      Boolean(
-        keyboardMirrorRequirements &&
-          keyboardMirrorRequirements.items.length > 0 &&
-          keyboardMirrorRequirements.items.every((item) => item.isMet)
-      ),
-    [keyboardMirrorRequirements]
-  );
-  const nextMirrorRequirement = useMemo(() => {
-    if (!shouldShowMirrorRequirements || !keyboardMirrorRequirements) {
-      return null;
+  useEffect(() => {
+    if (keyboardHeight <= 0) {
+      return;
     }
 
-    return keyboardMirrorRequirements.items.find((item) => !item.isMet) ?? null;
-  }, [keyboardMirrorRequirements, shouldShowMirrorRequirements]);
+    requestAnimationFrame(() => {
+      scrollFocusedInputIntoView();
+    });
+  }, [keyboardHeight, scrollFocusedInputIntoView]);
+
+  useEffect(() => {
+    if (keyboardHeight <= 0) {
+      previousFocusedExtraClearanceRef.current = normalizedFocusedExtraClearance;
+      return;
+    }
+
+    const previousClearance = previousFocusedExtraClearanceRef.current;
+    const nextClearance = normalizedFocusedExtraClearance;
+
+    if (nextClearance > previousClearance) {
+      requestAnimationFrame(() => {
+        scrollFocusedInputIntoView();
+      });
+    } else if (nextClearance < previousClearance) {
+      const clearanceDelta = previousClearance - nextClearance;
+      const targetOffsetY = Math.max(scrollOffsetYRef.current - clearanceDelta, 0);
+      scrollViewRef.current?.scrollTo({ y: targetOffsetY, animated: true });
+
+      if (clearanceAdjustTimeoutRef.current) {
+        clearTimeout(clearanceAdjustTimeoutRef.current);
+      }
+      clearanceAdjustTimeoutRef.current = setTimeout(() => {
+        scrollFocusedInputIntoView(true);
+        clearanceAdjustTimeoutRef.current = null;
+      }, 140);
+    }
+
+    previousFocusedExtraClearanceRef.current = nextClearance;
+  }, [keyboardHeight, normalizedFocusedExtraClearance, scrollFocusedInputIntoView]);
+
+  useEffect(() => {
+    if (keyboardHeight <= 0) {
+      return;
+    }
+
+    let previousFocusedInput = TextInput.State.currentlyFocusedInput?.() ?? null;
+    const focusPoll = setInterval(() => {
+      const focusedInput = TextInput.State.currentlyFocusedInput?.() ?? null;
+      if (!focusedInput || focusedInput === previousFocusedInput) {
+        return;
+      }
+
+      previousFocusedInput = focusedInput;
+      scrollFocusedInputIntoView();
+    }, 90);
+
+    return () => {
+      clearInterval(focusPoll);
+    };
+  }, [keyboardHeight, scrollFocusedInputIntoView]);
+
+  const contentBottomPadding = useMemo(
+    () => baseBottomPadding + extraBottomSpacer,
+    [baseBottomPadding, extraBottomSpacer]
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
-      <KeyboardAvoidingView
-        style={styles.keyboardWrap}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={styles.keyboardWrap}>
         <ScrollView
-          contentContainerStyle={styles.content}
+          ref={scrollViewRef}
+          onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+            scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: contentBottomPadding }
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
           {children}
         </ScrollView>
-
-        {shouldShowMirror && keyboardMirrorField ? (
-          <View pointerEvents="none" style={[styles.keyboardMirrorWrap, { bottom: keyboardHeight + spacing[8] }]}>
-            {shouldShowMirrorRequirements && keyboardMirrorRequirements ? (
-              <View style={styles.mirrorRulesWrap}>
-                <View
-                  style={[
-                    styles.mirrorRuleSingleChip,
-                    allMirrorRequirementsMet ? styles.mirrorRuleSingleChipMet : styles.mirrorRuleSingleChipMissing
-                  ]}
-                >
-                  <Text
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    minimumFontScale={0.82}
-                    style={[
-                      styles.mirrorRuleSingleText,
-                      allMirrorRequirementsMet ? styles.mirrorRuleSingleTextMet : styles.mirrorRuleSingleTextMissing
-                    ]}
-                  >
-                    {allMirrorRequirementsMet
-                      ? (keyboardMirrorRequirements.successText ?? "Your password meets our requirements.")
-                      : (nextMirrorRequirement?.label ?? "")}
-                  </Text>
-                </View>
-              </View>
-            ) : null}
-
-            <KeyboardMirrorField key={keyboardMirrorField.key} field={keyboardMirrorField} />
-          </View>
-        ) : null}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -173,82 +268,7 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     paddingHorizontal: layout.screenHorizontalPadding,
-    paddingVertical: spacing[24]
-  },
-  keyboardMirrorWrap: {
-    position: "absolute",
-    left: layout.screenHorizontalPadding,
-    right: layout.screenHorizontalPadding,
-    zIndex: 50
-  },
-  mirrorField: {
-    minHeight: controls.fieldHeight,
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderColor: palette.primaryGlow,
-    backgroundColor: surfaces.fieldStrong,
-    paddingLeft: spacing[16],
-    paddingRight: spacing[8],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  mirrorFieldText: {
-    flex: 1,
-    color: palette.textPrimary,
-    ...typography.body1
-  },
-  mirrorFieldPlaceholder: {
-    color: palette.textSecondary
-  },
-  mirrorRulesWrap: {
-    marginBottom: spacing[16],
-    alignItems: "center"
-  },
-  mirrorRuleSingleChip: {
-    width: "88%",
-    minHeight: 30,
-    borderRadius: radius.small,
-    borderWidth: 1,
-    paddingHorizontal: spacing[12],
-    justifyContent: "center",
-    alignItems: "center",
-    overflow: "hidden"
-  },
-  mirrorRuleSingleChipMissing: {
-    backgroundColor: palette.elevatedBackground,
-    borderColor: "rgba(244,104,119,0.52)",
-    shadowColor: palette.negative,
-    shadowOpacity: 0.55,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 8
-  },
-  mirrorRuleSingleChipMet: {
-    backgroundColor: palette.elevatedBackground,
-    borderColor: "rgba(28,197,131,0.56)",
-    shadowColor: palette.success,
-    shadowOpacity: 0.55,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 8
-  },
-  mirrorRuleSingleText: {
-    width: "100%",
-    textAlign: "center"
-  },
-  mirrorRuleSingleTextMissing: {
-    color: palette.negative,
-    textShadowColor: "rgba(244,104,119,0.62)",
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
-    ...typography.caption
-  },
-  mirrorRuleSingleTextMet: {
-    color: palette.success,
-    textShadowColor: "rgba(28,197,131,0.62)",
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
-    ...typography.caption
+    paddingTop: spacing[24],
+    paddingBottom: spacing[24]
   }
 });

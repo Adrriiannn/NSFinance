@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
@@ -40,82 +40,6 @@ export default function RegisterScreen() {
   const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
   const authApiDebugDetail = getAuthApiDebugDetail();
 
-  useEffect(() => {
-    if (focusedField !== "password") {
-      setPasswordVisible(false);
-    }
-
-    if (focusedField !== "confirmPassword") {
-      setConfirmPasswordVisible(false);
-    }
-  }, [focusedField]);
-
-  const keyboardMirrorField = useMemo(() => {
-    switch (focusedField) {
-      case "email":
-        return {
-          key: "email",
-          label: "Email",
-          value: email,
-          onChangeText: setEmail,
-          placeholder: "you@example.com",
-          keyboardType: "email-address" as const,
-          autoCapitalize: "none" as const
-        };
-      case "firstName":
-        return {
-          key: "firstName",
-          label: "First Name",
-          value: firstName,
-          onChangeText: setFirstName,
-          placeholder: "John",
-          autoCapitalize: "words" as const
-        };
-      case "lastName":
-        return {
-          key: "lastName",
-          label: "Last Name",
-          value: lastName,
-          onChangeText: setLastName,
-          placeholder: "Doe",
-          autoCapitalize: "words" as const
-        };
-      case "password":
-        return {
-          key: "password",
-          label: "Password",
-          value: password,
-          onChangeText: setPassword,
-          placeholder: "Choose a password",
-          secureTextEntry: true,
-          passwordVisible,
-          onPasswordVisibilityChange: setPasswordVisible
-        };
-      case "confirmPassword":
-        return {
-          key: "confirmPassword",
-          label: "Confirm Password",
-          value: confirmPassword,
-          onChangeText: setConfirmPassword,
-          placeholder: "Repeat password",
-          secureTextEntry: true,
-          passwordVisible: confirmPasswordVisible,
-          onPasswordVisibilityChange: setConfirmPasswordVisible
-        };
-      default:
-        return null;
-    }
-  }, [
-    confirmPassword,
-    confirmPasswordVisible,
-    email,
-    firstName,
-    focusedField,
-    lastName,
-    password,
-    passwordVisible
-  ]);
-
   const passwordRules = useMemo<PasswordRule[]>(
     () => [
       { key: "minLength", label: "Minimum 10 characters", isMet: password.length >= 10 },
@@ -132,38 +56,6 @@ export default function RegisterScreen() {
   const allPasswordRulesMet = passwordRules.every((rule) => rule.isMet);
   const hasConfirmInput = confirmPassword.trim().length > 0;
   const passwordsMatch = hasConfirmInput && password === confirmPassword;
-  const shouldShowMirrorPasswordRules = focusedField === "password";
-  const mirrorOrderedPasswordRules = useMemo<PasswordRule[]>(() => {
-    const byKey = new Map(passwordRules.map((rule) => [rule.key, rule]));
-    return [
-      byKey.get("lower"),
-      byKey.get("upper"),
-      byKey.get("symbolAndDigit"),
-      byKey.get("minLength")
-    ].filter((rule): rule is PasswordRule => Boolean(rule));
-  }, [passwordRules]);
-  const keyboardMirrorRequirements = useMemo(
-    () => {
-      if (shouldShowMirrorPasswordRules) {
-        return {
-          items: mirrorOrderedPasswordRules,
-          showSuccessWhenAllMet: true,
-          successText: "Your password meets out requirements."
-        };
-      }
-
-      if (focusedField === "confirmPassword" && passwordsMatch) {
-        return {
-          items: [{ key: "confirm-password-match", label: "", isMet: true }],
-          showSuccessWhenAllMet: true,
-          successText: "The confirmed password matches."
-        };
-      }
-
-      return null;
-    },
-    [focusedField, mirrorOrderedPasswordRules, passwordsMatch, shouldShowMirrorPasswordRules]
-  );
 
   const canSubmit = useMemo(
     () =>
@@ -230,8 +122,9 @@ export default function RegisterScreen() {
 
   return (
     <AuthScreen
-      keyboardMirrorField={keyboardMirrorField}
-      keyboardMirrorRequirements={keyboardMirrorRequirements}
+      focusedInputExtraClearance={
+        focusedField === "confirmPassword" && passwordsMatch ? spacing[24] : 0
+      }
     >
       <View style={styles.topRow}>
         <View style={styles.headerTextWrap}>
@@ -243,36 +136,46 @@ export default function RegisterScreen() {
 
       <View style={styles.centerWrap}>
         {registerMutation.isError ? (
-          <ErrorState
-            title="Registration failed"
-            message={formatUnknownError(registerMutation.error)}
-            onRetry={handleRegister}
-            retryLabel="Try again"
-            debugDetail={authApiDebugDetail}
-            showDebugDetail={authApiRouteDiagnostics.enabled}
-          />
+          <View style={styles.narrowBlock}>
+            <ErrorState
+              title="Registration failed"
+              message={formatUnknownError(registerMutation.error)}
+              onRetry={handleRegister}
+              retryLabel="Try again"
+              debugDetail={authApiDebugDetail}
+              showDebugDetail={authApiRouteDiagnostics.enabled}
+            />
+          </View>
         ) : null}
 
         <View style={styles.form}>
-          <TextField
-            label="Email"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            placeholder="you@example.com"
-            error={errors.email}
-            onFocus={() => setFocusedField("email")}
-            forceFocused={focusedField === "email"}
-          />
+          <View style={styles.narrowBlock}>
+            <TextField
+              label="Email"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              placeholder="you@example.com"
+              dense
+              containerStyle={styles.authFieldContainer}
+              style={styles.authFieldInput}
+              error={errors.email}
+              onFocus={() => setFocusedField("email")}
+              forceFocused={focusedField === "email"}
+            />
+          </View>
 
-          <View style={styles.nameRow}>
+          <View style={[styles.nameRow, styles.narrowBlock]}>
             <View style={styles.nameField}>
               <TextField
                 label="First Name"
                 value={firstName}
                 onChangeText={setFirstName}
                 placeholder="John"
+                dense
+                containerStyle={styles.authFieldContainer}
+                style={styles.authFieldInput}
                 error={errors.firstName}
                 onFocus={() => setFocusedField("firstName")}
                 forceFocused={focusedField === "firstName"}
@@ -284,6 +187,9 @@ export default function RegisterScreen() {
                 value={lastName}
                 onChangeText={setLastName}
                 placeholder="Doe"
+                dense
+                containerStyle={styles.authFieldContainer}
+                style={styles.authFieldInput}
                 error={errors.lastName}
                 onFocus={() => setFocusedField("lastName")}
                 forceFocused={focusedField === "lastName"}
@@ -291,23 +197,30 @@ export default function RegisterScreen() {
             </View>
           </View>
 
-          <PasswordField
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Choose a password"
-            error={errors.password}
-            onFocus={() => setFocusedField("password")}
-            forceFocused={focusedField === "password"}
-            isPasswordVisible={passwordVisible}
-            onPasswordVisibilityChange={setPasswordVisible}
-            autoHideOnBlur={false}
-          />
+          <View style={styles.narrowBlock}>
+            <PasswordField
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Choose a password"
+              dense
+              containerStyle={styles.authFieldContainer}
+              style={styles.authFieldInput}
+              error={errors.password}
+              onFocus={() => setFocusedField("password")}
+              forceFocused={focusedField === "password"}
+              isPasswordVisible={passwordVisible}
+              onPasswordVisibilityChange={setPasswordVisible}
+              autoHideOnBlur={false}
+            />
+          </View>
 
           {allPasswordRulesMet ? (
-            <Text style={styles.ruleSuccess}>Your password meets our requirements.</Text>
+            <View style={styles.narrowBlock}>
+              <Text style={styles.ruleSuccess}>Your password meets our requirements.</Text>
+            </View>
           ) : (
-            <View style={styles.ruleList}>
+            <View style={[styles.ruleList, styles.narrowBlock]}>
               {passwordRules.map((rule, index) => (
                 <Text
                   key={rule.key}
@@ -326,20 +239,29 @@ export default function RegisterScreen() {
             </View>
           )}
 
-          <PasswordField
-            label="Confirm Password"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="Repeat password"
-            error={errors.confirmPassword}
-            onFocus={() => setFocusedField("confirmPassword")}
-            forceFocused={focusedField === "confirmPassword"}
-            isPasswordVisible={confirmPasswordVisible}
-            onPasswordVisibilityChange={setConfirmPasswordVisible}
-            autoHideOnBlur={false}
-          />
+          <View style={styles.narrowBlock}>
+            <PasswordField
+              label="Confirm Password"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="Repeat your password"
+              dense
+              containerStyle={styles.authFieldContainer}
+              style={styles.authFieldInput}
+              error={errors.confirmPassword}
+              onFocus={() => setFocusedField("confirmPassword")}
+              forceFocused={focusedField === "confirmPassword"}
+              isPasswordVisible={confirmPasswordVisible}
+              onPasswordVisibilityChange={setConfirmPasswordVisible}
+              autoHideOnBlur={false}
+            />
+          </View>
 
-          {passwordsMatch ? <Text style={styles.matchText}>The confirmed password matches.</Text> : null}
+          {passwordsMatch ? (
+            <View style={styles.narrowBlock}>
+              <Text style={styles.matchText}>The confirmed password matches.</Text>
+            </View>
+          ) : null}
 
           <CaptchaGate
             isVerified={captchaVerified}
@@ -348,14 +270,19 @@ export default function RegisterScreen() {
           />
         </View>
 
-        <View style={styles.ctaGroup}>
+        <View style={[styles.ctaGroup, styles.narrowBlock]}>
+          <SecondaryButton
+            label="Back to sign in"
+            onPress={() => router.push("/login" as never)}
+            style={styles.ctaButton}
+          />
           <PrimaryButton
             label="Create account"
             onPress={() => void handleRegister()}
             isLoading={registerMutation.isPending}
             disabled={!canSubmit}
+            style={styles.ctaButton}
           />
-          <SecondaryButton label="Back to sign in" onPress={() => router.push("/login" as never)} />
         </View>
       </View>
 
@@ -389,11 +316,24 @@ const styles = StyleSheet.create({
   },
   centerWrap: {
     flex: 1,
-    justifyContent: "center",
+    marginTop: spacing[32],
     gap: spacing[24]
+  },
+  narrowBlock: {
+    alignSelf: "center",
+    width: "88%",
+    maxWidth: 360
   },
   form: {
     gap: spacing[16]
+  },
+  authFieldContainer: {
+    minHeight: 36,
+    borderRadius: 12,
+    paddingHorizontal: 12
+  },
+  authFieldInput: {
+    paddingVertical: 8
   },
   nameRow: {
     flexDirection: "row",
@@ -403,7 +343,13 @@ const styles = StyleSheet.create({
     flex: 1
   },
   ctaGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: spacing[12]
+  },
+  ctaButton: {
+    flex: 1
   },
   ruleList: {
     flexDirection: "row",

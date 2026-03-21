@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
-import type { TextInputProps } from "react-native";
+import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { palette } from "../../theme/tokens";
 import { FieldError } from "./forms/FieldError";
 import { AppText } from "./text/AppText";
@@ -11,6 +11,8 @@ type PasswordFieldProps = Omit<TextInputProps, "secureTextEntry"> & {
   label: string;
   error?: string;
   showLabel?: boolean;
+  dense?: boolean;
+  containerStyle?: StyleProp<ViewStyle>;
   forceFocused?: boolean;
   surfaceMode?: "normal" | "solid";
   isPasswordVisible?: boolean;
@@ -23,6 +25,8 @@ export function PasswordField({
   error,
   style,
   showLabel = true,
+  dense = false,
+  containerStyle,
   forceFocused = false,
   surfaceMode = "normal",
   isPasswordVisible,
@@ -50,9 +54,11 @@ export function PasswordField({
         onPress={() => inputRef.current?.focus()}
         style={[
           fieldPresets.container,
+          dense ? fieldPresets.containerDense : null,
           surfaceMode === "solid" ? { backgroundColor: "#162D48" } : null,
           forceFocused ? fieldPresets.containerFocused : null,
-          error ? fieldPresets.containerError : null
+          error ? fieldPresets.containerError : null,
+          containerStyle
         ]}
       >
         <TextInput
@@ -79,9 +85,12 @@ export function PasswordField({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={visible ? "Hide password" : "Show password"}
-          onPress={() => {
+          onPress={(event) => {
+            event.stopPropagation();
             setVisible(!visible);
-            inputRef.current?.focus();
+          }}
+          onPressIn={(event) => {
+            event.stopPropagation();
           }}
           style={({ pressed }) => [
             fieldPresets.action,

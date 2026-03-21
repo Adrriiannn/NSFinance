@@ -10,7 +10,7 @@ export function AuthLegalLinks({ onPressTerms, onPressPrivacy }: AuthLegalLinksP
   return (
     <View style={styles.row}>
       <Pressable onPress={onPressTerms} style={({ pressed }) => [pressed ? styles.pressed : null]}>
-        <Text style={styles.link}>Terms & Conditions</Text>
+        <Text style={styles.link}>Terms of Service</Text>
       </Pressable>
       <Pressable onPress={onPressPrivacy} style={({ pressed }) => [pressed ? styles.pressed : null]}>
         <Text style={styles.link}>Privacy Policy</Text>
@@ -34,4 +34,3 @@ const styles = StyleSheet.create({
     opacity: 0.75
   }
 });
-
