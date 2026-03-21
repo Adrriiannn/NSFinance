@@ -29,6 +29,14 @@ export function FloatingAssistantDock({
   const userId = session?.user.id ?? null;
   const dockedTravel =
     metrics.floatingAssistantSize - metrics.floatingAssistantDockedVisibleWidth;
+  const expandedHorizontalInset = spacing[12];
+  const expandedMinLeft = Math.max(metrics.safeAreaInsets.left, expandedHorizontalInset);
+  const expandedMaxLeft = Math.max(
+    expandedMinLeft,
+    metrics.screenWidth -
+      metrics.floatingAssistantSize -
+      Math.max(metrics.safeAreaInsets.right, expandedHorizontalInset)
+  );
   const minTop = metrics.safeAreaInsets.top + spacing[12];
   const maxTop = Math.max(
     minTop,
@@ -54,9 +62,9 @@ export function FloatingAssistantDock({
   const getExpandedLeft = useCallback(
     (side: AssistantDockSide) =>
       side === "left"
-        ? metrics.safeAreaInsets.left
-        : metrics.screenWidth - metrics.safeAreaInsets.right - metrics.floatingAssistantSize,
-    [metrics.floatingAssistantSize, metrics.safeAreaInsets.left, metrics.safeAreaInsets.right, metrics.screenWidth]
+        ? expandedMinLeft
+        : expandedMaxLeft,
+    [expandedMaxLeft, expandedMinLeft]
   );
 
   const getDockedLeft = useCallback(
@@ -236,12 +244,10 @@ export function FloatingAssistantDock({
         },
         onPanResponderMove: (_event, gestureState) => {
           const nextLeft = Math.max(
-            metrics.safeAreaInsets.left,
+            expandedMinLeft,
             Math.min(
               dragStartLeftRef.current + gestureState.dx,
-              metrics.screenWidth -
-                metrics.safeAreaInsets.right -
-                metrics.floatingAssistantSize
+              expandedMaxLeft
             )
           );
           const nextTop = clampTop(dragStartTopRef.current + gestureState.dy);
@@ -311,10 +317,10 @@ export function FloatingAssistantDock({
       left,
       metrics.floatingAssistantDockAnimationDurationMs,
       metrics.floatingAssistantSize,
-      metrics.safeAreaInsets.left,
-      metrics.safeAreaInsets.right,
       metrics.screenWidth,
       metrics.floatingAssistantSwipeToDockThreshold,
+      expandedMaxLeft,
+      expandedMinLeft,
       persistDockState,
       ratioFromTop,
       snapDock,

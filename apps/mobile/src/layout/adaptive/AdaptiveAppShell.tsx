@@ -10,12 +10,14 @@ import { queryKeys } from "../../lib/api/queryKeys";
 import { completeLatestNavigationProbe, navigateWithProbe } from "../../lib/perf/navigationTiming";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { queryClient } from "../../providers/QueryProvider";
-import { surfaces } from "../../theme/tokens";
+import { borders, surfaces, zIndex } from "../../theme/tokens";
+import { getEffectiveBottomSystemInset } from "../../theme/insets";
 import { FloatingAssistantDock } from "./FloatingAssistantDock";
 import { AdaptiveLayoutContext, useAdaptiveLayoutMetrics } from "./adaptive.hooks";
 import type { AdaptiveAppShellProps, AdaptiveShellFrame } from "./adaptive.types";
 
 const ROOT_TAB_PATHS = new Set(["/", "/accounts", "/activity", "/cashflow", "/calendar"]);
+const TAB_BAR_SEAM_COLOR = "#263142";
 
 function resolveSourceTab(pathname: string | null): "index" | "accounts" | "activity" | "cashflow" | "calendar" {
   if (pathname?.startsWith("/accounts")) {
@@ -76,6 +78,7 @@ function resolvePlanningHubSourceTab(
 
 export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
   const metrics = useAdaptiveLayoutMetrics();
+  const effectiveBottomSystemInset = getEffectiveBottomSystemInset(metrics.safeAreaInsets.bottom);
   const pathname = usePathname();
   const params = useGlobalSearchParams<{ source?: string; sourcePlanningHubTab?: string }>();
   const router = useRouter();
@@ -192,6 +195,15 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
           showTrigger={false}
         />
         {children}
+        {effectiveBottomSystemInset > 0 ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.systemBottomInsetMask,
+              { height: effectiveBottomSystemInset }
+            ]}
+          />
+        ) : null}
         <FloatingAssistantDock
           hidden={!showAssistantDock}
           accessibilityLabel="Open NS Companion"
@@ -231,6 +243,20 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: surfaces.app
+  },
+  systemBottomInsetMask: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: surfaces.tabBar,
+    borderTopWidth: borders.width.thin,
+    borderTopColor: TAB_BAR_SEAM_COLOR,
+    borderLeftWidth: borders.width.thin,
+    borderLeftColor: TAB_BAR_SEAM_COLOR,
+    borderRightWidth: borders.width.thin,
+    borderRightColor: TAB_BAR_SEAM_COLOR,
+    zIndex: zIndex.tabBar
   }
 });
 

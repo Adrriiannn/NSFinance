@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getEffectiveBottomSystemInset } from "../../theme/insets";
 import {
   ADAPTIVE_HEIGHT_BREAKPOINTS,
   ADAPTIVE_TOKENS,
@@ -42,6 +43,7 @@ function resolveHeightClass(usableHeight: number): AdaptiveHeightClass {
 export function useAdaptiveLayoutMetrics(): AdaptiveLayoutMetrics {
   const { width, height } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
+  const effectiveBottomInset = getEffectiveBottomSystemInset(safeAreaInsets.bottom);
   const usableWidth = width - safeAreaInsets.left - safeAreaInsets.right;
   const usableHeight = height - safeAreaInsets.top - safeAreaInsets.bottom;
   const widthClass = resolveWidthClass(usableWidth);
@@ -56,17 +58,17 @@ export function useAdaptiveLayoutMetrics(): AdaptiveLayoutMetrics {
     planningHubButtonSize * ADAPTIVE_TOKENS.planningHub.overlapRatio
   );
   const planningHubLift = planningHubButtonSize - planningHubOverlap;
-  const tabBarHeight = ADAPTIVE_TOKENS.tabBar.baseHeight + safeAreaInsets.bottom;
+  const tabBarHeight = ADAPTIVE_TOKENS.tabBar.baseHeight;
   const tabBarMargins = {
     horizontal: ADAPTIVE_TOKENS.tabBar.outerMarginX[widthClass],
-    bottom: ADAPTIVE_TOKENS.tabBar.outerMarginBottom[heightClass]
+    bottom: ADAPTIVE_TOKENS.tabBar.outerMarginBottom[heightClass] + effectiveBottomInset
   };
   const floatingAssistantRightMargin = ADAPTIVE_TOKENS.fab.rightMargin[widthClass];
   const floatingAssistantGapAboveTabBar = ADAPTIVE_TOKENS.fab.gapAboveTabBar;
   const floatingAssistantBottomOffset =
-    ADAPTIVE_TOKENS.tabBar.baseHeight + floatingAssistantGapAboveTabBar;
+    ADAPTIVE_TOKENS.tabBar.baseHeight + floatingAssistantGapAboveTabBar + effectiveBottomInset;
   const contentBottomInset =
-    Math.max(safeAreaInsets.bottom, 8) +
+    Math.max(effectiveBottomInset, 8) +
     ADAPTIVE_TOKENS.tabBar.baseHeight +
     ADAPTIVE_TOKENS.contentReserve.comfortSpacing;
 

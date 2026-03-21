@@ -81,7 +81,7 @@ export function AdaptiveTabBarShell({
               marginTop: metrics.planningHubLift,
               minHeight: metrics.tabBarHeight,
               borderRadius: metrics.tabBarRadius,
-              paddingBottom: metrics.safeAreaInsets.bottom + spacing[8]
+              paddingBottom: spacing[8]
             }
           ]}
         >

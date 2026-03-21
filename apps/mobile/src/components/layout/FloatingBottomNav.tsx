@@ -1,7 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, PanResponder, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getEffectiveBottomSystemInset } from "../../theme/insets";
 import { navigation, palette, radius, spacing, typography } from "../../theme/tokens";
 import { PlanningHubPeekButton } from "../../layout/adaptive/PlanningHubPeekButton";
 import { useOptionalAdaptiveShell } from "../../layout/adaptive/adaptive.hooks";
@@ -78,8 +80,14 @@ export function FloatingBottomNav({
   switcherAction
 }: FloatingBottomNavProps) {
   const adaptiveShell = useOptionalAdaptiveShell();
+  const insets = useSafeAreaInsets();
+  const androidBottomInset =
+    Platform.OS === "android" ? getEffectiveBottomSystemInset(insets.bottom) : 0;
   const shellContentPaddingBottom = spacing[8];
-  const tabBarBottomOffset = -2;
+  const tabBarBottomOffset =
+    Platform.OS === "android"
+      ? (androidBottomInset > 0 ? -2 + androidBottomInset : 0)
+      : -2;
   const [optimisticActiveKey, setOptimisticActiveKey] = useState<string | null>(null);
   const [itemLayouts, setItemLayouts] = useState<Partial<Record<string, { x: number; width: number }>>>({});
   const hasExplicitActiveKey = items.some((item) => item.key === activeKey);
@@ -121,7 +129,10 @@ export function FloatingBottomNav({
   const visibleScale = switcherBehavior === "peek"
     ? planningHubScale
     : new Animated.Value(PEEK_REVEALED_SCALE);
-  const switcherBottomOffset = Math.max(navigation.floatingTabBarHeight + tabBarBottomOffset, 0);
+  const switcherBottomOffset = Math.max(
+    navigation.floatingTabBarHeight + tabBarBottomOffset,
+    0
+  );
   const manualRevealTriggeredRef = useRef(false);
   const previousActiveKeyRef = useRef(activeKey);
 
