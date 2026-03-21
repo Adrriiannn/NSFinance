@@ -25,7 +25,11 @@ import {
   normalizeExpenseTaxonomySearchText,
   searchExpenseTaxonomy
 } from "../../../src/features/expenseTracker/expenseTaxonomySearch";
-import { setPendingActivityAddTransactionSubcategorySelection } from "../../../src/features/expenseTracker/categoryPickerBridge";
+import {
+  setPendingActivityAddTransactionSubcategorySelection,
+  setPendingActivitySearchCategorySelection,
+  type ActivitySearchCategorySelection
+} from "../../../src/features/expenseTracker/categoryPickerBridge";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
 import { getFloatingTabBarInset } from "../../../src/theme/insets";
@@ -43,6 +47,12 @@ export default function PlanningHubCategoriesScreen() {
   const lineItemId = typeof params.lineItemId === "string" ? params.lineItemId : "";
   const selectionTarget =
     typeof params.selectionTarget === "string" ? params.selectionTarget : "";
+  const selectionReturnPath: "/(tabs)/activity" | "/(tabs)/activity/add" | null =
+    selectionTarget === "activitySearchCategoryFilter"
+      ? "/(tabs)/activity"
+      : selectionTarget === "activityAddTransaction"
+        ? "/(tabs)/activity/add"
+        : null;
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const { assignBuilderLineItemSubcategory, setSelectionLineItemId } = useExpensePlanning();
   const [searchQuery, setSearchQuery] = useState("");
@@ -50,6 +60,19 @@ export default function PlanningHubCategoriesScreen() {
   const [expandedDomainId, setExpandedDomainId] = useState<number | null>(null);
   const [expandedCategoryIds, setExpandedCategoryIds] = useState<Record<number, number | null>>({});
   const [pendingSubcategoryId, setPendingSubcategoryId] = useState<number | null>(null);
+  const [pendingHierarchySelection, setPendingHierarchySelection] =
+    useState<ActivitySearchCategorySelection | null>(null);
+  const isActivitySearchCategorySelection =
+    selectionMode && selectionTarget === "activitySearchCategoryFilter";
+
+  const returnToSelectionOrigin = () => {
+    if (selectionReturnPath) {
+      router.replace(selectionReturnPath);
+      return;
+    }
+
+    router.back();
+  };
 
   const visibleDomains = useMemo(
     () => (taxonomyQuery.data?.domains ?? []).filter((domain) => domain.isUserSelectable && !domain.isSystemDomain && domain.isActive),
@@ -60,6 +83,18 @@ export default function PlanningHubCategoriesScreen() {
     () => new Map(flattenedSelections.map((item) => [item.subcategory.id, item] as const)),
     [flattenedSelections]
   );
+  const subcategoryIdsByCategoryId = useMemo(() => {
+    const map = new Map<number, Set<number>>();
+    flattenedSelections.forEach((item) => {
+      const current = map.get(item.category.id);
+      if (current) {
+        current.add(item.subcategory.id);
+      } else {
+        map.set(item.category.id, new Set([item.subcategory.id]));
+      }
+    });
+    return map;
+  }, [flattenedSelections]);
   const searchIndex = useMemo(() => buildExpenseTaxonomySearchIndex(visibleDomains), [visibleDomains]);
   const searchResults = useMemo(
     () => searchExpenseTaxonomy(searchIndex, debouncedSearchQuery),
@@ -85,8 +120,126 @@ export default function PlanningHubCategoriesScreen() {
     setSelectionLineItemId(lineItemId);
   }, [lineItemId, selectionMode, setSelectionLineItemId]);
 
+  const buildDomainSelection = (domainId: number, domainName: string): ActivitySearchCategorySelection => ({
+    scope: "domain",
+    domainId,
+    domainName,
+    categoryId: null,
+    categoryName: "",
+    subcategoryId: null,
+    subcategoryName: "",
+    excludedCategoryIds: [],
+    excludedSubcategoryIds: []
+  });
+
+  const buildCategorySelection = (
+    domainId: number,
+    domainName: string,
+    categoryId: number,
+    categoryName: string
+  ): ActivitySearchCategorySelection => ({
+    scope: "category",
+    domainId,
+    domainName,
+    categoryId,
+    categoryName,
+    subcategoryId: null,
+    subcategoryName: "",
+    excludedCategoryIds: [],
+    excludedSubcategoryIds: []
+  });
+
+  const buildSubcategorySelection = (
+    domainId: number,
+    domainName: string,
+    categoryId: number,
+    categoryName: string,
+    subcategoryId: number,
+    subcategoryName: string
+  ): ActivitySearchCategorySelection => ({
+    scope: "subcategory",
+    domainId,
+    domainName,
+    categoryId,
+    categoryName,
+    subcategoryId,
+    subcategoryName,
+    excludedCategoryIds: [],
+    excludedSubcategoryIds: []
+  });
+
+  const stripCategorySubcategoryExclusions = (
+    excludedSubcategoryIds: number[],
+    categoryId: number
+  ) => {
+    const subcategoryIds = subcategoryIdsByCategoryId.get(categoryId);
+    if (!subcategoryIds) {
+      return excludedSubcategoryIds;
+    }
+
+    return excludedSubcategoryIds.filter((id) => !subcategoryIds.has(id));
+  };
+
   const handleSubcategoryPress = (subcategoryId: number) => {
-    setPendingSubcategoryId(subcategoryId);
+    if (isActivitySearchCategorySelection) {
+      const selection = selectionBySubcategoryId.get(subcategoryId);
+      if (selection) {
+        setPendingHierarchySelection((current) => {
+          if (!current) {
+            return buildSubcategorySelection(
+              selection.domain.id,
+              selection.domain.name,
+              selection.category.id,
+              selection.category.name,
+              selection.subcategory.id,
+              selection.subcategory.name
+            );
+          }
+
+          if (current.scope === "domain" && current.domainId === selection.domain.id) {
+            if (current.excludedCategoryIds.includes(selection.category.id)) {
+              return current;
+            }
+
+            const isExcluded = current.excludedSubcategoryIds.includes(selection.subcategory.id);
+            return {
+              ...current,
+              excludedSubcategoryIds: isExcluded
+                ? current.excludedSubcategoryIds.filter((id) => id !== selection.subcategory.id)
+                : [...current.excludedSubcategoryIds, selection.subcategory.id]
+            };
+          }
+
+          if (current.scope === "category" && current.categoryId === selection.category.id) {
+            const isExcluded = current.excludedSubcategoryIds.includes(selection.subcategory.id);
+            return {
+              ...current,
+              excludedSubcategoryIds: isExcluded
+                ? current.excludedSubcategoryIds.filter((id) => id !== selection.subcategory.id)
+                : [...current.excludedSubcategoryIds, selection.subcategory.id]
+            };
+          }
+
+          if (
+            current.scope === "subcategory" &&
+            current.subcategoryId === selection.subcategory.id
+          ) {
+            return null;
+          }
+
+          return buildSubcategorySelection(
+            selection.domain.id,
+            selection.domain.name,
+            selection.category.id,
+            selection.category.name,
+            selection.subcategory.id,
+            selection.subcategory.name
+          );
+        });
+      }
+    } else {
+      setPendingSubcategoryId(subcategoryId);
+    }
 
     if (!selectionMode) {
       return;
@@ -104,14 +257,127 @@ export default function PlanningHubCategoriesScreen() {
     }));
   };
 
+  const handleDomainSelectionToggle = (domainId: number, domainName: string) => {
+    setPendingHierarchySelection((current) => {
+      if (current?.scope === "domain" && current.domainId === domainId) {
+        return null;
+      }
+
+      return buildDomainSelection(domainId, domainName);
+    });
+  };
+
+  const handleCategorySelectionToggle = (
+    domainId: number,
+    domainName: string,
+    categoryId: number,
+    categoryName: string
+  ) => {
+    setPendingHierarchySelection((current) => {
+      if (current?.scope === "domain" && current.domainId === domainId) {
+        const isExcluded = current.excludedCategoryIds.includes(categoryId);
+        if (isExcluded) {
+          return {
+            ...current,
+            excludedCategoryIds: current.excludedCategoryIds.filter((id) => id !== categoryId)
+          };
+        }
+
+        return {
+          ...current,
+          excludedCategoryIds: [...current.excludedCategoryIds, categoryId],
+          excludedSubcategoryIds: stripCategorySubcategoryExclusions(
+            current.excludedSubcategoryIds,
+            categoryId
+          )
+        };
+      }
+
+      if (current?.scope === "category" && current.categoryId === categoryId) {
+        return null;
+      }
+
+      return buildCategorySelection(domainId, domainName, categoryId, categoryName);
+    });
+  };
+
+  const isDomainChecked = (domainId: number) =>
+    pendingHierarchySelection?.scope === "domain" &&
+    pendingHierarchySelection.domainId === domainId;
+
+  const isCategoryChecked = (domainId: number, categoryId: number) => {
+    if (!pendingHierarchySelection) {
+      return false;
+    }
+
+    if (
+      pendingHierarchySelection.scope === "domain" &&
+      pendingHierarchySelection.domainId === domainId
+    ) {
+      return !pendingHierarchySelection.excludedCategoryIds.includes(categoryId);
+    }
+
+    return (
+      pendingHierarchySelection.scope === "category" &&
+      pendingHierarchySelection.categoryId === categoryId
+    );
+  };
+
+  const isSubcategoryChecked = (
+    domainId: number,
+    categoryId: number,
+    subcategoryId: number
+  ) => {
+    if (!pendingHierarchySelection) {
+      return false;
+    }
+
+    if (
+      pendingHierarchySelection.scope === "domain" &&
+      pendingHierarchySelection.domainId === domainId
+    ) {
+      if (pendingHierarchySelection.excludedCategoryIds.includes(categoryId)) {
+        return false;
+      }
+
+      return !pendingHierarchySelection.excludedSubcategoryIds.includes(subcategoryId);
+    }
+
+    if (
+      pendingHierarchySelection.scope === "category" &&
+      pendingHierarchySelection.categoryId === categoryId
+    ) {
+      return !pendingHierarchySelection.excludedSubcategoryIds.includes(subcategoryId);
+    }
+
+    return (
+      pendingHierarchySelection.scope === "subcategory" &&
+      pendingHierarchySelection.subcategoryId === subcategoryId
+    );
+  };
+
   const confirmSelection = () => {
-    if (!selectionMode || !pendingSubcategoryId) {
+    if (!selectionMode) {
+      return;
+    }
+
+    if (selectionTarget === "activitySearchCategoryFilter") {
+      if (!pendingHierarchySelection) {
+        return;
+      }
+
+      setPendingActivitySearchCategorySelection(pendingHierarchySelection);
+      returnToSelectionOrigin();
+      return;
+    }
+
+    if (!pendingSubcategoryId) {
       return;
     }
 
     if (selectionTarget === "activityAddTransaction") {
       setPendingActivityAddTransactionSubcategorySelection(pendingSubcategoryId);
-      router.back();
+      returnToSelectionOrigin();
       return;
     }
 
@@ -153,7 +419,13 @@ export default function PlanningHubCategoriesScreen() {
               searchResults.length > 0 ? (
                 <View style={styles.searchResultsList}>
                   {searchResults.slice(0, 20).map((result) => {
-                    const selected = selectionMode && pendingSubcategoryId === result.item.subcategoryId;
+                    const selected = selectionMode && (isActivitySearchCategorySelection
+                      ? isSubcategoryChecked(
+                          result.item.domainId,
+                          result.item.categoryId,
+                          result.item.subcategoryId
+                        )
+                      : pendingSubcategoryId === result.item.subcategoryId);
                     const visual = getExpenseTrackerSubcategoryVisual({
                       domainId: result.item.domainId,
                       categoryId: result.item.categoryId,
@@ -182,7 +454,22 @@ export default function PlanningHubCategoriesScreen() {
                           <Text style={styles.searchResultTitle}>{result.item.subcategoryName}</Text>
                           <Text style={styles.searchResultPath}>{result.item.categoryName} • {result.item.domainName}</Text>
                         </View>
-                        {selectionMode && selected ? <Ionicons name="checkmark" size={18} color={visual.color} /> : null}
+                        {selectionMode ? (
+                          isActivitySearchCategorySelection ? (
+                            <View
+                              style={[
+                                styles.selectionCheckbox,
+                                selected ? styles.selectionCheckboxChecked : null
+                              ]}
+                            >
+                              {selected ? (
+                                <Ionicons name="checkmark" size={13} color={palette.textPrimary} />
+                              ) : null}
+                            </View>
+                          ) : selected ? (
+                            <Ionicons name="checkmark" size={18} color={visual.color} />
+                          ) : null
+                        ) : null}
                       </Pressable>
                     );
                   })}
@@ -215,7 +502,27 @@ export default function PlanningHubCategoriesScreen() {
                           </View>
                           <Text style={styles.domainTitle}>{domain.name}</Text>
                         </View>
-                        <Ionicons name={isDomainExpanded ? "chevron-up" : "chevron-down"} size={18} color={palette.textSecondary} />
+                        <View style={styles.rowActionRail}>
+                          <Ionicons
+                            name={isDomainExpanded ? "chevron-up" : "chevron-down"}
+                            size={18}
+                            color={palette.textSecondary}
+                          />
+                          {isActivitySearchCategorySelection ? (
+                            <Pressable
+                              onPress={() => handleDomainSelectionToggle(domain.id, domain.name)}
+                              style={({ pressed }) => [
+                                styles.selectionCheckbox,
+                                isDomainChecked(domain.id) ? styles.selectionCheckboxChecked : null,
+                                pressed ? styles.selectionCheckboxPressed : null
+                              ]}
+                            >
+                              {isDomainChecked(domain.id) ? (
+                                <Ionicons name="checkmark" size={13} color={palette.textPrimary} />
+                              ) : null}
+                            </Pressable>
+                          ) : null}
+                        </View>
                       </Pressable>
 
                       {isDomainExpanded ? (
@@ -247,13 +554,48 @@ export default function PlanningHubCategoriesScreen() {
                                       </View>
                                       <Text style={styles.categoryHeading}>{category.name}</Text>
                                     </View>
-                                    <Ionicons name={isCategoryExpanded ? "chevron-up" : "chevron-down"} size={17} color={palette.textSecondary} />
+                                    <View style={styles.rowActionRail}>
+                                      <Ionicons
+                                        name={isCategoryExpanded ? "chevron-up" : "chevron-down"}
+                                        size={17}
+                                        color={palette.textSecondary}
+                                      />
+                                      {isActivitySearchCategorySelection ? (
+                                        <Pressable
+                                          onPress={() =>
+                                            handleCategorySelectionToggle(
+                                              domain.id,
+                                              domain.name,
+                                              category.id,
+                                              category.name
+                                            )
+                                          }
+                                          style={({ pressed }) => [
+                                            styles.selectionCheckbox,
+                                            isCategoryChecked(domain.id, category.id)
+                                              ? styles.selectionCheckboxChecked
+                                              : null,
+                                            pressed ? styles.selectionCheckboxPressed : null
+                                          ]}
+                                        >
+                                          {isCategoryChecked(domain.id, category.id) ? (
+                                            <Ionicons
+                                              name="checkmark"
+                                              size={13}
+                                              color={palette.textPrimary}
+                                            />
+                                          ) : null}
+                                        </Pressable>
+                                      ) : null}
+                                    </View>
                                   </Pressable>
 
                                   {isCategoryExpanded ? (
                                     <View style={styles.subcategoryList}>
                                       {category.subcategories.filter((subcategory) => subcategory.isUserSelectable && subcategory.isActive).map((subcategory) => {
-                                        const selected = selectionMode && pendingSubcategoryId === subcategory.id;
+                                        const selected = selectionMode && (isActivitySearchCategorySelection
+                                          ? isSubcategoryChecked(domain.id, category.id, subcategory.id)
+                                          : pendingSubcategoryId === subcategory.id);
                                         const subcategoryVisuals = getExpenseTrackerSubcategoryVisual({
                                           domainId: domain.id,
                                           categoryId: category.id,
@@ -283,7 +625,30 @@ export default function PlanningHubCategoriesScreen() {
                                               />
                                             </View>
                                             <Text style={styles.subcategoryLabel}>{subcategory.name}</Text>
-                                            {selectionMode && selected ? <Ionicons name="checkmark" size={18} color={subcategoryVisuals.color} /> : null}
+                                            {selectionMode ? (
+                                              isActivitySearchCategorySelection ? (
+                                                <View
+                                                  style={[
+                                                    styles.selectionCheckbox,
+                                                    selected ? styles.selectionCheckboxChecked : null
+                                                  ]}
+                                                >
+                                                  {selected ? (
+                                                    <Ionicons
+                                                      name="checkmark"
+                                                      size={13}
+                                                      color={palette.textPrimary}
+                                                    />
+                                                  ) : null}
+                                                </View>
+                                              ) : selected ? (
+                                                <Ionicons
+                                                  name="checkmark"
+                                                  size={18}
+                                                  color={subcategoryVisuals.color}
+                                                />
+                                              ) : null
+                                            ) : null}
                                           </Pressable>
                                         );
                                       })}
@@ -308,7 +673,10 @@ export default function PlanningHubCategoriesScreen() {
   return (
     <View style={styles.screenWrap}>
       {selectionMode ? (
-        <PlanningHubScreen title="Select category">
+        <PlanningHubScreen
+          title="Select category"
+          onBackPress={selectionReturnPath ? returnToSelectionOrigin : undefined}
+        >
           {content}
         </PlanningHubScreen>
       ) : (
@@ -348,7 +716,11 @@ export default function PlanningHubCategoriesScreen() {
       {selectionMode ? (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
           <View style={[styles.confirmBar, { bottom: getFloatingTabBarInset(insets.bottom, 4) }]}>
-            <PrimaryButton label="Confirm selection" onPress={confirmSelection} disabled={!pendingSubcategoryId} />
+            <PrimaryButton
+              label="Confirm selection"
+              onPress={confirmSelection}
+              disabled={isActivitySearchCategorySelection ? !pendingHierarchySelection : !pendingSubcategoryId}
+            />
           </View>
         </View>
       ) : null}
@@ -473,6 +845,28 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.bodyStrong,
     fontWeight: "700"
+  },
+  rowActionRail: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[10]
+  },
+  selectionCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(148,176,221,0.56)",
+    backgroundColor: "rgba(18,36,58,0.9)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  selectionCheckboxChecked: {
+    borderColor: "rgba(127,174,255,0.9)",
+    backgroundColor: "rgba(66,113,182,0.55)"
+  },
+  selectionCheckboxPressed: {
+    opacity: 0.88
   },
   domainCategoryDividerWrap: {
     alignItems: "center",

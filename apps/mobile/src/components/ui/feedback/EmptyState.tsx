@@ -10,6 +10,8 @@ type EmptyStateProps = {
   actionLabel?: string;
   onActionPress?: () => void;
   style?: StyleProp<ViewStyle>;
+  hideOrb?: boolean;
+  centerText?: boolean;
 };
 
 export function EmptyState({
@@ -17,13 +19,17 @@ export function EmptyState({
   message,
   actionLabel,
   onActionPress,
-  style
+  style,
+  hideOrb = false,
+  centerText = false
 }: EmptyStateProps) {
   return (
     <View style={[feedbackPresets.emptyState, style]}>
-      <View style={feedbackPresets.emptyStateOrb} />
-      <AppText preset="sectionTitle">{title}</AppText>
-      <AppText preset="secondary" style={{ textAlign: "center" }}>
+      {hideOrb ? null : <View style={feedbackPresets.emptyStateOrb} />}
+      <AppText preset="sectionTitle" style={centerText ? { textAlign: "center" } : undefined}>
+        {title}
+      </AppText>
+      <AppText preset="secondary" style={centerText ? { textAlign: "center" } : undefined}>
         {message}
       </AppText>
       {actionLabel ? (

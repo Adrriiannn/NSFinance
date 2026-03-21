@@ -7,6 +7,8 @@ type EmptyStateProps = {
   actionLabel?: string;
   onActionPress?: () => void;
   style?: StyleProp<ViewStyle>;
+  hideOrb?: boolean;
+  centerText?: boolean;
 };
 
 export function EmptyState(props: EmptyStateProps) {

@@ -8,7 +8,7 @@ type NsfLogoProps = {
 
 export function NsfLogo({ size = 56, style }: NsfLogoProps) {
   return (
-    <View style={[styles.wrap, style, { width: size, height: size, borderRadius: size * 0.24 }]}>
+    <View style={[styles.wrap, style, { width: size, height: size, borderRadius: size * 0.5 }]}>
       <Image
         source={require("../../../assets/nsf-logo.png")}
         style={{ width: size, height: size, borderRadius: size * 0.24 }}

@@ -8,6 +8,8 @@ type TabEmptyStateCardProps = {
   ctaLabel?: string;
   onCtaPress?: () => void;
   verticalSpacingMode?: "tab-aligned" | "compact" | "none";
+  hideOrb?: boolean;
+  centerText?: boolean;
 };
 
 export function TabEmptyStateCard({
@@ -15,7 +17,9 @@ export function TabEmptyStateCard({
   subtitle,
   ctaLabel,
   onCtaPress,
-  verticalSpacingMode = "tab-aligned"
+  verticalSpacingMode = "tab-aligned",
+  hideOrb = false,
+  centerText = false
 }: TabEmptyStateCardProps) {
   const spacingStyle =
     verticalSpacingMode === "compact"
@@ -31,6 +35,8 @@ export function TabEmptyStateCard({
         message={subtitle}
         actionLabel={ctaLabel}
         onActionPress={onCtaPress}
+        hideOrb={hideOrb}
+        centerText={centerText}
       />
     </View>
   );

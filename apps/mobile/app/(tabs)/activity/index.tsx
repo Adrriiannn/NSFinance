@@ -1,9 +1,9 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   PanResponder,
+  Pressable,
   RefreshControl,
   SectionList,
   StyleSheet,
@@ -16,23 +16,33 @@ import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
+import { ActivitySearchBar } from "../../../src/features/activity/components/ActivitySearchBar";
+import {
+  consumeActivitySearchSnapshot,
+  setActivitySearchSnapshot
+} from "../../../src/features/activity/search/activitySearch.bridge";
+import { useActivitySearch } from "../../../src/features/activity/search/activitySearch.hooks";
+import type { ActivityTaxonomySearchEntry } from "../../../src/features/activity/search/activitySearch.types";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
-import { HeaderActionButton, HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
+import { HeaderShell } from "../../../src/layout/appHeader";
+import { HEADER_CONSTANTS } from "../../../src/layout/header/header.constants";
 import {
   CONTENT_FRAME_HEADER_GAP,
   getDockAwareContentBottomInset
 } from "../../../src/layout/contentFrame";
 import {
-  type ActivityFilter,
-  applyActivityFilter,
   groupTransactionsByTimeBucket
 } from "../../../src/features/transactions/activityGrouping";
+import { consumePendingActivitySearchCategorySelection } from "../../../src/features/expenseTracker/categoryPickerBridge";
+import { flattenVisibleExpenseTaxonomy } from "../../../src/features/expenseTracker/expenseTrackerModels";
+import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
+import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
+import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
 import type { TransactionDto } from "../../../src/types/api";
 
-const filters: ActivityFilter[] = ["All", "Income", "Expense", "Online", "In person"];
 const transactionSwipeHoldDelayMs = 1000;
 
 export default function ActivityTabScreen() {
@@ -44,10 +54,13 @@ export default function ActivityTabScreen() {
   });
   const params = useLocalSearchParams<{ focusTransactionId?: string; focusNonce?: string }>();
   const plannerStore = usePlannerStore();
-  const [filter, setFilter] = useState<ActivityFilter>("All");
+  const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
+  const accountsQuery = useAccountsQuery();
+  const profileQuery = useUserProfileQuery();
   const [highlightedTransactionId, setHighlightedTransactionId] = useState<string | null>(
     null
   );
+  const initialSearchSnapshotRef = useRef(consumeActivitySearchSnapshot());
   const sectionListRef = useRef<SectionList<TransactionDto>>(null);
   const handledFocusTransactionIdRef = useRef<string | null>(null);
   const transactionsQuery = useTransactionsQuery();
@@ -58,6 +71,39 @@ export default function ActivityTabScreen() {
     typeof params.focusTransactionId === "string" ? params.focusTransactionId : "";
   const focusNonce = typeof params.focusNonce === "string" ? params.focusNonce : "";
   const focusKey = focusTransactionId ? `${focusTransactionId}:${focusNonce}` : "";
+  const searchBackdropTop =
+    insets.top + HEADER_CONSTANTS.rowHeight + HEADER_CONSTANTS.secondRowHeight + 10;
+  const taxonomyEntries = useMemo<ActivityTaxonomySearchEntry[]>(() => {
+    const visibleDomains = (taxonomyQuery.data?.domains ?? []).filter(
+      (domain) => domain.isUserSelectable && !domain.isSystemDomain && domain.isActive
+    );
+    return flattenVisibleExpenseTaxonomy(visibleDomains).map((entry) => ({
+      domainId: entry.domain.id,
+      domainName: entry.domain.name,
+      categoryId: entry.category.id,
+      categoryName: entry.category.name,
+      subcategoryId: entry.subcategory.id,
+      subcategoryName: entry.subcategory.name
+    }));
+  }, [taxonomyQuery.data?.domains]);
+  const search = useActivitySearch({
+    transactions: transactionsQuery.data ?? [],
+    annotations: plannerStore.annotations,
+    preferredCurrency: profileQuery.data?.preferredCurrency,
+    accountCurrencies: (accountsQuery.data ?? []).map((account) => account.currency),
+    taxonomyEntries,
+    initialSnapshot: initialSearchSnapshotRef.current,
+    onRequestCategoryPicker: (snapshot) => {
+      setActivitySearchSnapshot(snapshot);
+      router.push({
+        pathname: "/(tabs)/planning/categories",
+        params: {
+          selectionMode: "true",
+          selectionTarget: "activitySearchCategoryFilter"
+        }
+      });
+    }
+  });
 
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
@@ -69,15 +115,40 @@ export default function ActivityTabScreen() {
   }, [transactionsQuery]);
 
   const grouped = useMemo(() => {
-    const data = applyActivityFilter(transactionsQuery.data ?? [], filter);
-    return groupTransactionsByTimeBucket(data)
+    return groupTransactionsByTimeBucket(search.filteredTransactions)
       .filter((section) => section.items.length > 0)
       .map((section) => ({
         title: section.title,
         data: section.items
       }));
-  }, [transactionsQuery.data, filter]);
-  const showEmptyState = !isInitialLoading && !transactionsQuery.isError && grouped.length === 0;
+  }, [search.filteredTransactions]);
+  const hasAnyTransactions = (transactionsQuery.data?.length ?? 0) > 0;
+  const hasActiveSearch =
+    search.tokens.length > 0 || search.rawSearchText.trim().length > 0;
+  const showNoSearchResultsState =
+    !isInitialLoading &&
+    !transactionsQuery.isError &&
+    grouped.length === 0 &&
+    hasAnyTransactions &&
+    hasActiveSearch;
+  const showNoActivityState =
+    !isInitialLoading && !transactionsQuery.isError && grouped.length === 0 && !showNoSearchResultsState;
+
+  useFocusEffect(
+    useCallback(() => {
+      const restoredSnapshot = consumeActivitySearchSnapshot();
+      if (restoredSnapshot) {
+        search.setSnapshot(restoredSnapshot);
+      }
+
+      const pickedCategorySelection = consumePendingActivitySearchCategorySelection();
+      if (pickedCategorySelection) {
+        search.applyPickedCategory(pickedCategorySelection);
+      }
+
+      return undefined;
+    }, [search])
+  );
 
   useEffect(() => {
     if (!focusTransactionId || handledFocusTransactionIdRef.current === focusKey) {
@@ -85,7 +156,6 @@ export default function ActivityTabScreen() {
     }
 
     handledFocusTransactionIdRef.current = focusKey;
-    setFilter("All");
     setHighlightedTransactionId(focusTransactionId);
   }, [focusKey, focusTransactionId]);
 
@@ -137,26 +207,55 @@ export default function ActivityTabScreen() {
     <AdaptiveScreen contentStyle={styles.container} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
         <HeaderShell
-          preset="primaryTwoRowSelector"
+          preset="primaryTwoRowSearch"
           includeTopInset
           title="Activity"
           secondRow={
-            <>
-              <HeaderActionButton
-                icon={<Ionicons name="add-outline" size={18} color={palette.textPrimary} />}
-                accessibilityLabel="Add transaction"
-                onPress={() => router.push("/(tabs)/activity/add")}
-                style={styles.headerIconAction}
-              />
-              <HeaderDropdownSlot
-                title="Transactions filter"
-                value={filter}
-                options={filters.map((item) => ({ label: item, value: item }))}
-                onChange={(value) => setFilter(value as ActivityFilter)}
-              />
-            </>
+            <ActivitySearchBar
+              tokens={search.tokens}
+              rawSearchText={search.rawSearchText}
+              activeTokenId={search.activeTokenId}
+              activeTokenType={search.activeTokenType}
+              activeTokenDraft={search.activeTokenDraft}
+              dropdownOpen={search.dropdownOpen}
+              dropdownMode={search.dropdownMode}
+              filterOptions={search.filterOptionAvailability}
+              merchantSuggestions={search.merchantSuggestions}
+              dateSuggestions={search.dateSuggestionResult.suggestions}
+              currencies={search.availableCurrencies}
+              selectedCurrency={search.activeCurrencyCode}
+              onFocusSearch={search.focusSearch}
+              onSetRawSearchText={search.setRawSearchText}
+              onSetActiveDraft={search.setActiveTokenDraft}
+              onConfirmActiveDraft={search.confirmTokenDraft}
+              onSelectFilter={search.selectFilterOption}
+              onSelectMerchantSuggestion={search.selectMerchantSuggestion}
+              onSelectDateSuggestion={search.selectDateSuggestion}
+              onSelectCurrency={search.selectCurrency}
+              onEditToken={search.beginEditingToken}
+              onRemoveToken={search.removeToken}
+              onOpenCategoryPicker={() => {
+                const snapshot = search.getSnapshot();
+                setActivitySearchSnapshot(snapshot);
+                router.push({
+                  pathname: "/(tabs)/planning/categories",
+                  params: {
+                    selectionMode: "true",
+                    selectionTarget: "activitySearchCategoryFilter"
+                  }
+                });
+              }}
+              onClearSearch={search.clearSearch}
+            />
           }
         />
+
+        {search.dropdownOpen && search.dropdownMode !== "hidden" ? (
+          <Pressable
+            onPress={search.dismissDropdown}
+            style={[styles.searchBackdrop, { top: searchBackdropTop }]}
+          />
+        ) : null}
 
         <View style={styles.feedWrap}>
           {isInitialLoading ? (
@@ -174,7 +273,17 @@ export default function ActivityTabScreen() {
                 void transactionsQuery.refetch();
               }}
             />
-          ) : showEmptyState ? (
+          ) : showNoSearchResultsState ? (
+            <TabEmptyStateCard
+              title="No transactions match your current search."
+              subtitle="Please try a different search or contact us if you are missing transactions."
+              ctaLabel="Contact us"
+              onCtaPress={() => router.push("/(tabs)/accounts/support")}
+              verticalSpacingMode="tab-aligned"
+              hideOrb
+              centerText
+            />
+          ) : showNoActivityState ? (
             <TabEmptyStateCard
               title="No activity yet"
               subtitle="Connect your bank to start tracking spending activity."
@@ -189,6 +298,7 @@ export default function ActivityTabScreen() {
               keyExtractor={(item) => item.id}
               stickySectionHeadersEnabled={false}
               bounces={false}
+              onScrollBeginDrag={search.dismissDropdown}
               renderSectionHeader={({ section }) => (
                 <Text style={styles.groupHeading}>{section.title}</Text>
               )}
@@ -474,11 +584,9 @@ const styles = StyleSheet.create({
   tabStage: {
     flex: 1
   },
-  headerIconAction: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: "rgba(18,36,58,0.92)"
+  searchBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 44
   },
   feedWrap: {
     flex: 1

@@ -118,7 +118,7 @@ export const HEADER_SURFACES = {
 export const HEADER_PAGE_PRESETS = {
   Home: "primaryGreeting",
   Accounts: "primaryTwoRowSelector",
-  Activity: "primaryTwoRowSelector",
+  Activity: "primaryTwoRowSearch",
   Cashflow: "primaryDefault",
   Calendar: "primaryDefault",
   "NS Companion": "primaryDefault",
