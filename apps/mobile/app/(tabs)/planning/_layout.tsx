@@ -28,6 +28,12 @@ export default function PlannerStackLayout() {
           animation: "none"
         }}
       />
+      <Stack.Screen
+        name="browse"
+        options={{
+          animation: "none"
+        }}
+      />
     </Stack>
   );
 }

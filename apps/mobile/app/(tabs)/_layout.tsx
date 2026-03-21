@@ -29,7 +29,7 @@ export default function TabsLayout() {
             title: "Home",
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons
-                name={focused ? "sparkles" : "sparkles-outline"}
+                name={focused ? "apps" : "apps-outline"}
                 color={color}
                 size={size}
               />

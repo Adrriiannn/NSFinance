@@ -4,9 +4,13 @@ import { appBottomNavItems } from "./bottomNavConfigs";
 import { FloatingBottomNav } from "./FloatingBottomNav";
 import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 
-const rootTabScreens: Record<string, string | undefined> = {
-  accounts: "index",
-  cashflow: "index"
+const appBottomNavHrefMap: Record<string, string> = {
+  index: "/(tabs)",
+  accounts: "/(tabs)/accounts",
+  activity: "/(tabs)/activity",
+  cashflow: "/(tabs)/cashflow",
+  // Intentionally force a clean route without planning-context params.
+  calendar: "/(tabs)/calendar"
 };
 
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
@@ -70,13 +74,20 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
           return;
         }
 
-        const rootScreen = rootTabScreens[item.key];
-        if (rootScreen) {
-          navigation.navigate(route.name, { screen: rootScreen } as never);
+        const href = appBottomNavHrefMap[item.key];
+        if (!href) {
           return;
         }
 
-        navigation.navigate(route.name, route.params);
+        navigateWithProbe(
+          router as unknown as {
+            push: (href: string) => void;
+            replace: (href: string) => void;
+            navigate?: (href: string) => void;
+          },
+          href,
+          "premium-tab-item"
+        );
       }}
     />
   );

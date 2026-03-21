@@ -385,8 +385,16 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
         : params.sourceTab
       : "cashflow"
   );
+  const sourcePlanningHubTab =
+    params.sourcePlanningHubTab === "overview" ||
+    params.sourcePlanningHubTab === "graphs" ||
+    params.sourcePlanningHubTab === "add" ||
+    params.sourcePlanningHubTab === "calendar" ||
+    params.sourcePlanningHubTab === "discover"
+      ? params.sourcePlanningHubTab
+      : "overview";
   const bottomNavItems = source === "planningHub" ? planningHubBottomNavItems : appBottomNavItems;
-  const activeBottomKey = source === "planningHub" ? "ai" : sourceTab;
+  const activeBottomKey = "__none__";
   const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
   const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
   const [isReady, setIsReady] = useState(false);
@@ -1007,7 +1015,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
                 graphs: "/(tabs)/planning/analytics",
                 add: "/(tabs)/planning/categories",
                 calendar: "/(tabs)/calendar?source=planningHub&sourcePlanningHubTab=calendar",
-                ai: "/(tabs)/companion?source=planningHub"
+                discover: "/(tabs)/planning/browse"
               }[item.key]
             : {
                 index: "/(tabs)",

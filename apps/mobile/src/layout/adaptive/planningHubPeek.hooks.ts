@@ -28,6 +28,7 @@ type HideReason = "timeout" | "outside" | "swipe-down" | "tab-change" | "disable
 
 type UsePlanningHubPeekParams = {
   enabled: boolean;
+  autoPeekEnabled?: boolean;
   getLastInteractionAt?: (() => number) | null;
   sharedRevealKey?: string | null;
 };
@@ -63,6 +64,7 @@ function randomDelay(min: number, max: number) {
 
 export function usePlanningHubPeek({
   enabled,
+  autoPeekEnabled = true,
   getLastInteractionAt,
   sharedRevealKey
 }: UsePlanningHubPeekParams): UsePlanningHubPeekResult {
@@ -260,13 +262,6 @@ export function usePlanningHubPeek({
     setPeekSource(null);
   }, []);
 
-  const resetVisualStateToHidden = useCallback(() => {
-    stopCurrentAnimation();
-    translateY.setValue(PEEK_HIDDEN_TRANSLATE_Y);
-    opacity.setValue(PEEK_HIDDEN_OPACITY);
-    scale.setValue(PEEK_HIDDEN_SCALE);
-  }, [opacity, scale, stopCurrentAnimation, translateY]);
-
   const runHideAnimation = useCallback(
     (onComplete?: () => void) => {
       const duration = isReduceMotionEnabled ? 80 : PEEK_HIDE_DURATION_MS;
@@ -408,7 +403,7 @@ export function usePlanningHubPeek({
   );
 
   const isBlockedForAutoPeek = useCallback(() => {
-    if (!enabled) {
+    if (!enabled || !autoPeekEnabled) {
       return true;
     }
 
@@ -421,10 +416,10 @@ export function usePlanningHubPeek({
     }
 
     return Date.now() - getLastInteractionAt() < AUTO_PEEK_IDLE_WINDOW_MS;
-  }, [enabled, getLastInteractionAt, keyboardVisible]);
+  }, [autoPeekEnabled, enabled, getLastInteractionAt, keyboardVisible]);
 
   const scheduleNextPeek = useCallback(function scheduleNextPeekImpl() {
-    if (!enabled || planningHubPeekSession.autoPeekDisabled) {
+    if (!enabled || !autoPeekEnabled || planningHubPeekSession.autoPeekDisabled) {
       return;
     }
 
@@ -462,7 +457,7 @@ export function usePlanningHubPeek({
         scheduleNextPeekImpl();
       });
     }, delay);
-  }, [enabled, isBlockedForAutoPeek, runAutoPeekSequence, setHiddenState]);
+  }, [autoPeekEnabled, enabled, isBlockedForAutoPeek, runAutoPeekSequence, setHiddenState]);
 
   const hidePeek = useCallback(
     (reason: HideReason = "timeout") => {
@@ -470,7 +465,7 @@ export function usePlanningHubPeek({
       clearPeekTimer();
 
       if (!isVisibleRef.current && reason !== "disabled") {
-        if (enabled && !planningHubPeekSession.autoPeekDisabled) {
+        if (enabled && autoPeekEnabled && !planningHubPeekSession.autoPeekDisabled) {
           scheduleNextPeek();
         }
         return;
@@ -482,7 +477,12 @@ export function usePlanningHubPeek({
 
       setHiddenState();
       runHideAnimation(() => {
-        if (reason !== "disabled" && enabled && !planningHubPeekSession.autoPeekDisabled) {
+        if (
+          reason !== "disabled" &&
+          enabled &&
+          autoPeekEnabled &&
+          !planningHubPeekSession.autoPeekDisabled
+        ) {
           scheduleNextPeek();
         }
       });
@@ -491,6 +491,7 @@ export function usePlanningHubPeek({
       clearHideTimer,
       clearPeekTimer,
       clearSharedManualReveal,
+      autoPeekEnabled,
       enabled,
       runHideAnimation,
       scheduleNextPeek,
@@ -509,7 +510,7 @@ export function usePlanningHubPeek({
       if (source === "auto") {
         runAutoPeekSequence(() => {
           setHiddenState();
-          if (enabled && !planningHubPeekSession.autoPeekDisabled) {
+          if (enabled && autoPeekEnabled && !planningHubPeekSession.autoPeekDisabled) {
             scheduleNextPeek();
           }
         });
@@ -529,6 +530,7 @@ export function usePlanningHubPeek({
     [
       cancelPendingTimers,
       clearHideTimer,
+      autoPeekEnabled,
       enabled,
       hidePeek,
       persistSharedManualReveal,
@@ -556,17 +558,13 @@ export function usePlanningHubPeek({
       }
 
       cancelPendingTimers();
-      setHiddenState();
-      resetVisualStateToHidden();
       onPress();
     },
     [
       cancelPendingTimers,
       clearSharedManualReveal,
       getRemainingSharedManualRevealMs,
-      persistSharedManualReveal,
-      resetVisualStateToHidden,
-      setHiddenState
+      persistSharedManualReveal
     ]
   );
 
@@ -576,29 +574,42 @@ export function usePlanningHubPeek({
     }
 
     const remainingMs = getRemainingSharedManualRevealMs();
-    if (remainingMs <= 0 || isVisibleRef.current) {
+    if (remainingMs <= 0) {
+      if (isVisibleRef.current && peekSourceRef.current === "manual") {
+        hidePeek("timeout");
+      }
       return;
     }
 
-    cancelPendingTimers();
-    isVisibleRef.current = true;
-    peekSourceRef.current = "manual";
-    manualRevealExpiresAtRef.current = Date.now() + remainingMs;
-    setIsVisible(true);
-    setPeekSource("manual");
-    runManualRevealAnimation();
+    clearPeekTimer();
+    clearHideTimer();
+    if (!isVisibleRef.current || peekSourceRef.current !== "manual") {
+      isVisibleRef.current = true;
+      peekSourceRef.current = "manual";
+      setIsVisible(true);
+      setPeekSource("manual");
+      stopCurrentAnimation();
+      translateY.setValue(PEEK_REVEALED_TRANSLATE_Y);
+      opacity.setValue(PEEK_REVEALED_OPACITY);
+      scale.setValue(PEEK_REVEALED_SCALE);
+    }
 
+    manualRevealExpiresAtRef.current = Date.now() + remainingMs;
     hideTimerRef.current = setTimeout(() => {
       hideTimerRef.current = null;
       hidePeek("timeout");
     }, remainingMs);
   }, [
-    cancelPendingTimers,
+    clearHideTimer,
+    clearPeekTimer,
     enabled,
     getRemainingSharedManualRevealMs,
     hidePeek,
-    runManualRevealAnimation,
-    sharedRevealRevision
+    opacity,
+    scale,
+    sharedRevealRevision,
+    stopCurrentAnimation,
+    translateY
   ]);
 
   useEffect(() => {
@@ -607,13 +618,15 @@ export function usePlanningHubPeek({
       return;
     }
 
-    scheduleNextPeek();
+    if (autoPeekEnabled) {
+      scheduleNextPeek();
+    }
 
     return () => {
       cancelPendingTimers();
       stopCurrentAnimation();
     };
-  }, [cancelPendingTimers, enabled, hidePeek, scheduleNextPeek, stopCurrentAnimation]);
+  }, [autoPeekEnabled, cancelPendingTimers, enabled, hidePeek, scheduleNextPeek, stopCurrentAnimation]);
 
   return useMemo(
     () => ({

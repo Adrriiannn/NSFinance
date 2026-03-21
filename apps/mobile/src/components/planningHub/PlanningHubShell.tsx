@@ -12,18 +12,14 @@ import { PLANNING_HUB_CONTENT_PADDING_X } from "./planningHubLayout";
 import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 
 const planningHubNavItems = [
+  { key: "discover", path: "/(tabs)/planning/browse", matchPath: "/planning/browse" },
   { key: "graphs", path: "/(tabs)/planning/analytics", matchPath: "/planning/analytics" },
   { key: "add", path: "/(tabs)/planning/categories", matchPath: "/planning/categories" },
   { key: "overview", path: "/(tabs)/planning", matchPath: "/planning" },
-  { key: "calendar", path: "/(tabs)/calendar?source=planningHub&sourcePlanningHubTab=calendar", matchPath: "/calendar" },
-  { key: "ai", path: "/(tabs)/companion?source=planningHub", matchPath: "/companion" }
+  { key: "calendar", path: "/(tabs)/calendar?source=planningHub&sourcePlanningHubTab=calendar", matchPath: "/calendar" }
 ] as const;
 
 const planningHubNavMap = new Map<string, FloatingBottomNavItem>(planningHubBottomNavItems.map((item) => [item.key, item]));
-
-function buildPlanningHubCompanionHref(sourcePlanningHubTab: string) {
-  return `/(tabs)/companion?source=planningHub&sourcePlanningHubTab=${sourcePlanningHubTab}` as never;
-}
 
 type PlanningHubShellProps = {
   children: ReactNode;
@@ -36,7 +32,7 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
 
   const currentNav = useMemo(() => {
     const normalizedPathname = pathname ?? "";
-    return planningHubNavItems.find((item) => normalizedPathname.startsWith(item.matchPath))?.key ?? planningHubNavItems[0].key;
+    return planningHubNavItems.find((item) => normalizedPathname.startsWith(item.matchPath))?.key ?? "overview";
   }, [pathname]);
 
   return (
@@ -75,19 +71,6 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
             return;
           }
 
-          if (target.key === "ai") {
-            navigateWithProbe(
-              router as unknown as {
-                push: (href: string) => void;
-                replace: (href: string) => void;
-                navigate?: (href: string) => void;
-              },
-              buildPlanningHubCompanionHref(currentNav),
-              "planning-bottom-nav-item-ai"
-            );
-            return;
-          }
-
           navigateWithProbe(
             router as unknown as {
               push: (href: string) => void;
@@ -104,7 +87,7 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
         visible={optionsSheetOpen}
         onClose={() => setOptionsSheetOpen(false)}
         title="Planning Hub"
-        subtitle="Move between plans, analytics, categories, and NS Companion."
+        subtitle="Move between plans, analytics, categories, calendar, and Discover."
       >
         <View style={styles.optionsList}>
           {planningHubNavItems.map((item) => {
@@ -129,27 +112,15 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
                   if (currentNav === item.key) {
                     return;
                   }
-                  if (item.key === "ai") {
-                    navigateWithProbe(
-                      router as unknown as {
-                        push: (href: string) => void;
-                        replace: (href: string) => void;
-                        navigate?: (href: string) => void;
-                      },
-                      buildPlanningHubCompanionHref(currentNav),
-                      "planning-menu-item-ai"
-                    );
-                  } else {
-                    navigateWithProbe(
-                      router as unknown as {
-                        push: (href: string) => void;
-                        replace: (href: string) => void;
-                        navigate?: (href: string) => void;
-                      },
-                      item.path,
-                      "planning-menu-item"
-                    );
-                  }
+                  navigateWithProbe(
+                    router as unknown as {
+                      push: (href: string) => void;
+                      replace: (href: string) => void;
+                      navigate?: (href: string) => void;
+                    },
+                    item.path,
+                    "planning-menu-item"
+                  );
                 }}
               />
             );

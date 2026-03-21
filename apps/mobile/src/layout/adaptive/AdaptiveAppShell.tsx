@@ -40,7 +40,11 @@ function resolveSourceTab(pathname: string | null): "index" | "accounts" | "acti
 function resolvePlanningHubSourceTab(
   pathname: string | null,
   sourcePlanningHubTab?: string
-): "overview" | "graphs" | "add" | "calendar" {
+): "overview" | "graphs" | "add" | "calendar" | "discover" {
+  if (pathname?.startsWith("/planning/browse")) {
+    return "discover";
+  }
+
   if (pathname?.startsWith("/planning/analytics")) {
     return "graphs";
   }
@@ -61,7 +65,8 @@ function resolvePlanningHubSourceTab(
     sourcePlanningHubTab === "overview" ||
     sourcePlanningHubTab === "graphs" ||
     sourcePlanningHubTab === "add" ||
-    sourcePlanningHubTab === "calendar"
+    sourcePlanningHubTab === "calendar" ||
+    sourcePlanningHubTab === "discover"
   ) {
     return sourcePlanningHubTab;
   }

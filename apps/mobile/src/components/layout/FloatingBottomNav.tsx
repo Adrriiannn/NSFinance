@@ -2,7 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
-import { palette, radius, spacing, typography } from "../../theme/tokens";
+import { navigation, palette, radius, spacing, typography } from "../../theme/tokens";
 import { PlanningHubPeekButton } from "../../layout/adaptive/PlanningHubPeekButton";
 import { useOptionalAdaptiveShell } from "../../layout/adaptive/adaptive.hooks";
 import {
@@ -80,10 +80,10 @@ export function FloatingBottomNav({
   const adaptiveShell = useOptionalAdaptiveShell();
   const shellContentPaddingBottom = spacing[8];
   const tabBarBottomOffset = -2;
-  const [tabBarHeight, setTabBarHeight] = useState(0);
   const [optimisticActiveKey, setOptimisticActiveKey] = useState<string | null>(null);
   const [itemLayouts, setItemLayouts] = useState<Partial<Record<string, { x: number; width: number }>>>({});
-  const resolvedActiveKey = optimisticActiveKey ?? activeKey;
+  const hasExplicitActiveKey = items.some((item) => item.key === activeKey);
+  const resolvedActiveKey = hasExplicitActiveKey ? (optimisticActiveKey ?? activeKey) : activeKey;
   const highlightLeft = useRef(new Animated.Value(0)).current;
   const highlightWidth = useRef(new Animated.Value(0)).current;
   const hasAnimatedRef = useRef(false);
@@ -96,10 +96,8 @@ export function FloatingBottomNav({
   const switcherBehavior = switcherAction?.behavior ?? "visible";
   const shouldUsePeekBehavior = switcherAction !== undefined && switcherBehavior === "peek";
   const planningHubPeek = usePlanningHubPeek({
-    enabled:
-      shouldUsePeekBehavior &&
-      !hidden &&
-      (switcherAction?.autoPeekEnabled ?? false),
+    enabled: shouldUsePeekBehavior && !hidden,
+    autoPeekEnabled: switcherAction?.autoPeekEnabled ?? false,
     getLastInteractionAt: adaptiveShell?.getLastInteractionAt ?? null,
     sharedRevealKey: switcherAction?.sharedRevealKey ?? null
   });
@@ -123,7 +121,7 @@ export function FloatingBottomNav({
   const visibleScale = switcherBehavior === "peek"
     ? planningHubScale
     : new Animated.Value(PEEK_REVEALED_SCALE);
-  const switcherBottomOffset = Math.max(tabBarHeight + tabBarBottomOffset, 0);
+  const switcherBottomOffset = Math.max(navigation.floatingTabBarHeight + tabBarBottomOffset, 0);
   const manualRevealTriggeredRef = useRef(false);
   const previousActiveKeyRef = useRef(activeKey);
 
@@ -195,11 +193,16 @@ export function FloatingBottomNav({
   }, [activeKey]);
 
   useEffect(() => {
-    if (shouldUsePeekBehavior && previousActiveKeyRef.current !== activeKey) {
+    if (
+      shouldUsePeekBehavior &&
+      previousActiveKeyRef.current !== activeKey &&
+      isPlanningHubPeekVisible &&
+      peekSource === "auto"
+    ) {
       hidePeek("tab-change");
     }
     previousActiveKeyRef.current = activeKey;
-  }, [activeKey, hidePeek, shouldUsePeekBehavior]);
+  }, [activeKey, hidePeek, isPlanningHubPeekVisible, peekSource, shouldUsePeekBehavior]);
 
   const tabBarPanResponder = useRef(
     PanResponder.create({
@@ -279,10 +282,6 @@ export function FloatingBottomNav({
             paddingBottom: shellContentPaddingBottom
           }
         ]}
-        onLayout={(event) => {
-          const { height } = event.nativeEvent.layout;
-          setTabBarHeight((current) => (current === height ? current : height));
-        }}
         {...(shouldUsePeekBehavior ? tabBarPanResponder.panHandlers : {})}
       >
         {switcherAction && !shouldUsePeekBehavior ? (
@@ -374,7 +373,7 @@ export function FloatingBottomNav({
               accessibilityRole="button"
               accessibilityState={isActive ? { selected: true } : {}}
               onPress={() => {
-                if (item.key !== activeKey) {
+                if (hasExplicitActiveKey && item.key !== activeKey) {
                   setOptimisticActiveKey(item.key);
                 }
                 onPressItem(item);

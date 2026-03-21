@@ -28,7 +28,7 @@ import { layout, palette, radius, spacing, typography } from "../../../src/theme
 
 const quickActionConfig = [
   { key: "new", label: "New plan", icon: "add-circle-outline" },
-  { key: "browse", label: "Browse plans", icon: "storefront-outline" },
+  { key: "discover", label: "Discover", icon: "compass-outline" },
   { key: "published", label: "My published plans", icon: "briefcase-outline" }
 ] as const;
 
@@ -147,7 +147,7 @@ export default function PlanningHubOverviewScreen() {
       return;
     }
 
-    if (key === "browse") {
+    if (key === "discover") {
       router.push("/(tabs)/planning/browse" as never);
       return;
     }

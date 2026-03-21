@@ -1,391 +1,290 @@
-﻿import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { DiscoverFilters } from "../../../src/components/planningHub/discover/DiscoverFilters";
+import { DiscoverHeroCard } from "../../../src/components/planningHub/discover/DiscoverHeroCard";
+import { FeaturedPlanCarousel } from "../../../src/components/planningHub/discover/FeaturedPlanCarousel";
+import { PlanListCard } from "../../../src/components/planningHub/discover/PlanListCard";
+import { PlanningHubShell } from "../../../src/components/planningHub/PlanningHubShell";
+import {
+  PLANNING_HUB_CONTENT_PADDING_X,
+  PLANNING_HUB_CONTENT_TOP_GAP,
+  getPlanningHubContentBottomInset
+} from "../../../src/components/planningHub/planningHubLayout";
 import { useExpensePlanning } from "../../../src/features/expenseTracker/ExpensePlanningProvider";
-import { buildPublicationSections, searchAndSortExpensePlanPublications } from "../../../src/features/expenseTracker/expensePlanCommunityUtils";
-import type { ExpensePlanPeriodType, ExpensePlanPublicationSort } from "../../../src/features/expenseTracker/expensePlanningTypes";
-import { palette, radius, spacing, typography } from "../../../src/theme/tokens";
+import { searchAndSortExpensePlanPublications } from "../../../src/features/expenseTracker/expensePlanCommunityUtils";
+import type { ExpensePlanPeriodType, ExpensePlanPublication } from "../../../src/features/expenseTracker/expensePlanningTypes";
+import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
+import { palette, spacing, typography } from "../../../src/theme/tokens";
 
-const sortOptions: Array<{ id: ExpensePlanPublicationSort; label: string }> = [
+type DiscoverRankingSort = "trending" | "most_liked" | "most_downloaded" | "recently_added";
+type DiscoverPlanTypeFilter = "all" | ExpensePlanPeriodType | "templates";
+
+const rankingOptions: Array<{ id: DiscoverRankingSort; label: string }> = [
   { id: "trending", label: "Trending" },
   { id: "most_liked", label: "Most liked" },
   { id: "most_downloaded", label: "Most downloaded" },
-  { id: "recently_added", label: "Recently added" },
-  { id: "newest", label: "Newest" }
+  { id: "recently_added", label: "Recently added" }
 ];
 
-const typeOptions: Array<{ id: "all" | ExpensePlanPeriodType; label: string }> = [
+const planTypeOptions: Array<{ id: DiscoverPlanTypeFilter; label: string }> = [
   { id: "all", label: "All" },
   { id: "weekly", label: "Weekly" },
   { id: "monthly", label: "Monthly" },
-  { id: "custom", label: "Custom" }
+  { id: "custom", label: "Custom" },
+  { id: "templates", label: "Templates" }
 ];
 
-function formatAmount(amount: number) {
-  return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(amount);
-}
+function buildFilteredPublications(input: {
+  publications: ExpensePlanPublication[];
+  search: string;
+  sort: DiscoverRankingSort;
+  planTypeFilter: DiscoverPlanTypeFilter;
+}) {
+  const templatesOnly = input.planTypeFilter === "templates";
+  const planType = input.planTypeFilter === "templates" ? "all" : input.planTypeFilter;
 
-function formatDate(value: string | null) {
-  if (!value) {
-    return "Draft";
-  }
-
-  return new Date(value).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-}
-
-export default function ExpensePlanCommunityBrowserScreen() {
-  const router = useRouter();
-  const { publications } = useExpensePlanning();
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<ExpensePlanPublicationSort>("trending");
-  const [planType, setPlanType] = useState<"all" | ExpensePlanPeriodType>("all");
-  const [templatesOnly, setTemplatesOnly] = useState(false);
-
-  const sections = useMemo(() => buildPublicationSections(publications), [publications]);
-  const filtered = useMemo(() => searchAndSortExpensePlanPublications({
-    publications,
-    search,
-    sort,
+  return searchAndSortExpensePlanPublications({
+    publications: input.publications,
+    search: input.search,
+    sort: input.sort,
     planType,
     creatorFilter: "",
     templatesOnly
-  }), [planType, publications, search, sort, templatesOnly]);
+  });
+}
+
+export default function PlanningHubDiscoverScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { publications } = useExpensePlanning();
+  const [search, setSearch] = useState("");
+  const [rankingSort, setRankingSort] = useState<DiscoverRankingSort>("trending");
+  const [planTypeFilter, setPlanTypeFilter] = useState<DiscoverPlanTypeFilter>("all");
+
+  const publishedPublications = useMemo(
+    () => publications.filter((item) => item.publicationStatus === "published"),
+    [publications]
+  );
+
+  const sortedSets = useMemo(
+    () => ({
+      trending: buildFilteredPublications({
+        publications: publishedPublications,
+        search,
+        sort: "trending",
+        planTypeFilter
+      }),
+      most_liked: buildFilteredPublications({
+        publications: publishedPublications,
+        search,
+        sort: "most_liked",
+        planTypeFilter
+      }),
+      most_downloaded: buildFilteredPublications({
+        publications: publishedPublications,
+        search,
+        sort: "most_downloaded",
+        planTypeFilter
+      }),
+      recently_added: buildFilteredPublications({
+        publications: publishedPublications,
+        search,
+        sort: "recently_added",
+        planTypeFilter
+      })
+    }),
+    [planTypeFilter, publishedPublications, search]
+  );
+
+  const allPublicPlans = sortedSets[rankingSort];
+  const featuredPlans = sortedSets.trending.slice(0, 6);
+  const popularThisWeek = sortedSets.most_liked.slice(0, 6);
+  const recentlyAdded = sortedSets.recently_added.slice(0, 6);
+
+  const isVeryLimited = allPublicPlans.length <= 3;
+  const isLimited = !isVeryLimited && allPublicPlans.length <= 6;
 
   return (
-    <PlanningHubScreen title="Browse plans">
-      <GlassCard style={styles.heroCard}>
-        <View style={styles.heroRow}>
-          <View style={styles.heroCopy}>
-            <Text style={styles.heroTitle}>Community library</Text>
-            <Text style={styles.heroBody}>Browse polished public plans, save the ones that fit your season, and publish your own when they’re ready.</Text>
-          </View>
-          <View style={styles.heroMetricsWrap}>
-            <Text style={styles.heroMetric}>{publications.filter((item) => item.publicationStatus === "published").length}</Text>
-            <Text style={styles.heroMetricLabel}>Live plans</Text>
-          </View>
-        </View>
-        <View style={styles.heroActions}>
-          <Pressable style={styles.heroActionButton} onPress={() => router.push("/(tabs)/planning/publish" as never)}>
-            <Ionicons name="share-social-outline" size={16} color={palette.textPrimary} />
-            <Text style={styles.heroActionLabel}>Publish a plan</Text>
-          </Pressable>
-          <Pressable style={styles.heroActionButton} onPress={() => router.push("/(tabs)/planning/my-published" as never)}>
-            <Ionicons name="stats-chart-outline" size={16} color={palette.textPrimary} />
-            <Text style={styles.heroActionLabel}>My published plans</Text>
-          </Pressable>
-        </View>
-      </GlassCard>
-
-      <View style={styles.searchWrap}>
-        <Ionicons name="search-outline" size={18} color={palette.textSecondary} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search plans, tags, or creators"
-          placeholderTextColor={palette.textSecondary}
-          style={styles.searchInput}
+    <PlanningHubShell>
+      <View style={styles.screen}>
+        <HeaderShell
+          preset="primaryDefault"
+          includeTopInset
+          bleedHorizontal={PLANNING_HUB_CONTENT_PADDING_X}
+          title="Discover"
         />
-      </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>
-        {sortOptions.map((option) => (
-          <Pressable key={option.id} style={[styles.filterChip, sort === option.id ? styles.filterChipActive : null]} onPress={() => setSort(option.id)}>
-            <Text style={[styles.filterChipLabel, sort === option.id ? styles.filterChipLabelActive : null]}>{option.label}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              paddingTop: PLANNING_HUB_CONTENT_TOP_GAP,
+              paddingBottom: getPlanningHubContentBottomInset(insets.bottom)
+            }
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <DiscoverHeroCard
+            livePlansCount={publishedPublications.length}
+            onPressPublishPlan={() => router.push("/(tabs)/planning/publish" as never)}
+            onPressMyPublishedPlans={() => router.push("/(tabs)/planning/my-published" as never)}
+          />
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>
-        {typeOptions.map((option) => (
-          <Pressable key={option.id} style={[styles.filterChip, planType === option.id ? styles.filterChipActive : null]} onPress={() => setPlanType(option.id)}>
-            <Text style={[styles.filterChipLabel, planType === option.id ? styles.filterChipLabelActive : null]}>{option.label}</Text>
-          </Pressable>
-        ))}
-        <Pressable style={[styles.filterChip, templatesOnly ? styles.filterChipActive : null]} onPress={() => setTemplatesOnly((current) => !current)}>
-          <Text style={[styles.filterChipLabel, templatesOnly ? styles.filterChipLabelActive : null]}>Templates</Text>
-        </Pressable>
-      </ScrollView>
+          <HeaderSearchSlot
+            value={search}
+            onChangeText={setSearch}
+            onClear={() => setSearch("")}
+            placeholder="Search plans, tags, or creators"
+            containerStyle={styles.searchSlot}
+          />
 
-      <View style={styles.sectionWrap}>
-        <Text style={styles.sectionTitle}>Featured</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featureRail}>
-          {sections.featured.map((publication) => (
-            <Pressable key={publication.id} style={styles.featureCard} onPress={() => router.push(`/(tabs)/planning/published/${publication.id}` as never)}>
-              <Text style={styles.featureTitle}>{publication.publicTitle}</Text>
-              <Text style={styles.featureMeta}>{publication.creatorName} • {publication.planType}</Text>
-              <Text style={styles.featureBody} numberOfLines={3}>{publication.publicDescription}</Text>
-              <View style={styles.metricRow}>
-                <Text style={styles.metricPill}>{publication.likeCount} likes</Text>
-                <Text style={styles.metricPill}>{publication.downloadCount} uses</Text>
-                <Text style={styles.metricPill}>{formatAmount(publication.expectedSpendTotal)}</Text>
+          <View style={styles.filterSection}>
+            <DiscoverFilters
+              options={rankingOptions}
+              selectedId={rankingSort}
+              onSelect={(id) => setRankingSort(id as DiscoverRankingSort)}
+              emphasis="primary"
+            />
+            <DiscoverFilters
+              options={planTypeOptions}
+              selectedId={planTypeFilter}
+              onSelect={(id) => setPlanTypeFilter(id as DiscoverPlanTypeFilter)}
+              emphasis="secondary"
+            />
+          </View>
+
+          {allPublicPlans.length === 0 ? (
+            <EmptyState
+              title="No public plans found"
+              message="Try another search term or filter combination."
+            />
+          ) : (
+            <>
+              {!isLimited && featuredPlans.length > 0 ? (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Featured</Text>
+                  <FeaturedPlanCarousel
+                    items={featuredPlans}
+                    onPressPublication={(publicationId) =>
+                      router.push(`/(tabs)/planning/published/${publicationId}` as never)
+                    }
+                  />
+                </View>
+              ) : null}
+
+              {isVeryLimited ? (
+                recentlyAdded.length > 0 ? (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Recently added</Text>
+                    <View style={styles.listWrap}>
+                      {recentlyAdded.map((publication) => (
+                        <PlanListCard
+                          key={publication.id}
+                          publication={publication}
+                          onPress={() => router.push(`/(tabs)/planning/published/${publication.id}` as never)}
+                          variant="compact"
+                          showDate
+                        />
+                      ))}
+                    </View>
+                  </View>
+                ) : null
+              ) : (
+                popularThisWeek.length > 0 ? (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Popular this week</Text>
+                    <View style={styles.listWrap}>
+                      {popularThisWeek.map((publication) => (
+                        <PlanListCard
+                          key={publication.id}
+                          publication={publication}
+                          onPress={() => router.push(`/(tabs)/planning/published/${publication.id}` as never)}
+                          variant="compact"
+                        />
+                      ))}
+                    </View>
+                  </View>
+                ) : null
+              )}
+
+              {!isLimited && recentlyAdded.length > 0 ? (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Recently added</Text>
+                  <View style={styles.listWrap}>
+                    {recentlyAdded.map((publication) => (
+                      <PlanListCard
+                        key={publication.id}
+                        publication={publication}
+                        onPress={() => router.push(`/(tabs)/planning/published/${publication.id}` as never)}
+                        variant="compact"
+                        showDate
+                      />
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>All public plans</Text>
+                  <Text style={styles.sectionCount}>{allPublicPlans.length}</Text>
+                </View>
+                <View style={styles.listWrap}>
+                  {allPublicPlans.map((publication) => (
+                    <PlanListCard
+                      key={publication.id}
+                      publication={publication}
+                      onPress={() => router.push(`/(tabs)/planning/published/${publication.id}` as never)}
+                      variant="full"
+                      showDate={rankingSort === "recently_added"}
+                    />
+                  ))}
+                </View>
               </View>
-            </Pressable>
-          ))}
+            </>
+          )}
         </ScrollView>
       </View>
-
-      <View style={styles.sectionWrap}>
-        <Text style={styles.sectionTitle}>Popular this week</Text>
-        <View style={styles.stackList}>
-          {sections.popularThisWeek.slice(0, 3).map((publication) => (
-            <Pressable key={publication.id} style={styles.rowCard} onPress={() => router.push(`/(tabs)/planning/published/${publication.id}` as never)}>
-              <View style={styles.rowCardCopy}>
-                <Text style={styles.rowCardTitle}>{publication.publicTitle}</Text>
-                <Text style={styles.rowCardMeta}>{publication.creatorTag} • {publication.likeCount} likes • {publication.downloadCount} uses</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.sectionWrap}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>All public plans</Text>
-          <Text style={styles.sectionCaption}>{filtered.length} results</Text>
-        </View>
-        {filtered.length === 0 ? (
-          <EmptyState title="No public plans found" message="Try another search, filter, or publish the first plan in this niche." />
-        ) : (
-          <View style={styles.stackList}>
-            {filtered.map((publication) => (
-              <Pressable key={publication.id} style={styles.libraryCard} onPress={() => router.push(`/(tabs)/planning/published/${publication.id}` as never)}>
-                <View style={styles.libraryCardHeader}>
-                  <View style={styles.libraryCardCopy}>
-                    <Text style={styles.libraryCardTitle}>{publication.publicTitle}</Text>
-                    <Text style={styles.libraryCardMeta}>{publication.creatorName} {publication.creatorTag}</Text>
-                  </View>
-                  <Text style={styles.libraryCardFreshness}>{formatDate(publication.publishedAtUtc)}</Text>
-                </View>
-                <Text style={styles.libraryCardBody} numberOfLines={2}>{publication.publicDescription}</Text>
-                <View style={styles.metricRow}>
-                  <Text style={styles.metricPill}>{publication.planType}</Text>
-                  <Text style={styles.metricPill}>{publication.likeCount} likes</Text>
-                  <Text style={styles.metricPill}>{publication.downloadCount} uses</Text>
-                  {publication.isTemplate ? <Text style={styles.metricPill}>Template</Text> : null}
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </View>
-    </PlanningHubScreen>
+    </PlanningHubShell>
   );
 }
 
 const styles = StyleSheet.create({
-  heroCard: {
+  screen: {
+    flex: 1
+  },
+  scrollContent: {
     gap: spacing[16]
   },
-  heroRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing[12]
+  searchSlot: {
+    width: "100%"
   },
-  heroCopy: {
-    flex: 1,
-    gap: spacing[8]
+  filterSection: {
+    gap: spacing[10]
   },
-  heroTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  heroBody: {
-    color: palette.textSecondary,
-    ...typography.body2
-  },
-  heroMetricsWrap: {
-    minWidth: 72,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4
-  },
-  heroMetric: {
-    color: palette.textPrimary,
-    ...typography.title1
-  },
-  heroMetricLabel: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  heroActions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing[12]
-  },
-  heroActionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8],
-    paddingHorizontal: spacing[12],
-    paddingVertical: spacing[8],
-    borderRadius: radius.medium,
-    backgroundColor: "rgba(255,255,255,0.06)"
-  },
-  heroActionLabel: {
-    color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "700"
-  },
-  searchWrap: {
-    minHeight: 52,
-    borderRadius: radius.large,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    paddingHorizontal: spacing[16],
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  searchInput: {
-    flex: 1,
-    color: palette.textPrimary,
-    ...typography.body1
-  },
-  filterRail: {
-    gap: spacing[8],
-    paddingRight: spacing[16]
-  },
-  filterChip: {
-    minHeight: 34,
-    paddingHorizontal: spacing[12],
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    justifyContent: "center"
-  },
-  filterChipActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary
-  },
-  filterChipLabel: {
-    color: palette.textSecondary,
-    ...typography.caption,
-    fontWeight: "700"
-  },
-  filterChipLabelActive: {
-    color: palette.textPrimary
-  },
-  sectionWrap: {
+  section: {
     gap: spacing[12]
   },
   sectionHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center"
+    alignItems: "center",
+    gap: spacing[8]
   },
   sectionTitle: {
     color: palette.textPrimary,
-    ...typography.title2
-  },
-  sectionCaption: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  featureRail: {
-    gap: spacing[12],
-    paddingRight: spacing[16]
-  },
-  featureCard: {
-    width: 280,
-    minHeight: 188,
-    borderRadius: radius.large,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    padding: spacing[16],
-    gap: spacing[8]
-  },
-  featureTitle: {
-    color: palette.textPrimary,
-    ...typography.title2
-  },
-  featureMeta: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  featureBody: {
-    color: palette.textSecondary,
-    ...typography.body2
-  },
-  metricRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing[8]
-  },
-  metricPill: {
-    color: palette.textPrimary,
-    ...typography.caption,
-    fontWeight: "700"
-  },
-  stackList: {
-    gap: spacing[12]
-  },
-  rowCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing[12],
-    borderRadius: radius.large,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    padding: spacing[16]
-  },
-  rowCardCopy: {
-    flex: 1,
-    gap: 4
-  },
-  rowCardTitle: {
-    color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "800"
   },
-  rowCardMeta: {
+  sectionCount: {
     color: palette.textSecondary,
     ...typography.caption
   },
-  libraryCard: {
-    borderRadius: radius.large,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    padding: spacing[16],
-    gap: spacing[8]
-  },
-  libraryCardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing[12]
-  },
-  libraryCardCopy: {
-    flex: 1,
-    gap: 4
-  },
-  libraryCardTitle: {
-    color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "700"
-  },
-  libraryCardMeta: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  libraryCardFreshness: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  libraryCardBody: {
-    color: palette.textSecondary,
-    ...typography.body2
+  listWrap: {
+    gap: spacing[10]
   }
 });
-
-
-
 

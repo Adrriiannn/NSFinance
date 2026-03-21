@@ -70,7 +70,7 @@ export default function ExpensePlanPublishScreen() {
     Alert.alert(
       result.publication.publicationStatus === "published" ? "Published" : "Moderation check complete",
       result.publication.publicationStatus === "published"
-        ? "Your plan is now live in the community library."
+        ? "Your plan is now live in Discover."
         : result.publication.moderationSummary
     );
     router.replace(`/(tabs)/planning/published/${result.publication.id}` as never);
@@ -80,7 +80,7 @@ export default function ExpensePlanPublishScreen() {
     <PlanningHubScreen title={existingPublication ? "Edit publication" : "Publish plan"}>
       <GlassCard style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>{existingPublication ? "Public metadata" : "Source plan"}</Text>
-        <Text style={styles.sectionCaption}>Choose the plan and shape how it will appear in the community browser.</Text>
+        <Text style={styles.sectionCaption}>Choose the plan and shape how it will appear in Discover.</Text>
 
         {!existingPublication ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.planRail}>
