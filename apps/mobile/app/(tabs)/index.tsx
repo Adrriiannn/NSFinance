@@ -354,7 +354,7 @@ export default function DashboardTabScreen() {
               title="No connected accounts"
               subtitle="Connect your bank to start tracking balances and spending."
               ctaLabel="Connect bank"
-              onCtaPress={() => router.push("/(tabs)/accounts/connect-bank")}
+              onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
               verticalSpacingMode="tab-aligned"
             />
           ) : heroTotals ? (
@@ -463,7 +463,7 @@ export default function DashboardTabScreen() {
                 <View style={styles.quickActionSecondary}>
                   <SecondaryButton
                     label="Connect bank"
-                    onPress={() => router.push("/(tabs)/accounts/connect-bank")}
+                    onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
                   />
                 </View>
               </View>

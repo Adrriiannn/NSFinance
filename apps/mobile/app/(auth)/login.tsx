@@ -1,5 +1,6 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
@@ -11,6 +12,7 @@ import { PasswordField } from "../../src/components/ui/PasswordField";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { TextField } from "../../src/components/ui/TextField";
+import { persistRememberedEmail, readRememberedEmail } from "../../src/features/auth/rememberedEmail";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
@@ -32,7 +34,28 @@ export default function LoginScreen() {
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const [rememberEmail, setRememberEmail] = useState(false);
   const authApiDebugDetail = getAuthApiDebugDetail();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateRememberedEmail = async () => {
+      const remembered = await readRememberedEmail();
+      if (cancelled || !remembered.enabled) {
+        return;
+      }
+
+      setRememberEmail(true);
+      setEmail(remembered.email);
+    };
+
+    void hydrateRememberedEmail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const canSubmit = useMemo(
     () => email.trim().length > 0 && password.length > 0 && captchaVerified,
@@ -68,6 +91,7 @@ export default function LoginScreen() {
       }
     });
 
+    await persistRememberedEmail(rememberEmail, email);
     playSuccess();
     router.replace("/(tabs)");
   };
@@ -110,78 +134,105 @@ export default function LoginScreen() {
           </View>
         ) : null}
 
-        <View style={styles.form}>
-          <View style={styles.narrowBlock}>
-            <TextField
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            placeholder="you@example.com"
-            dense
-            containerStyle={styles.authFieldContainer}
-            style={styles.authFieldInput}
-            error={errors.email}
-            onFocus={() => setFocusedField("email")}
-            forceFocused={focusedField === "email"}
-            />
-          </View>
-          <View style={styles.narrowBlock}>
-          <PasswordField
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            placeholder="B4dM3m0ry_H3lp!"
-            dense
-            containerStyle={styles.authFieldContainer}
-            style={styles.authFieldInput}
-            error={errors.password}
-            onFocus={() => setFocusedField("password")}
-            forceFocused={focusedField === "password"}
-              isPasswordVisible={passwordVisible}
-              onPasswordVisibilityChange={setPasswordVisible}
-              autoHideOnBlur={false}
-            />
-          </View>
-          <CaptchaGate
-            isVerified={captchaVerified}
-            onVerify={() => setCaptchaVerified((current) => !current)}
-            showLabel={false}
-          />
-        </View>
-
-        <View style={[styles.ctaGroup, styles.narrowBlock]}>
-          <View style={styles.primaryAuthRow}>
-            <PrimaryButton
-              label="Log in"
-              onPress={() => void handleLogin()}
-              isLoading={loginMutation.isPending}
-              disabled={!canSubmit}
-              style={styles.primaryAuthButton}
+        <View style={styles.formAndActions}>
+          <View style={styles.form}>
+            <View style={styles.narrowBlock}>
+              <TextField
+                label="Email"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              placeholder="you@example.com"
+              dense
+              containerStyle={styles.authFieldContainer}
+              style={styles.authFieldInput}
+              error={errors.email}
+              onFocus={() => setFocusedField("email")}
+              forceFocused={focusedField === "email"}
+              />
+            </View>
+            <View style={styles.narrowBlock}>
+            <PasswordField
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              placeholder="B4dM3m0ry_H3lp!"
+              dense
+              containerStyle={styles.authFieldContainer}
+              style={styles.authFieldInput}
+              error={errors.password}
+              onFocus={() => setFocusedField("password")}
+              forceFocused={focusedField === "password"}
+                isPasswordVisible={passwordVisible}
+                onPasswordVisibilityChange={setPasswordVisible}
+                autoHideOnBlur={false}
+              />
+            </View>
+            <CaptchaGate
+              isVerified={captchaVerified}
+              onVerify={() => setCaptchaVerified((current) => !current)}
+              showLabel={false}
             />
 
-            <SecondaryButton
-              label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
-              onPress={() => void handleGoogleSignIn()}
-              disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
-              style={styles.primaryAuthButton}
-            />
+            <View style={styles.narrowBlock}>
+              <View style={styles.rememberEmailRow}>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: rememberEmail }}
+                  onPress={() => setRememberEmail((current) => !current)}
+                  style={({ pressed }) => [
+                    styles.rememberEmailCheckbox,
+                    rememberEmail ? styles.rememberEmailCheckboxChecked : null,
+                    pressed ? styles.rememberEmailCheckboxPressed : null
+                  ]}
+                >
+                  {rememberEmail ? <Ionicons name="checkmark" size={14} color={palette.appBackground} /> : null}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Remember my email"
+                  onPress={() => setRememberEmail((current) => !current)}
+                  style={({ pressed }) => [pressed ? styles.linkPressed : null]}
+                >
+                  <Text style={styles.rememberEmailLabel}>Remember my email</Text>
+                </Pressable>
+              </View>
+            </View>
           </View>
-          {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
 
-          <View style={styles.forgotWrap}>
-            <Pressable
-              onPress={() => router.push("/forgot-password" as never)}
-              style={({ pressed }) => [pressed ? styles.linkPressed : null]}
-            >
-              <Text style={styles.forgotLink}>Forgot your password?</Text>
-            </Pressable>
-          </View>
+          <View style={[styles.ctaGroup, styles.narrowBlock]}>
+            <View style={styles.primaryAuthRow}>
+              <PrimaryButton
+                label="Log in"
+                onPress={() => void handleLogin()}
+                isLoading={loginMutation.isPending}
+                disabled={!canSubmit}
+                style={styles.primaryAuthButton}
+              />
 
-          <View style={styles.createAccountSection}>
-            <AuthDivider widthPercent={70} />
-            <SecondaryButton label="Create account" onPress={() => router.push("/register" as never)} />
+              <SecondaryButton
+                label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
+                onPress={() => void handleGoogleSignIn()}
+                disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
+                style={styles.primaryAuthButton}
+              />
+            </View>
+            {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
+
+            <View style={styles.forgotWrap}>
+              <Pressable
+                onPress={() => router.push("/forgot-password" as never)}
+                style={({ pressed }) => [pressed ? styles.linkPressed : null]}
+              >
+                <Text style={styles.forgotLink}>Forgot your password?</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.createAccountSection}>
+              <AuthDivider widthPercent={70} />
+              <SecondaryButton label="Create account" onPress={() => router.push("/register" as never)} />
+            </View>
           </View>
         </View>
       </View>
@@ -227,6 +278,9 @@ const styles = StyleSheet.create({
   form: {
     gap: spacing[16]
   },
+  formAndActions: {
+    gap: spacing[16]
+  },
   authFieldContainer: {
     minHeight: 36,
     borderRadius: 12,
@@ -234,6 +288,34 @@ const styles = StyleSheet.create({
   },
   authFieldInput: {
     paddingVertical: 8
+  },
+  rememberEmailRow: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[10]
+  },
+  rememberEmailCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(18,36,58,0.74)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  rememberEmailCheckboxPressed: {
+    opacity: 0.86
+  },
+  rememberEmailCheckboxChecked: {
+    borderColor: palette.success,
+    backgroundColor: palette.success
+  },
+  rememberEmailLabel: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "600"
   },
   ctaGroup: {
     gap: spacing[12]

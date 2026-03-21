@@ -9,6 +9,7 @@ type ChartSlice = {
   category: string;
   total: number;
   percentage: number;
+  color?: string;
 };
 
 type PlanningHubCategoryRadialChartProps = {
@@ -52,7 +53,10 @@ export function PlanningHubCategoryRadialChart({ data, totalLabel, centerLabel =
                   cx={CENTER}
                   cy={CENTER}
                   r={RADIUS}
-                  stroke={getExpenseTrackerVisual({ domainId: slice.domainId, categoryId: slice.categoryId }).color}
+                  stroke={
+                    slice.color ??
+                    getExpenseTrackerVisual({ domainId: slice.domainId, categoryId: slice.categoryId }).color
+                  }
                   strokeWidth={STROKE_WIDTH}
                   strokeLinecap="butt"
                   strokeDasharray={`${dashLength} ${dashGap}`}

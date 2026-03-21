@@ -319,7 +319,7 @@ export default function CashflowScreen() {
             title="No cashflow data yet"
             subtitle="Connect your bank to start building cashflow insights from your spending data."
             ctaLabel="Connect bank"
-            onCtaPress={() => router.push("/(tabs)/accounts/connect-bank")}
+            onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
             verticalSpacingMode="tab-aligned"
           />
         ) : (

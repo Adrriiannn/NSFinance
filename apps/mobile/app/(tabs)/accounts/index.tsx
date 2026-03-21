@@ -175,7 +175,7 @@ export default function AccountsTabScreen() {
               <HeaderActionButton
                 icon={<Ionicons name="link-outline" size={18} color={palette.textPrimary} />}
                 accessibilityLabel="Connect bank"
-                onPress={() => router.push("/(tabs)/accounts/connect-bank")}
+                onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
                 style={styles.headerIconAction}
               />
               <HeaderDropdownSlot
@@ -207,7 +207,7 @@ export default function AccountsTabScreen() {
           title="No connected accounts"
           subtitle="Connect your bank to start tracking balances and spending."
           ctaLabel="Connect bank"
-          onCtaPress={() => router.push("/(tabs)/accounts/connect-bank")}
+          onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
           verticalSpacingMode="tab-aligned"
         />
       ) : (
@@ -242,7 +242,7 @@ export default function AccountsTabScreen() {
             <ActionItem
               label="Connect bank"
               icon="link-outline"
-              onPress={() => router.push("/(tabs)/accounts/connect-bank")}
+              onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
             />
             <ActionItem
               label="Details"
@@ -342,7 +342,7 @@ export default function AccountsTabScreen() {
                 style={({ pressed }) => [styles.createAccountItem, pressed ? styles.modalItemPressed : null]}
                 onPress={() => {
                   setSelectorVisible(false);
-                  router.push("/(tabs)/accounts/connect-bank");
+                  router.push("/(tabs)/accounts/connect-bank?intent=new");
                 }}
               >
                 <View style={styles.createAccountTextWrap}>

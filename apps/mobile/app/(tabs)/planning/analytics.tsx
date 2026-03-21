@@ -25,14 +25,43 @@ import type { ExpenseAnalyticsMode } from "../../../src/features/expenseTracker/
 import { getExpenseTrackerVisual } from "../../../src/features/expenseTracker/expenseTrackerModels";
 import { HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
+import type { ExpenseTaxonomyDomainDto, ExpenseTrackerEntryDto } from "../../../src/types/api";
 
 const analyticsModes = [
   { label: "Actual", value: "actual" },
   { label: "Planned", value: "planned" },
-  { label: "Variance", value: "variance" }
+  { label: "Variance", value: "variance" },
+  { label: "Savings", value: "savings" }
 ] as const;
 
-const analyticsModeOrder: ExpenseAnalyticsMode[] = ["actual", "planned", "variance"];
+type PlanningAnalyticsMode = ExpenseAnalyticsMode | "savings";
+type SavingsMonthMetric = {
+  key: string;
+  label: string;
+  amount: number;
+  percentage: number;
+  transactionCount: number;
+  color: string;
+  sortKey: number;
+};
+
+const analyticsModeOrder: PlanningAnalyticsMode[] = ["actual", "planned", "variance", "savings"];
+const SAVINGS_DOMAIN_MATCH = ["saving", "invest"];
+const SAVINGS_MONTH_COLORS = [
+  "#58D2E6",
+  "#4EA8FF",
+  "#39C6A8",
+  "#7DD3FC",
+  "#60A5FA",
+  "#2DD4BF",
+  "#38BDF8",
+  "#5EEAD4",
+  "#34D399",
+  "#22D3EE",
+  "#7DD3FC",
+  "#67E8F9"
+];
+const monthLabelFormatter = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" });
 
 function formatAmount(amount: number, currency: string) {
   return new Intl.NumberFormat("en-GB", {
@@ -41,13 +70,86 @@ function formatAmount(amount: number, currency: string) {
   }).format(amount);
 }
 
-function getAnalyticsModeDescription(mode: ExpenseAnalyticsMode) {
+function normalizeToken(value?: string | null) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function isSavingsDomainLabel(domainName?: string | null) {
+  const normalized = normalizeToken(domainName);
+  return SAVINGS_DOMAIN_MATCH.every((fragment) => normalized.includes(fragment));
+}
+
+function buildSavingsMonthMetrics(
+  entries: ExpenseTrackerEntryDto[],
+  domains: ExpenseTaxonomyDomainDto[]
+): SavingsMonthMetric[] {
+  const savingsDomainIds = new Set(
+    domains
+      .filter((domain) => isSavingsDomainLabel(domain.name))
+      .map((domain) => domain.id)
+  );
+
+  const byMonth = new Map<string, { amount: number; transactionCount: number; sortKey: number }>();
+
+  entries.forEach((entry) => {
+    if (entry.status !== "completed") {
+      return;
+    }
+
+    const isSavingsDomain =
+      (entry.domainId !== null && savingsDomainIds.has(entry.domainId)) ||
+      (entry.domainId === null && isSavingsDomainLabel(entry.domainName));
+
+    if (!isSavingsDomain) {
+      return;
+    }
+
+    const occurredAt = new Date(entry.occurredAtUtc);
+    if (Number.isNaN(occurredAt.getTime())) {
+      return;
+    }
+
+    const year = occurredAt.getUTCFullYear();
+    const month = occurredAt.getUTCMonth();
+    const monthStart = Date.UTC(year, month, 1);
+    const key = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const existing = byMonth.get(key) ?? {
+      amount: 0,
+      transactionCount: 0,
+      sortKey: monthStart
+    };
+    existing.amount += Math.abs(entry.amount);
+    existing.transactionCount += 1;
+    byMonth.set(key, existing);
+  });
+
+  const totalSavings = Array.from(byMonth.values()).reduce((sum, item) => sum + item.amount, 0);
+  const denominator = totalSavings > 0 ? totalSavings : 1;
+
+  return Array.from(byMonth.entries())
+    .sort((left, right) => right[1].sortKey - left[1].sortKey)
+    .map(([key, item], index) => ({
+      key,
+      label: monthLabelFormatter.format(new Date(item.sortKey)),
+      amount: Number(item.amount.toFixed(2)),
+      percentage: Number(((item.amount / denominator) * 100).toFixed(1)),
+      transactionCount: item.transactionCount,
+      color: SAVINGS_MONTH_COLORS[index % SAVINGS_MONTH_COLORS.length],
+      sortKey: item.sortKey
+    }));
+}
+
+function getAnalyticsModeDescription(mode: PlanningAnalyticsMode) {
   if (mode === "planned") {
     return "Your planned expenses.";
   }
 
   if (mode === "variance") {
     return "The gap between planned and actual spending.";
+  }
+
+  if (mode === "savings") {
+    return "Monthly savings built from your Savings & Investments transactions.";
   }
 
   return "Your actual recorded expenses.";
@@ -59,10 +161,10 @@ export default function PlanningHubAnalyticsScreen() {
   const entriesQuery = useExpenseTrackerEntriesQuery();
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const { plans } = useExpensePlanning();
-  const [mode, setMode] = useState<ExpenseAnalyticsMode>("actual");
+  const [mode, setMode] = useState<PlanningAnalyticsMode>("actual");
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  const modeRef = useRef<ExpenseAnalyticsMode>("actual");
+  const modeRef = useRef<PlanningAnalyticsMode>("actual");
 
   useEffect(() => {
     modeRef.current = mode;
@@ -77,22 +179,43 @@ export default function PlanningHubAnalyticsScreen() {
   }, [plans, selectedPlanId]);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[0] ?? null;
+  const isSavingsMode = mode === "savings";
   const currency = entriesQuery.data?.[0]?.currency ?? "EUR";
   const taxonomyLookup = useMemo(
     () => buildExpensePlanTaxonomyLookup(taxonomyQuery.data?.domains ?? []),
     [taxonomyQuery.data?.domains]
   );
-  const computed = selectedPlan ? buildExpensePlanComputed(selectedPlan, entriesQuery.data ?? [], taxonomyLookup) : null;
+  const computed = selectedPlan && !isSavingsMode
+    ? buildExpensePlanComputed(selectedPlan, entriesQuery.data ?? [], taxonomyLookup)
+    : null;
   const categoryMetrics = useMemo(
-    () => selectedPlan ? buildExpensePlanCategoryMetrics(selectedPlan, entriesQuery.data ?? [], taxonomyLookup, mode) : [],
-    [entriesQuery.data, mode, selectedPlan, taxonomyLookup]
+    () =>
+      selectedPlan && !isSavingsMode
+        ? buildExpensePlanCategoryMetrics(selectedPlan, entriesQuery.data ?? [], taxonomyLookup, mode)
+        : [],
+    [entriesQuery.data, isSavingsMode, mode, selectedPlan, taxonomyLookup]
+  );
+  const savingsMonthMetrics = useMemo(
+    () => buildSavingsMonthMetrics(entriesQuery.data ?? [], taxonomyQuery.data?.domains ?? []),
+    [entriesQuery.data, taxonomyQuery.data?.domains]
+  );
+  const savingsTopMonths = useMemo(
+    () => [...savingsMonthMetrics].sort((left, right) => right.amount - left.amount).slice(0, 3),
+    [savingsMonthMetrics]
+  );
+  const savingsTotal = useMemo(
+    () => savingsMonthMetrics.reduce((sum, month) => sum + month.amount, 0),
+    [savingsMonthMetrics]
   );
   const topLegendItems = categoryMetrics.slice(0, 3);
-  const totalLabel = mode === "planned"
-    ? computed?.expectedTotal ?? 0
-    : mode === "actual"
-      ? computed?.actualTotal ?? 0
-      : computed?.varianceAmount ?? 0;
+  const totalLabel = isSavingsMode
+    ? savingsTotal
+    : mode === "planned"
+      ? computed?.expectedTotal ?? 0
+      : mode === "actual"
+        ? computed?.actualTotal ?? 0
+        : computed?.varianceAmount ?? 0;
+  const showPlanEmptyState = !selectedPlan && !isSavingsMode;
 
   const chartPanResponder = useMemo(
     () =>
@@ -134,7 +257,7 @@ export default function PlanningHubAnalyticsScreen() {
         secondRow={
           <HeaderDropdownSlot
             title="Current plan"
-            value={selectedPlan?.title ?? null}
+            value={isSavingsMode ? "Savings overview" : selectedPlan?.title ?? null}
             placeholder="Select plan"
             containerStyle={styles.planHeaderDropdown}
             options={plans.map((plan) => ({
@@ -142,6 +265,7 @@ export default function PlanningHubAnalyticsScreen() {
               value: plan.id
             }))}
             onChange={(value) => setSelectedPlanId(value)}
+            disabled={isSavingsMode}
           />
         }
       />
@@ -155,109 +279,179 @@ export default function PlanningHubAnalyticsScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-      {!selectedPlan ? (
+      <PlanningHubSegmentedControl
+        value={mode}
+        options={[...analyticsModes]}
+        onChange={setMode}
+      />
+
+      {showPlanEmptyState ? (
         <EmptyState
           title="No plans to analyse yet"
-          message="Create a plan first, then this screen will compare actual, planned, and variance views." 
+          message="Create a plan first, then this screen will compare actual, planned, and variance views."
           actionLabel="Create plan"
           onActionPress={() => router.push("/(tabs)/planning/builder" as never)}
         />
       ) : (
         <>
-          <PlanningHubSegmentedControl
-            value={mode}
-            options={[...analyticsModes]}
-            onChange={setMode}
-          />
-
           <View {...chartPanResponder.panHandlers}>
             <GlassCard style={styles.chartCard}>
               <View style={styles.chartCardHeader}>
                 <View>
-                  <Text style={styles.chartTitle}>{mode === "actual" ? "Actual spendings" : mode === "planned" ? "Planned allocation" : "Variance view"}</Text>
+                  <Text style={styles.chartTitle}>
+                    {isSavingsMode
+                      ? "Savings distribution"
+                      : mode === "actual"
+                        ? "Actual spendings"
+                        : mode === "planned"
+                          ? "Planned allocation"
+                          : "Variance view"}
+                  </Text>
                   <Text style={styles.chartSubtitle}>{getAnalyticsModeDescription(mode)}</Text>
                 </View>
               </View>
 
               <View style={styles.chartBody}>
                 <PlanningHubCategoryRadialChart
-                  data={categoryMetrics.map((item) => ({
-                    domainId: item.domainId,
-                    categoryId: item.categoryId,
-                    category: item.categoryName,
-                    total: item.amount,
-                    percentage: item.percentage
-                  }))}
+                  data={
+                    isSavingsMode
+                      ? savingsMonthMetrics.map((month) => ({
+                          domainId: null,
+                          categoryId: null,
+                          category: month.key,
+                          total: month.amount,
+                          percentage: month.percentage,
+                          color: month.color
+                        }))
+                      : categoryMetrics.map((item) => ({
+                          domainId: item.domainId,
+                          categoryId: item.categoryId,
+                          category: item.categoryName,
+                          total: item.amount,
+                          percentage: item.percentage
+                        }))
+                  }
                   totalLabel={formatAmount(Math.abs(totalLabel), currency)}
-                  centerLabel={mode === "variance" ? "Variance" : mode === "planned" ? "Planned" : "Actual"}
+                  centerLabel={isSavingsMode ? "Saved" : mode === "variance" ? "Variance" : mode === "planned" ? "Planned" : "Actual"}
                 />
                 <View style={styles.chartLegend}>
-                  {topLegendItems.map((item) => {
-                    const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
-                    return (
-                      <View key={item.key} style={styles.legendRow}>
-                        <View style={styles.legendLabelWrap}>
-                          <View style={[styles.legendDot, { backgroundColor: visuals.color }]} />
-                          <Text style={styles.legendLabel}>{item.categoryName}</Text>
+                  {isSavingsMode ? (
+                    savingsTopMonths.map((month, index) => (
+                      <View key={month.key} style={styles.topMonthChip}>
+                        <View style={[styles.legendDot, { backgroundColor: month.color }]} />
+                        <View style={styles.topMonthChipContent}>
+                          <Text style={styles.topMonthChipTitle}>{`${index + 1}. ${month.label}`}</Text>
+                          <Text style={styles.topMonthChipAmount}>{formatAmount(month.amount, currency)}</Text>
                         </View>
-                        <Text style={styles.legendValue}>{item.percentage.toFixed(1)}%</Text>
                       </View>
-                    );
-                  })}
+                    ))
+                  ) : (
+                    topLegendItems.map((item) => {
+                      const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
+                      return (
+                        <View key={item.key} style={styles.legendRow}>
+                          <View style={styles.legendLabelWrap}>
+                            <View style={[styles.legendDot, { backgroundColor: visuals.color }]} />
+                            <Text style={styles.legendLabel}>{item.categoryName}</Text>
+                          </View>
+                          <Text style={styles.legendValue}>{item.percentage.toFixed(1)}%</Text>
+                        </View>
+                      );
+                    })
+                  )}
                 </View>
               </View>
             </GlassCard>
           </View>
 
-          <View style={styles.breakdownWrap}>
-            {categoryMetrics.map((item) => {
-              const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
-              const expanded = expandedCategory === item.key;
-              return (
-                <GlassCard key={item.key} style={styles.categoryCard}>
-                  <Pressable
-                    style={styles.categoryCardPressable}
-                    onPress={() => {
-                      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                      setExpandedCategory((current) => current === item.key ? null : item.key);
-                    }}
-                  >
-                    <View style={styles.categoryMainRow}>
-                      <View style={[styles.categoryIconWrap, { backgroundColor: `${visuals.color}22` }]}>
-                        <Ionicons name={visuals.icon as keyof typeof Ionicons.glyphMap} size={18} color={visuals.color} />
+          {isSavingsMode ? (
+            savingsMonthMetrics.length ? (
+              <View style={styles.breakdownWrap}>
+                {savingsMonthMetrics.map((month) => (
+                  <GlassCard key={month.key} style={styles.monthCard}>
+                    <View style={styles.monthRow}>
+                      <View style={styles.monthLabelWrap}>
+                        <View style={[styles.legendDot, { backgroundColor: month.color }]} />
+                        <Text style={styles.monthLabel}>{month.label}</Text>
                       </View>
+                      <View style={styles.monthMetricsColumn}>
+                        <Text style={styles.monthAmount}>{formatAmount(month.amount, currency)}</Text>
+                        <Text style={styles.monthMeta}>
+                          {month.percentage.toFixed(1)}% • {month.transactionCount} tx
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.monthProgressTrack}>
+                      <View
+                        style={[
+                          styles.monthProgressFill,
+                          {
+                            width: `${Math.max(month.percentage, 4)}%`,
+                            backgroundColor: month.color
+                          }
+                        ]}
+                      />
+                    </View>
+                  </GlassCard>
+                ))}
+              </View>
+            ) : (
+              <EmptyState
+                title="No savings tracked yet"
+                message="Tag transactions under Savings & Investments to populate this savings breakdown."
+              />
+            )
+          ) : (
+            <View style={styles.breakdownWrap}>
+              {categoryMetrics.map((item) => {
+                const visuals = getExpenseTrackerVisual({ domainId: item.domainId, categoryId: item.categoryId });
+                const expanded = expandedCategory === item.key;
+                return (
+                  <GlassCard key={item.key} style={styles.categoryCard}>
+                    <Pressable
+                      style={styles.categoryCardPressable}
+                      onPress={() => {
+                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        setExpandedCategory((current) => current === item.key ? null : item.key);
+                      }}
+                    >
+                      <View style={styles.categoryMainRow}>
+                        <View style={[styles.categoryIconWrap, { backgroundColor: `${visuals.color}22` }]}>
+                          <Ionicons name={visuals.icon as keyof typeof Ionicons.glyphMap} size={18} color={visuals.color} />
+                        </View>
 
-                      <View style={styles.categoryContentColumn}>
-                        <Text style={styles.categoryName}>{item.categoryName}</Text>
-                        <View style={styles.progressTrackWrap}>
-                          <View style={[styles.progressTrack, { backgroundColor: `${visuals.color}22` }]}>
-                            <View style={[styles.progressFill, { width: `${Math.max(item.percentage, 4)}%`, backgroundColor: visuals.color }]} />
+                        <View style={styles.categoryContentColumn}>
+                          <Text style={styles.categoryName}>{item.categoryName}</Text>
+                          <View style={styles.progressTrackWrap}>
+                            <View style={[styles.progressTrack, { backgroundColor: `${visuals.color}22` }]}>
+                              <View style={[styles.progressFill, { width: `${Math.max(item.percentage, 4)}%`, backgroundColor: visuals.color }]} />
+                            </View>
                           </View>
                         </View>
-                      </View>
 
-                      <View style={styles.categoryMetricsColumn}>
-                        <Text style={styles.categoryMetricPrimary}>{formatAmount(item.amount, currency)}</Text>
-                        <Text style={styles.categoryMetricSecondary}>{item.transactionCount} tx</Text>
-                      </View>
-                    </View>
-                  </Pressable>
-
-                  {expanded ? (
-                    <View style={styles.subcategoryPreview}>
-                      {item.subcategories.slice(0, 4).map((subcategory) => (
-                        <View key={`${subcategory.subcategoryId ?? subcategory.subcategoryName}`} style={styles.subcategoryRow}>
-                          <Text style={styles.subcategoryName}>{subcategory.subcategoryName}</Text>
-                          <Text style={styles.subcategoryAmount}>{formatAmount(subcategory.amount, currency)}</Text>
+                        <View style={styles.categoryMetricsColumn}>
+                          <Text style={styles.categoryMetricPrimary}>{formatAmount(item.amount, currency)}</Text>
+                          <Text style={styles.categoryMetricSecondary}>{item.percentage.toFixed(1)}%</Text>
                         </View>
-                      ))}
-                      <Text style={styles.drillDownLabel}>Transactions shown inline in this section.</Text>
-                    </View>
-                  ) : null}
-                </GlassCard>
-              );
-            })}
-          </View>
+                      </View>
+                    </Pressable>
+
+                    {expanded ? (
+                      <View style={styles.subcategoryPreview}>
+                        {item.subcategories.slice(0, 4).map((subcategory) => (
+                          <View key={`${subcategory.subcategoryId ?? subcategory.subcategoryName}`} style={styles.subcategoryRow}>
+                            <Text style={styles.subcategoryName}>{subcategory.subcategoryName}</Text>
+                            <Text style={styles.subcategoryAmount}>{formatAmount(subcategory.amount, currency)}</Text>
+                          </View>
+                        ))}
+                        <Text style={styles.drillDownLabel}>Transactions shown inline in this section.</Text>
+                      </View>
+                    ) : null}
+                  </GlassCard>
+                );
+              })}
+            </View>
+          )}
         </>
       )}
       </ScrollView>
@@ -303,6 +497,29 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 12
   },
+  topMonthChip: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(18,36,58,0.72)",
+    paddingHorizontal: spacing[10],
+    paddingVertical: spacing[8],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  topMonthChipContent: {
+    flex: 1
+  },
+  topMonthChipTitle: {
+    color: palette.textPrimary,
+    ...typography.caption,
+    fontWeight: "700"
+  },
+  topMonthChipAmount: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
   legendRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -332,6 +549,49 @@ const styles = StyleSheet.create({
   },
   breakdownWrap: {
     gap: spacing[12]
+  },
+  monthCard: {
+    gap: spacing[10]
+  },
+  monthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[12]
+  },
+  monthLabelWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8],
+    flex: 1
+  },
+  monthLabel: {
+    color: palette.textPrimary,
+    ...typography.bodyStrong,
+    fontWeight: "700"
+  },
+  monthMetricsColumn: {
+    alignItems: "flex-end",
+    gap: 2
+  },
+  monthAmount: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "700"
+  },
+  monthMeta: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  monthProgressTrack: {
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(226,236,255,0.12)",
+    overflow: "hidden"
+  },
+  monthProgressFill: {
+    height: "100%",
+    borderRadius: 999
   },
   categoryCard: {
     gap: spacing[12]

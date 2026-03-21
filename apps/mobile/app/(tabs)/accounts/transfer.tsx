@@ -201,7 +201,7 @@ export default function TransferMoneyScreen() {
           title="No connected accounts"
           message="Connect your bank first to set a source account."
           actionLabel="Connect bank"
-          onActionPress={() => router.push("/(tabs)/accounts/connect-bank")}
+          onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
         />
       ) : (
         <>

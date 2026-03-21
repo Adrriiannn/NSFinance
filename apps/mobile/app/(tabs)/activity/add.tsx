@@ -193,7 +193,7 @@ export default function AddTransactionScreen() {
           title="No connected accounts"
           message="Connect your bank first before adding transactions."
           actionLabel="Connect bank"
-          onActionPress={() => router.push("/(tabs)/accounts/connect-bank")}
+          onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
         />
       ) : (
         <>

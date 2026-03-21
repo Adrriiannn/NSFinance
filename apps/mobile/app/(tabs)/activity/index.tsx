@@ -288,7 +288,7 @@ export default function ActivityTabScreen() {
               title="No activity yet"
               subtitle="Connect your bank to start tracking spending activity."
               ctaLabel="Connect bank"
-              onCtaPress={() => router.push("/(tabs)/accounts/connect-bank")}
+              onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
               verticalSpacingMode="tab-aligned"
             />
           ) : (

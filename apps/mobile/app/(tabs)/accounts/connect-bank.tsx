@@ -109,7 +109,7 @@ function shouldThrottleBankingLog(event: string, metadata?: Record<string, unkno
 }
 
 function buildBankReturnUri() {
-  return ExpoLinking.createURL("/(tabs)/accounts/connect-bank");
+  return ExpoLinking.createURL("/(tabs)/accounts/connect-bank?intent=new");
 }
 
 function formatDateAdded(createdUtc?: string | null) {
@@ -196,10 +196,12 @@ function deriveUiState(
 
 export default function AddAccountModalScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ bankingResult?: string; connectionId?: string }>();
+  const params = useLocalSearchParams<{ bankingResult?: string; connectionId?: string; intent?: string }>();
   const queryClient = useQueryClient();
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
+
+  const forceNewConnectionFlow = params.intent === "new";
 
   const [awaitingConsentReturn, setAwaitingConsentReturn] = useState(false);
   const [browserPhase, setBrowserPhase] = useState<BrowserPhase>("idle");
@@ -210,7 +212,7 @@ export default function AddAccountModalScreen() {
   const [lastManualSyncUtc, setLastManualSyncUtc] = useState<string | null>(null);
   const [consentTimedOut, setConsentTimedOut] = useState(false);
 
-  const connectionsQuery = useBankConnectionsQuery(!pendingConnectionId);
+  const connectionsQuery = useBankConnectionsQuery(!pendingConnectionId && !forceNewConnectionFlow);
   const activeConnectionQuery = useBankConnectionQuery(pendingConnectionId);
   const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
   const startLinkMutation = useStartTrueLayerLinkMutation();
@@ -258,19 +260,31 @@ export default function AddAccountModalScreen() {
   }, [queryClient]);
 
   const latestConnection = useMemo(() => {
+    if (forceNewConnectionFlow && !pendingConnectionId) {
+      return null;
+    }
+
     const list = connectionsQuery.data ?? [];
     return [...list].sort((a, b) => Date.parse(b.updatedUtc) - Date.parse(a.updatedUtc))[0] ?? null;
-  }, [connectionsQuery.data]);
+  }, [connectionsQuery.data, forceNewConnectionFlow, pendingConnectionId]);
 
   const activeConnection = useMemo(() => {
     if (pendingConnectionId) {
       return activeConnectionQuery.data ?? null;
     }
 
+    if (forceNewConnectionFlow) {
+      return null;
+    }
+
     return latestConnection;
-  }, [activeConnectionQuery.data, latestConnection, pendingConnectionId]);
+  }, [activeConnectionQuery.data, forceNewConnectionFlow, latestConnection, pendingConnectionId]);
 
   const linkedAccountNames = useMemo(() => {
+    if (forceNewConnectionFlow && !pendingConnectionId) {
+      return [];
+    }
+
     const accounts = linkedBankAccountsQuery.data ?? [];
     const filtered = pendingConnectionId
       ? accounts.filter((account) => account.connectionId === pendingConnectionId)
@@ -284,7 +298,7 @@ export default function AddAccountModalScreen() {
           .filter((name) => name.length > 0)
       )
     );
-  }, [linkedBankAccountsQuery.data, pendingConnectionId]);
+  }, [forceNewConnectionFlow, linkedBankAccountsQuery.data, pendingConnectionId]);
 
   const pendingLinkValid = useMemo(
     () => isLinkStillValid(pendingConsentLink, Date.now()),
@@ -681,8 +695,17 @@ export default function AddAccountModalScreen() {
     return <Redirect href={"/login" as never} />;
   }
 
-  const connectionQueryError = pendingConnectionId ? activeConnectionQuery.error : connectionsQuery.error;
-  const connectionQueryIsError = pendingConnectionId ? activeConnectionQuery.isError : connectionsQuery.isError;
+  const canUseConnectionsQueryState = !pendingConnectionId && !forceNewConnectionFlow;
+  const connectionQueryError = pendingConnectionId
+    ? activeConnectionQuery.error
+    : canUseConnectionsQueryState
+      ? connectionsQuery.error
+      : null;
+  const connectionQueryIsError = pendingConnectionId
+    ? activeConnectionQuery.isError
+    : canUseConnectionsQueryState
+      ? connectionsQuery.isError
+      : false;
   const completionReached = completionStatuses.has(activeConnection?.status ?? "not_connected");
   const showResumeAction =
     uiState === "awaiting_consent" &&
@@ -721,7 +744,7 @@ export default function AddAccountModalScreen() {
   const lastSyncLabel = lastSyncUtc ? formatDateAdded(lastSyncUtc) : "Not synced yet";
 
   return (
-    <ScreenContainer contentStyle={styles.content}>
+    <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
       <View style={styles.mainContent}>
         <View style={styles.header}>
           <Text style={styles.title}>Bank Connection</Text>
@@ -837,42 +860,42 @@ export default function AddAccountModalScreen() {
           </View>
         ) : null}
 
-        <View style={styles.actionSpacer} />
-
         <View style={styles.primaryActions}>
-          <PrimaryButton
-            label="Connect to your bank"
-            onPress={() => {
-              void handleConnectBank();
-            }}
-            isLoading={startLinkMutation.isPending}
-          />
+          <View style={styles.primaryActionRow}>
+            <PrimaryButton
+              label="Connect to your bank"
+              onPress={() => {
+                void handleConnectBank();
+              }}
+              isLoading={startLinkMutation.isPending}
+              style={styles.connectBankButton}
+            />
 
-          <PrimaryButton
-            label="Sync now"
+            <PrimaryButton
+              label="Sync now"
+              onPress={() => {
+                void handleSyncNow();
+              }}
+              isLoading={syncMutation.isPending}
+              disabled={!canSyncNow}
+              style={styles.syncNowButton}
+            />
+          </View>
+
+          <SecondaryButton
+            label="Cancel"
             onPress={() => {
-              void handleSyncNow();
+              logBankingEvent("modal_close", {
+                connectionId: pendingConnectionId,
+                uiState,
+                backendStatus: activeConnection?.status ?? null,
+                linkedAccountCount: linkedAccountNames.length,
+                completionReached
+              });
+              router.back();
             }}
-            isLoading={syncMutation.isPending}
-            disabled={!canSyncNow}
           />
         </View>
-      </View>
-
-      <View style={styles.closeAction}>
-        <SecondaryButton
-          label="Close"
-          onPress={() => {
-            logBankingEvent("modal_close", {
-              connectionId: pendingConnectionId,
-              uiState,
-              backendStatus: activeConnection?.status ?? null,
-              linkedAccountCount: linkedAccountNames.length,
-              completionReached
-            });
-            router.back();
-          }}
-        />
       </View>
     </ScreenContainer>
   );
@@ -933,14 +956,19 @@ const styles = StyleSheet.create({
   resumeActions: {
     gap: spacing[12]
   },
-  actionSpacer: {
-    flex: 1
-  },
   primaryActions: {
     gap: spacing[12]
   },
-  closeAction: {
-    paddingTop: spacing[16]
+  primaryActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[10]
+  },
+  connectBankButton: {
+    flex: 0.65
+  },
+  syncNowButton: {
+    flex: 0.35
   }
 });
 
