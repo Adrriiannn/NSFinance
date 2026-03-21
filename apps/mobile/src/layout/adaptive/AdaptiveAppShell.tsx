@@ -7,9 +7,9 @@ import { FloatingAssistantDock } from "./FloatingAssistantDock";
 import { AdaptiveLayoutContext, useAdaptiveLayoutMetrics } from "./adaptive.hooks";
 import type { AdaptiveAppShellProps, AdaptiveShellFrame } from "./adaptive.types";
 
-const ROOT_TAB_PATHS = new Set(["/", "/accounts", "/activity", "/planner", "/calendar"]);
+const ROOT_TAB_PATHS = new Set(["/", "/accounts", "/activity", "/cashflow", "/calendar"]);
 
-function resolveSourceTab(pathname: string | null): "index" | "accounts" | "activity" | "planner" {
+function resolveSourceTab(pathname: string | null): "index" | "accounts" | "activity" | "cashflow" | "calendar" {
   if (pathname?.startsWith("/accounts")) {
     return "accounts";
   }
@@ -18,8 +18,12 @@ function resolveSourceTab(pathname: string | null): "index" | "accounts" | "acti
     return "activity";
   }
 
-  if (pathname?.startsWith("/planner")) {
-    return "planner";
+  if (pathname?.startsWith("/cashflow")) {
+    return "cashflow";
+  }
+
+  if (pathname?.startsWith("/calendar")) {
+    return "calendar";
   }
 
   return "index";
@@ -64,7 +68,7 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
           <FloatingAssistantDock
             accessibilityLabel="Open NS Companion"
             onPress={() =>
-              router.push(`/companion?source=app&sourceTab=${sourceTab}` as never)
+              router.push(`/(tabs)/companion?source=app&sourceTab=${sourceTab}` as never)
             }
           />
         ) : null}
@@ -79,3 +83,4 @@ const styles = StyleSheet.create({
     backgroundColor: surfaces.app
   }
 });
+

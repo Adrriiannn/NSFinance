@@ -70,14 +70,6 @@ export default function AuthEntryScreen() {
         />
 
         <SecondaryButton
-          label="Verify email"
-          onPress={() => {
-            clearSessionMessage();
-            router.push("/verify-email" as never);
-          }}
-        />
-
-        <SecondaryButton
           label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
           onPress={() => void handleGoogleSignIn()}
           disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
@@ -86,7 +78,7 @@ export default function AuthEntryScreen() {
 
         <View style={styles.legalRow}>
           <SecondaryButton label="Terms" onPress={() => router.push("/legal/terms" as never)} />
-          <SecondaryButton label="Privacy" onPress={() => router.push("/legal/privacy" as never)} />
+          <SecondaryButton label="Privacy" onPress={() => router.push("/legal/privacy-policy" as never)} />
         </View>
       </GlassCard>
     </AuthScreen>
@@ -130,3 +122,4 @@ const styles = StyleSheet.create({
     gap: spacing[8]
   }
 });
+

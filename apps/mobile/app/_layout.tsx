@@ -34,54 +34,6 @@ export default function RootLayout() {
           <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs)" />
-          <Stack.Screen
-            name="companion/index"
-            options={{
-              presentation: "card",
-              animation: "slide_from_right",
-              contentStyle: { backgroundColor: palette.appBackground }
-            }}
-          />
-          <Stack.Screen
-            name="modals/add-account"
-            options={{
-              presentation: "card",
-              animation: "slide_from_bottom",
-              contentStyle: { backgroundColor: palette.appBackground }
-            }}
-          />
-          <Stack.Screen
-            name="modals/send-money"
-            options={{
-              presentation: "card",
-              animation: "slide_from_bottom",
-              contentStyle: { backgroundColor: palette.appBackground }
-            }}
-          />
-          <Stack.Screen
-            name="modals/move-money"
-            options={{
-              presentation: "card",
-              animation: "slide_from_bottom",
-              contentStyle: { backgroundColor: palette.appBackground }
-            }}
-          />
-          <Stack.Screen
-            name="modals/add-transaction"
-            options={{
-              presentation: "card",
-              animation: "slide_from_bottom",
-              contentStyle: { backgroundColor: palette.appBackground }
-            }}
-          />
-          <Stack.Screen
-            name="modals/transaction-context"
-            options={{
-              presentation: "transparentModal",
-              animation: "fade",
-              contentStyle: { backgroundColor: "transparent" }
-            }}
-          />
         </Stack>
       </ThemeProvider>
     </AppProviders>

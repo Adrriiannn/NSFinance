@@ -1,5 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import {
+  deleteJsonFileStorage,
+  readJsonFileStorage,
+  writeJsonFileStorage
+} from "../../lib/storage/jsonFileStore";
 import { useAuthSession } from "../../providers/AuthProvider";
 import type {
   ExpensePlan,
@@ -127,6 +132,27 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
   useEffect(() => {
     const hydrate = async () => {
       try {
+        const [storedPlans, storedBuilder, storedCommunity] = await Promise.all([
+          readJsonFileStorage<ExpensePlan[]>(PLANS_STORAGE_KEY),
+          readJsonFileStorage<ExpensePlanDraft>(BUILDER_STORAGE_KEY),
+          readJsonFileStorage<ExpensePlanPublication[]>(COMMUNITY_STORAGE_KEY)
+        ]);
+
+        if (storedPlans) {
+          setPlans(storedPlans);
+        }
+        if (storedBuilder) {
+          setBuilderDraft(storedBuilder);
+        }
+        if (storedCommunity) {
+          setPublications(storedCommunity.map((item) => normalizePublicationStatus(item)));
+        }
+
+        if (storedPlans || storedBuilder || storedCommunity) {
+          setHasHydrated(true);
+          return;
+        }
+
         const [rawPlans, rawBuilder, rawCommunity] = await Promise.all([
           SecureStore.getItemAsync(PLANS_STORAGE_KEY),
           SecureStore.getItemAsync(BUILDER_STORAGE_KEY),
@@ -134,13 +160,24 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
         ]);
 
         if (rawPlans) {
-          setPlans(JSON.parse(rawPlans) as ExpensePlan[]);
+          const parsedPlans = JSON.parse(rawPlans) as ExpensePlan[];
+          setPlans(parsedPlans);
+          await writeJsonFileStorage(PLANS_STORAGE_KEY, parsedPlans);
+          await SecureStore.deleteItemAsync(PLANS_STORAGE_KEY);
         }
         if (rawBuilder) {
-          setBuilderDraft(JSON.parse(rawBuilder) as ExpensePlanDraft);
+          const parsedBuilder = JSON.parse(rawBuilder) as ExpensePlanDraft;
+          setBuilderDraft(parsedBuilder);
+          await writeJsonFileStorage(BUILDER_STORAGE_KEY, parsedBuilder);
+          await SecureStore.deleteItemAsync(BUILDER_STORAGE_KEY);
         }
         if (rawCommunity) {
-          setPublications((JSON.parse(rawCommunity) as ExpensePlanPublication[]).map((item) => normalizePublicationStatus(item)));
+          const parsedCommunity = (JSON.parse(rawCommunity) as ExpensePlanPublication[]).map((item) =>
+            normalizePublicationStatus(item)
+          );
+          setPublications(parsedCommunity);
+          await writeJsonFileStorage(COMMUNITY_STORAGE_KEY, parsedCommunity);
+          await SecureStore.deleteItemAsync(COMMUNITY_STORAGE_KEY);
         }
       } catch {
         // Ignore hydration issues and fall back to seeded state.
@@ -207,7 +244,7 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
       return;
     }
 
-    void SecureStore.setItemAsync(PLANS_STORAGE_KEY, JSON.stringify(plans));
+    void writeJsonFileStorage(PLANS_STORAGE_KEY, plans);
   }, [hasHydrated, plans]);
 
   useEffect(() => {
@@ -215,7 +252,7 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
       return;
     }
 
-    void SecureStore.setItemAsync(COMMUNITY_STORAGE_KEY, JSON.stringify(publications));
+    void writeJsonFileStorage(COMMUNITY_STORAGE_KEY, publications);
   }, [hasHydrated, publications]);
 
   useEffect(() => {
@@ -224,11 +261,11 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
     }
 
     if (!builderDraft) {
-      void SecureStore.deleteItemAsync(BUILDER_STORAGE_KEY);
+      void deleteJsonFileStorage(BUILDER_STORAGE_KEY);
       return;
     }
 
-    void SecureStore.setItemAsync(BUILDER_STORAGE_KEY, JSON.stringify(builderDraft));
+    void writeJsonFileStorage(BUILDER_STORAGE_KEY, builderDraft);
   }, [builderDraft, hasHydrated]);
 
   const getPlanById = useCallback((planId: string) => plans.find((plan) => plan.id === planId) ?? null, [plans]);
@@ -632,7 +669,7 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
 export function useExpensePlanning() {
   const context = useContext(ExpensePlanningContext);
   if (!context) {
-    throw new Error("useExpensePlanning must be used within ExpensePlanningProvider.");
+    throw new Error("useExpensePlanning must be used within the Planning Hub provider.");
   }
 
   return context;

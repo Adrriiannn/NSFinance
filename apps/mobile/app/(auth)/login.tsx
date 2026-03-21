@@ -206,7 +206,7 @@ export default function LoginScreen() {
 
       <AuthLegalLinks
         onPressTerms={() => router.push("/legal/terms" as never)}
-        onPressPrivacy={() => router.push("/legal/privacy" as never)}
+        onPressPrivacy={() => router.push("/legal/privacy-policy" as never)}
       />
     </AuthScreen>
   );
@@ -258,6 +258,7 @@ const styles = StyleSheet.create({
     ...typography.caption
   }
 });
+
 
 
 

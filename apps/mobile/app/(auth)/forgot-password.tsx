@@ -61,7 +61,6 @@ export default function ForgotPasswordScreen() {
           isLoading={forgotMutation.isPending}
           disabled={!email.trim()}
         />
-        <SecondaryButton label="Reset with token" onPress={() => router.push("/reset-password" as never)} />
         <SecondaryButton label="Back to sign in" onPress={() => router.push("/login" as never)} />
       </View>
     </AuthScreen>

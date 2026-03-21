@@ -175,7 +175,7 @@ export default function AccountsTabScreen() {
               <HeaderActionButton
                 icon={<Ionicons name="link-outline" size={18} color={palette.textPrimary} />}
                 accessibilityLabel="Connect bank"
-                onPress={() => router.push("/modals/add-account")}
+                onPress={() => router.push("/(tabs)/accounts/connect-bank")}
                 style={styles.headerIconAction}
               />
               <HeaderDropdownSlot
@@ -207,7 +207,7 @@ export default function AccountsTabScreen() {
           title="No connected accounts"
           subtitle="Connect your bank to start tracking balances and spending."
           ctaLabel="Connect bank"
-          onCtaPress={() => router.push("/modals/add-account")}
+          onCtaPress={() => router.push("/(tabs)/accounts/connect-bank")}
           verticalSpacingMode="tab-aligned"
         />
       ) : (
@@ -235,14 +235,14 @@ export default function AccountsTabScreen() {
 
           <View style={styles.actionGrid}>
             <ActionItem
-              label="Send money"
-              icon="link-outline"
-              onPress={() => router.push("/modals/send-money")}
+              label="Transfer money"
+              icon="swap-horizontal-outline"
+              onPress={() => router.push("/(tabs)/accounts/transfer?mode=external")}
             />
             <ActionItem
-              label="Move money"
-              icon="swap-horizontal-outline"
-              onPress={() => router.push("/modals/move-money")}
+              label="Connect bank"
+              icon="link-outline"
+              onPress={() => router.push("/(tabs)/accounts/connect-bank")}
             />
             <ActionItem
               label="Details"
@@ -342,7 +342,7 @@ export default function AccountsTabScreen() {
                 style={({ pressed }) => [styles.createAccountItem, pressed ? styles.modalItemPressed : null]}
                 onPress={() => {
                   setSelectorVisible(false);
-                  router.push("/modals/add-account");
+                  router.push("/(tabs)/accounts/connect-bank");
                 }}
               >
                 <View style={styles.createAccountTextWrap}>
@@ -608,3 +608,5 @@ const styles = StyleSheet.create({
   },
   
 });
+
+

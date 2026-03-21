@@ -1,4 +1,5 @@
 import { View } from "react-native";
+import { ExpensePlanningProvider } from "../features/expenseTracker/ExpensePlanningProvider";
 import { AuthProvider, useAuthSession } from "./AuthProvider";
 import { PlannerProvider } from "./PlannerProvider";
 import { QueryProvider } from "./QueryProvider";
@@ -31,9 +32,11 @@ export function AppProviders({ children }: AppProvidersProps) {
   return (
     <QueryProvider>
       <AuthProvider>
-        <PlannerProvider>
-          <InteractionCapture>{children}</InteractionCapture>
-        </PlannerProvider>
+        <ExpensePlanningProvider>
+          <PlannerProvider>
+            <InteractionCapture>{children}</InteractionCapture>
+          </PlannerProvider>
+        </ExpensePlanningProvider>
       </AuthProvider>
     </QueryProvider>
   );

@@ -244,12 +244,7 @@ export default function AccountDetailsScreen() {
                     key={transaction.id}
                     transaction={transaction}
                     index={index}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/modals/transaction-context",
-                        params: { transactionId: transaction.id }
-                      })
-                    }
+                    onPress={() => router.push(`/(tabs)/activity/${transaction.id}` as never)}
                   />
                 ))
               ) : (

@@ -3,14 +3,14 @@ import { useCallback, useMemo, useRef } from "react";
 import { PanResponder, useWindowDimensions } from "react-native";
 
 type MainTabSwipeTarget = {
-  path: "/(tabs)" | "/(tabs)/accounts" | "/(tabs)/activity" | "/(tabs)/planner";
+  path: "/(tabs)" | "/(tabs)/accounts" | "/(tabs)/activity" | "/(tabs)/cashflow";
 };
 
 const mainTabSwipeTargets: readonly MainTabSwipeTarget[] = [
   { path: "/(tabs)" },
   { path: "/(tabs)/accounts" },
   { path: "/(tabs)/activity" },
-  { path: "/(tabs)/planner" }
+  { path: "/(tabs)/cashflow" }
 ] as const;
 
 type MainTabPath = MainTabSwipeTarget["path"];

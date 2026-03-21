@@ -1,5 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import {
+  readJsonFileStorage,
+  writeJsonFileStorage
+} from "../lib/storage/jsonFileStore";
 
 export type PlannerCategory = string;
 export type CategoryDirection = "Expense" | "Income";
@@ -158,13 +162,28 @@ export function PlannerProvider({ children }: PlannerProviderProps) {
   useEffect(() => {
     const load = async () => {
       try {
-        const raw = await SecureStore.getItemAsync(STORAGE_KEY);
-        if (!raw) {
+        const stored = await readJsonFileStorage<PlannerState>(STORAGE_KEY);
+        if (stored) {
+          setState({
+            necessities: stored.necessities ?? [],
+            annotations: stored.annotations ?? {},
+            plannerNotes: stored.plannerNotes ?? "",
+            customCategories: {
+              Expense: stored.customCategories?.Expense ?? [],
+              Income: stored.customCategories?.Income ?? []
+            }
+          });
           setIsReady(true);
           return;
         }
 
-        const parsed = JSON.parse(raw) as PlannerState;
+        const legacyRaw = await SecureStore.getItemAsync(STORAGE_KEY);
+        if (!legacyRaw) {
+          setIsReady(true);
+          return;
+        }
+
+        const parsed = JSON.parse(legacyRaw) as PlannerState;
         setState({
           necessities: parsed.necessities ?? [],
           annotations: parsed.annotations ?? {},
@@ -174,6 +193,8 @@ export function PlannerProvider({ children }: PlannerProviderProps) {
             Income: parsed.customCategories?.Income ?? []
           }
         });
+        await writeJsonFileStorage(STORAGE_KEY, parsed);
+        await SecureStore.deleteItemAsync(STORAGE_KEY);
       } catch {
         setState(defaultState);
       } finally {
@@ -189,7 +210,7 @@ export function PlannerProvider({ children }: PlannerProviderProps) {
       return;
     }
 
-    void SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(state));
+    void writeJsonFileStorage(STORAGE_KEY, state);
   }, [isReady, state]);
 
   const categoryCatalog = useMemo(

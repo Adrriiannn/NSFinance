@@ -63,9 +63,9 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="planner"
+          name="cashflow"
           options={{
-            title: "Planner",
+            title: "Cashflow",
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons
                 name={focused ? "calendar" : "calendar-outline"}
@@ -86,6 +86,18 @@ export default function TabsLayout() {
                 size={size}
               />
             )
+          }}
+        />
+        <Tabs.Screen
+          name="planning"
+          options={{
+            href: null
+          }}
+        />
+        <Tabs.Screen
+          name="companion"
+          options={{
+            href: null
           }}
         />
       </Tabs>

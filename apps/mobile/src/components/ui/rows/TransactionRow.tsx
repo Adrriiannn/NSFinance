@@ -102,7 +102,7 @@ export function TransactionRow({
         </View>
 
         <View style={{ alignItems: "flex-end", minWidth: 88 }}>
-          <AmountText amount={transaction.amount} currency={transaction.currency} />
+          <AmountText amount={transaction.amount} currency={transaction.currency} appearance="transaction" />
           {showTimestamp ? <Text style={rowPresets.trailing}>{timestamp}</Text> : null}
         </View>
       </Pressable>

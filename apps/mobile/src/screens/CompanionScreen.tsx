@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -19,7 +19,7 @@ import {
   View
 } from "react-native";
 import { FloatingBottomNav } from "../components/layout/FloatingBottomNav";
-import { appBottomNavItems, expenseBottomNavItems } from "../components/layout/bottomNavConfigs";
+import { appBottomNavItems, planningHubBottomNavItems } from "../components/layout/bottomNavConfigs";
 import { GlassCard } from "../components/ui/GlassCard";
 import { HeaderActionButton, HeaderShell } from "../layout/appHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -259,7 +259,7 @@ const formatChatTitle = (chat: CompanionChat) => {
 
   const firstUserMessage = chat.messages.find((item) => item.role === "user")?.text;
   if (!firstUserMessage) {
-    return "Planner conversation";
+    return "Cashflow conversation";
   }
 
   return firstUserMessage.length > 36
@@ -363,22 +363,29 @@ function rankPrompts(input: string) {
 }
 
 type CompanionScreenProps = {
-  sourceOverride?: "app" | "expense";
-  sourceTabOverride?: "index" | "accounts" | "activity" | "planner";
+  sourceOverride?: "app" | "planningHub";
+  sourceTabOverride?: "index" | "accounts" | "activity" | "cashflow" | "calendar";
 };
 
-export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverride }: CompanionScreenProps = {}) {
-  const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourceExpenseTab?: string }>();
+export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverride }: CompanionScreenProps = {}) {
+  const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourcePlanningHubTab?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const source = sourceOverride ?? (params.source === "expense" ? "expense" : "app");
+  const source = sourceOverride ?? (params.source === "planningHub" || params.source === "expense" ? "planningHub" : "app");
   const sourceTab = sourceTabOverride ?? (
-    params.sourceTab === "index" || params.sourceTab === "accounts" || params.sourceTab === "activity" || params.sourceTab === "planner"
-      ? params.sourceTab
-      : "planner"
+    params.sourceTab === "index" ||
+    params.sourceTab === "accounts" ||
+    params.sourceTab === "activity" ||
+    params.sourceTab === "cashflow" ||
+    params.sourceTab === "calendar" ||
+    params.sourceTab === "planner"
+      ? params.sourceTab === "planner"
+        ? "cashflow"
+        : params.sourceTab
+      : "cashflow"
   );
-  const bottomNavItems = source === "expense" ? expenseBottomNavItems : appBottomNavItems;
-  const activeBottomKey = source === "expense" ? "ai" : sourceTab;
+  const bottomNavItems = source === "planningHub" ? planningHubBottomNavItems : appBottomNavItems;
+  const activeBottomKey = source === "planningHub" ? "ai" : sourceTab;
   const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
   const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
   const [isReady, setIsReady] = useState(false);
@@ -571,7 +578,7 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
     const assistantMessage: CompanionMessage = {
       id: `${Date.now()}-a`,
       role: "assistant",
-      text: "I can help with guidance using your current planning context. Deeper intelligence will improve as your transaction context and necessities coverage grow.",
+      text: "I can help with guidance using your current cashflow context. Deeper intelligence will improve as your transaction context and necessities coverage grow.",
       createdUtc: now
     };
 
@@ -946,24 +953,51 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
       <FloatingBottomNav
         items={bottomNavItems}
         activeKey={activeBottomKey}
+        switcherAction={
+          source === "planningHub"
+            ? {
+                label: "Finance Hub",
+                icon: "wallet-outline",
+                accessibilityLabel: "Return to finance hub",
+                behavior: "peek",
+                autoPeekEnabled: true,
+                sharedRevealKey: "hub-switcher",
+                onPress: () => {
+                  router.replace("/(tabs)" as never);
+                }
+              }
+            : {
+                label: "Planning Hub",
+                icon: "notebook-outline",
+                iconFamily: "material",
+                accessibilityLabel: "Open planning hub",
+                behavior: "peek",
+                autoPeekEnabled: true,
+                sharedRevealKey: "hub-switcher",
+                onPress: () => {
+                  router.replace("/(tabs)/planning" as never);
+                }
+              }
+        }
         onPressItem={(item) => {
           if (item.key === activeBottomKey) {
             return;
           }
 
-          const href = source === "expense"
+          const href = source === "planningHub"
             ? {
-                overview: "/(tabs)/planner/expense-tracker/overview",
-                graphs: "/(tabs)/planner/expense-tracker/graphs",
-                add: "/(tabs)/planner/expense-tracker/add",
-                calendar: "/(tabs)/planner/expense-tracker/calendar",
-                ai: "/companion/expense"
+                overview: "/(tabs)/planning",
+                graphs: "/(tabs)/planning/analytics",
+                add: "/(tabs)/planning/categories",
+                calendar: "/(tabs)/calendar?source=planningHub&sourcePlanningHubTab=calendar",
+                ai: "/(tabs)/companion?source=planningHub"
               }[item.key]
             : {
                 index: "/(tabs)",
                 accounts: "/(tabs)/accounts",
                 activity: "/(tabs)/activity",
-                planner: "/(tabs)/planner"
+                cashflow: "/(tabs)/cashflow",
+                calendar: "/(tabs)/calendar"
               }[item.key];
 
           if (!href) {
@@ -1016,7 +1050,7 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
                         style={({ pressed }) => [styles.historyEditButton, pressed ? styles.historyItemPressed : null]}
                         onPress={() => openEditChat(chat)}
                       >
-                        <Ionicons name="create-outline" size={14} color={palette.textPrimary} />
+                        <Ionicons name="color-palette-outline" size={15} color={palette.textPrimary} />
                       </Pressable>
                       <Pressable
                         style={({ pressed }) => [
@@ -1026,9 +1060,9 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
                         ]}
                         onPress={() => togglePinChat(chat.id)}
                       >
-                        <Ionicons
-                          name={chat.isPinned ? "pin" : "pin-outline"}
-                          size={14}
+                        <MaterialCommunityIcons
+                          name={chat.isPinned ? "pin" : "pin-off-outline"}
+                          size={15}
                           color={chat.isPinned ? palette.textPrimary : palette.textSecondary}
                         />
                       </Pressable>
@@ -1093,7 +1127,7 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
                         style={({ pressed }) => [styles.historyEditButton, pressed ? styles.historyItemPressed : null]}
                         onPress={() => openEditChat(chat)}
                       >
-                        <Ionicons name="create-outline" size={14} color={palette.textPrimary} />
+                        <Ionicons name="color-palette-outline" size={15} color={palette.textPrimary} />
                       </Pressable>
                       <Pressable
                         style={({ pressed }) => [
@@ -1103,9 +1137,9 @@ export default function PlannerCompanionScreen({ sourceOverride, sourceTabOverri
                         ]}
                         onPress={() => togglePinChat(chat.id)}
                       >
-                        <Ionicons
-                          name={chat.isPinned ? "pin" : "pin-outline"}
-                          size={14}
+                        <MaterialCommunityIcons
+                          name={chat.isPinned ? "pin" : "pin-off-outline"}
+                          size={15}
                           color={chat.isPinned ? palette.textPrimary : palette.textSecondary}
                         />
                       </Pressable>
@@ -1514,3 +1548,4 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   }
 });
+

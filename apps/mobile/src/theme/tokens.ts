@@ -27,6 +27,8 @@ export const palette = {
   success: theme.colors.status.success,
   caution: theme.colors.status.warning,
   negative: theme.colors.status.danger,
+  moneyPositive: theme.colors.money.positive,
+  moneyNegative: theme.colors.money.negative,
   overlay: theme.colors.overlay.strong
 } as const;
 

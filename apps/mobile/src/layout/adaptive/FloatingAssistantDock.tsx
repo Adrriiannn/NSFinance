@@ -7,7 +7,7 @@ import {
   StyleSheet,
   View
 } from "react-native";
-import { palette, spacing } from "../../theme/tokens";
+import { palette, spacing, zIndex } from "../../theme/tokens";
 import { surfacePresets } from "../../components/ui/surfaces/surface.presets";
 import { useAdaptiveShell } from "./adaptive.hooks";
 import { useAuthSession } from "../../providers/AuthProvider";
@@ -344,6 +344,7 @@ export function FloatingAssistantDock({
         style={({ pressed }) => [
           surfacePresets.fab,
           styles.button,
+          styles.buttonShadow,
           {
             width: metrics.floatingAssistantSize,
             height: metrics.floatingAssistantSize,
@@ -382,13 +383,22 @@ export function FloatingAssistantDock({
 
 const styles = StyleSheet.create({
   wrapper: {
-    position: "absolute"
+    position: "absolute",
+    zIndex: zIndex.fab,
+    elevation: zIndex.fab
   },
   button: {
     paddingHorizontal: 0,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden"
+  },
+  buttonShadow: {
+    shadowColor: "#000000",
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 6
   },
   dockedButtonLeft: {
     borderTopLeftRadius: 0,

@@ -33,8 +33,7 @@ export function requestOpenGlobalAppMenu() {
 const menuItems = [
   { label: "Profile", path: "/(tabs)/accounts/profile", icon: "person-outline" },
   { label: "Security", path: "/(tabs)/accounts/security", icon: "shield-checkmark-outline" },
-  { label: "Privacy", path: "/(tabs)/accounts/privacy", icon: "lock-closed-outline" },
-  { label: "Legal", path: "/(tabs)/accounts/legal", icon: "document-text-outline" },
+  { label: "Legal & Privacy", path: "/(tabs)/accounts/legal-privacy", icon: "document-text-outline" },
   { label: "Support", path: "/(tabs)/accounts/support", icon: "help-circle-outline" },
   { label: "About", path: "/(tabs)/accounts/about", icon: "information-circle-outline" }
 ] as const;
@@ -426,3 +425,4 @@ const styles = StyleSheet.create({
     opacity: 0.45
   }
 });
+

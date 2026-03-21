@@ -1,4 +1,8 @@
 import * as SecureStore from "expo-secure-store";
+import {
+  readJsonFileStorage,
+  writeJsonFileStorage
+} from "../../lib/storage/jsonFileStore";
 
 const CHAT_HISTORY_KEY = "nsfinance.planner.companion.chat_history";
 const COMPANION_TOOLTIP_SEEN_KEY = "nsfinance.planner.companion.tooltip_seen";
@@ -71,17 +75,25 @@ function normalizeChat(raw: Partial<CompanionChat>): CompanionChat {
 
 export async function getCompanionChats(): Promise<CompanionChat[]> {
   try {
-    const raw = await SecureStore.getItemAsync(CHAT_HISTORY_KEY);
-    if (!raw) {
+    const stored = await readJsonFileStorage<Partial<CompanionChat>[]>(CHAT_HISTORY_KEY);
+    if (stored) {
+      return stored.map(normalizeChat);
+    }
+
+    const legacyRaw = await SecureStore.getItemAsync(CHAT_HISTORY_KEY);
+    if (!legacyRaw) {
       return [];
     }
 
-    const parsed = JSON.parse(raw) as Partial<CompanionChat>[];
+    const parsed = JSON.parse(legacyRaw) as Partial<CompanionChat>[];
     if (!Array.isArray(parsed)) {
       return [];
     }
 
-    return parsed.map(normalizeChat);
+    const normalized = parsed.map(normalizeChat);
+    await writeJsonFileStorage(CHAT_HISTORY_KEY, normalized);
+    await SecureStore.deleteItemAsync(CHAT_HISTORY_KEY);
+    return normalized;
   } catch {
     return [];
   }
@@ -89,7 +101,7 @@ export async function getCompanionChats(): Promise<CompanionChat[]> {
 
 export async function setCompanionChats(chats: CompanionChat[]): Promise<void> {
   const normalized = chats.map(normalizeChat);
-  await SecureStore.setItemAsync(CHAT_HISTORY_KEY, JSON.stringify(normalized));
+  await writeJsonFileStorage(CHAT_HISTORY_KEY, normalized);
 }
 
 export async function deleteCompanionChatArtifacts(chatId: string): Promise<void> {

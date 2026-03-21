@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { Children, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -64,31 +64,34 @@ type HeaderShellProps = {
   hideDivider?: boolean;
 };
 
+const HEADER_CONTROL_HEIGHT = 36;
+
 const HEADER = {
   rowHeight: 56,
   secondRowHeight: 44,
   touchTarget: 44,
   paddingX: 12,
-  contentGap: 10,
+  contentGap: 12,
+  secondRowGap: 8,
   rowGap: -10,
   titleSubtitleGap: 4,
   leadingSlotWidth: 44,
   trailingSlotWidth: 44,
   iconSize: 20,
   iconButtonRadius: 14,
-  titleMaxWidthDefault: "64%",
-  titleMaxWidthCentered: "72%",
-  subtitleMaxWidth: "82%",
-  greetingTitleMaxWidth: "100%",
-  greetingSubtitleMaxWidth: "100%",
+  titleMaxWidthDefault: "56%",
+  titleMaxWidthCentered: "62%",
+  subtitleMaxWidth: "72%",
+  greetingTitleMaxWidth: "64%",
+  greetingSubtitleMaxWidth: "72%",
   greetingGap: 2,
   inlineButtonHeight: 36,
-  inlineButtonRadius: 12,
+  inlineButtonRadius: 18,
   iconButtonSize: 36,
   iconButtonVisualRadius: 12,
-  dropdownHeight: 36,
+  dropdownHeight: HEADER_CONTROL_HEIGHT,
   dropdownRadius: 12,
-  searchHeight: 36,
+  searchHeight: HEADER_CONTROL_HEIGHT,
   searchRadius: 12,
   stickyDividerHeight: 1,
   stickyElevatedOpacity: 0.94,
@@ -236,23 +239,25 @@ export function HeaderSearchSlot({
   ...props
 }: HeaderSearchSlotProps) {
   return (
-    <TextField
-      {...props}
-      value={value}
-      showLabel={false}
-      dense
-      placeholderTextColor={palette.textSecondary}
-      containerStyle={[styles.searchSlot, containerStyle]}
-      inputStyle={styles.searchInput}
-      leading={<Ionicons name="search-outline" size={18} color={palette.textSecondary} />}
-      trailing={
-        value && onClear ? (
-          <Pressable onPress={onClear} style={styles.clearButton}>
-            <Ionicons name="close" size={16} color={palette.textSecondary} />
-          </Pressable>
-        ) : undefined
-      }
-    />
+    <View style={[styles.searchSlotWrap, containerStyle]}>
+      <TextField
+        {...props}
+        value={value}
+        showLabel={false}
+        dense
+        placeholderTextColor={palette.textSecondary}
+        containerStyle={styles.searchSlot}
+        inputStyle={styles.searchInput}
+        leading={<Ionicons name="search-outline" size={18} color={palette.textSecondary} />}
+        trailing={
+          value && onClear ? (
+            <Pressable onPress={onClear} style={styles.clearButton}>
+              <Ionicons name="close" size={16} color={palette.textSecondary} />
+            </Pressable>
+          ) : undefined
+        }
+      />
+    </View>
   );
 }
 
@@ -275,11 +280,9 @@ export function HeaderShell({
   const isGreeting = preset === "primaryGreeting";
   const isSecondary = preset === "secondaryDetail";
   const hasSecondRow = preset === "primaryTwoRowSelector" || preset === "primaryTwoRowSearch";
-  const secondRowChildren = Children.toArray(secondRow);
-  const splitSecondRow = preset === "primaryTwoRowSelector" && secondRowChildren.length >= 2;
   const centeredTitle = preset !== "primaryGreeting";
   const resolvedLeading = leadingAction ?? (isSecondary ? <HeaderBackButton /> : <HeaderMenuButton />);
-  const resolvedTrailing = trailingAction ?? (isSecondary ? <HeaderMenuButton /> : <HeaderPlaceholderAction />);
+  const resolvedTrailing = trailingAction ?? <HeaderPlaceholderAction />;
   const resolvedBleedHorizontal =
     bleedHorizontal ?? adaptiveShell?.metrics.contentHorizontalPadding ?? layout.screenHorizontalPadding;
   const shouldAutoDockTop = isSecondary && !includeTopInset && !adaptiveShell;
@@ -349,18 +352,7 @@ export function HeaderShell({
 
         {hasSecondRow && secondRow ? (
           <View style={styles.secondRow}>
-            <View style={styles.secondRowContent}>
-              {splitSecondRow ? (
-                <>
-                  <View style={styles.secondRowLeadingSlot}>{secondRowChildren[0]}</View>
-                  <View style={styles.secondRowTrailingSlot}>
-                    {secondRowChildren.slice(1)}
-                  </View>
-                </>
-              ) : (
-                secondRow
-              )}
-            </View>
+            <View style={styles.secondRowContent}>{secondRow}</View>
           </View>
         ) : null}
       </View>
@@ -390,17 +382,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: HEADER.paddingX,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8
-  },
-  secondRowLeadingSlot: {
-    width: HEADER.leadingSlotWidth,
-    minWidth: HEADER.leadingSlotWidth,
-    alignItems: "center",
-    justifyContent: "center",
-    transform: [{ translateX: 4 }]
-  },
-  secondRowTrailingSlot: {
-    flex: 1
+    gap: HEADER.secondRowGap
   },
   leadingSlot: {
     width: HEADER.leadingSlotWidth,
@@ -467,7 +449,7 @@ const styles = StyleSheet.create({
     borderRadius: HEADER.inlineButtonRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.fieldStrong,
+    backgroundColor: surfaces.field,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
@@ -482,11 +464,12 @@ const styles = StyleSheet.create({
   },
   fieldSlot: {
     flex: 1,
+    height: HEADER.dropdownHeight,
     minHeight: HEADER.dropdownHeight,
     borderRadius: HEADER.dropdownRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.fieldStrong,
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     flexDirection: "row",
     alignItems: "center",
@@ -509,15 +492,23 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   searchSlot: {
+    height: HEADER.searchHeight,
     minHeight: HEADER.searchHeight,
     borderRadius: HEADER.searchRadius,
     paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.fieldStrong
+    backgroundColor: surfaces.field
+  },
+  searchSlotWrap: {
+    flex: 1,
+    minWidth: 0
   },
   searchInput: {
-    paddingVertical: 8
+    paddingVertical: 0,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "600"
   },
   clearButton: {
     width: 24,

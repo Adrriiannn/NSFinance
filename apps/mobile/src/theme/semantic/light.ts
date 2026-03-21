@@ -56,8 +56,8 @@ export const lightTheme = {
       soft: "rgba(12, 18, 28, 0.22)"
     },
     money: {
-      positive: colors.green500,
-      negative: colors.red500
+      positive: "rgba(43, 154, 110, 0.82)",
+      negative: "rgba(212, 102, 118, 0.8)"
     }
   }
 } as const;

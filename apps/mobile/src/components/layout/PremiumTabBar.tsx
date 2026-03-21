@@ -1,19 +1,27 @@
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { usePathname, useRouter } from "expo-router";
+import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { appBottomNavItems } from "./bottomNavConfigs";
 import { FloatingBottomNav } from "./FloatingBottomNav";
 
 const rootTabScreens: Record<string, string | undefined> = {
   accounts: "index",
-  planner: "index"
+  cashflow: "index"
 };
 
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const pathname = usePathname();
+  const params = useGlobalSearchParams<{ source?: string }>();
   const router = useRouter();
-  const hidden = pathname?.includes("/planner/expense-tracker") || pathname?.startsWith("/companion");
+  const hidden =
+    pathname?.startsWith("/planning") ||
+    pathname?.startsWith("/companion") ||
+    (pathname === "/calendar" && (params.source === "planningHub" || params.source === "expense"));
   const activeKey = state.routes[state.index]?.name.split("/")[0] ?? "index";
-  const autoPeekEligiblePath = pathname === "/" || pathname === "/accounts" || pathname === "/activity" || pathname === "/planner";
+  const autoPeekEligiblePath =
+    pathname === "/" ||
+    pathname === "/accounts" ||
+    pathname === "/activity" ||
+    pathname === "/cashflow";
 
   if (hidden) {
     return null;
@@ -32,7 +40,7 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
         autoPeekEnabled: autoPeekEligiblePath,
         sharedRevealKey: "hub-switcher",
         onPress: () => {
-          router.replace("/(tabs)/planner/expense-tracker/overview" as never);
+          router.replace("/(tabs)/planning" as never);
         }
       }}
       onPressItem={(item) => {
@@ -64,3 +72,4 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
     />
   );
 }
+

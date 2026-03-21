@@ -56,8 +56,8 @@ export const darkTheme = {
       soft: alphaColors.overlaySoft
     },
     money: {
-      positive: colors.green500,
-      negative: colors.red500
+      positive: "rgba(104, 214, 164, 0.9)",
+      negative: "rgba(255, 141, 153, 0.88)"
     }
   }
 } as const;

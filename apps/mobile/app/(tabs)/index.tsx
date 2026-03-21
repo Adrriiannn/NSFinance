@@ -334,7 +334,7 @@ export default function DashboardTabScreen() {
               title="No connected accounts"
               subtitle="Connect your bank to start tracking balances and spending."
               ctaLabel="Connect bank"
-              onCtaPress={() => router.push("/modals/add-account")}
+              onCtaPress={() => router.push("/(tabs)/accounts/connect-bank")}
               verticalSpacingMode="tab-aligned"
             />
           ) : heroTotals ? (
@@ -429,11 +429,11 @@ export default function DashboardTabScreen() {
               <View style={styles.quickActionRow}>
                 <View style={styles.quickActionPrimary}>
                   <PrimaryButton
-                    label="Add transaction"
-                    onPress={() => router.push("/modals/add-transaction")}
+                    label="View activity"
+                    onPress={() => router.push("/(tabs)/activity")}
                     icon={
                       <Ionicons
-                        name="swap-horizontal-outline"
+                        name="list-outline"
                         size={18}
                         color={palette.textPrimary}
                       />
@@ -443,7 +443,7 @@ export default function DashboardTabScreen() {
                 <View style={styles.quickActionSecondary}>
                   <SecondaryButton
                     label="Connect bank"
-                    onPress={() => router.push("/modals/add-account")}
+                    onPress={() => router.push("/(tabs)/accounts/connect-bank")}
                   />
                 </View>
               </View>
@@ -451,8 +451,8 @@ export default function DashboardTabScreen() {
               <Animated.View style={sectionAnimation}>
                 <SectionHeader
                   title="Key insights"
-                  actionLabel="Planner"
-                  onActionPress={() => router.push("/(tabs)/planner" as never)}
+                  actionLabel="Cashflow"
+                  onActionPress={() => router.push("/(tabs)/cashflow" as never)}
                 />
                 <View style={styles.suggestionsWrap}>
                   {suggestions.length > 0 ? (
