@@ -75,6 +75,18 @@ const aggressivePollDurationMs = 15_000;
 const aggressivePollIntervalMs = 1_500;
 const steadyPollIntervalMs = 5_000;
 const refreshCoalesceWindowMs = 750;
+const BANKING_ONGOING_LOG_THROTTLE_MS = 5 * 60 * 1000;
+const BANKING_ONGOING_LOG_EVENTS = new Set([
+  "poll_tick",
+  "refresh_joined",
+  "refresh_coalesced"
+]);
+const BANKING_ONGOING_REFRESH_REASONS = new Set([
+  "poll",
+  "app_resume",
+  "deep_link_return"
+]);
+const bankingOngoingLogLastAt = new Map<string, number>();
 
 type PendingConsentLink = {
   authorizationUrl: string;
@@ -82,6 +94,19 @@ type PendingConsentLink = {
 };
 
 type BrowserPhase = "idle" | "opening_bank" | "awaiting_consent";
+
+function shouldThrottleBankingLog(event: string, metadata?: Record<string, unknown>) {
+  if (BANKING_ONGOING_LOG_EVENTS.has(event)) {
+    return true;
+  }
+
+  if (event === "refresh_start" || event === "refresh_complete") {
+    const reason = typeof metadata?.reason === "string" ? metadata.reason : null;
+    return reason ? BANKING_ONGOING_REFRESH_REASONS.has(reason) : false;
+  }
+
+  return false;
+}
 
 function buildBankReturnUri() {
   return ExpoLinking.createURL("/(tabs)/accounts/connect-bank");
@@ -202,6 +227,18 @@ export default function AddAccountModalScreen() {
   const processedDeepLinkRef = useRef<string | null>(null);
 
   const logBankingEvent = useCallback((event: string, metadata?: Record<string, unknown>) => {
+    if (shouldThrottleBankingLog(event, metadata)) {
+      const reasonKey = typeof metadata?.reason === "string" ? metadata.reason : "none";
+      const throttleKey = `${event}:${reasonKey}`;
+      const now = Date.now();
+      const lastLoggedAt = bankingOngoingLogLastAt.get(throttleKey) ?? 0;
+      if (now - lastLoggedAt < BANKING_ONGOING_LOG_THROTTLE_MS) {
+        return;
+      }
+
+      bankingOngoingLogLastAt.set(throttleKey, now);
+    }
+
     console.info("[Banking UX]", {
       event,
       timestampUtc: new Date().toISOString(),

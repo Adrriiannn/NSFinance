@@ -1,6 +1,7 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useMemo, useRef } from "react";
 import { PanResponder, useWindowDimensions } from "react-native";
+import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 
 type MainTabSwipeTarget = {
   path: "/(tabs)" | "/(tabs)/accounts" | "/(tabs)/activity" | "/(tabs)/cashflow";
@@ -85,7 +86,15 @@ export function useMainTabSwipeNavigation(
         }
 
         isNavigatingRef.current = true;
-        router.replace(mainTabSwipeTargets[targetIndex].path as never);
+        navigateWithProbe(
+          router as unknown as {
+            push: (href: string) => void;
+            replace: (href: string) => void;
+            navigate?: (href: string) => void;
+          },
+          mainTabSwipeTargets[targetIndex].path,
+          "main-tab-horizontal-swipe"
+        );
       },
       onPanResponderTerminate: () => {
         isNavigatingRef.current = false;

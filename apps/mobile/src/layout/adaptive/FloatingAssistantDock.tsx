@@ -21,7 +21,8 @@ import type { FloatingAssistantDockProps } from "./adaptive.types";
 
 export function FloatingAssistantDock({
   onPress,
-  accessibilityLabel = "Open NS Companion"
+  accessibilityLabel = "Open NS Companion",
+  hidden = false
 }: FloatingAssistantDockProps) {
   const { metrics } = useAdaptiveShell();
   const { session } = useAuthSession();
@@ -36,6 +37,7 @@ export function FloatingAssistantDock({
   const [dockMode, setDockMode] = useState<AssistantDockMode>("docked");
   const [dockSide, setDockSide] = useState<AssistantDockSide>("right");
   const [verticalRatio, setVerticalRatio] = useState(1);
+  const [hasHydratedDockState, setHasHydratedDockState] = useState(false);
   const [isDraggingDock, setIsDraggingDock] = useState(false);
   const left = useRef(new Animated.Value(0)).current;
   const top = useRef(new Animated.Value(maxTop)).current;
@@ -94,26 +96,32 @@ export function FloatingAssistantDock({
     let cancelled = false;
 
     const loadDockMode = async () => {
-      const persistedState = await getAssistantDockState(userId);
-      if (cancelled) {
-        return;
-      }
+      try {
+        const persistedState = await getAssistantDockState(userId);
+        if (cancelled) {
+          return;
+        }
 
-      const nextState = persistedState ?? {
-        mode: "docked" as AssistantDockMode,
-        side: "right" as AssistantDockSide,
-        verticalRatio: 1
-      };
-      const nextTop = topFromRatio(nextState.verticalRatio);
-      setDockMode(nextState.mode);
-      setDockSide(nextState.side);
-      setVerticalRatio(nextState.verticalRatio);
-      left.setValue(
-        nextState.mode === "expanded"
-          ? getExpandedLeft(nextState.side)
-          : getDockedLeft(nextState.side)
-      );
-      top.setValue(nextTop);
+        const nextState = persistedState ?? {
+          mode: "docked" as AssistantDockMode,
+          side: "right" as AssistantDockSide,
+          verticalRatio: 1
+        };
+        const nextTop = topFromRatio(nextState.verticalRatio);
+        setDockMode(nextState.mode);
+        setDockSide(nextState.side);
+        setVerticalRatio(nextState.verticalRatio);
+        left.setValue(
+          nextState.mode === "expanded"
+            ? getExpandedLeft(nextState.side)
+            : getDockedLeft(nextState.side)
+        );
+        top.setValue(nextTop);
+      } finally {
+        if (!cancelled) {
+          setHasHydratedDockState(true);
+        }
+      }
     };
 
     void loadDockMode();
@@ -318,17 +326,22 @@ export function FloatingAssistantDock({
 
   const showFullCircle = isExpanded || isDraggingDock;
 
+  if (!hasHydratedDockState) {
+    return null;
+  }
+
   return (
     <Animated.View
-      pointerEvents="box-none"
+      pointerEvents={hidden ? "none" : "box-none"}
       style={[
         styles.wrapper,
         {
           left,
-          top
+          top,
+          opacity: hidden ? 0 : 1
         }
       ]}
-      {...panResponder.panHandlers}
+      {...(hidden ? {} : panResponder.panHandlers)}
     >
       <Pressable
         accessibilityRole="button"

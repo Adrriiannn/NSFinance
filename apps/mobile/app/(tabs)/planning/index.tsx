@@ -71,14 +71,32 @@ export default function PlanningHubOverviewScreen() {
   const [listMode, setListMode] = useState<PlanListMode>("recent");
   const [heroRailWidth, setHeroRailWidth] = useState<number | null>(null);
   const quickActionsHint = useRef(new Animated.Value(0)).current;
+  const entries = useMemo(() => entriesQuery.data ?? [], [entriesQuery.data]);
 
-  const currency = entriesQuery.data?.[0]?.currency ?? "EUR";
+  const currency = entries[0]?.currency ?? "EUR";
   const taxonomyLookup = useMemo(
     () => buildExpensePlanTaxonomyLookup(taxonomyQuery.data?.domains ?? []),
     [taxonomyQuery.data?.domains]
   );
   const activePlans = useMemo(() => plans.filter((plan) => plan.status === "active"), [plans]);
   const listPlans = useMemo(() => filterExpensePlans(plans, listMode), [plans, listMode]);
+  const planComputedById = useMemo(() => {
+    const computedById = new Map<string, ReturnType<typeof buildExpensePlanComputed>>();
+    plans.forEach((plan) => {
+      computedById.set(plan.id, buildExpensePlanComputed(plan, entries, taxonomyLookup));
+    });
+    return computedById;
+  }, [entries, plans, taxonomyLookup]);
+  const plannedCategoryCountByPlanId = useMemo(() => {
+    const countByPlanId = new Map<string, number>();
+    listPlans.forEach((plan) => {
+      countByPlanId.set(
+        plan.id,
+        buildExpensePlanCategoryMetrics(plan, entries, taxonomyLookup, "planned").length
+      );
+    });
+    return countByPlanId;
+  }, [entries, listPlans, taxonomyLookup]);
   const heroCardWidth = Math.max(heroRailWidth ?? (windowWidth - PLANNING_HUB_CONTENT_PADDING_X * 2), 280);
   const statusCounts = useMemo(
     () => ({
@@ -91,6 +109,11 @@ export default function PlanningHubOverviewScreen() {
   );
 
   useEffect(() => {
+    if (quickActionConfig.length <= 4) {
+      quickActionsHint.setValue(0);
+      return;
+    }
+
     const animation = Animated.loop(
       Animated.sequence([
         Animated.delay(900),
@@ -209,7 +232,10 @@ export default function PlanningHubOverviewScreen() {
               contentContainerStyle={styles.heroRail}
             >
               {activePlans.map((plan) => {
-                const computed = buildExpensePlanComputed(plan, entriesQuery.data ?? [], taxonomyLookup);
+                const computed = planComputedById.get(plan.id);
+                if (!computed) {
+                  return null;
+                }
                 const meta = getExpensePlanStatusMeta(plan.status);
                 return (
                   <Pressable
@@ -371,9 +397,12 @@ export default function PlanningHubOverviewScreen() {
         ) : (
           <View style={styles.planList}>
             {listPlans.map((plan) => {
-              const computed = buildExpensePlanComputed(plan, entriesQuery.data ?? [], taxonomyLookup);
+              const computed = planComputedById.get(plan.id);
+              if (!computed) {
+                return null;
+              }
               const meta = getExpensePlanStatusMeta(plan.status);
-              const categoryCount = buildExpensePlanCategoryMetrics(plan, entriesQuery.data ?? [], taxonomyLookup, "planned").length;
+              const categoryCount = plannedCategoryCountByPlanId.get(plan.id) ?? 0;
               return (
                 <Pressable key={plan.id} onPress={() => router.push(`/(tabs)/planning/${plan.id}` as never)}>
                   <GlassCard style={styles.planCard}>

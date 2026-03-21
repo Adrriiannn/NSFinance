@@ -11,6 +11,8 @@ const CHAT_MEMORY_PREFIX = "nsfinance.companion.chat.memory.";
 const CHAT_RETRIEVAL_PREFIX = "nsfinance.companion.chat.retrieval.";
 const CHAT_INDEX_PREFIX = "nsfinance.companion.chat.index.";
 const DEFAULT_CHAT_COLOR: CompanionChatColor = "blue";
+let companionChatsCache: CompanionChat[] | null = null;
+let companionChatsLoadPromise: Promise<CompanionChat[]> | null = null;
 
 export type CompanionMessage = {
   id: string;
@@ -73,34 +75,64 @@ function normalizeChat(raw: Partial<CompanionChat>): CompanionChat {
   };
 }
 
+function cloneChats(chats: CompanionChat[]): CompanionChat[] {
+  return chats.map((chat) => ({
+    ...chat,
+    messages: [...chat.messages]
+  }));
+}
+
 export async function getCompanionChats(): Promise<CompanionChat[]> {
+  if (companionChatsCache) {
+    return cloneChats(companionChatsCache);
+  }
+
+  if (companionChatsLoadPromise) {
+    return cloneChats(await companionChatsLoadPromise);
+  }
+
+  companionChatsLoadPromise = (async () => {
+    try {
+      const stored = await readJsonFileStorage<Partial<CompanionChat>[]>(CHAT_HISTORY_KEY);
+      if (stored) {
+        const normalizedStored = stored.map(normalizeChat);
+        companionChatsCache = normalizedStored;
+        return cloneChats(normalizedStored);
+      }
+
+      const legacyRaw = await SecureStore.getItemAsync(CHAT_HISTORY_KEY);
+      if (!legacyRaw) {
+        companionChatsCache = [];
+        return [];
+      }
+
+      const parsed = JSON.parse(legacyRaw) as Partial<CompanionChat>[];
+      if (!Array.isArray(parsed)) {
+        companionChatsCache = [];
+        return [];
+      }
+
+      const normalized = parsed.map(normalizeChat);
+      await writeJsonFileStorage(CHAT_HISTORY_KEY, normalized);
+      await SecureStore.deleteItemAsync(CHAT_HISTORY_KEY);
+      companionChatsCache = normalized;
+      return cloneChats(normalized);
+    } catch {
+      companionChatsCache = [];
+      return [];
+    }
+  })();
+
   try {
-    const stored = await readJsonFileStorage<Partial<CompanionChat>[]>(CHAT_HISTORY_KEY);
-    if (stored) {
-      return stored.map(normalizeChat);
-    }
-
-    const legacyRaw = await SecureStore.getItemAsync(CHAT_HISTORY_KEY);
-    if (!legacyRaw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(legacyRaw) as Partial<CompanionChat>[];
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    const normalized = parsed.map(normalizeChat);
-    await writeJsonFileStorage(CHAT_HISTORY_KEY, normalized);
-    await SecureStore.deleteItemAsync(CHAT_HISTORY_KEY);
-    return normalized;
-  } catch {
-    return [];
+    return cloneChats(await companionChatsLoadPromise);
+  } finally {
+    companionChatsLoadPromise = null;
   }
 }
 
 export async function setCompanionChats(chats: CompanionChat[]): Promise<void> {
   const normalized = chats.map(normalizeChat);
+  companionChatsCache = normalized;
   await writeJsonFileStorage(CHAT_HISTORY_KEY, normalized);
 }
 
@@ -118,6 +150,7 @@ export async function deleteCompanionChatArtifacts(chatId: string): Promise<void
 export async function deleteCompanionChat(chatId: string): Promise<CompanionChat[]> {
   const chats = await getCompanionChats();
   const nextChats = chats.filter((chat) => chat.id !== chatId);
+  companionChatsCache = nextChats;
   await setCompanionChats(nextChats);
   await deleteCompanionChatArtifacts(chatId);
   return nextChats;

@@ -13,6 +13,7 @@ import { palette } from "../../theme/tokens";
 import { FloatingBottomNav } from "../layout/FloatingBottomNav";
 import { planningHubBottomNavItems } from "../layout/bottomNavConfigs";
 import { HeaderShell } from "../../layout/appHeader";
+import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 
 const planningHubNavItems = [
   { key: "graphs", path: "/(tabs)/planning/analytics", matchPath: "/planning/analytics" },
@@ -78,11 +79,27 @@ export function PlanningHubScreen({ title, children, scrollViewRef }: PlanningHu
           }
 
           if (target.key === "ai") {
-            router.replace(buildPlanningHubCompanionHref(currentNav));
+            navigateWithProbe(
+              router as unknown as {
+                push: (href: string) => void;
+                replace: (href: string) => void;
+                navigate?: (href: string) => void;
+              },
+              buildPlanningHubCompanionHref(currentNav),
+              "planning-screen-bottom-nav-ai"
+            );
             return;
           }
 
-          router.replace(target.path as never);
+          navigateWithProbe(
+            router as unknown as {
+              push: (href: string) => void;
+              replace: (href: string) => void;
+              navigate?: (href: string) => void;
+            },
+            target.path,
+            "planning-screen-bottom-nav-item"
+          );
         }}
       />
     </SafeAreaView>

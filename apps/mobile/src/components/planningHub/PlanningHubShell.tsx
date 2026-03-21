@@ -9,7 +9,7 @@ import { FloatingBottomNav, type FloatingBottomNavItem } from "../layout/Floatin
 import { ModalSheet } from "../ui/surfaces/ModalSheet";
 import { ListRow } from "../ui/rows/ListRow";
 import { PLANNING_HUB_CONTENT_PADDING_X } from "./planningHubLayout";
-import { FloatingAssistantDock } from "../../layout/adaptive/FloatingAssistantDock";
+import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 
 const planningHubNavItems = [
   { key: "graphs", path: "/(tabs)/planning/analytics", matchPath: "/planning/analytics" },
@@ -54,7 +54,15 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
           autoPeekEnabled: currentNav !== "add",
           sharedRevealKey: "hub-switcher",
           onPress: () => {
-            router.replace("/(tabs)" as never);
+            navigateWithProbe(
+              router as unknown as {
+                push: (href: string) => void;
+                replace: (href: string) => void;
+                navigate?: (href: string) => void;
+              },
+              "/(tabs)",
+              "planning-bottom-nav-switcher"
+            );
           }
         }}
         onPressItem={(item) => {
@@ -68,18 +76,27 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
           }
 
           if (target.key === "ai") {
-            router.replace(buildPlanningHubCompanionHref(currentNav));
+            navigateWithProbe(
+              router as unknown as {
+                push: (href: string) => void;
+                replace: (href: string) => void;
+                navigate?: (href: string) => void;
+              },
+              buildPlanningHubCompanionHref(currentNav),
+              "planning-bottom-nav-item-ai"
+            );
             return;
           }
 
-          router.replace(target.path as never);
-        }}
-      />
-
-      <FloatingAssistantDock
-        accessibilityLabel="Open NS Companion"
-        onPress={() => {
-          router.push(buildPlanningHubCompanionHref(currentNav));
+          navigateWithProbe(
+            router as unknown as {
+              push: (href: string) => void;
+              replace: (href: string) => void;
+              navigate?: (href: string) => void;
+            },
+            target.path,
+            "planning-bottom-nav-item"
+          );
         }}
       />
 
@@ -113,9 +130,25 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
                     return;
                   }
                   if (item.key === "ai") {
-                    router.replace(buildPlanningHubCompanionHref(currentNav));
+                    navigateWithProbe(
+                      router as unknown as {
+                        push: (href: string) => void;
+                        replace: (href: string) => void;
+                        navigate?: (href: string) => void;
+                      },
+                      buildPlanningHubCompanionHref(currentNav),
+                      "planning-menu-item-ai"
+                    );
                   } else {
-                    router.replace(item.path as never);
+                    navigateWithProbe(
+                      router as unknown as {
+                        push: (href: string) => void;
+                        replace: (href: string) => void;
+                        navigate?: (href: string) => void;
+                      },
+                      item.path,
+                      "planning-menu-item"
+                    );
                   }
                 }}
               />
@@ -126,7 +159,15 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
             leading={<Ionicons name="grid-outline" size={18} color={palette.textPrimary} />}
             onPress={() => {
               setOptionsSheetOpen(false);
-              router.replace("/(tabs)/cashflow" as never);
+              navigateWithProbe(
+                router as unknown as {
+                  push: (href: string) => void;
+                  replace: (href: string) => void;
+                  navigate?: (href: string) => void;
+                },
+                "/(tabs)/cashflow",
+                "planning-menu-back-cashflow"
+              );
             }}
           />
         </View>

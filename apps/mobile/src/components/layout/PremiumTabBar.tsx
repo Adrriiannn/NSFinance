@@ -2,6 +2,7 @@ import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { appBottomNavItems } from "./bottomNavConfigs";
 import { FloatingBottomNav } from "./FloatingBottomNav";
+import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 
 const rootTabScreens: Record<string, string | undefined> = {
   accounts: "index",
@@ -40,7 +41,15 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
         autoPeekEnabled: autoPeekEligiblePath,
         sharedRevealKey: "hub-switcher",
         onPress: () => {
-          router.replace("/(tabs)/planning" as never);
+          navigateWithProbe(
+            router as unknown as {
+              push: (href: string) => void;
+              replace: (href: string) => void;
+              navigate?: (href: string) => void;
+            },
+            "/(tabs)/planning",
+            "premium-tab-switcher-planning"
+          );
         }
       }}
       onPressItem={(item) => {

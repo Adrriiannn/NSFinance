@@ -97,6 +97,7 @@ export type PlanningHubDockButtonProps = {
 export type FloatingAssistantDockProps = {
   onPress: () => void;
   accessibilityLabel?: string;
+  hidden?: boolean;
 };
 
 export type AdaptiveTabBarShellProps = {

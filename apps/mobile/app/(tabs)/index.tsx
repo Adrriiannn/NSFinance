@@ -47,6 +47,16 @@ type HeroCarouselItem = HeroCardItem & {
   logicalIndex: number;
 };
 
+const HOME_RECURRING_LOG_EVENTS = new Set([
+  "home_mount",
+  "home_focus",
+  "home_accounts_query_state",
+  "home_summary_query_state",
+  "home_connected_account_data_visible"
+]);
+const HOME_RECURRING_LOG_THROTTLE_MS = 5 * 60 * 1000;
+const homeRecurringLogLastAt = new Map<string, number>();
+
 export default function DashboardTabScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -64,6 +74,16 @@ export default function DashboardTabScreen() {
   const sectionAnimation = useEntranceAnimation(150);
 
   const logHomeEvent = useCallback((event: string, metadata?: Record<string, unknown>) => {
+    if (HOME_RECURRING_LOG_EVENTS.has(event)) {
+      const now = Date.now();
+      const lastLoggedAt = homeRecurringLogLastAt.get(event) ?? 0;
+      if (now - lastLoggedAt < HOME_RECURRING_LOG_THROTTLE_MS) {
+        return;
+      }
+
+      homeRecurringLogLastAt.set(event, now);
+    }
+
     console.info("[Home Banking Timeline]", {
       event,
       timestampUtc: new Date().toISOString(),

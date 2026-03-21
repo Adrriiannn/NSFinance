@@ -34,6 +34,7 @@ import {
   getCompanionChats,
   setCompanionChats
 } from "../features/planner/chatHistory";
+import { navigateWithProbe } from "../lib/perf/navigationTiming";
 import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography } from "../theme/tokens";
 
 type PromptSeed = {
@@ -733,7 +734,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
         return;
       }
 
-      const nextOffset = promptOffsetRef.current + 0.9;
+      const nextOffset = promptOffsetRef.current + 1.7;
       if (nextOffset >= latestMaxOffset) {
         promptOffsetRef.current = 0;
         promptScrollRef.current?.scrollTo({ x: 0, animated: false });
@@ -742,7 +743,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
 
       promptOffsetRef.current = nextOffset;
       promptScrollRef.current?.scrollTo({ x: nextOffset, animated: false });
-    }, 42);
+    }, 80);
   }, [showPrompts, stopPromptAutoScroll]);
 
   const schedulePromptAutoScroll = useCallback(
@@ -963,7 +964,15 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
                 autoPeekEnabled: true,
                 sharedRevealKey: "hub-switcher",
                 onPress: () => {
-                  router.replace("/(tabs)" as never);
+                  navigateWithProbe(
+                    router as unknown as {
+                      push: (href: string) => void;
+                      replace: (href: string) => void;
+                      navigate?: (href: string) => void;
+                    },
+                    "/(tabs)",
+                    "companion-switcher-finance"
+                  );
                 }
               }
             : {
@@ -975,7 +984,15 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
                 autoPeekEnabled: true,
                 sharedRevealKey: "hub-switcher",
                 onPress: () => {
-                  router.replace("/(tabs)/planning" as never);
+                  navigateWithProbe(
+                    router as unknown as {
+                      push: (href: string) => void;
+                      replace: (href: string) => void;
+                      navigate?: (href: string) => void;
+                    },
+                    "/(tabs)/planning",
+                    "companion-switcher-planning"
+                  );
                 }
               }
         }
@@ -1004,7 +1021,15 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
             return;
           }
 
-          router.replace(href as never);
+          navigateWithProbe(
+            router as unknown as {
+              push: (href: string) => void;
+              replace: (href: string) => void;
+              navigate?: (href: string) => void;
+            },
+            href,
+            "companion-bottom-nav-item"
+          );
         }}
       />
 

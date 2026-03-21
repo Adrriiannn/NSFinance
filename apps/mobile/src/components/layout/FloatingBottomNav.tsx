@@ -81,7 +81,9 @@ export function FloatingBottomNav({
   const shellContentPaddingBottom = spacing[8];
   const tabBarBottomOffset = -2;
   const [tabBarHeight, setTabBarHeight] = useState(0);
+  const [optimisticActiveKey, setOptimisticActiveKey] = useState<string | null>(null);
   const [itemLayouts, setItemLayouts] = useState<Partial<Record<string, { x: number; width: number }>>>({});
+  const resolvedActiveKey = optimisticActiveKey ?? activeKey;
   const highlightLeft = useRef(new Animated.Value(0)).current;
   const highlightWidth = useRef(new Animated.Value(0)).current;
   const hasAnimatedRef = useRef(false);
@@ -126,7 +128,7 @@ export function FloatingBottomNav({
   const previousActiveKeyRef = useRef(activeKey);
 
   useEffect(() => {
-    const layout = itemLayouts[activeKey];
+    const layout = itemLayouts[resolvedActiveKey];
     if (!layout) {
       return;
     }
@@ -134,7 +136,7 @@ export function FloatingBottomNav({
     if (!hasAnimatedRef.current) {
       const cachedState = navHighlightCache.get(navCacheKey);
       const previousLayout =
-        cachedState && cachedState.activeKey !== activeKey
+        cachedState && cachedState.activeKey !== resolvedActiveKey
           ? cachedState.layouts[cachedState.activeKey]
           : null;
 
@@ -179,14 +181,18 @@ export function FloatingBottomNav({
         useNativeDriver: false
       })
     ]).start();
-  }, [activeKey, highlightLeft, highlightWidth, itemLayouts, navCacheKey]);
+  }, [highlightLeft, highlightWidth, itemLayouts, navCacheKey, resolvedActiveKey]);
 
   useEffect(() => {
     navHighlightCache.set(navCacheKey, {
-      activeKey,
+      activeKey: resolvedActiveKey,
       layouts: itemLayouts
     });
-  }, [activeKey, itemLayouts, navCacheKey]);
+  }, [itemLayouts, navCacheKey, resolvedActiveKey]);
+
+  useEffect(() => {
+    setOptimisticActiveKey(null);
+  }, [activeKey]);
 
   useEffect(() => {
     if (shouldUsePeekBehavior && previousActiveKeyRef.current !== activeKey) {
@@ -300,7 +306,7 @@ export function FloatingBottomNav({
             placement="above"
           />
         ) : null}
-        {itemLayouts[activeKey] && !suppressActiveStateForKeys.includes(activeKey) ? (
+        {itemLayouts[resolvedActiveKey] && !suppressActiveStateForKeys.includes(resolvedActiveKey) ? (
           <Animated.View
             pointerEvents="none"
             style={[
@@ -359,7 +365,7 @@ export function FloatingBottomNav({
           </View>
         ) : null}
         {items.map((item) => {
-          const isActive = item.key === activeKey;
+          const isActive = item.key === resolvedActiveKey;
           const isVisuallyActive = isActive && !suppressActiveStateForKeys.includes(item.key);
           const color = isVisuallyActive ? palette.textPrimary : palette.textSecondary;
           return (
@@ -367,7 +373,12 @@ export function FloatingBottomNav({
               key={item.key}
               accessibilityRole="button"
               accessibilityState={isActive ? { selected: true } : {}}
-              onPress={() => onPressItem(item)}
+              onPress={() => {
+                if (item.key !== activeKey) {
+                  setOptimisticActiveKey(item.key);
+                }
+                onPressItem(item);
+              }}
               onLayout={(event) => {
                 const { x, width } = event.nativeEvent.layout;
                 setItemLayouts((current) => {

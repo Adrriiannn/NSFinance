@@ -16,10 +16,12 @@ import {
 } from "./expenseTrackerApi";
 
 const trackerQueryOptions = {
-  staleTime: 10_000,
-  refetchOnMount: "always" as const,
-  refetchOnWindowFocus: "always" as const,
-  refetchOnReconnect: "always" as const
+  staleTime: 30_000,
+  refetchOnMount: false,
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: true,
+  refetchInterval: false as const,
+  refetchIntervalInBackground: false
 };
 
 function upsertEntry(
@@ -45,8 +47,8 @@ export function useExpenseTrackerTaxonomyQuery() {
   return useQuery({
     queryKey: queryKeys.expenseTracker.taxonomy,
     queryFn: getExpenseTrackerTaxonomy,
-    staleTime: 60_000,
-    refetchOnMount: "always" as const,
+    staleTime: 12 * 60 * 60_000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true
   });

@@ -7,7 +7,7 @@ export default function PlannerStackLayout() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: palette.appBackground },
-        animation: "slide_from_right"
+        animation: "none"
       }}
     >
       <Stack.Screen

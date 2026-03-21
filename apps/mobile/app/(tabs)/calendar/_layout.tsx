@@ -7,7 +7,7 @@ export default function CalendarStackLayout() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: palette.appBackground },
-        animation: "slide_from_right"
+        animation: "none"
       }}
     />
   );

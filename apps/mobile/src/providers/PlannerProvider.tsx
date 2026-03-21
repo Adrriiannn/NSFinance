@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import {
   readJsonFileStorage,
@@ -158,12 +158,15 @@ type PlannerProviderProps = {
 export function PlannerProvider({ children }: PlannerProviderProps) {
   const [state, setState] = useState<PlannerState>(defaultState);
   const [isReady, setIsReady] = useState(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPersistedSnapshotRef = useRef<string>("");
 
   useEffect(() => {
     const load = async () => {
       try {
         const stored = await readJsonFileStorage<PlannerState>(STORAGE_KEY);
         if (stored) {
+          lastPersistedSnapshotRef.current = JSON.stringify(stored);
           setState({
             necessities: stored.necessities ?? [],
             annotations: stored.annotations ?? {},
@@ -184,6 +187,7 @@ export function PlannerProvider({ children }: PlannerProviderProps) {
         }
 
         const parsed = JSON.parse(legacyRaw) as PlannerState;
+        lastPersistedSnapshotRef.current = JSON.stringify(parsed);
         setState({
           necessities: parsed.necessities ?? [],
           annotations: parsed.annotations ?? {},
@@ -210,8 +214,30 @@ export function PlannerProvider({ children }: PlannerProviderProps) {
       return;
     }
 
-    void writeJsonFileStorage(STORAGE_KEY, state);
+    const snapshot = JSON.stringify(state);
+    if (snapshot === lastPersistedSnapshotRef.current) {
+      return;
+    }
+
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+    }
+
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      lastPersistedSnapshotRef.current = snapshot;
+      void writeJsonFileStorage(STORAGE_KEY, state);
+    }, 280);
   }, [isReady, state]);
+
+  useEffect(
+    () => () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+      }
+    },
+    []
+  );
 
   const categoryCatalog = useMemo(
     () => buildCategoryCatalog(state.customCategories),

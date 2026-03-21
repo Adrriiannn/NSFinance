@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import {
   deleteJsonFileStorage,
@@ -128,6 +128,12 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
   const [builderDraft, setBuilderDraft] = useState<ExpensePlanDraft | null>(null);
   const [selectionLineItemId, setSelectionLineItemId] = useState<string | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
+  const plansPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const publicationsPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const builderPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPlansSnapshotRef = useRef<string>("");
+  const lastPublicationsSnapshotRef = useRef<string>("");
+  const lastBuilderSnapshotRef = useRef<string>("");
 
   useEffect(() => {
     const hydrate = async () => {
@@ -139,12 +145,15 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
         ]);
 
         if (storedPlans) {
+          lastPlansSnapshotRef.current = JSON.stringify(storedPlans);
           setPlans(storedPlans);
         }
         if (storedBuilder) {
+          lastBuilderSnapshotRef.current = JSON.stringify(storedBuilder);
           setBuilderDraft(storedBuilder);
         }
         if (storedCommunity) {
+          lastPublicationsSnapshotRef.current = JSON.stringify(storedCommunity);
           setPublications(storedCommunity.map((item) => normalizePublicationStatus(item)));
         }
 
@@ -161,12 +170,14 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
 
         if (rawPlans) {
           const parsedPlans = JSON.parse(rawPlans) as ExpensePlan[];
+          lastPlansSnapshotRef.current = JSON.stringify(parsedPlans);
           setPlans(parsedPlans);
           await writeJsonFileStorage(PLANS_STORAGE_KEY, parsedPlans);
           await SecureStore.deleteItemAsync(PLANS_STORAGE_KEY);
         }
         if (rawBuilder) {
           const parsedBuilder = JSON.parse(rawBuilder) as ExpensePlanDraft;
+          lastBuilderSnapshotRef.current = JSON.stringify(parsedBuilder);
           setBuilderDraft(parsedBuilder);
           await writeJsonFileStorage(BUILDER_STORAGE_KEY, parsedBuilder);
           await SecureStore.deleteItemAsync(BUILDER_STORAGE_KEY);
@@ -175,6 +186,7 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
           const parsedCommunity = (JSON.parse(rawCommunity) as ExpensePlanPublication[]).map((item) =>
             normalizePublicationStatus(item)
           );
+          lastPublicationsSnapshotRef.current = JSON.stringify(parsedCommunity);
           setPublications(parsedCommunity);
           await writeJsonFileStorage(COMMUNITY_STORAGE_KEY, parsedCommunity);
           await SecureStore.deleteItemAsync(COMMUNITY_STORAGE_KEY);
@@ -244,7 +256,20 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
       return;
     }
 
-    void writeJsonFileStorage(PLANS_STORAGE_KEY, plans);
+    const snapshot = JSON.stringify(plans);
+    if (snapshot === lastPlansSnapshotRef.current) {
+      return;
+    }
+
+    if (plansPersistTimerRef.current) {
+      clearTimeout(plansPersistTimerRef.current);
+    }
+
+    plansPersistTimerRef.current = setTimeout(() => {
+      plansPersistTimerRef.current = null;
+      lastPlansSnapshotRef.current = snapshot;
+      void writeJsonFileStorage(PLANS_STORAGE_KEY, plans);
+    }, 320);
   }, [hasHydrated, plans]);
 
   useEffect(() => {
@@ -252,7 +277,20 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
       return;
     }
 
-    void writeJsonFileStorage(COMMUNITY_STORAGE_KEY, publications);
+    const snapshot = JSON.stringify(publications);
+    if (snapshot === lastPublicationsSnapshotRef.current) {
+      return;
+    }
+
+    if (publicationsPersistTimerRef.current) {
+      clearTimeout(publicationsPersistTimerRef.current);
+    }
+
+    publicationsPersistTimerRef.current = setTimeout(() => {
+      publicationsPersistTimerRef.current = null;
+      lastPublicationsSnapshotRef.current = snapshot;
+      void writeJsonFileStorage(COMMUNITY_STORAGE_KEY, publications);
+    }, 320);
   }, [hasHydrated, publications]);
 
   useEffect(() => {
@@ -260,13 +298,42 @@ export function ExpensePlanningProvider({ children }: ExpensePlanningProviderPro
       return;
     }
 
-    if (!builderDraft) {
-      void deleteJsonFileStorage(BUILDER_STORAGE_KEY);
+    const snapshot = builderDraft ? JSON.stringify(builderDraft) : "";
+    if (snapshot === lastBuilderSnapshotRef.current) {
       return;
     }
 
-    void writeJsonFileStorage(BUILDER_STORAGE_KEY, builderDraft);
+    if (builderPersistTimerRef.current) {
+      clearTimeout(builderPersistTimerRef.current);
+    }
+
+    builderPersistTimerRef.current = setTimeout(() => {
+      builderPersistTimerRef.current = null;
+      lastBuilderSnapshotRef.current = snapshot;
+
+      if (!builderDraft) {
+        void deleteJsonFileStorage(BUILDER_STORAGE_KEY);
+        return;
+      }
+
+      void writeJsonFileStorage(BUILDER_STORAGE_KEY, builderDraft);
+    }, 260);
   }, [builderDraft, hasHydrated]);
+
+  useEffect(
+    () => () => {
+      if (plansPersistTimerRef.current) {
+        clearTimeout(plansPersistTimerRef.current);
+      }
+      if (publicationsPersistTimerRef.current) {
+        clearTimeout(publicationsPersistTimerRef.current);
+      }
+      if (builderPersistTimerRef.current) {
+        clearTimeout(builderPersistTimerRef.current);
+      }
+    },
+    []
+  );
 
   const getPlanById = useCallback((planId: string) => plans.find((plan) => plan.id === planId) ?? null, [plans]);
   const getPublicationById = useCallback((publicationId: string) => publications.find((publication) => publication.id === publicationId) ?? null, [publications]);

@@ -46,6 +46,7 @@ export default function PlanningHubCategoriesScreen() {
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const { assignBuilderLineItemSubcategory, setSelectionLineItemId } = useExpensePlanning();
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [expandedDomainId, setExpandedDomainId] = useState<number | null>(null);
   const [expandedCategoryIds, setExpandedCategoryIds] = useState<Record<number, number | null>>({});
   const [pendingSubcategoryId, setPendingSubcategoryId] = useState<number | null>(null);
@@ -60,8 +61,21 @@ export default function PlanningHubCategoriesScreen() {
     [flattenedSelections]
   );
   const searchIndex = useMemo(() => buildExpenseTaxonomySearchIndex(visibleDomains), [visibleDomains]);
-  const searchResults = useMemo(() => searchExpenseTaxonomy(searchIndex, searchQuery), [searchIndex, searchQuery]);
-  const hasSearchQuery = normalizeExpenseTaxonomySearchText(searchQuery).length > 0;
+  const searchResults = useMemo(
+    () => searchExpenseTaxonomy(searchIndex, debouncedSearchQuery),
+    [debouncedSearchQuery, searchIndex]
+  );
+  const hasSearchQuery = normalizeExpenseTaxonomySearchText(debouncedSearchQuery).length > 0;
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 150);
+
+    return () => {
+      clearTimeout(handle);
+    };
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!selectionMode || !lineItemId) {
