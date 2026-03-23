@@ -1,3 +1,5 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0dev-stop.ps1"
-exit
+setlocal
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0dev-stop.ps1"
+set EXITCODE=%ERRORLEVEL%
+endlocal & exit /b %EXITCODE%
