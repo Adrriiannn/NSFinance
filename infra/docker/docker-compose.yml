@@ -4,9 +4,9 @@ services:
     container_name: nsfinance-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: nsfinance
-      POSTGRES_USER: nsfinance
-      POSTGRES_PASSWORD: nsfinance_dev_password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
