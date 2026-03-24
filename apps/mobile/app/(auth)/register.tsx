@@ -33,7 +33,7 @@ export default function RegisterScreen() {
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [captchaVerified, setCaptchaVerified] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -64,8 +64,8 @@ export default function RegisterScreen() {
       lastName.trim().length > 0 &&
       allPasswordRulesMet &&
       password === confirmPassword &&
-      captchaVerified,
-    [allPasswordRulesMet, captchaVerified, confirmPassword, email, firstName, lastName, password]
+      Boolean(captchaToken),
+    [allPasswordRulesMet, captchaToken, confirmPassword, email, firstName, lastName, password]
   );
 
   const validate = () => {
@@ -111,6 +111,7 @@ export default function RegisterScreen() {
       timezone,
       locale,
       preferredCurrency: "EUR",
+      captchaToken,
       deviceContext: {
         platform: Platform.OS
       }
@@ -264,8 +265,8 @@ export default function RegisterScreen() {
           ) : null}
 
           <CaptchaGate
-            isVerified={captchaVerified}
-            onVerify={() => setCaptchaVerified((current) => !current)}
+            token={captchaToken}
+            onTokenChange={setCaptchaToken}
             showLabel={false}
           />
         </View>

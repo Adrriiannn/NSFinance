@@ -217,6 +217,7 @@ export type RegisterRequest = {
   timezone?: string | null;
   locale?: string | null;
   preferredCurrency?: string | null;
+  captchaToken?: string | null;
   deviceContext?: DeviceContextDto | null;
 };
 

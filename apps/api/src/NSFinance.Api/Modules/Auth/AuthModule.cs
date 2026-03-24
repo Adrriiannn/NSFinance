@@ -88,6 +88,10 @@ public static class AuthModule
             .WithName("GoogleAuthCallback")
             .RequireRateLimiting("provider-callback");
 
+        app.MapGet("/turnstile/register", TurnstileRegisterPageEndpoint.HandleAsync)
+            .WithName("TurnstileRegisterPage")
+            .AllowAnonymous();
+
         return app;
     }
 }

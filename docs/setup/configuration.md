@@ -77,3 +77,7 @@ Not yet bound by runtime services (template-ready only):
 
 `EXPO_PUBLIC_*` values are public and bundled into the client app.
 Never place private secrets in `EXPO_PUBLIC_*` keys.
+
+Turnstile public key for the register challenge:
+
+- `EXPO_PUBLIC_TURNSTILE_SITE_KEY`

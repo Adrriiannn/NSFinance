@@ -54,6 +54,12 @@
 - Local mobile env example: `apps/mobile/.env.example`
 
 ## Auth and Banking Callback Inventory
+- Turnstile hosted register challenge page: `/turnstile/register`
+  - Defined in:
+    - `apps/api/src/NSFinance.Api/Modules/Auth/AuthModule.cs`
+    - `apps/api/src/NSFinance.Api/Modules/Auth/Endpoints/TurnstileRegisterPageEndpoint.cs`
+  - Mobile app loads this page in a WebView and passes `siteKey` via query string.
+  - The hostname serving this page must be authorized in Cloudflare Turnstile hostnames.
 - Backend Google callback route (scaffold route): `/api/auth/providers/google/callback`
   - Defined in:
     - `apps/api/src/NSFinance.Api/Modules/Auth/AuthModule.cs`
