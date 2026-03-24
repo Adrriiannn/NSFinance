@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform } from "react-native";
 import * as Google from "expo-auth-session/providers/google";
 import { formatUnknownError } from "../../lib/api/errors";
@@ -68,7 +68,6 @@ function logGoogleAuthDebug(event: string, details?: Record<string, unknown>) {
 
 export function useGoogleSignIn() {
   const googleLoginMutation = useGoogleLoginMutation();
-  const pendingResultResolverRef = useRef<((result: GoogleSignInResult) => void) | null>(null);
   const [isPromptInFlight, setIsPromptInFlight] = useState(false);
 
   const googleWebClientId = readGoogleWebClientId();
@@ -117,47 +116,16 @@ export function useGoogleSignIn() {
     });
   }, [response]);
 
-  const resolvePendingResult = useCallback((result: GoogleSignInResult) => {
-    const resolver = pendingResultResolverRef.current;
-    pendingResultResolverRef.current = null;
-    setIsPromptInFlight(false);
-    resolver?.(result);
-  }, []);
+  const completeGoogleSignIn = useCallback(
+    async (authResult: unknown): Promise<GoogleSignInResult> => {
+      const idToken = extractIdToken(authResult);
+      if (!idToken) {
+        return {
+          succeeded: false,
+          message: "Google sign-in did not return an ID token."
+        };
+      }
 
-  useEffect(() => {
-    if (!response || !pendingResultResolverRef.current) {
-      return;
-    }
-
-    if (response.type === "cancel" || response.type === "dismiss") {
-      resolvePendingResult({
-        succeeded: false,
-        cancelled: true,
-        message: "Google sign-in was cancelled."
-      });
-      return;
-    }
-
-    if (response.type !== "success") {
-      resolvePendingResult({
-        succeeded: false,
-        message: "Google sign-in could not be completed."
-      });
-      return;
-    }
-
-    const idToken = extractIdToken(response);
-    if (!idToken) {
-      resolvePendingResult({
-        succeeded: false,
-        message: "Google sign-in did not return an ID token."
-      });
-      return;
-    }
-
-    let isCancelled = false;
-
-    void (async () => {
       try {
         await googleLoginMutation.mutateAsync({
           idToken,
@@ -166,23 +134,18 @@ export function useGoogleSignIn() {
           }
         });
 
-        if (!isCancelled) {
-          resolvePendingResult({ succeeded: true });
-        }
+        logGoogleAuthDebug("backend_login_success");
+        return { succeeded: true };
       } catch (error) {
-        if (!isCancelled) {
-          resolvePendingResult({
-            succeeded: false,
-            message: formatUnknownError(error)
-          });
-        }
+        logGoogleAuthDebug("backend_login_error");
+        return {
+          succeeded: false,
+          message: formatUnknownError(error)
+        };
       }
-    })();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [googleLoginMutation, resolvePendingResult, response]);
+    },
+    [googleLoginMutation]
+  );
 
   const signInWithGoogle = useCallback(async (): Promise<GoogleSignInResult> => {
     const isExpoLikeRedirect = request?.redirectUri?.startsWith("exp://") ?? false;
@@ -211,48 +174,48 @@ export function useGoogleSignIn() {
       };
     }
 
-    if (pendingResultResolverRef.current || isPromptInFlight) {
+    if (isPromptInFlight) {
       return {
         succeeded: false,
         message: "Google sign-in is already in progress."
       };
     }
 
-    const resultPromise = new Promise<GoogleSignInResult>((resolve) => {
-      pendingResultResolverRef.current = resolve;
-      setIsPromptInFlight(true);
-    });
-
+    setIsPromptInFlight(true);
     try {
       logGoogleAuthDebug("prompt_open", {
         redirectUri: request.redirectUri
       });
       const authResult = await promptAsync();
+      logGoogleAuthDebug("prompt_result", {
+        type: authResult.type
+      });
+
       if (authResult.type === "cancel" || authResult.type === "dismiss") {
-        resolvePendingResult({
+        return {
           succeeded: false,
           cancelled: true,
           message: "Google sign-in was cancelled."
-        });
-        return resultPromise;
+        };
       }
 
       if (authResult.type !== "success") {
-        resolvePendingResult({
+        return {
           succeeded: false,
           message: "Google sign-in could not be completed."
-        });
-        return resultPromise;
+        };
       }
+
+      return await completeGoogleSignIn(authResult);
     } catch (error) {
-      resolvePendingResult({
+      return {
         succeeded: false,
         message: formatUnknownError(error)
-      });
+      };
+    } finally {
+      setIsPromptInFlight(false);
     }
-
-    return resultPromise;
-  }, [isConfigured, isPromptInFlight, promptAsync, request, resolvePendingResult]);
+  }, [completeGoogleSignIn, isConfigured, isPromptInFlight, promptAsync, request]);
 
   return {
     signInWithGoogle,
