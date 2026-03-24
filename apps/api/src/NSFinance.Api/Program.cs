@@ -1,7 +1,6 @@
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Infrastructure.DependencyInjection;
 using NSFinance.Api.Infrastructure.RequestContext;
-using NSFinance.Api.Infrastructure.Startup;
 using NSFinance.Api.Modules;
 using Microsoft.AspNetCore.HttpOverrides;
 
@@ -58,8 +57,6 @@ app.MapGet("/health", () => Results.Ok(new HealthResponse("Healthy", DateTime.Ut
     .WithTags("System");
 
 app.MapModules();
-
-await app.InitializeDatabaseAsync();
 
 app.Run();
 

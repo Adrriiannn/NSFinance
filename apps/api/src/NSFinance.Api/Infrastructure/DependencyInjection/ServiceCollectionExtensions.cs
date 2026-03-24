@@ -11,6 +11,7 @@ using Npgsql;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Infrastructure.RequestContext;
 using NSFinance.Api.Infrastructure.Seeding;
+using NSFinance.Api.Infrastructure.Startup;
 using NSFinance.Api.Modules.Accounts.Services;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Auth.Services;
@@ -224,6 +225,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITrueLayerSyncQueue>(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
         services.AddHostedService(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
         services.AddScoped<DevelopmentDataSeeder>();
+        services.AddHostedService<DatabaseInitializationHostedService>();
 
         return services;
     }
