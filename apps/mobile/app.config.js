@@ -1,13 +1,10 @@
-import type { ConfigContext, ExpoConfig } from "expo/config";
+const appJson = require("./app.json");
 
-const appJson = require("./app.json") as { expo: ExpoConfig };
-
-const azureProductionBaseUrl =
-  "https://api.finance.nsireland.ie";
+const azureProductionBaseUrl = "https://api.finance.nsireland.ie";
 const androidPackageName = "com.nsfinance.mobile";
 const appSchemes = ["nsfinance", androidPackageName];
 
-function normalizeAppEnv(value: string | undefined): "development" | "preview" | "production" {
+function normalizeAppEnv(value) {
   const normalized = (value ?? "development").trim().toLowerCase();
 
   if (normalized === "production") {
@@ -21,11 +18,11 @@ function normalizeAppEnv(value: string | undefined): "development" | "preview" |
   return "development";
 }
 
-export default ({ config }: ConfigContext): ExpoConfig => {
+module.exports = ({ config }) => {
   const appEnv = normalizeAppEnv(process.env.EXPO_PUBLIC_APP_ENV);
   const baseConfig = appJson.expo;
 
-  const mergedConfig: ExpoConfig = {
+  return {
     ...baseConfig,
     ...config,
     name: appEnv === "development" ? "NSFinance Dev" : "NSFinance",
@@ -42,12 +39,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       ...(config.extra ?? {}),
       appEnv,
       defaultProductionApiBaseUrl: azureProductionBaseUrl,
-
       eas: {
         projectId: "21986a2d-cbfa-4757-bf6d-04eb6aa4f197"
       }
     }
   };
-
-  return mergedConfig;
 };
