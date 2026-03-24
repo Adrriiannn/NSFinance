@@ -329,17 +329,18 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     width: TURNSTILE_WIDGET_WIDTH + 4,
     height: TURNSTILE_WIDGET_HEIGHT + 4,
-    borderRadius: 10,
-    padding: 1,
-    borderWidth: 2,
-    borderColor: palette.border,
+    borderRadius: 8,
     overflow: "hidden",
-    backgroundColor: "rgba(18,36,58,0.72)"
+    backgroundColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center"
   },
   inlineWidgetClip: {
     width: TURNSTILE_WIDGET_WIDTH,
     height: TURNSTILE_WIDGET_HEIGHT,
-    borderRadius: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
     overflow: "hidden",
     backgroundColor: "#2f3136"
   },

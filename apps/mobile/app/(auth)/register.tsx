@@ -1,5 +1,5 @@
-import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
@@ -26,9 +26,15 @@ type PasswordRule = {
 };
 
 export default function RegisterScreen() {
+  const routeParams = useLocalSearchParams<{ email?: string | string[] }>();
+  const prefilledEmail = useMemo(() => {
+    const rawEmail = Array.isArray(routeParams.email) ? routeParams.email[0] : routeParams.email;
+    return typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
+  }, [routeParams.email]);
+
   const registerMutation = useRegisterMutation();
   const { playSuccess } = useFeedbackSound();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(prefilledEmail);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
@@ -39,6 +45,14 @@ export default function RegisterScreen() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
   const authApiDebugDetail = getAuthApiDebugDetail();
+
+  useEffect(() => {
+    if (!prefilledEmail) {
+      return;
+    }
+
+    setEmail((current) => current || prefilledEmail);
+  }, [prefilledEmail]);
 
   const passwordRules = useMemo<PasswordRule[]>(
     () => [

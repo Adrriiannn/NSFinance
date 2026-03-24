@@ -224,6 +224,7 @@ export type RegisterRequest = {
 export type LoginRequest = {
   email: string;
   password: string;
+  captchaToken?: string | null;
   deviceContext?: DeviceContextDto | null;
 };
 

@@ -160,23 +160,58 @@ public sealed class AuthService(
             .Include(x => x.AuthProviders)
             .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
 
-        var localProvider = user?.AuthProviders.FirstOrDefault(x => x.ProviderType == ProviderTypeLocalPassword && x.IsActive);
-        var passwordCredential = user?.PasswordCredential;
-
-        if (user is null || localProvider is null || passwordCredential is null || !passwordHasher.VerifyPassword(request.Password, passwordCredential.PasswordHash))
+        if (user is null)
         {
-            await authAbuseService.RecordAttemptAsync(normalizedEmail, user?.Id, requestContext.IpAddress, succeeded: false, "invalid_credentials", cancellationToken);
+            await authAbuseService.RecordAttemptAsync(normalizedEmail, null, requestContext.IpAddress, succeeded: false, "account_not_found", cancellationToken);
             await auditService.WriteEventAsync(
                 category: "auth",
                 eventName: "login_failure",
                 targetEntityType: "user",
-                targetEntityId: user?.Id.ToString(),
-                actorId: user?.Id,
-                actorType: user is null ? "anonymous" : "user",
-                metadata: new { reason = "invalid_credentials" },
+                targetEntityId: null,
+                actorId: null,
+                actorType: "anonymous",
+                metadata: new { reason = "account_not_found" },
                 cancellationToken);
 
-            return ServiceResult<AuthTokenResponse>.Fail("Invalid email or password.", "invalid_credentials", StatusCodes.Status401Unauthorized);
+            return ServiceResult<AuthTokenResponse>.Fail("No account was found for this email.", "account_not_found", StatusCodes.Status404NotFound);
+        }
+
+        var localProvider = user.AuthProviders.FirstOrDefault(x => x.ProviderType == ProviderTypeLocalPassword && x.IsActive);
+        var passwordCredential = user.PasswordCredential;
+
+        if (localProvider is null || passwordCredential is null)
+        {
+            await authAbuseService.RecordAttemptAsync(normalizedEmail, user.Id, requestContext.IpAddress, succeeded: false, "password_login_unavailable", cancellationToken);
+            await auditService.WriteEventAsync(
+                category: "auth",
+                eventName: "login_failure",
+                targetEntityType: "user",
+                targetEntityId: user.Id.ToString(),
+                actorId: user.Id,
+                actorType: "user",
+                metadata: new { reason = "password_login_unavailable" },
+                cancellationToken);
+
+            return ServiceResult<AuthTokenResponse>.Fail(
+                "Password sign-in is not available for this account.",
+                "password_login_unavailable",
+                StatusCodes.Status400BadRequest);
+        }
+
+        if (!passwordHasher.VerifyPassword(request.Password, passwordCredential.PasswordHash))
+        {
+            await authAbuseService.RecordAttemptAsync(normalizedEmail, user.Id, requestContext.IpAddress, succeeded: false, "invalid_password", cancellationToken);
+            await auditService.WriteEventAsync(
+                category: "auth",
+                eventName: "login_failure",
+                targetEntityType: "user",
+                targetEntityId: user.Id.ToString(),
+                actorId: user.Id,
+                actorType: "user",
+                metadata: new { reason = "invalid_password" },
+                cancellationToken);
+
+            return ServiceResult<AuthTokenResponse>.Fail("The password is incorrect.", "invalid_password", StatusCodes.Status401Unauthorized);
         }
 
         if (user.IsDisabled || user.IsSuspended)
