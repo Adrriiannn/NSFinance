@@ -193,7 +193,7 @@ public sealed class AuthService(
                 cancellationToken);
 
             return ServiceResult<AuthTokenResponse>.Fail(
-                "Password sign-in is not available for this account.",
+                "This account uses Google sign-in. Continue with Google to log in.",
                 "password_login_unavailable",
                 StatusCodes.Status400BadRequest);
         }

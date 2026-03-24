@@ -327,9 +327,17 @@ export default function LoginScreen() {
           setFailedLoginAttempts(0);
           router.push((`/register?email=${encodeURIComponent(normalizedEmail)}`) as never);
           return;
+        } else if (error.code === "password_login_unavailable") {
+          setLoginErrorBanner({
+            kind: "temporary_error",
+            id: Date.now(),
+            title: "Use Google to sign in",
+            message: "This account uses Google sign-in. Continue with Google to log in.",
+            highlightTarget: "none"
+          });
         } else {
           let highlightTarget: ErrorFieldTarget = "none";
-          if (error.code === "invalid_password" || error.code === "password_login_unavailable") {
+          if (error.code === "invalid_password") {
             highlightTarget = "password";
           } else if ([400, 401, 403].includes(error.status)) {
             highlightTarget = "both";
