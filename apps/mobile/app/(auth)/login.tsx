@@ -337,6 +337,9 @@ export default function LoginScreen() {
             }
           : null;
 
+  const isGoogleOnlyLoginBanner =
+    loginErrorBanner?.kind === "temporary_error" && loginErrorBanner.title === "This account uses Google sign-in.";
+
   const canSubmit = useMemo(
     () => email.trim().length > 0 && password.length > 0 && (!shouldShowCaptcha || Boolean(captchaToken)) && !isLockoutActive,
     [captchaToken, email, isLockoutActive, password, shouldShowCaptcha]
@@ -410,8 +413,8 @@ export default function LoginScreen() {
           setLoginErrorBanner({
             kind: "temporary_error",
             id: Date.now(),
-            title: "Use Google to sign in",
-            message: "This account uses Google sign-in. Continue with Google to log in.",
+            title: "This account uses Google sign-in.",
+            message: "Please try logging in via the Sign in with Google option.",
             highlightTarget: "none"
           });
         } else {
@@ -479,7 +482,20 @@ export default function LoginScreen() {
             {loginErrorBanner && bannerCopy ? (
               <View pointerEvents="box-none" style={styles.errorBannerAboveForm}>
                 <Animated.View style={[styles.narrowBlock, { opacity: loginBannerOpacity }]}>
-                  <Banner title={bannerCopy.title} message={bannerCopy.message} tone="error" />
+                  <Banner
+                    title={bannerCopy.title}
+                    message={
+                      isGoogleOnlyLoginBanner ? (
+                        <>
+                          Please try logging in via the{" "}
+                          <Text style={styles.googleSignInMessageAccent}>Sign in with Google</Text> option.
+                        </>
+                      ) : (
+                        bannerCopy.message
+                      )
+                    }
+                    tone="error"
+                  />
                 </Animated.View>
               </View>
             ) : null}
@@ -708,6 +724,10 @@ const styles = StyleSheet.create({
   googleError: {
     color: palette.negative,
     ...typography.caption
+  },
+  googleSignInMessageAccent: {
+    color: palette.primaryGlow,
+    fontWeight: "700"
   },
   createAccountSection: {
     marginTop: spacing[16],

@@ -1,10 +1,11 @@
+import type { ReactNode } from "react";
 import { View } from "react-native";
 import { AppText } from "../text/AppText";
 import { bannerPresets, feedbackPresets, type FeedbackTone } from "./feedback.presets";
 
 type BannerProps = {
   title: string;
-  message?: string;
+  message?: ReactNode;
   tone?: FeedbackTone;
 };
 

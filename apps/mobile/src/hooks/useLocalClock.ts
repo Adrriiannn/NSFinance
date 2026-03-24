@@ -81,6 +81,32 @@ function pickGreeting(
   };
 }
 
+function formatFallbackTime(now: Date): string {
+  const hours = now.getHours().toString().padStart(2, "0");
+  const minutes = now.getMinutes().toString().padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function formatFallbackDate(now: Date): string {
+  const day = now.getDate();
+  const month = now.toLocaleString("en-IE", { month: "short" });
+  const weekday = now.toLocaleString("en-IE", { weekday: "short" });
+  return `${weekday}, ${day} ${month}`;
+}
+
+function safeFormat(formatter: () => string, fallback: string): string {
+  try {
+    const formatted = formatter().trim();
+    if (formatted.length > 0) {
+      return formatted;
+    }
+  } catch {
+    // Fall back to deterministic local formatting.
+  }
+
+  return fallback;
+}
+
 export function useLocalClock() {
   const [now, setNow] = useState(() => new Date());
   const [greeting, setGreeting] = useState(() => pickGreeting(new Date(), null, []).value);
@@ -133,16 +159,25 @@ export function useLocalClock() {
   }, []);
 
   return useMemo(() => {
-    const timeLabel = new Intl.DateTimeFormat("en-IE", {
-      hour: "numeric",
-      minute: "2-digit"
-    }).format(now);
+    const timeLabel = safeFormat(
+      () =>
+        new Intl.DateTimeFormat("en-IE", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false
+        }).format(now),
+      formatFallbackTime(now)
+    );
 
-    const dateLabel = new Intl.DateTimeFormat("en-IE", {
-      weekday: "long",
-      day: "numeric",
-      month: "long"
-    }).format(now);
+    const dateLabel = safeFormat(
+      () =>
+        new Intl.DateTimeFormat("en-IE", {
+          weekday: "short",
+          day: "numeric",
+          month: "short"
+        }).format(now),
+      formatFallbackDate(now)
+    );
 
     return {
       greeting,

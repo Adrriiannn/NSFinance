@@ -48,12 +48,13 @@ export function useLoginMutation() {
 
 export function useGoogleLoginMutation() {
   const queryClient = useQueryClient();
-  const { applyAuthTokenResponse } = useAuthSession();
+  const { applyAuthTokenResponse, refreshSessionUser } = useAuthSession();
 
   return useMutation({
     mutationFn: (payload: GoogleLoginRequest) => loginWithGoogle(payload),
     onSuccess: async (response) => {
       await applyAuthTokenResponse(response);
+      void refreshSessionUser();
       await queryClient.invalidateQueries();
     }
   });

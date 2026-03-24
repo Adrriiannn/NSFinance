@@ -31,6 +31,7 @@ type AuthContextValue = {
   session: StoredSession | null;
   sessionMessage: string | null;
   applyAuthTokenResponse: (response: AuthTokenResponse) => Promise<void>;
+  refreshSessionUser: () => Promise<void>;
   logout: (reason?: string) => Promise<void>;
   clearSessionMessage: () => void;
   notifyUserInteraction: () => void;
@@ -145,6 +146,32 @@ export function AuthProvider({ children }: AuthProviderProps) {
     },
     [persistSession, startInactivityTimer]
   );
+
+  const refreshSessionUser = useCallback(async () => {
+    const currentSession = sessionRef.current;
+    if (!currentSession) {
+      return;
+    }
+
+    try {
+      const currentUser = await getCurrentUser();
+      const latestSession = sessionRef.current;
+      if (!latestSession || latestSession.sessionId !== currentSession.sessionId) {
+        return;
+      }
+
+      const nextSession = {
+        ...latestSession,
+        user: currentUser
+      };
+
+      sessionRef.current = nextSession;
+      setSession(nextSession);
+      await persistSession(nextSession);
+    } catch {
+      // Keep current session user payload if profile refresh fails.
+    }
+  }, [persistSession]);
 
   const refreshAccessToken = useCallback(async () => {
     if (refreshPromiseRef.current) {
@@ -300,12 +327,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       session,
       sessionMessage,
       applyAuthTokenResponse,
+      refreshSessionUser,
       logout,
       clearSessionMessage: () => setSessionMessage(null),
       notifyUserInteraction
     }),
     [
       applyAuthTokenResponse,
+      refreshSessionUser,
       isBootstrapping,
       logout,
       notifyUserInteraction,
