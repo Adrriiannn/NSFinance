@@ -1,4 +1,6 @@
 node_modules/
+.tmp/
+**/.tmp/
 .env
 .env.*
 !apps/mobile/.env.example

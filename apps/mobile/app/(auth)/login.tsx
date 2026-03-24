@@ -157,7 +157,7 @@ export default function LoginScreen() {
               label="Password"
               value={password}
               onChangeText={setPassword}
-              placeholder="B4dM3m0ry_H3lp!"
+              placeholder="Password"
               dense
               containerStyle={styles.authFieldContainer}
               style={styles.authFieldInput}

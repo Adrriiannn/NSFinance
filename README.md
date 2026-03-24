@@ -35,29 +35,47 @@ NSFinance
 - pnpm 10+
 - PostgreSQL running locally (`nsfinance` db), or Docker in `infra`
 
-## Environment variables
+## API Configuration
 
-See `.env.example`.
+### How API config works
 
-Important values:
+- `apps/api/src/NSFinance.Api/appsettings.json`
+  - shared safe defaults only (no secrets)
+- `apps/api/src/NSFinance.Api/appsettings.Development.json`
+  - development-safe non-secret overrides (seeding, local CORS, sandbox redirect defaults)
+- `apps/api/src/NSFinance.Api/appsettings.Local.json` (gitignored)
+  - the only local secret file for development
 
-- `NSFINANCE_DB_CONNECTION_STRING`
-- `NSFINANCE_ALLOW_REMOTE_DB_IN_DEVELOPMENT`
-- `NSFINANCE_JWT_SIGNING_KEY`
-- `TRUELAYER_CLIENT_ID`
-- `TRUELAYER_CLIENT_SECRET`
-- `TRUELAYER_REDIRECT_URI`
-- `TRUELAYER_ENVIRONMENT`
-- `TRUELAYER_AUTH_BASE_URL`
-- `TRUELAYER_API_BASE_URL`
-- `EXPO_PUBLIC_API_BASE_URL`
-- `ASPNETCORE_ENVIRONMENT`
+Production does not use `appsettings.Local.json`. Production secrets must come from Azure App Service settings / Key Vault / environment variables.
 
-Default DB:
+Never commit DB passwords, JWT signing keys, provider client secrets, or any private API keys.
 
-`Host=localhost;Port=5432;Database=nsfinance;Username=nsfinance`
+### API keys currently consumed
 
-## Run API
+- Database connection string:
+  - local: `ConnectionStrings:DefaultConnection` in `appsettings.Local.json`
+  - production: `ConnectionStrings__DefaultConnection` (or `NSFINANCE_DB_CONNECTION_STRING` fallback)
+- JWT signing key:
+  - local: `Jwt:SigningKey` in `appsettings.Local.json`
+  - production: `Jwt__SigningKey` (or `NSFINANCE_JWT_SIGNING_KEY` fallback)
+- TrueLayer:
+  - local: `TrueLayer:ClientId` and `TrueLayer:ClientSecret` in `appsettings.Local.json`
+  - production: `TrueLayer__ClientId` / `TrueLayer__ClientSecret` (or `TRUELAYER_*` fallbacks)
+- Google auth:
+  - API currently reads `GoogleAuth:ClientId` only.
+- Turnstile and email settings:
+  - not currently bound by API runtime; `Turnstile:SecretKey` is reserved for upcoming captcha backend wiring.
+
+### Local development
+
+1. Copy `apps/api/src/NSFinance.Api/appsettings.Local.example.json` to `apps/api/src/NSFinance.Api/appsettings.Local.json`.
+2. Set local secrets in `appsettings.Local.json`:
+   - `ConnectionStrings:DefaultConnection`
+   - `Jwt:SigningKey`
+   - `TrueLayer:ClientId`
+   - `TrueLayer:ClientSecret`
+   - `Turnstile:SecretKey` (reserved for captcha backend wiring)
+3. Run the API:
 
 ```bash
 dotnet run --project .\apps\api\src\NSFinance.Api\NSFinance.Api.csproj
@@ -84,14 +102,32 @@ Seeded demo login:
 
 Local TrueLayer sandbox setup:
 
-1. Copy `apps/api/src/NSFinance.Api/appsettings.Local.example.json` to `apps/api/src/NSFinance.Api/appsettings.Local.json`.
-2. Set `TrueLayer:ClientId` and `TrueLayer:ClientSecret` in that local file.
-3. Set `TrueLayer:RedirectUri` to `http://localhost:5080/api/banking/truelayer/callback`.
-4. Register that redirect URI in your TrueLayer sandbox console.
+1. Put `TrueLayer:ClientId` and `TrueLayer:ClientSecret` in `appsettings.Local.json`.
+2. Keep sandbox defaults in `appsettings.Development.json` or override them in `appsettings.Local.json`:
+   - `TrueLayer:RedirectUri=http://localhost:5080/api/banking/truelayer/callback`
+   - `TrueLayer:Environment=sandbox`
+   - `TrueLayer:AuthBaseUrl=https://auth.truelayer-sandbox.com`
+   - `TrueLayer:ApiBaseUrl=https://api.truelayer-sandbox.com`
+3. Register `http://localhost:5080/api/banking/truelayer/callback` in your TrueLayer sandbox console.
 
 Production TrueLayer callback:
 
 - `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
+- Full production checklist: `docs/deployment/azure-production.md`
+
+### Production on Azure
+
+Set production secrets in Azure App Service settings / Key Vault (for example):
+
+- `ConnectionStrings__DefaultConnection`
+- `Jwt__SigningKey`
+- `TrueLayer__ClientId`
+- `TrueLayer__ClientSecret`
+- `TrueLayer__RedirectUri`
+- `TrueLayer__Environment`
+- `TrueLayer__AuthBaseUrl`
+- `TrueLayer__ApiBaseUrl`
+- `GoogleAuth__ClientId` (if Google login is enabled)
 
 ## Run mobile
 
@@ -108,6 +144,7 @@ Mobile API URL strategy:
 - production default URL: `https://api.finance.nsireland.ie`
 - optional override: `EXPO_PUBLIC_API_BASE_URL`
 - for local safety, do not set `EXPO_PUBLIC_API_BASE_URL` to production when running Expo dev builds.
+- `EXPO_PUBLIC_*` values are public client config only. Never put private API/provider secrets in them.
 
 Implemented mobile slice:
 
@@ -144,9 +181,12 @@ dotnet run --project .\apps\worker\src\NSFinance.Worker\NSFinance.Worker.csproj
 - PDF import
 - microservice split / message broker / Redis
 
-## Phase 2 docs
+## Documentation
 
-- `docs/phase-2-open-banking-truelayer.md`
-- `docs/api-endpoints-phase-2.md`
-- `docs/env-config-phase-2.md`
-- `docs/manual-qa-phase-2.md`
+- Docs index: `docs/README.md`
+- Setup: `docs/setup/local-development.md`
+- Configuration and secrets: `docs/setup/configuration.md`
+- Deployment: `docs/deployment/azure-production.md`
+- API endpoints: `docs/features/api-endpoints.md`
+- Banking (TrueLayer): `docs/features/banking-truelayer.md`
+- Manual QA: `docs/testing/manual-qa.md`

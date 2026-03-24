@@ -11,14 +11,30 @@ dotnet run --project .\src\NSFinance.Api\NSFinance.Api.csproj
 ## Configuration
 
 - Shared base config: `src/NSFinance.Api/appsettings.json`
-- Local-only defaults: `src/NSFinance.Api/appsettings.Development.json`
-- Optional local secrets override (gitignored): `src/NSFinance.Api/appsettings.Local.json`
-- Template: `src/NSFinance.Api/appsettings.Local.example.json`
-- Production should use App Service environment variables (no secrets in source).
-- Deployment checklist: `..\..\docs\azure-production-checklist.md`
+- Development-safe overrides: `src/NSFinance.Api/appsettings.Development.json` (no secrets)
+- Local secrets (only path, gitignored): `src/NSFinance.Api/appsettings.Local.json`
+- Local template: `src/NSFinance.Api/appsettings.Local.example.json`
+- Production should use App Service/Key Vault environment variables (no secrets in source).
+- Deployment checklist: `..\..\docs\deployment\azure-production.md`
 - TrueLayer callback URIs:
   - Development: `http://localhost:5080/api/banking/truelayer/callback`
   - Production: `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
+
+### Local secret bootstrap
+
+1. Copy `src/NSFinance.Api/appsettings.Local.example.json` to `src/NSFinance.Api/appsettings.Local.json`.
+2. Fill local secrets in `appsettings.Local.json`:
+   - `ConnectionStrings:DefaultConnection`
+   - `Jwt:SigningKey`
+   - `TrueLayer:ClientId`
+   - `TrueLayer:ClientSecret`
+   - `Turnstile:SecretKey` (reserved for captcha backend wiring)
+
+### Active config keys
+
+- API consumes `ConnectionStrings:DefaultConnection`, `Jwt:SigningKey`, `TrueLayer:*`, and `GoogleAuth:ClientId`.
+- `Turnstile:SecretKey` is template-ready but not yet used at runtime.
+- Email env constants exist for future transport wiring, but no email options binding is active yet.
 
 ## Key endpoints
 

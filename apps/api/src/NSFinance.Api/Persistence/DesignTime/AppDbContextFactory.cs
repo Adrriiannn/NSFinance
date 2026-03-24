@@ -10,10 +10,17 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
     {
         var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
 
-        var configuration = new ConfigurationBuilder()
+        var configurationBuilder = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile($"appsettings.{environment}.json", optional: true)
+            .AddJsonFile($"appsettings.{environment}.json", optional: true);
+
+        if (environment.Equals("Development", StringComparison.OrdinalIgnoreCase))
+        {
+            configurationBuilder.AddJsonFile("appsettings.Local.json", optional: true);
+        }
+
+        var configuration = configurationBuilder
             .AddEnvironmentVariables()
             .Build();
 

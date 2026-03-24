@@ -9,7 +9,7 @@ on:
       - ".config/dotnet-tools.json"
       - "apps/api/**"
       - "libs/shared/**"
-      - "docs/database-migrations.md"
+      - "docs/deployment/database-migrations.md"
   workflow_dispatch:
 
 permissions:

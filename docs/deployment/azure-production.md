@@ -16,6 +16,7 @@
 - `TrueLayer__AuthBaseUrl=https://auth.truelayer.com`
 - `TrueLayer__ApiBaseUrl=https://api.truelayer.com`
 - `Cors__AllowedOrigins=<comma-separated allowed web origins, if needed>`
+- Optional reserved (not currently consumed by API runtime): `Turnstile__SecretKey`
 
 ## Supported Legacy Variable Fallbacks (Compatibility)
 - `NSFINANCE_DB_CONNECTION_STRING` (fallback if `ConnectionStrings__DefaultConnection` is not set)
@@ -26,11 +27,15 @@
 
 ## Backend Config Structure
 - Base config: `apps/api/src/NSFinance.Api/appsettings.json` (production-safe defaults, no secrets).
-- Local-only config: `apps/api/src/NSFinance.Api/appsettings.Development.json`.
+- Development-safe config: `apps/api/src/NSFinance.Api/appsettings.Development.json` (no secrets).
+- Local secrets (development only): `apps/api/src/NSFinance.Api/appsettings.Local.json` (gitignored).
+- Production secrets: Azure App Service settings / Key Vault only.
+- `appsettings.Production.json` is not required.
 - Environment variable override order:
   1. `appsettings.json`
   2. `appsettings.{Environment}.json`
-  3. environment variables
+  3. development only: optional `appsettings.Local.json`
+  4. environment variables
 
 ## Startup and Runtime Behavior
 - Swagger UI: enabled only in Development.
