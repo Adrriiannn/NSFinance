@@ -6,12 +6,11 @@ import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-nat
 import { NsfLogo } from "../../src/components/branding/NsfLogo";
 import { CaptchaGate } from "../../src/components/forms/CaptchaGate";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
-import { AuthDivider } from "../../src/components/ui/AuthDivider";
 import { AuthLegalLinks } from "../../src/components/ui/AuthLegalLinks";
 import { PasswordField } from "../../src/components/ui/PasswordField";
+import { Button } from "../../src/components/ui/buttons/Button";
 import { Banner } from "../../src/components/ui/feedback/Banner";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
-import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { TextField } from "../../src/components/ui/TextField";
 import { persistRememberedEmail, readRememberedEmail } from "../../src/features/auth/rememberedEmail";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
@@ -466,6 +465,10 @@ export default function LoginScreen() {
     router.replace("/(tabs)");
   };
 
+  const handleMicrosoftSignIn = () => {
+    setGoogleError("Microsoft sign-in is coming soon.");
+  };
+
   return (
     <AuthScreen>
       <View style={styles.topRow}>
@@ -541,64 +544,85 @@ export default function LoginScreen() {
 
                 <View style={styles.narrowBlock}>
                   <View style={styles.rememberEmailRow}>
+                    <View style={styles.rememberEmailLeft}>
+                      <Pressable
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: rememberEmail }}
+                        onPress={() => setRememberEmail((current) => !current)}
+                        style={({ pressed }) => [
+                          styles.rememberEmailCheckbox,
+                          rememberEmail ? styles.rememberEmailCheckboxChecked : null,
+                          pressed ? styles.rememberEmailCheckboxPressed : null
+                        ]}
+                      >
+                        {rememberEmail ? <Ionicons name="checkmark" size={14} color={palette.appBackground} /> : null}
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Remember my email"
+                        onPress={() => setRememberEmail((current) => !current)}
+                        style={({ pressed }) => [pressed ? styles.linkPressed : null]}
+                      >
+                        <Text style={styles.rememberEmailLabel}>Remember my email</Text>
+                      </Pressable>
+                    </View>
+
                     <Pressable
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: rememberEmail }}
-                      onPress={() => setRememberEmail((current) => !current)}
-                      style={({ pressed }) => [
-                        styles.rememberEmailCheckbox,
-                        rememberEmail ? styles.rememberEmailCheckboxChecked : null,
-                        pressed ? styles.rememberEmailCheckboxPressed : null
-                      ]}
-                    >
-                      {rememberEmail ? <Ionicons name="checkmark" size={14} color={palette.appBackground} /> : null}
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Remember my email"
-                      onPress={() => setRememberEmail((current) => !current)}
+                      onPress={() => router.push("/forgot-password" as never)}
                       style={({ pressed }) => [pressed ? styles.linkPressed : null]}
                     >
-                      <Text style={styles.rememberEmailLabel}>Remember my email</Text>
+                      <Text style={styles.forgotInlineLink}>Forgot password?</Text>
                     </Pressable>
                   </View>
                 </View>
               </View>
 
               <View style={[styles.ctaGroup, styles.narrowBlock]}>
-                <View style={styles.primaryAuthRow}>
-                  <PrimaryButton
-                    label="Log in"
-                    onPress={() => void handleLogin()}
-                    isLoading={loginMutation.isPending}
-                    disabled={!canSubmit}
-                    style={styles.primaryAuthButton}
-                  />
+                <PrimaryButton
+                  label="Log in"
+                  onPress={() => void handleLogin()}
+                  isLoading={loginMutation.isPending}
+                  disabled={!canSubmit}
+                  style={[styles.authButton, styles.loginButton]}
+                />
 
-                  <SecondaryButton
-                    label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
+                <View style={styles.socialDividerRow}>
+                  <View style={styles.socialDividerLine} />
+                  <Text style={styles.socialDividerText}>Or continue with</Text>
+                  <View style={styles.socialDividerLine} />
+                </View>
+
+                <View style={styles.socialAuthRow}>
+                  <Button
+                    label="Google"
+                    variant="secondary"
+                    icon={<Ionicons name="logo-google" size={16} color={palette.textPrimary} />}
                     onPress={() => void handleGoogleSignIn()}
                     disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
-                    style={styles.primaryAuthButton}
+                    style={styles.authButton}
+                  />
+
+                  <Button
+                    label="Microsoft"
+                    variant="secondary"
+                    icon={<Ionicons name="logo-microsoft" size={16} color={palette.textPrimary} />}
+                    onPress={handleMicrosoftSignIn}
+                    style={styles.authButton}
                   />
                 </View>
                 {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
 
-                <View style={styles.forgotWrap}>
+                <View style={styles.signUpRow}>
+                  <Text style={styles.signUpPrompt}>Don&apos;t have an account yet? </Text>
                   <Pressable
-                    onPress={() => router.push("/forgot-password" as never)}
+                    onPress={() => router.push("/register" as never)}
                     style={({ pressed }) => [pressed ? styles.linkPressed : null]}
                   >
-                    <Text style={styles.forgotLink}>Forgot your password?</Text>
+                    <Text style={styles.signUpLink}>Sign up</Text>
                   </Pressable>
                 </View>
               </View>
             </View>
-          </View>
-
-          <View style={[styles.createAccountSection, styles.narrowBlock]}>
-            <AuthDivider widthPercent={70} />
-            <SecondaryButton label="Create an account" onPress={() => router.push("/register" as never)} />
           </View>
         </View>
       </View>
@@ -675,6 +699,12 @@ const styles = StyleSheet.create({
     minHeight: 28,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[10]
+  },
+  rememberEmailLeft: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: spacing[10]
   },
   rememberEmailCheckbox: {
@@ -700,23 +730,57 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   },
   ctaGroup: {
-    gap: spacing[12]
+    marginTop: spacing[16],
+    gap: spacing[14]
   },
-  primaryAuthRow: {
+  authButton: {
+    flex: 1,
+    borderRadius: 18,
+    minHeight: 50
+  },
+  loginButton: {
+    marginTop: spacing[6]
+  },
+  socialAuthRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing[10]
   },
-  primaryAuthButton: {
-    flex: 1
+  socialDividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[10],
+    marginTop: spacing[4]
   },
-  forgotWrap: {
-    alignItems: "center"
+  socialDividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(220,232,255,0.22)"
   },
-  forgotLink: {
+  socialDividerText: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  forgotInlineLink: {
     color: palette.primaryGlow,
+    ...typography.body2,
+    fontWeight: "600"
+  },
+  signUpRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: spacing[4]
+  },
+  signUpPrompt: {
+    color: palette.textSecondary,
     ...typography.body2
+  },
+  signUpLink: {
+    color: palette.primaryGlow,
+    ...typography.body2,
+    fontWeight: "700"
   },
   linkPressed: {
     opacity: 0.75
@@ -728,9 +792,5 @@ const styles = StyleSheet.create({
   googleSignInMessageAccent: {
     color: palette.primaryGlow,
     fontWeight: "700"
-  },
-  createAccountSection: {
-    marginTop: spacing[16],
-    gap: spacing[28]
   }
 });
