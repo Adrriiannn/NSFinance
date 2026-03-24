@@ -10,6 +10,8 @@ type GoogleSignInResult = {
   message?: string;
 };
 
+const GOOGLE_CLIENT_ID_FALLBACK = "missing-google-client-id";
+
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
@@ -40,6 +42,8 @@ export function useGoogleSignIn() {
   const googleAndroidClientId = __DEV__
     ? readEnv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_DEBUG")
     : readEnv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD");
+  const safeGoogleWebClientId = googleWebClientId ?? GOOGLE_CLIENT_ID_FALLBACK;
+  const safeGoogleAndroidClientId = googleAndroidClientId ?? GOOGLE_CLIENT_ID_FALLBACK;
   const activeClientId = useMemo(
     () =>
       Platform.select({
@@ -51,9 +55,9 @@ export function useGoogleSignIn() {
   );
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: googleWebClientId,
-    androidClientId: googleAndroidClientId,
-    clientId: googleWebClientId,
+    webClientId: safeGoogleWebClientId,
+    androidClientId: safeGoogleAndroidClientId,
+    clientId: safeGoogleWebClientId,
     selectAccount: true,
     scopes: ["openid", "profile", "email"]
   });
