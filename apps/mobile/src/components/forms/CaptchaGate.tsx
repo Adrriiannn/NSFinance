@@ -31,6 +31,10 @@ type ChallengeState = "loading" | "ready" | "expired" | "error";
 const TURNSTILE_PAGE_BASE_URL =
   process.env.EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL?.trim() ?? "https://api.finance.nsireland.ie";
 const TURNSTILE_REGISTER_PATH = "/turnstile/register";
+const TURNSTILE_WIDGET_WIDTH = 300;
+const TURNSTILE_WIDGET_HEIGHT = 65;
+const TURNSTILE_SEAM_MASK = 1;
+const TURNSTILE_BOTTOM_MASK = 2;
 
 function isTokenCaptchaProps(props: CaptchaGateProps): props is TokenCaptchaProps {
   return "token" in props && "onTokenChange" in props;
@@ -204,45 +208,61 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
       {showLabel ? <Text style={styles.label}>Security check</Text> : null}
 
       <View style={styles.inlineWidgetShell}>
-        {challengeUrl ? (
-          <WebView
-            key={`turnstile-inline-${challengeSeed}`}
-            source={{ uri: challengeUrl }}
-            originWhitelist={["https://*", "http://*", "about:blank", "about:srcdoc"]}
-            javaScriptEnabled
-            domStorageEnabled
-            setSupportMultipleWindows={false}
-            scrollEnabled={false}
-            bounces={false}
-            onMessage={onTurnstileMessage}
-            onError={handleWebViewError}
-            onHttpError={handleWebViewHttpError}
-            onShouldStartLoadWithRequest={(request) => {
-              const nextUrl = (request.url || "").toLowerCase();
-              const isAllowed =
-                nextUrl.startsWith("https://") ||
-                nextUrl.startsWith("http://") ||
-                nextUrl.startsWith("about:blank") ||
-                nextUrl.startsWith("about:srcdoc");
+        <View style={styles.inlineWidgetClip}>
+          {challengeUrl ? (
+            <WebView
+              key={`turnstile-inline-${challengeSeed}`}
+              source={{ uri: challengeUrl }}
+              style={styles.inlineWebView}
+              containerStyle={styles.inlineWebViewContainer}
+              originWhitelist={["https://*", "http://*", "about:blank", "about:srcdoc"]}
+              javaScriptEnabled
+              domStorageEnabled
+              androidLayerType="software"
+              setSupportMultipleWindows={false}
+              scrollEnabled={false}
+              bounces={false}
+              cacheEnabled={false}
+              showsHorizontalScrollIndicator={false}
+              showsVerticalScrollIndicator={false}
+              overScrollMode="never"
+              scalesPageToFit={false}
+              contentInset={{ top: 0, left: 0, bottom: 0, right: 0 }}
+              automaticallyAdjustContentInsets={false}
+              onMessage={onTurnstileMessage}
+              onError={handleWebViewError}
+              onHttpError={handleWebViewHttpError}
+              onShouldStartLoadWithRequest={(request) => {
+                const nextUrl = (request.url || "").toLowerCase();
+                const isAllowed =
+                  nextUrl.startsWith("https://") ||
+                  nextUrl.startsWith("http://") ||
+                  nextUrl.startsWith("about:blank") ||
+                  nextUrl.startsWith("about:srcdoc");
 
-              if (!isAllowed) {
-                logTurnstileDebug("navigation_blocked", request.url);
-              }
+                if (!isAllowed) {
+                  logTurnstileDebug("navigation_blocked", request.url);
+                }
 
-              return isAllowed;
-            }}
-          />
-        ) : (
-          <View style={styles.inlineFallback}>
-            <Text style={styles.inlineFallbackText}>Security challenge URL is unavailable.</Text>
-          </View>
-        )}
+                return isAllowed;
+              }}
+            />
+          ) : (
+            <View style={styles.inlineFallback}>
+              <Text style={styles.inlineFallbackText}>Security challenge URL is unavailable.</Text>
+            </View>
+          )}
 
-        {showLoadingOverlay ? (
-          <View pointerEvents="none" style={styles.webViewPendingOverlay}>
-            <ActivityIndicator color={palette.primaryGlow} />
-          </View>
-        ) : null}
+          <View pointerEvents="none" style={styles.seamMaskLeft} />
+          <View pointerEvents="none" style={styles.seamMaskRight} />
+          <View pointerEvents="none" style={styles.seamMaskBottom} />
+
+          {showLoadingOverlay ? (
+            <View pointerEvents="none" style={styles.webViewPendingOverlay}>
+              <ActivityIndicator color={palette.primaryGlow} />
+            </View>
+          ) : null}
+        </View>
       </View>
 
       {lastError ? <Text style={styles.errorText}>{lastError}</Text> : null}
@@ -307,17 +327,38 @@ const styles = StyleSheet.create({
   },
   inlineWidgetShell: {
     alignSelf: "center",
-    width: "88%",
-    maxWidth: 360,
-    minHeight: 86,
-    borderRadius: 14,
-    overflow: "hidden",
-    borderWidth: 1,
+    width: TURNSTILE_WIDGET_WIDTH + 4,
+    height: TURNSTILE_WIDGET_HEIGHT + 4,
+    borderRadius: 10,
+    padding: 1,
+    borderWidth: 2,
     borderColor: palette.border,
-    backgroundColor: "#0b1a2d"
+    overflow: "hidden",
+    backgroundColor: "rgba(18,36,58,0.72)"
+  },
+  inlineWidgetClip: {
+    width: TURNSTILE_WIDGET_WIDTH,
+    height: TURNSTILE_WIDGET_HEIGHT,
+    borderRadius: 6,
+    overflow: "hidden",
+    backgroundColor: "#2f3136"
+  },
+  inlineWebView: {
+    flex: 0,
+    width: TURNSTILE_WIDGET_WIDTH,
+    height: TURNSTILE_WIDGET_HEIGHT + 1,
+    marginTop: -1,
+    backgroundColor: "#2f3136"
+  },
+  inlineWebViewContainer: {
+    flex: 0,
+    width: TURNSTILE_WIDGET_WIDTH,
+    height: TURNSTILE_WIDGET_HEIGHT,
+    backgroundColor: "#2f3136"
   },
   inlineFallback: {
-    minHeight: 86,
+    width: TURNSTILE_WIDGET_WIDTH,
+    height: TURNSTILE_WIDGET_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12]
@@ -332,6 +373,31 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(11,26,45,0.22)"
+  },
+  seamMaskLeft: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: TURNSTILE_SEAM_MASK,
+    backgroundColor: "#2f3136"
+  },
+  seamMaskRight: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: TURNSTILE_SEAM_MASK,
+    backgroundColor: "#2f3136"
+  },
+  seamMaskBottom: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: TURNSTILE_BOTTOM_MASK,
+    backgroundColor: "#2f3136",
+    zIndex: 8
   },
   errorText: {
     color: palette.negative,

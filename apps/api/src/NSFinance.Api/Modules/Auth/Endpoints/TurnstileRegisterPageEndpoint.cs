@@ -43,18 +43,29 @@ public static class TurnstileRegisterPageEndpoint
       html, body {
         margin: 0;
         padding: 0;
-        width: 100%;
-        height: 100%;
-        background: transparent;
+        width: 300px;
+        height: 65px;
+        background: #2f3136;
         overflow: hidden;
       }
 
       #turnstile-root {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        width: 300px;
+        height: 65px;
+        background: #2f3136;
+        overflow: hidden;
+        line-height: 0;
+        font-size: 0;
+      }
+
+      #turnstile-root iframe {
+        display: block !important;
+        width: 300px !important;
+        height: 65px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        background: #2f3136 !important;
       }
     </style>
   </head>
@@ -103,6 +114,7 @@ public static class TurnstileRegisterPageEndpoint
               sitekey: siteKey,
               action: action || 'register',
               theme: theme === 'light' ? 'light' : 'dark',
+              size: 'normal',
               callback: function (token) {
                 postMessageToHost({ type: 'turnstile.success', token: token });
               },
