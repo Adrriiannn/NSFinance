@@ -10,6 +10,12 @@ type GoogleSignInResult = {
   message?: string;
 };
 
+type TokenSummary = {
+  hasToken: boolean;
+  tokenLength: number;
+  tokenPrefix: string;
+};
+
 const GOOGLE_CLIENT_ID_FALLBACK = "missing-google-client-id";
 
 function normalizeEnvValue(value: string | undefined): string | undefined {
@@ -51,6 +57,22 @@ function extractIdToken(authResult: unknown): string | null {
 
   const trimmed = idToken.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function summarizeToken(token: string | null): TokenSummary {
+  if (!token) {
+    return {
+      hasToken: false,
+      tokenLength: 0,
+      tokenPrefix: ""
+    };
+  }
+
+  return {
+    hasToken: true,
+    tokenLength: token.length,
+    tokenPrefix: token.slice(0, 10)
+  };
 }
 
 function logGoogleAuthDebug(event: string, details?: Record<string, unknown>) {
@@ -119,6 +141,15 @@ export function useGoogleSignIn() {
   const completeGoogleSignIn = useCallback(
     async (authResult: unknown): Promise<GoogleSignInResult> => {
       const idToken = extractIdToken(authResult);
+      const tokenSummary = summarizeToken(idToken);
+
+      logGoogleAuthDebug("api_google_login_request_prepared", {
+        endpoint: "/api/auth/google",
+        hasIdToken: tokenSummary.hasToken,
+        idTokenLength: tokenSummary.tokenLength,
+        idTokenPrefix: tokenSummary.tokenPrefix
+      });
+
       if (!idToken) {
         return {
           succeeded: false,
@@ -134,13 +165,19 @@ export function useGoogleSignIn() {
           }
         });
 
-        logGoogleAuthDebug("backend_login_success");
+        logGoogleAuthDebug("api_google_login_success", {
+          endpoint: "/api/auth/google"
+        });
         return { succeeded: true };
       } catch (error) {
-        logGoogleAuthDebug("backend_login_error");
+        const failureMessage = formatUnknownError(error);
+        logGoogleAuthDebug("api_google_login_failure", {
+          endpoint: "/api/auth/google",
+          reason: failureMessage
+        });
         return {
           succeeded: false,
-          message: formatUnknownError(error)
+          message: failureMessage
         };
       }
     },

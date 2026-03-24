@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { NsfLogo } from "../../src/components/branding/NsfLogo";
@@ -135,6 +135,7 @@ function runShake(animationValue: Animated.Value) {
 }
 
 export default function LoginScreen() {
+  const searchParams = useLocalSearchParams<{ googleError?: string | string[] }>();
   const loginMutation = useLoginMutation();
   const googleSignIn = useGoogleSignIn();
   const { playSuccess } = useFeedbackSound();
@@ -174,6 +175,17 @@ export default function LoginScreen() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const rawGoogleError = searchParams.googleError;
+    const nextGoogleError = Array.isArray(rawGoogleError) ? rawGoogleError[0] : rawGoogleError;
+    const normalizedGoogleError = nextGoogleError?.trim();
+    if (!normalizedGoogleError) {
+      return;
+    }
+
+    setGoogleError(normalizedGoogleError);
+  }, [searchParams.googleError]);
 
   useEffect(() => {
     let cancelled = false;

@@ -252,9 +252,27 @@ public sealed class AuthService(
         GoogleLoginRequest request,
         CancellationToken cancellationToken)
     {
+        var tokenSummary = SummarizeToken(request.IdToken);
+        if (hostEnvironment.IsDevelopment())
+        {
+            logger.LogInformation(
+                "Google login service entry hasIdToken={HasIdToken} idTokenLength={IdTokenLength} idTokenPrefix={IdTokenPrefix}",
+                tokenSummary.HasToken,
+                tokenSummary.TokenLength,
+                tokenSummary.TokenPrefix);
+        }
+
         var verification = await googleAuthService.VerifyIdTokenAsync(request.IdToken, cancellationToken);
         if (!verification.Succeeded)
         {
+            if (hostEnvironment.IsDevelopment())
+            {
+                logger.LogWarning(
+                    "Google login verification failed code={Code} statusCode={StatusCode} message={Message}",
+                    verification.Error?.Code,
+                    verification.Error?.StatusCode,
+                    verification.Error?.Message);
+            }
             await WriteGoogleLoginFailureAuditAsync(null, verification.Error!.Code, cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 verification.Error.Message,
@@ -265,6 +283,10 @@ public sealed class AuthService(
         var identity = verification.Value!;
         if (!identity.EmailVerified)
         {
+            if (hostEnvironment.IsDevelopment())
+            {
+                logger.LogWarning("Google login failed reason=google_email_not_verified");
+            }
             await WriteGoogleLoginFailureAuditAsync(null, "google_email_not_verified", cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 "Google account email must be verified before sign-in is allowed.",
@@ -274,6 +296,10 @@ public sealed class AuthService(
 
         if (string.IsNullOrWhiteSpace(identity.Email))
         {
+            if (hostEnvironment.IsDevelopment())
+            {
+                logger.LogWarning("Google login failed reason=google_email_missing");
+            }
             await WriteGoogleLoginFailureAuditAsync(null, "google_email_missing", cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 "Google account email is required.",
@@ -301,6 +327,10 @@ public sealed class AuthService(
         {
             if (existingProviderLink.User is null)
             {
+                if (hostEnvironment.IsDevelopment())
+                {
+                    logger.LogWarning("Google login failed reason=google_provider_user_not_found");
+                }
                 await WriteGoogleLoginFailureAuditAsync(null, "google_provider_user_not_found", cancellationToken);
                 return ServiceResult<AuthTokenResponse>.Fail(
                     "Google account link is invalid. Please contact support.",
@@ -327,6 +357,10 @@ public sealed class AuthService(
                     && !string.IsNullOrWhiteSpace(existingUserGoogleProvider.ProviderSubject)
                     && !string.Equals(existingUserGoogleProvider.ProviderSubject, identity.Subject, StringComparison.Ordinal))
                 {
+                    if (hostEnvironment.IsDevelopment())
+                    {
+                        logger.LogWarning("Google login failed reason=google_provider_conflict");
+                    }
                     await WriteGoogleLoginFailureAuditAsync(user.Id, "google_provider_conflict", cancellationToken);
                     return ServiceResult<AuthTokenResponse>.Fail(
                         "Google provider identity conflict detected. Please contact support.",
@@ -414,6 +448,10 @@ public sealed class AuthService(
 
         if (user.IsDisabled || user.IsSuspended)
         {
+            if (hostEnvironment.IsDevelopment())
+            {
+                logger.LogWarning("Google login failed reason=account_restricted");
+            }
             await WriteGoogleLoginFailureAuditAsync(user.Id, "account_restricted", cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 "Account access is restricted.",
@@ -493,6 +531,15 @@ public sealed class AuthService(
                 createdViaGoogle
             },
             cancellationToken);
+
+        if (hostEnvironment.IsDevelopment())
+        {
+            logger.LogInformation(
+                "Google login succeeded userId={UserId} createdViaGoogle={CreatedViaGoogle} linkedByEmail={LinkedByEmail}",
+                user.Id,
+                createdViaGoogle,
+                linkedToExistingByEmail);
+        }
 
         return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
     }
@@ -1014,6 +1061,18 @@ public sealed class AuthService(
             actorType: actorId.HasValue ? "user" : "anonymous",
             metadata: new { provider = ProviderTypeGoogleOidc, reason },
             cancellationToken);
+    }
+
+    private static (bool HasToken, int TokenLength, string TokenPrefix) SummarizeToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return (false, 0, string.Empty);
+        }
+
+        var trimmed = token.Trim();
+        var prefixLength = Math.Min(10, trimmed.Length);
+        return (true, trimmed.Length, trimmed[..prefixLength]);
     }
 
     private async Task<string> IssueEmailActionTokenAsync(
