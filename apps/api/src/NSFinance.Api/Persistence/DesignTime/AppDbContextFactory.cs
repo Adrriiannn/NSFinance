@@ -26,14 +26,13 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 
         var connectionString =
             configuration[EnvironmentVariableNames.DatabaseConnectionString]
-            ?? configuration[EnvironmentVariableNames.LegacyDatabaseConnectionString]
             ?? configuration.GetConnectionString("DefaultConnection");
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
             throw new InvalidOperationException(
                 $"Database connection string is missing. Set {EnvironmentVariableNames.DatabaseConnectionString}, " +
-                $"{EnvironmentVariableNames.LegacyDatabaseConnectionString}, or ConnectionStrings:DefaultConnection.");
+                "or ConnectionStrings:DefaultConnection.");
         }
 
         var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();

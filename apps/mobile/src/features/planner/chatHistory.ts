@@ -100,13 +100,13 @@ export async function getCompanionChats(): Promise<CompanionChat[]> {
         return cloneChats(normalizedStored);
       }
 
-      const legacyRaw = await SecureStore.getItemAsync(CHAT_HISTORY_KEY);
-      if (!legacyRaw) {
+      const secureStoreRaw = await SecureStore.getItemAsync(CHAT_HISTORY_KEY);
+      if (!secureStoreRaw) {
         companionChatsCache = [];
         return [];
       }
 
-      const parsed = JSON.parse(legacyRaw) as Partial<CompanionChat>[];
+      const parsed = JSON.parse(secureStoreRaw) as Partial<CompanionChat>[];
       if (!Array.isArray(parsed)) {
         companionChatsCache = [];
         return [];

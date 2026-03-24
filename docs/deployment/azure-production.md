@@ -18,12 +18,12 @@
 - `Cors__AllowedOrigins=<comma-separated allowed web origins, if needed>`
 - Optional reserved (not currently consumed by API runtime): `Turnstile__SecretKey`
 
-## Supported Legacy Variable Fallbacks (Compatibility)
-- `NSFINANCE_DB_CONNECTION_STRING` (fallback if `ConnectionStrings__DefaultConnection` is not set)
-- `NSFINANCE_JWT_SIGNING_KEY` and `NSFINTECH_JWT_SIGNING_KEY` (fallbacks for `Jwt__SigningKey`)
-- `NSFINANCE_GOOGLE_CLIENT_ID` and `NSFINTECH_GOOGLE_CLIENT_ID` (fallbacks for `GoogleAuth__ClientId`)
-- `TRUELAYER_CLIENT_ID`, `TRUELAYER_CLIENT_SECRET`, `TRUELAYER_REDIRECT_URI`, `TRUELAYER_ENVIRONMENT`, `TRUELAYER_AUTH_BASE_URL`, `TRUELAYER_API_BASE_URL` (fallbacks for `TrueLayer__*`)
-- `NSFINANCE_ALLOWED_CORS_ORIGINS` and `NSFINTECH_ALLOWED_CORS_ORIGINS` (fallbacks for `Cors__AllowedOrigins`)
+## Optional Environment Variable Aliases
+- `NSFINANCE_DB_CONNECTION_STRING` (alias for `ConnectionStrings__DefaultConnection`)
+- `NSFINANCE_JWT_SIGNING_KEY` (alias for `Jwt__SigningKey`)
+- `NSFINANCE_GOOGLE_CLIENT_ID` (alias for `GoogleAuth__ClientId`)
+- `TRUELAYER_CLIENT_ID`, `TRUELAYER_CLIENT_SECRET`, `TRUELAYER_REDIRECT_URI`, `TRUELAYER_ENVIRONMENT`, `TRUELAYER_AUTH_BASE_URL`, `TRUELAYER_API_BASE_URL` (aliases for `TrueLayer__*`)
+- `NSFINANCE_ALLOWED_CORS_ORIGINS` (alias for `Cors__AllowedOrigins`)
 
 ## Backend Config Structure
 - Base config: `apps/api/src/NSFinance.Api/appsettings.json` (production-safe defaults, no secrets).
@@ -64,7 +64,7 @@
     - `apps/api/src/NSFinance.Api/Modules/Banking/BankingModule.cs`
     - `apps/api/src/NSFinance.Api/Modules/Banking/Endpoints/TrueLayerCallbackEndpoint.cs`
 - TrueLayer redirect URI source:
-  - `TrueLayer__RedirectUri` (preferred) or legacy fallback env vars.
+  - `TrueLayer__RedirectUri` (preferred) or the alias variable names listed above.
   - Development local default is only in `appsettings.Development.json`.
 - Mobile return deep link after TrueLayer callback:
   - `nsfinance://modals/add-account?...`

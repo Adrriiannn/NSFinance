@@ -10,7 +10,7 @@
 
 - Raw app colors live in `apps/mobile/src/theme/tokens/colors.ts`.
 - Semantic light and dark mappings live in `apps/mobile/src/theme/semantic/light.ts` and `apps/mobile/src/theme/semantic/dark.ts`.
-- Existing legacy imports still flow through `apps/mobile/src/theme/tokens.ts`.
+- Existing token imports still flow through `apps/mobile/src/theme/tokens.ts`.
 
 ## Change Shadows
 

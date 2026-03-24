@@ -11,7 +11,7 @@ public sealed record ExpenseTrackerEntryDto(
     string? CategoryName,
     int? SubcategoryId,
     string? SubcategoryName,
-    string? LegacyCategoryLabel,
+    string? CategoryLabel,
     string PaymentSource,
     DateTime OccurredAtUtc,
     string? Notes,

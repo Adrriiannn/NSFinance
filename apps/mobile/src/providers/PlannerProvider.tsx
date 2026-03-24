@@ -180,13 +180,13 @@ export function PlannerProvider({ children }: PlannerProviderProps) {
           return;
         }
 
-        const legacyRaw = await SecureStore.getItemAsync(STORAGE_KEY);
-        if (!legacyRaw) {
+        const secureStoreRaw = await SecureStore.getItemAsync(STORAGE_KEY);
+        if (!secureStoreRaw) {
           setIsReady(true);
           return;
         }
 
-        const parsed = JSON.parse(legacyRaw) as PlannerState;
+        const parsed = JSON.parse(secureStoreRaw) as PlannerState;
         lastPersistedSnapshotRef.current = JSON.stringify(parsed);
         setState({
           necessities: parsed.necessities ?? [],

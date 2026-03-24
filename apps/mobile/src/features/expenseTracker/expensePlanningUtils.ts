@@ -416,10 +416,10 @@ export function buildExpensePlanComputed(
       return;
     }
 
-    const key = `${entry.subcategoryId ?? "none"}|${entry.subcategoryName ?? entry.legacyCategoryLabel ?? "Unplanned"}`;
+    const key = `${entry.subcategoryId ?? "none"}|${entry.subcategoryName ?? entry.categoryLabel ?? "Unplanned"}`;
     const existing = unexpectedMap.get(key) ?? {
       subcategoryId: entry.subcategoryId,
-      subcategoryName: entry.subcategoryName ?? entry.legacyCategoryLabel ?? "Unplanned",
+      subcategoryName: entry.subcategoryName ?? entry.categoryLabel ?? "Unplanned",
       categoryId: entry.categoryId,
       categoryName: entry.categoryName ?? "Unplanned",
       domainId: entry.domainId,
@@ -545,11 +545,11 @@ export function buildExpensePlanCategoryMetrics(
   planEntries.forEach((entry) => {
     touchBucket(actualByCategory, {
       categoryId: entry.categoryId,
-      categoryName: entry.categoryName ?? entry.legacyCategoryLabel ?? "Unplanned",
+      categoryName: entry.categoryName ?? entry.categoryLabel ?? "Unplanned",
       domainId: entry.domainId,
       domainName: entry.domainName ?? "Unplanned",
       subcategoryId: entry.subcategoryId,
-      subcategoryName: entry.subcategoryName ?? entry.legacyCategoryLabel ?? "Unplanned",
+      subcategoryName: entry.subcategoryName ?? entry.categoryLabel ?? "Unplanned",
       amount: entry.amount,
       entryId: entry.id
     });

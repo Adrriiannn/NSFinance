@@ -74,8 +74,7 @@ public static class ServiceCollectionExtensions
             configuration.GetSection(JwtOptions.SectionName).Bind(options);
             var signingKeyOverride = ResolveEnvironmentValue(
                 configuration,
-                EnvironmentVariableNames.JwtSigningKey,
-                EnvironmentVariableNames.LegacyJwtSigningKey);
+                EnvironmentVariableNames.JwtSigningKey);
             if (!string.IsNullOrWhiteSpace(signingKeyOverride))
             {
                 options.SigningKey = signingKeyOverride;
@@ -100,15 +99,13 @@ public static class ServiceCollectionExtensions
                 value => options.ClientId = value,
                 ResolveEnvironmentValue(
                     configuration,
-                    EnvironmentVariableNames.GoogleClientId,
-                    EnvironmentVariableNames.LegacyGoogleClientId));
+                    EnvironmentVariableNames.GoogleClientId));
         });
 
         var jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
         var signingKeyFromEnv = ResolveEnvironmentValue(
             configuration,
-            EnvironmentVariableNames.JwtSigningKey,
-            EnvironmentVariableNames.LegacyJwtSigningKey);
+            EnvironmentVariableNames.JwtSigningKey);
         if (!string.IsNullOrWhiteSpace(signingKeyFromEnv))
         {
             jwtOptions.SigningKey = signingKeyFromEnv;
@@ -126,7 +123,7 @@ public static class ServiceCollectionExtensions
             throw new InvalidOperationException(
                 $"A non-placeholder JWT signing key is required outside Development. " +
                 $"Set Jwt:SigningKey, Jwt__SigningKey, {EnvironmentVariableNames.JwtSigningKey}, " +
-                $"or legacy {EnvironmentVariableNames.LegacyJwtSigningKey}.");
+                "and ensure it is not a placeholder value.");
         }
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -236,22 +233,20 @@ public static class ServiceCollectionExtensions
         var connectionString =
             ResolveEnvironmentValue(
                 configuration,
-                EnvironmentVariableNames.DatabaseConnectionString,
-                EnvironmentVariableNames.LegacyDatabaseConnectionString)
+                EnvironmentVariableNames.DatabaseConnectionString)
             ?? configuration.GetConnectionString("DefaultConnection");
 
         if (string.IsNullOrWhiteSpace(connectionString))
         {
             throw new InvalidOperationException(
                 $"Database connection string is missing. Set {EnvironmentVariableNames.DatabaseConnectionString} " +
-                $"(legacy: {EnvironmentVariableNames.LegacyDatabaseConnectionString}) or ConnectionStrings:DefaultConnection.");
+                "or ConnectionStrings:DefaultConnection.");
         }
 
         var allowRemoteDbInDevelopment = ParseBoolean(
             ResolveEnvironmentValue(
                 configuration,
-                EnvironmentVariableNames.AllowRemoteDbInDevelopment,
-                EnvironmentVariableNames.LegacyAllowRemoteDbInDevelopment));
+                EnvironmentVariableNames.AllowRemoteDbInDevelopment));
 
         if (hostEnvironment.IsDevelopment()
             && !allowRemoteDbInDevelopment
@@ -303,8 +298,7 @@ public static class ServiceCollectionExtensions
         var configuredOrigins =
             ResolveEnvironmentValue(
                 configuration,
-                EnvironmentVariableNames.AllowedCorsOrigins,
-                EnvironmentVariableNames.LegacyAllowedCorsOrigins)
+                EnvironmentVariableNames.AllowedCorsOrigins)
             ?? configuration["Cors:AllowedOrigins"];
 
         var origins = (configuredOrigins ?? string.Empty)
@@ -419,21 +413,9 @@ public static class ServiceCollectionExtensions
 
     private static string? ResolveEnvironmentValue(
         IConfiguration configuration,
-        string primaryKey,
-        string? legacyKey = null)
+        string key)
     {
-        var primary = configuration[primaryKey];
-        if (!string.IsNullOrWhiteSpace(primary))
-        {
-            return primary;
-        }
-
-        if (string.IsNullOrWhiteSpace(legacyKey))
-        {
-            return null;
-        }
-
-        return configuration[legacyKey];
+        return configuration[key];
     }
 }
 

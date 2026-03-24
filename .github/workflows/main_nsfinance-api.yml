@@ -96,10 +96,15 @@ jobs:
           Get-ChildItem $env:PUBLISH_OUTPUT_PATH | Select-Object Name, Length, LastWriteTimeUtc
 
       - name: Create EF Core migration bundle
+        env:
+          PROD_DB_CONNECTION_STRING: ${{ secrets.PROD_DB_CONNECTION_STRING }}
         shell: pwsh
         run: |
           Remove-Item $env:MIGRATION_BUNDLE_PATH -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path (Split-Path $env:MIGRATION_BUNDLE_PATH) | Out-Null
+
+          $env:NSFINANCE_DB_CONNECTION_STRING = $env:PROD_DB_CONNECTION_STRING
+          $env:ConnectionStrings__DefaultConnection = $env:PROD_DB_CONNECTION_STRING
 
           # Use an EF migration bundle in CI/CD so production schema changes happen before deploy,
           # without depending on app-startup auto-migrations on Azure.
@@ -127,13 +132,10 @@ jobs:
         run: |
           Write-Host "Starting EF Core migration bundle execution against the production database."
 
-          # The migration bundle still bootstraps the app's configuration pipeline, so map the
-          # CI secret into the environment variable names the API already expects at runtime/design-time.
           $env:NSFINANCE_DB_CONNECTION_STRING = $env:PROD_DB_CONNECTION_STRING
-          $env:NSFINTECH_DB_CONNECTION_STRING = $env:PROD_DB_CONNECTION_STRING
           $env:ConnectionStrings__DefaultConnection = $env:PROD_DB_CONNECTION_STRING
 
-          Write-Host "Mapped PROD_DB_CONNECTION_STRING into the API's expected database configuration environment variables."
+          Write-Host "Using mapped database environment variables required by API runtime/design-time configuration."
 
           chmod +x $env:MIGRATION_BUNDLE_PATH
           & $env:MIGRATION_BUNDLE_PATH --connection "$env:PROD_DB_CONNECTION_STRING"

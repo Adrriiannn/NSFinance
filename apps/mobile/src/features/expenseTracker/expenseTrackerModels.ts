@@ -220,11 +220,11 @@ export function getExpenseTrackerSubcategoryVisual(input: {
 }
 
 export function getExpenseTrackerEntryCategoryLabel(entry: ExpenseTrackerEntryDto) {
-  return entry.categoryName ?? entry.legacyCategoryLabel ?? "Uncategorized";
+  return entry.categoryName ?? entry.categoryLabel ?? "Uncategorized";
 }
 
 export function getExpenseTrackerEntrySubcategoryLabel(entry: ExpenseTrackerEntryDto) {
-  return entry.subcategoryName ?? entry.legacyCategoryLabel ?? entry.categoryName ?? "Uncategorized";
+  return entry.subcategoryName ?? entry.categoryLabel ?? entry.categoryName ?? "Uncategorized";
 }
 
 export function getExpenseTrackerVisual(input: {

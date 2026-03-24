@@ -116,7 +116,7 @@ export type ExpenseTrackerEntryDto = {
   categoryName: string | null;
   subcategoryId: number | null;
   subcategoryName: string | null;
-  legacyCategoryLabel: string | null;
+  categoryLabel: string | null;
   paymentSource: string;
   occurredAtUtc: string;
   notes: string | null;

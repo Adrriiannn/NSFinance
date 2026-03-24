@@ -3,24 +3,15 @@ namespace NSFinance.Shared.Configuration;
 public static class EnvironmentVariableNames
 {
     public const string DatabaseConnectionString = "NSFINANCE_DB_CONNECTION_STRING";
-    public const string LegacyDatabaseConnectionString = "NSFINTECH_DB_CONNECTION_STRING";
     public const string AllowRemoteDbInDevelopment = "NSFINANCE_ALLOW_REMOTE_DB_IN_DEVELOPMENT";
-    public const string LegacyAllowRemoteDbInDevelopment = "NSFINTECH_ALLOW_REMOTE_DB_IN_DEVELOPMENT";
     public const string ApiBaseUrl = "EXPO_PUBLIC_API_BASE_URL";
     public const string JwtSigningKey = "NSFINANCE_JWT_SIGNING_KEY";
-    public const string LegacyJwtSigningKey = "NSFINTECH_JWT_SIGNING_KEY";
     public const string AllowedCorsOrigins = "NSFINANCE_ALLOWED_CORS_ORIGINS";
-    public const string LegacyAllowedCorsOrigins = "NSFINTECH_ALLOWED_CORS_ORIGINS";
     public const string GoogleClientId = "NSFINANCE_GOOGLE_CLIENT_ID";
-    public const string LegacyGoogleClientId = "NSFINTECH_GOOGLE_CLIENT_ID";
     public const string GoogleClientSecret = "NSFINANCE_GOOGLE_CLIENT_SECRET";
-    public const string LegacyGoogleClientSecret = "NSFINTECH_GOOGLE_CLIENT_SECRET";
     public const string GoogleRedirectUri = "NSFINANCE_GOOGLE_REDIRECT_URI";
-    public const string LegacyGoogleRedirectUri = "NSFINTECH_GOOGLE_REDIRECT_URI";
     public const string EmailSenderAddress = "NSFINANCE_EMAIL_SENDER_ADDRESS";
-    public const string LegacyEmailSenderAddress = "NSFINTECH_EMAIL_SENDER_ADDRESS";
     public const string EmailTransportMode = "NSFINANCE_EMAIL_TRANSPORT_MODE";
-    public const string LegacyEmailTransportMode = "NSFINTECH_EMAIL_TRANSPORT_MODE";
     public const string TrueLayerClientId = "TRUELAYER_CLIENT_ID";
     public const string TrueLayerClientSecret = "TRUELAYER_CLIENT_SECRET";
     public const string TrueLayerRedirectUri = "TRUELAYER_REDIRECT_URI";
