@@ -128,6 +128,15 @@ export function useGoogleSignIn() {
   }, [googleLoginMutation, resolvePendingResult, response]);
 
   const signInWithGoogle = useCallback(async (): Promise<GoogleSignInResult> => {
+    const isExpoLikeRedirect = request?.redirectUri?.startsWith("exp://") ?? false;
+    if (isExpoLikeRedirect) {
+      return {
+        succeeded: false,
+        message:
+          "Google sign-in is not supported in Expo Go. Use an Android development build (or production build) for OAuth."
+      };
+    }
+
     if (!isConfigured) {
       return {
         succeeded: false,
