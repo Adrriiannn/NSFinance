@@ -15,6 +15,7 @@ using NSFinance.Api.Infrastructure.Startup;
 using NSFinance.Api.Modules.Accounts.Services;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Auth.Services;
+using NSFinance.Api.Modules.Auth.Configuration;
 using NSFinance.Api.Modules.Banking.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Categories.Services;
@@ -101,6 +102,11 @@ public static class ServiceCollectionExtensions
                 ResolveEnvironmentValue(
                     configuration,
                     EnvironmentVariableNames.GoogleClientId));
+        });
+
+        services.Configure<TurnstileOptions>(options =>
+        {
+            configuration.GetSection(TurnstileOptions.SectionName).Bind(options);
         });
 
         var jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();

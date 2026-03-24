@@ -1,15 +1,37 @@
+using System.Net;
 using System.Text;
+using Microsoft.Extensions.Options;
+using NSFinance.Api.Modules.Auth.Configuration;
 
 namespace NSFinance.Api.Modules.Auth.Endpoints;
 
 public static class TurnstileRegisterPageEndpoint
 {
-    public static IResult HandleAsync()
+    public static IResult HandleAsync(IOptions<TurnstileOptions> turnstileOptions)
     {
-        return Results.Content(Html, "text/html; charset=utf-8", Encoding.UTF8);
+        var options = turnstileOptions.Value;
+        var siteKey = options.SiteKey?.Trim() ?? string.Empty;
+        var secretKey = options.SecretKey?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(siteKey))
+        {
+            throw new InvalidOperationException("Turnstile SiteKey is missing from configuration.");
+        }
+
+        if (string.IsNullOrWhiteSpace(secretKey))
+        {
+            throw new InvalidOperationException("Turnstile SecretKey is missing from configuration.");
+        }
+
+        var html = BuildHtml(siteKey);
+        return Results.Content(html, "text/html; charset=utf-8", Encoding.UTF8);
     }
 
-    private const string Html = """
+    private static string BuildHtml(string siteKey)
+    {
+        var encodedSiteKey = WebUtility.HtmlEncode(siteKey);
+
+        return $$"""
 <!doctype html>
 <html lang="en">
   <head>
@@ -86,7 +108,7 @@ public static class TurnstileRegisterPageEndpoint
       <div class="panel">
         <h1 class="title">Security verification</h1>
         <p class="meta">Complete the Turnstile challenge to continue registration.</p>
-        <div id="turnstile-root"></div>
+        <div id="turnstile-root" class="cf-turnstile" data-sitekey="{{encodedSiteKey}}"></div>
         <div id="error" class="error"></div>
       </div>
     </div>
@@ -94,9 +116,10 @@ public static class TurnstileRegisterPageEndpoint
     <script>
       (function () {
         var params = new URLSearchParams(window.location.search);
-        var siteKey = (params.get('siteKey') || '').trim();
         var action = (params.get('action') || 'register').trim();
         var theme = (params.get('theme') || 'dark').trim();
+        var rootElement = document.getElementById('turnstile-root');
+        var siteKey = (rootElement && rootElement.getAttribute('data-sitekey') || '').trim();
 
         function postMessageToHost(payload) {
           var serialized = JSON.stringify(payload);
@@ -125,7 +148,7 @@ public static class TurnstileRegisterPageEndpoint
           postMessageToHost({
             type: 'turnstile.error',
             code: 'site_key_missing',
-            message: 'Turnstile site key is missing in query string.'
+            message: 'Turnstile site key is missing in server configuration.'
           });
           return;
         }
@@ -177,4 +200,5 @@ public static class TurnstileRegisterPageEndpoint
   </body>
 </html>
 """;
+    }
 }
