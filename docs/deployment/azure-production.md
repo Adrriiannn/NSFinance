@@ -8,7 +8,9 @@
 - `ASPNETCORE_ENVIRONMENT=Production`
 - `ConnectionStrings__DefaultConnection=<Azure PostgreSQL connection string>`
 - `Jwt__SigningKey=<32+ character signing key>`
-- `GoogleAuth__ClientId=<Google OAuth client id used by mobile>`
+- `GoogleAuth__WebClientId=<Google OAuth web client id>`
+- `GoogleAuth__AndroidClientIdProd=<Google OAuth Android production client id>`
+- `GoogleAuth__AndroidClientIdDebug=<Google OAuth Android debug client id (optional in production)>`
 - `TrueLayer__ClientId=<TrueLayer client id>`
 - `TrueLayer__ClientSecret=<TrueLayer client secret>`
 - `TrueLayer__RedirectUri=https://api.finance.nsireland.ie/api/banking/truelayer/callback`
@@ -21,7 +23,10 @@
 ## Optional Environment Variable Aliases
 - `NSFINANCE_DB_CONNECTION_STRING` (alias for `ConnectionStrings__DefaultConnection`)
 - `NSFINANCE_JWT_SIGNING_KEY` (alias for `Jwt__SigningKey`)
-- `NSFINANCE_GOOGLE_CLIENT_ID` (alias for `GoogleAuth__ClientId`)
+- `NSFINANCE_GOOGLE_WEB_CLIENT_ID` (alias for `GoogleAuth__WebClientId`)
+- `NSFINANCE_GOOGLE_ANDROID_CLIENT_ID_DEBUG` (alias for `GoogleAuth__AndroidClientIdDebug`)
+- `NSFINANCE_GOOGLE_ANDROID_CLIENT_ID_PROD` (alias for `GoogleAuth__AndroidClientIdProd`)
+- `NSFINANCE_GOOGLE_CLIENT_ID` (legacy alias for `GoogleAuth__ClientId`)
 - `TRUELAYER_CLIENT_ID`, `TRUELAYER_CLIENT_SECRET`, `TRUELAYER_REDIRECT_URI`, `TRUELAYER_ENVIRONMENT`, `TRUELAYER_AUTH_BASE_URL`, `TRUELAYER_API_BASE_URL` (aliases for `TrueLayer__*`)
 - `NSFINANCE_ALLOWED_CORS_ORIGINS` (alias for `Cors__AllowedOrigins`)
 

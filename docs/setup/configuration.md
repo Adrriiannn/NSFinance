@@ -26,13 +26,21 @@ Required local secret keys:
 - `TrueLayer:ClientId`
 - `TrueLayer:ClientSecret`
 
+Google sign-in keys (required only when Google sign-in is enabled locally):
+
+- `GoogleAuth:WebClientId`
+- `GoogleAuth:AndroidClientIdDebug`
+- `GoogleAuth:AndroidClientIdProd`
+
 Reserved key for upcoming backend wiring:
 
 - `Turnstile:SecretKey`
 
 Optional local override key:
 
-- `GoogleAuth:ClientId`
+- `GoogleAuth:WebClientId`
+- `GoogleAuth:AndroidClientIdDebug`
+- `GoogleAuth:AndroidClientIdProd`
 
 ## Production secrets (Azure)
 
@@ -48,7 +56,9 @@ Primary keys:
 - `TrueLayer__Environment`
 - `TrueLayer__AuthBaseUrl`
 - `TrueLayer__ApiBaseUrl`
-- `GoogleAuth__ClientId` (if Google sign-in is enabled)
+- `GoogleAuth__WebClientId` (recommended)
+- `GoogleAuth__AndroidClientIdDebug` (optional outside local/dev)
+- `GoogleAuth__AndroidClientIdProd` (recommended)
 
 ## Runtime sources
 
@@ -66,7 +76,7 @@ Actively consumed by runtime:
 - database connection string
 - JWT options and signing key
 - TrueLayer options
-- Google auth client id
+- Google auth client IDs (web + android audiences)
 
 Not yet bound by runtime services (template-ready only):
 

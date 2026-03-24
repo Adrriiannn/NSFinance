@@ -102,6 +102,21 @@ public static class ServiceCollectionExtensions
                 ResolveEnvironmentValue(
                     configuration,
                     EnvironmentVariableNames.GoogleClientId));
+            OverrideIfSet(
+                value => options.WebClientId = value,
+                ResolveEnvironmentValue(
+                    configuration,
+                    EnvironmentVariableNames.GoogleWebClientId));
+            OverrideIfSet(
+                value => options.AndroidClientIdDebug = value,
+                ResolveEnvironmentValue(
+                    configuration,
+                    EnvironmentVariableNames.GoogleAndroidClientIdDebug));
+            OverrideIfSet(
+                value => options.AndroidClientIdProd = value,
+                ResolveEnvironmentValue(
+                    configuration,
+                    EnvironmentVariableNames.GoogleAndroidClientIdProd));
         });
 
         services.Configure<TurnstileOptions>(options =>

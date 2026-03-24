@@ -711,7 +711,10 @@ public class AuthAndTrustIntegrationTests
             _failures[idToken] = exception;
         }
 
-        public Task<GoogleJsonWebSignature.Payload> ValidateAsync(string idToken, string audience, CancellationToken cancellationToken)
+        public Task<GoogleJsonWebSignature.Payload> ValidateAsync(
+            string idToken,
+            IReadOnlyCollection<string> audiences,
+            CancellationToken cancellationToken)
         {
             if (_failures.TryGetValue(idToken, out var failure))
             {

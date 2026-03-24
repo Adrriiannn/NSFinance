@@ -28,11 +28,14 @@ dotnet run --project .\src\NSFinance.Api\NSFinance.Api.csproj
    - `Jwt:SigningKey`
    - `TrueLayer:ClientId`
    - `TrueLayer:ClientSecret`
+   - `GoogleAuth:WebClientId`
+   - `GoogleAuth:AndroidClientIdDebug`
+   - `GoogleAuth:AndroidClientIdProd`
    - `Turnstile:SecretKey` (reserved for captcha backend wiring)
 
 ### Active config keys
 
-- API consumes `ConnectionStrings:DefaultConnection`, `Jwt:SigningKey`, `TrueLayer:*`, and `GoogleAuth:ClientId`.
+- API consumes `ConnectionStrings:DefaultConnection`, `Jwt:SigningKey`, `TrueLayer:*`, and Google auth client IDs from `GoogleAuth:WebClientId`, `GoogleAuth:AndroidClientIdDebug`, and `GoogleAuth:AndroidClientIdProd` (plus `GoogleAuth:ClientId` as a compatibility alias).
 - `Turnstile:SecretKey` is template-ready but not yet used at runtime.
 - Email env constants exist for future transport wiring, but no email options binding is active yet.
 

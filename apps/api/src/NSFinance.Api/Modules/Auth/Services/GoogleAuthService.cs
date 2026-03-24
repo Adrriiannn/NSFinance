@@ -9,9 +9,9 @@ public sealed class GoogleAuthService(
     IGoogleIdTokenVerifier idTokenVerifier,
     ILogger<GoogleAuthService> logger)
 {
-    private readonly GoogleAuthOptions _options = options.Value;
+    private readonly IReadOnlyCollection<string> _allowedClientIds = options.Value.GetConfiguredClientIds();
 
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(_options.ClientId);
+    public bool IsConfigured => _allowedClientIds.Count > 0;
 
     public string ProviderType => "google_oidc";
 
@@ -21,7 +21,9 @@ public sealed class GoogleAuthService(
     {
         if (!IsConfigured)
         {
-            logger.LogWarning("Google sign-in attempted but GoogleAuth:ClientId is missing.");
+            logger.LogWarning(
+                "Google sign-in attempted but no Google client IDs are configured. " +
+                "Set GoogleAuth:WebClientId and/or GoogleAuth:AndroidClientIdDebug/GoogleAuth:AndroidClientIdProd.");
             return ServiceResult<GoogleIdentityPayload>.Fail(
                 "Google sign-in is not configured in this environment.",
                 "google_sign_in_not_configured",
@@ -41,7 +43,7 @@ public sealed class GoogleAuthService(
         {
             payload = await idTokenVerifier.ValidateAsync(
                 idToken.Trim(),
-                _options.ClientId.Trim(),
+                _allowedClientIds,
                 cancellationToken);
         }
         catch (InvalidJwtException ex)

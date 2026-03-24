@@ -6,12 +6,17 @@ public sealed class GoogleIdTokenVerifier : IGoogleIdTokenVerifier
 {
     public Task<GoogleJsonWebSignature.Payload> ValidateAsync(
         string idToken,
-        string audience,
+        IReadOnlyCollection<string> audiences,
         CancellationToken cancellationToken)
     {
+        if (audiences.Count == 0)
+        {
+            throw new InvalidOperationException("At least one Google client ID must be configured.");
+        }
+
         var settings = new GoogleJsonWebSignature.ValidationSettings
         {
-            Audience = [audience]
+            Audience = audiences
         };
 
         return GoogleJsonWebSignature.ValidateAsync(idToken, settings);

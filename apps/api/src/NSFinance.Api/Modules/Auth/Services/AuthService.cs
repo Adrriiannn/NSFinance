@@ -976,7 +976,7 @@ public sealed class AuthService(
             CallbackPath: "/api/auth/providers/google/callback",
             Message: googleAuthService.IsConfigured
                 ? "Google sign-in is configured for backend token verification."
-                : "Google sign-in is not configured. Set GoogleAuth:ClientId to enable it.");
+                : "Google sign-in is not configured. Set GoogleAuth:WebClientId and/or GoogleAuth:AndroidClientIdDebug/GoogleAuth:AndroidClientIdProd to enable it.");
     }
 
     public async Task<ServiceResult<AuthActionResponse>> ScaffoldGoogleCallbackAsync(CancellationToken cancellationToken)

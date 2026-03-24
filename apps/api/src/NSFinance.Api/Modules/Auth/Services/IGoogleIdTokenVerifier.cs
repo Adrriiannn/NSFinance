@@ -6,6 +6,6 @@ public interface IGoogleIdTokenVerifier
 {
     Task<GoogleJsonWebSignature.Payload> ValidateAsync(
         string idToken,
-        string audience,
+        IReadOnlyCollection<string> audiences,
         CancellationToken cancellationToken);
 }

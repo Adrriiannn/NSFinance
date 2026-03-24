@@ -33,7 +33,7 @@ public class GoogleAuthServiceTests
         Assert.Equal("google-sub-1", result.Value!.Subject);
         Assert.Equal("person@test.local", result.Value.Email);
         Assert.True(result.Value.EmailVerified);
-        Assert.Equal("expected-client-id", verifier.LastAudience);
+        Assert.Contains("expected-client-id", verifier.LastAudiences);
     }
 
     [Fact]
@@ -92,14 +92,14 @@ public class GoogleAuthServiceTests
     {
         public GoogleJsonWebSignature.Payload Payload { get; set; } = new();
         public Exception? Exception { get; set; }
-        public string? LastAudience { get; private set; }
+        public IReadOnlyCollection<string> LastAudiences { get; private set; } = Array.Empty<string>();
 
         public Task<GoogleJsonWebSignature.Payload> ValidateAsync(
             string idToken,
-            string audience,
+            IReadOnlyCollection<string> audiences,
             CancellationToken cancellationToken)
         {
-            LastAudience = audience;
+            LastAudiences = audiences;
 
             if (Exception is not null)
             {
