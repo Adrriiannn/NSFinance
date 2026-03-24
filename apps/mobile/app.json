@@ -4,7 +4,10 @@
     "slug": "nsfinance-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "nsfinance",
+    "scheme": [
+      "nsfinance",
+      "com.nsfinance.mobile"
+    ],
     "backgroundColor": "#07111F",
     "userInterfaceStyle": "automatic",
     "plugins": [

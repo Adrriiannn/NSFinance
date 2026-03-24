@@ -5,6 +5,7 @@ const appJson = require("./app.json") as { expo: ExpoConfig };
 const azureProductionBaseUrl =
   "https://api.finance.nsireland.ie";
 const androidPackageName = "com.nsfinance.mobile";
+const appSchemes = ["nsfinance", androidPackageName];
 
 function normalizeAppEnv(value: string | undefined): "development" | "preview" | "production" {
   const normalized = (value ?? "development").trim().toLowerCase();
@@ -29,6 +30,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ...config,
     name: appEnv === "development" ? "NSFinance Dev" : "NSFinance",
     slug: baseConfig.slug,
+    scheme: appSchemes,
     version: process.env.EXPO_PUBLIC_APP_VERSION?.trim() || baseConfig.version || "1.0.0",
     android: {
       ...(baseConfig.android ?? {}),

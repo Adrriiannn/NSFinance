@@ -12,8 +12,28 @@ type GoogleSignInResult = {
 
 const GOOGLE_CLIENT_ID_FALLBACK = "missing-google-client-id";
 
-function readEnv(name: string): string | undefined {
-  const value = process.env[name]?.trim();
+function normalizeEnvValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readGoogleWebClientId(): string | undefined {
+  const value = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+  return normalizeEnvValue(value);
+}
+
+function readGoogleAndroidClientIdDebug(): string | undefined {
+  const value = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_DEBUG;
+  return normalizeEnvValue(value);
+}
+
+function readGoogleAndroidClientIdProd(): string | undefined {
+  const value = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD;
+  return normalizeEnvValue(value);
+}
+
+function readActiveGoogleAndroidClientId(): string | undefined {
+  const value = __DEV__ ? readGoogleAndroidClientIdDebug() : readGoogleAndroidClientIdProd();
   return value ? value : undefined;
 }
 
@@ -33,15 +53,26 @@ function extractIdToken(authResult: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function logGoogleAuthDebug(event: string, details?: Record<string, unknown>) {
+  if (!__DEV__) {
+    return;
+  }
+
+  if (!details) {
+    console.info(`[GoogleAuth] ${event}`);
+    return;
+  }
+
+  console.info(`[GoogleAuth] ${event}`, details);
+}
+
 export function useGoogleSignIn() {
   const googleLoginMutation = useGoogleLoginMutation();
   const pendingResultResolverRef = useRef<((result: GoogleSignInResult) => void) | null>(null);
   const [isPromptInFlight, setIsPromptInFlight] = useState(false);
 
-  const googleWebClientId = readEnv("EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID");
-  const googleAndroidClientId = __DEV__
-    ? readEnv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_DEBUG")
-    : readEnv("EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD");
+  const googleWebClientId = readGoogleWebClientId();
+  const googleAndroidClientId = readActiveGoogleAndroidClientId();
   const safeGoogleWebClientId = googleWebClientId ?? GOOGLE_CLIENT_ID_FALLBACK;
   const safeGoogleAndroidClientId = googleAndroidClientId ?? GOOGLE_CLIENT_ID_FALLBACK;
   const activeClientId = useMemo(
@@ -63,6 +94,28 @@ export function useGoogleSignIn() {
   });
 
   const isConfigured = Boolean(activeClientId);
+
+  useEffect(() => {
+    if (!request) {
+      return;
+    }
+
+    logGoogleAuthDebug("request_ready", {
+      redirectUri: request.redirectUri,
+      hasClientId: Boolean(activeClientId)
+    });
+  }, [activeClientId, request]);
+
+  useEffect(() => {
+    if (!response) {
+      return;
+    }
+
+    logGoogleAuthDebug("response_received", {
+      type: response.type,
+      hasIdToken: Boolean(extractIdToken(response))
+    });
+  }, [response]);
 
   const resolvePendingResult = useCallback((result: GoogleSignInResult) => {
     const resolver = pendingResultResolverRef.current;
@@ -171,6 +224,9 @@ export function useGoogleSignIn() {
     });
 
     try {
+      logGoogleAuthDebug("prompt_open", {
+        redirectUri: request.redirectUri
+      });
       const authResult = await promptAsync();
       if (authResult.type === "cancel" || authResult.type === "dismiss") {
         resolvePendingResult({
