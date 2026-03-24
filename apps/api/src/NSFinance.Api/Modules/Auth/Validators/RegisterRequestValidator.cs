@@ -38,6 +38,11 @@ public static partial class RegisterRequestValidator
             errors["preferredCurrency"] = ["Preferred currency must be an ISO 3-letter code."];
         }
 
+        if (string.IsNullOrWhiteSpace(request.CaptchaToken))
+        {
+            errors["captchaToken"] = ["Security verification is required."];
+        }
+
         return errors;
     }
 

@@ -10,12 +10,21 @@ public static class RegisterEndpoint
     public static async Task<IResult> HandleAsync(
         RegisterRequest request,
         AuthService authService,
+        TurnstileVerificationService turnstileVerificationService,
         CancellationToken cancellationToken)
     {
         var errors = RegisterRequestValidator.Validate(request);
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);
+        }
+
+        var captchaResult = await turnstileVerificationService.VerifyRegisterTokenAsync(
+            request.CaptchaToken,
+            cancellationToken);
+        if (!captchaResult.Succeeded)
+        {
+            return captchaResult.Error!.ToApiError();
         }
 
         var result = await authService.RegisterAsync(request, cancellationToken);

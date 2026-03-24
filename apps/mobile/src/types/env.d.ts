@@ -1,6 +1,7 @@
 declare namespace NodeJS {
   interface ProcessEnv {
     EXPO_PUBLIC_API_BASE_URL?: string;
+    EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL?: string;
     EXPO_PUBLIC_APP_ENV?: "development" | "preview" | "production";
     EXPO_PUBLIC_ALLOW_AZURE_IN_DEV?: "true" | "false";
     EXPO_PUBLIC_APP_VERSION?: string;

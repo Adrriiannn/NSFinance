@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { WebViewErrorEvent, WebViewHttpErrorEvent } from "react-native-webview/lib/WebViewTypes";
 import { apiConfig } from "../../lib/api/config";
@@ -26,24 +26,24 @@ type TurnstileMessage =
   | { type: "turnstile.expired" }
   | { type: "turnstile.error"; code?: string; message?: string };
 
-type ChallengeState = "idle" | "loading" | "ready" | "expired" | "error";
+type ChallengeState = "loading" | "ready" | "expired" | "error";
 
-const TURNSTILE_SITE_KEY = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? "";
+const TURNSTILE_PAGE_BASE_URL =
+  process.env.EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL?.trim() ?? "https://api.finance.nsireland.ie";
 const TURNSTILE_REGISTER_PATH = "/turnstile/register";
 
 function isTokenCaptchaProps(props: CaptchaGateProps): props is TokenCaptchaProps {
   return "token" in props && "onTokenChange" in props;
 }
 
-function buildTurnstileRegisterUrl(baseUrl: string, siteKey: string): string | null {
-  if (!baseUrl || !siteKey) {
+function buildTurnstileRegisterUrl(baseUrl: string): string | null {
+  if (!baseUrl) {
     return null;
   }
 
   try {
     const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
     const url = new URL(`${normalizedBaseUrl}${TURNSTILE_REGISTER_PATH}`);
-    url.searchParams.set("siteKey", siteKey);
     url.searchParams.set("action", "register");
     url.searchParams.set("theme", "dark");
     return url.toString();
@@ -87,75 +87,36 @@ export function CaptchaGate(props: CaptchaGateProps) {
 }
 
 function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptchaProps) {
-  const [isChallengeVisible, setIsChallengeVisible] = useState(false);
   const [isChallengeReady, setIsChallengeReady] = useState(false);
   const [challengeSeed, setChallengeSeed] = useState(0);
-  const [challengeState, setChallengeState] = useState<ChallengeState>("idle");
-  const [statusText, setStatusText] = useState<string | null>(null);
+  const [challengeState, setChallengeState] = useState<ChallengeState>("loading");
   const [lastError, setLastError] = useState<string | null>(null);
 
-  const isVerified = Boolean(token?.trim());
-  const challengeUrl = useMemo(
-    () => buildTurnstileRegisterUrl(apiConfig.baseUrl, TURNSTILE_SITE_KEY),
-    []
-  );
+  const challengeUrl = useMemo(() => buildTurnstileRegisterUrl(TURNSTILE_PAGE_BASE_URL), []);
 
-  const openChallenge = useCallback(() => {
-    if (!TURNSTILE_SITE_KEY) {
-      onTokenChange(null);
-      setChallengeState("error");
-      setLastError("Turnstile site key is missing.");
-      setStatusText("Security check is unavailable. Configure EXPO_PUBLIC_TURNSTILE_SITE_KEY.");
-      logTurnstileDebug("site_key_missing");
-      return;
-    }
-
+  useEffect(() => {
     if (!challengeUrl) {
-      onTokenChange(null);
       setChallengeState("error");
-      setLastError("Turnstile URL could not be built from API configuration.");
-      setStatusText("Security check is unavailable. Verify API base URL configuration.");
-      logTurnstileDebug("challenge_url_invalid", { baseUrl: apiConfig.baseUrl });
+      setIsChallengeReady(true);
+      setLastError("Turnstile URL could not be built from Turnstile host configuration.");
+      logTurnstileDebug("challenge_url_invalid", {
+        turnstileBaseUrl: TURNSTILE_PAGE_BASE_URL,
+        apiBaseUrl: apiConfig.baseUrl
+      });
       return;
     }
 
-    onTokenChange(null);
-    setChallengeSeed((current) => current + 1);
-    setIsChallengeReady(false);
     setChallengeState("loading");
-    setStatusText("Loading security challenge...");
+    setIsChallengeReady(false);
     setLastError(null);
-    setIsChallengeVisible(true);
-    logTurnstileDebug("challenge_open", { challengeUrl });
-  }, [challengeUrl, onTokenChange]);
-
-  const closeChallenge = useCallback(
-    (reason: "cancel" | "success") => {
-      setIsChallengeVisible(false);
-      setIsChallengeReady(false);
-
-      if (reason === "cancel") {
-        onTokenChange(null);
-        setStatusText("Security check cancelled.");
-        setChallengeState("idle");
-        logTurnstileDebug("challenge_closed_cancel");
-      }
-
-      if (reason === "success") {
-        logTurnstileDebug("challenge_closed_success");
-      }
-    },
-    [onTokenChange]
-  );
+    logTurnstileDebug("challenge_load", { challengeUrl, seed: challengeSeed });
+  }, [challengeSeed, challengeUrl]);
 
   const retryChallenge = useCallback(() => {
+    onTokenChange(null);
     setChallengeSeed((current) => current + 1);
-    setIsChallengeReady(false);
-    setChallengeState("loading");
-    setStatusText("Reloading security challenge...");
-    setLastError(null);
     logTurnstileDebug("challenge_retry");
-  }, []);
+  }, [onTokenChange]);
 
   const onTurnstileMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -176,7 +137,6 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
       if (message.type === "turnstile.ready") {
         setIsChallengeReady(true);
         setChallengeState("ready");
-        setStatusText("Complete the challenge to continue.");
         setLastError(null);
         return;
       }
@@ -187,167 +147,111 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
         if (!nextToken) {
           onTokenChange(null);
           setChallengeState("error");
-          setStatusText("Security check returned an empty token. Please retry.");
           setLastError("Turnstile returned an empty token.");
           setIsChallengeReady(true);
           return;
         }
 
         onTokenChange(nextToken);
-        setChallengeState("idle");
-        setStatusText("Security check completed.");
+        setChallengeState("ready");
         setLastError(null);
-        closeChallenge("success");
         return;
       }
 
       if (message.type === "turnstile.expired") {
         onTokenChange(null);
         setChallengeState("expired");
-        setStatusText("Security check expired. Retry to continue.");
-        setLastError(null);
+        setLastError("Security check expired. Please verify again.");
         setIsChallengeReady(true);
         return;
       }
 
       onTokenChange(null);
       setChallengeState("error");
-      setStatusText("Security challenge failed. Retry to continue.");
       setLastError(message.code ? `Turnstile error code: ${message.code}` : message.message ?? "Unknown Turnstile error.");
       setIsChallengeReady(true);
     },
-    [closeChallenge, onTokenChange]
+    [onTokenChange]
   );
 
-  const handleWebViewError = useCallback((event: WebViewErrorEvent) => {
-    setChallengeState("error");
-    setIsChallengeReady(true);
-    setStatusText("Security challenge failed to load. Retry to continue.");
-    setLastError(event.nativeEvent.description || "WebView loading error.");
-    logTurnstileDebug("webview_error", event.nativeEvent);
-  }, []);
+  const handleWebViewError = useCallback(
+    (event: WebViewErrorEvent) => {
+      onTokenChange(null);
+      setChallengeState("error");
+      setIsChallengeReady(true);
+      setLastError(event.nativeEvent.description || "WebView loading error.");
+      logTurnstileDebug("webview_error", event.nativeEvent);
+    },
+    [onTokenChange]
+  );
 
-  const handleWebViewHttpError = useCallback((event: WebViewHttpErrorEvent) => {
-    setChallengeState("error");
-    setIsChallengeReady(true);
-    setStatusText("Security challenge endpoint returned an error. Retry to continue.");
-    setLastError(`HTTP ${event.nativeEvent.statusCode}`);
-    logTurnstileDebug("webview_http_error", event.nativeEvent);
-  }, []);
-
-  const helperText = isVerified
-    ? "Security check completed."
-    : statusText ?? "Complete the security check to continue.";
+  const handleWebViewHttpError = useCallback(
+    (event: WebViewHttpErrorEvent) => {
+      onTokenChange(null);
+      setChallengeState("error");
+      setIsChallengeReady(true);
+      setLastError(`HTTP ${event.nativeEvent.statusCode}`);
+      logTurnstileDebug("webview_http_error", event.nativeEvent);
+    },
+    [onTokenChange]
+  );
 
   const showRetry = challengeState === "error" || challengeState === "expired";
+  const showLoadingOverlay = !isChallengeReady && challengeState === "loading";
 
   return (
     <View style={styles.wrap}>
       {showLabel ? <Text style={styles.label}>Security check</Text> : null}
 
-      <Pressable
-        style={({ pressed }) => [styles.card, pressed ? styles.pressed : null]}
-        onPress={openChallenge}
-      >
-        <View style={[styles.checkbox, isVerified ? styles.checkboxVerified : null]}>
-          {isVerified ? <Ionicons name="checkmark" size={14} color={palette.appBackground} /> : null}
-        </View>
-        <View style={styles.body}>
-          <Text style={styles.title}>{isVerified ? "Verification complete" : "Verify you are human"}</Text>
-          <Text style={styles.meta}>{helperText}</Text>
-        </View>
-      </Pressable>
+      <View style={styles.inlineWidgetShell}>
+        {challengeUrl ? (
+          <WebView
+            key={`turnstile-inline-${challengeSeed}`}
+            source={{ uri: challengeUrl }}
+            originWhitelist={["https://*", "http://*", "about:blank", "about:srcdoc"]}
+            javaScriptEnabled
+            domStorageEnabled
+            setSupportMultipleWindows={false}
+            scrollEnabled={false}
+            bounces={false}
+            onMessage={onTurnstileMessage}
+            onError={handleWebViewError}
+            onHttpError={handleWebViewHttpError}
+            onShouldStartLoadWithRequest={(request) => {
+              const nextUrl = (request.url || "").toLowerCase();
+              const isAllowed =
+                nextUrl.startsWith("https://") ||
+                nextUrl.startsWith("http://") ||
+                nextUrl.startsWith("about:blank") ||
+                nextUrl.startsWith("about:srcdoc");
 
-      <Modal
-        visible={isChallengeVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => closeChallenge("cancel")}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Security verification</Text>
-              <Pressable
-                onPress={() => closeChallenge("cancel")}
-                style={({ pressed }) => [styles.closeButton, pressed ? styles.pressed : null]}
-              >
-                <Ionicons name="close" size={18} color={palette.textPrimary} />
-              </Pressable>
-            </View>
+              if (!isAllowed) {
+                logTurnstileDebug("navigation_blocked", request.url);
+              }
 
-            <Text style={styles.modalSubtitle}>Complete the Turnstile challenge to continue registration.</Text>
-
-            <View style={styles.webViewShell}>
-              {challengeUrl ? (
-                <WebView
-                  key={`turnstile-${challengeSeed}`}
-                  source={{ uri: challengeUrl }}
-                  originWhitelist={["https://*", "http://*", "about:blank", "about:srcdoc"]}
-                  javaScriptEnabled
-                  domStorageEnabled
-                  setSupportMultipleWindows={false}
-                  startInLoadingState
-                  onMessage={onTurnstileMessage}
-                  onError={handleWebViewError}
-                  onHttpError={handleWebViewHttpError}
-                  onShouldStartLoadWithRequest={(request) => {
-                    const nextUrl = (request.url || "").toLowerCase();
-                    const isAllowed =
-                      nextUrl.startsWith("https://") ||
-                      nextUrl.startsWith("http://") ||
-                      nextUrl.startsWith("about:blank") ||
-                      nextUrl.startsWith("about:srcdoc");
-
-                    if (!isAllowed) {
-                      logTurnstileDebug("navigation_blocked", request.url);
-                    }
-
-                    return isAllowed;
-                  }}
-                  renderLoading={() => (
-                    <View style={styles.webViewLoading}>
-                      <ActivityIndicator color={palette.primaryGlow} />
-                      <Text style={styles.webViewLoadingText}>Loading security challenge...</Text>
-                    </View>
-                  )}
-                />
-              ) : (
-                <View style={styles.webViewLoading}>
-                  <Ionicons name="warning-outline" size={18} color={palette.negative} />
-                  <Text style={styles.webViewLoadingText}>Security challenge URL is unavailable.</Text>
-                </View>
-              )}
-
-              {!isChallengeReady && challengeState === "loading" ? (
-                <View pointerEvents="none" style={styles.webViewPendingOverlay}>
-                  <ActivityIndicator color={palette.primaryGlow} />
-                </View>
-              ) : null}
-            </View>
-
-            {lastError ? <Text style={styles.errorText}>{lastError}</Text> : null}
-
-            <View style={styles.modalActionRow}>
-              {showRetry ? (
-                <Pressable
-                  style={({ pressed }) => [styles.retryAction, pressed ? styles.pressed : null]}
-                  onPress={retryChallenge}
-                >
-                  <Text style={styles.retryActionText}>Retry challenge</Text>
-                </Pressable>
-              ) : null}
-
-              <Pressable
-                style={({ pressed }) => [styles.secondaryAction, pressed ? styles.pressed : null]}
-                onPress={() => closeChallenge("cancel")}
-              >
-                <Text style={styles.secondaryActionText}>Cancel</Text>
-              </Pressable>
-            </View>
+              return isAllowed;
+            }}
+          />
+        ) : (
+          <View style={styles.inlineFallback}>
+            <Text style={styles.inlineFallbackText}>Security challenge URL is unavailable.</Text>
           </View>
-        </View>
-      </Modal>
+        )}
+
+        {showLoadingOverlay ? (
+          <View pointerEvents="none" style={styles.webViewPendingOverlay}>
+            <ActivityIndicator color={palette.primaryGlow} />
+          </View>
+        ) : null}
+      </View>
+
+      {lastError ? <Text style={styles.errorText}>{lastError}</Text> : null}
+
+      {showRetry ? (
+        <Pressable style={({ pressed }) => [styles.retryAction, pressed ? styles.pressed : null]} onPress={retryChallenge}>
+          <Text style={styles.retryActionText}>Retry challenge</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -401,60 +305,24 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(4,11,23,0.72)",
-    justifyContent: "center",
-    paddingHorizontal: spacing[16]
-  },
-  modalCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
-    padding: spacing[14],
-    gap: spacing[10]
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  modalTitle: {
-    color: palette.textPrimary,
-    ...typography.bodyStrong
-  },
-  closeButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)"
-  },
-  modalSubtitle: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  webViewShell: {
-    minHeight: 220,
-    borderRadius: 12,
+  inlineWidgetShell: {
+    alignSelf: "center",
+    width: "88%",
+    maxWidth: 360,
+    minHeight: 86,
+    borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: "#0b1a2d"
   },
-  webViewLoading: {
-    flex: 1,
+  inlineFallback: {
+    minHeight: 86,
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing[8],
-    backgroundColor: "#0b1a2d",
     paddingHorizontal: spacing[12]
   },
-  webViewLoadingText: {
+  inlineFallbackText: {
     color: palette.textSecondary,
     ...typography.caption,
     textAlign: "center"
@@ -467,14 +335,15 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: palette.negative,
-    ...typography.caption
-  },
-  modalActionRow: {
-    flexDirection: "row",
-    gap: spacing[8],
-    justifyContent: "flex-end"
+    ...typography.caption,
+    alignSelf: "center",
+    width: "88%",
+    maxWidth: 360
   },
   retryAction: {
+    alignSelf: "center",
+    width: "88%",
+    maxWidth: 360,
     minHeight: 42,
     borderRadius: 10,
     borderWidth: 1,
@@ -486,21 +355,6 @@ const styles = StyleSheet.create({
   },
   retryActionText: {
     color: palette.caution,
-    ...typography.body2,
-    fontWeight: "600"
-  },
-  secondaryAction: {
-    minHeight: 42,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: palette.border,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(18,36,58,0.74)",
-    paddingHorizontal: spacing[12]
-  },
-  secondaryActionText: {
-    color: palette.textPrimary,
     ...typography.body2,
     fontWeight: "600"
   },

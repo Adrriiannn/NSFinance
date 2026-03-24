@@ -7,4 +7,5 @@ public sealed record RegisterRequest(
     string? Timezone,
     string? Locale,
     string? PreferredCurrency,
-    DeviceContextDto? DeviceContext);
+    DeviceContextDto? DeviceContext,
+    string? CaptchaToken = null);

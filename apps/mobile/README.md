@@ -30,6 +30,7 @@ Expo Router + TypeScript mobile client for NSFinance.
     - Android emulator: `http://10.0.2.2:5080`
     - iOS simulator: `http://localhost:5080`
   - Prevents accidental Azure usage unless `EXPO_PUBLIC_ALLOW_AZURE_IN_DEV=true`.
+  - Turnstile challenge page can be pinned to Azure with `EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL` (recommended).
 - Production runtime (`__DEV__ = false`):
   - Uses Azure API by default:
     - `https://api.finance.nsireland.ie`
@@ -42,6 +43,7 @@ Expo Router + TypeScript mobile client for NSFinance.
 2. Configure local env:
    - copy `.env.example` to `.env`
    - set `EXPO_PUBLIC_API_BASE_URL` only if testing on a physical device
+   - set `EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL=https://api.finance.nsireland.ie` to keep Turnstile host consistent across dev/prod
 3. Start Expo:
    - `pnpm --filter @nsfinance/mobile start`
 
@@ -55,4 +57,3 @@ Demo login for local dev:
 
 - Email: `demo@nsfinance.local`
 - Password: `Password123!`
-

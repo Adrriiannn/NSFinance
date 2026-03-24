@@ -202,6 +202,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TokenSecretService>();
         services.AddScoped<IGoogleIdTokenVerifier, GoogleIdTokenVerifier>();
         services.AddScoped<GoogleAuthService>();
+        services.AddHttpClient<TurnstileVerificationService>();
         services.AddScoped<AuthAbuseService>();
         services.AddScoped<SessionService>();
         services.AddScoped<AuthService>();
