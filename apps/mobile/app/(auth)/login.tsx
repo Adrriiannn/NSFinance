@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as SecureStore from "expo-secure-store";
 import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
@@ -27,6 +28,7 @@ const LOGIN_ATTEMPTS_BEFORE_CAPTCHA = 3;
 const LOGIN_ERROR_BANNER_DURATION_MS = 5000;
 const LOGIN_ERROR_SHAKE_DURATION_MS = 60;
 const LOCKOUT_READY_NOTICE_DURATION_MS = 5000;
+const LOGIN_LOCKOUT_UNTIL_KEY = "nsfinance.auth.login.lockout_until_utc_ms";
 
 type LoginErrorBannerState =
   | { kind: "temporary_error"; id: number; title: string; message: string; highlightTarget: ErrorFieldTarget }
@@ -56,6 +58,40 @@ function formatMmSs(totalSeconds: number): string {
   const minutes = Math.floor(normalized / 60);
   const seconds = normalized % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+async function readPersistedLockoutUntilMs(): Promise<number | null> {
+  try {
+    const raw = await SecureStore.getItemAsync(LOGIN_LOCKOUT_UNTIL_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function persistLockoutUntilMs(unlockAtMs: number) {
+  try {
+    await SecureStore.setItemAsync(LOGIN_LOCKOUT_UNTIL_KEY, String(unlockAtMs));
+  } catch {
+    // Keep auth UX running even if local persistence fails.
+  }
+}
+
+async function clearPersistedLockoutUntil() {
+  try {
+    await SecureStore.deleteItemAsync(LOGIN_LOCKOUT_UNTIL_KEY);
+  } catch {
+    // Keep auth UX running even if local persistence fails.
+  }
 }
 
 function runShake(animationValue: Animated.Value) {
@@ -140,6 +176,34 @@ export default function LoginScreen() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const hydrateLockout = async () => {
+      const persistedUnlockAt = await readPersistedLockoutUntilMs();
+      if (cancelled || !persistedUnlockAt) {
+        return;
+      }
+
+      if (persistedUnlockAt <= Date.now()) {
+        await clearPersistedLockoutUntil();
+        return;
+      }
+
+      setLoginErrorBanner({
+        kind: "lockout_countdown",
+        id: Date.now(),
+        unlockAtMs: persistedUnlockAt
+      });
+    };
+
+    void hydrateLockout();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!shouldShowCaptcha && captchaToken) {
       setCaptchaToken(null);
     }
@@ -183,6 +247,7 @@ export default function LoginScreen() {
       return;
     }
 
+    void clearPersistedLockoutUntil();
     setLoginErrorBanner({ kind: "lockout_ready", id: Date.now() });
   }, [countdownNowMs, loginErrorBanner]);
 
@@ -245,7 +310,7 @@ export default function LoginScreen() {
   const bannerCopy =
     loginErrorBanner?.kind === "lockout_countdown"
       ? {
-          title: "Sign-in failed. Too many failed attempts.",
+          title: "Sign-in blocked. Too many failed attempts.",
           message: `Try again in ${formatMmSs(lockoutRemainingSeconds)} minutes.`
         }
       : loginErrorBanner?.kind === "lockout_ready"
@@ -306,6 +371,7 @@ export default function LoginScreen() {
         }
       });
 
+      void clearPersistedLockoutUntil();
       setLoginErrorBanner(null);
       setFailedLoginAttempts(0);
       await persistRememberedEmail(rememberEmail, email);
@@ -316,6 +382,7 @@ export default function LoginScreen() {
         const lockoutRetryAfterMs = tryParseLockoutRetryAfterMs(error);
 
         if (lockoutRetryAfterMs && lockoutRetryAfterMs > Date.now()) {
+          void persistLockoutUntilMs(lockoutRetryAfterMs);
           setLoginErrorBanner({
             kind: "lockout_countdown",
             id: Date.now(),
@@ -503,7 +570,7 @@ export default function LoginScreen() {
 
           <View style={[styles.createAccountSection, styles.narrowBlock]}>
             <AuthDivider widthPercent={70} />
-            <SecondaryButton label="Create account" onPress={() => router.push("/register" as never)} />
+            <SecondaryButton label="Create an account" onPress={() => router.push("/register" as never)} />
           </View>
         </View>
       </View>

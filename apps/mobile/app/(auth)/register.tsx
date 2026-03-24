@@ -143,7 +143,7 @@ export default function RegisterScreen() {
     >
       <View style={styles.topRow}>
         <View style={styles.headerTextWrap}>
-          <Text style={styles.title}>Create account</Text>
+          <Text style={styles.title}>Create an account</Text>
           <Text style={styles.subtitle}>Set up your NSFinance profile.</Text>
         </View>
         <NsfLogo size={52} />
