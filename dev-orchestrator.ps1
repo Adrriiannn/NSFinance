@@ -4,7 +4,7 @@ param(
     [switch]$StartEmulator = $true,
     [switch]$LaunchExpoGo = $true,
     [int]$ApiPort = 5080,
-    [string]$Root = "C:\Users\MariusAlbu\Desktop\Projects\NSFinance",
+    [string]$Root = "C:\Users\%USERNAME%\Desktop\Projects\NSFinance",
     [string]$PreferredAvdName = "Resizable (Experimental)",
     [string]$EmulatorExe = "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe",
     [string]$AdbExe = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",

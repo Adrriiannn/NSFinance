@@ -2,7 +2,7 @@ $ErrorActionPreference = "SilentlyContinue"
 
 Write-Host "`nStopping NSFinance development stack..." -ForegroundColor Cyan
 
-$root = "C:\Users\MariusAlbu\Desktop\Projects\NSFinance"
+$root = "C:\Users\%USERNAME%\Desktop\Projects\NSFinance"
 $dbPath = Join-Path $root "infra\docker"
 $statePath = Join-Path $root ".dev-orchestrator"
 $adbExe = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
