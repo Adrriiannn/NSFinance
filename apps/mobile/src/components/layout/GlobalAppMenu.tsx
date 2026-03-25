@@ -16,7 +16,7 @@ import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
-import { layout, palette, spacing, surfaces, typography } from "../../theme/tokens";
+import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type GlobalAppMenuProps = {
   topOffset?: number;
@@ -346,7 +346,7 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   triggerWrap: {
     position: "absolute",
     right: layout.screenHorizontalPadding,
@@ -561,5 +561,6 @@ const styles = StyleSheet.create({
   linkIconDisabled: {
     opacity: 0.45
   }
-});
+}));
+
 

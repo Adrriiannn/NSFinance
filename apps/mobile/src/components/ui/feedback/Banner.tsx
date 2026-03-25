@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { AppText } from "../text/AppText";
-import { bannerPresets, feedbackPresets, type FeedbackTone } from "./feedback.presets";
+import { useFeedbackPresets, type FeedbackTone } from "./feedback.presets";
 
 type BannerProps = {
   title: string;
@@ -10,6 +10,8 @@ type BannerProps = {
 };
 
 export function Banner({ title, message, tone = "info" }: BannerProps) {
+  const { bannerPresets, feedbackPresets } = useFeedbackPresets();
+
   return (
     <View style={[feedbackPresets.banner, bannerPresets[tone]]}>
       <AppText preset="label" style={feedbackPresets.bannerTitle}>

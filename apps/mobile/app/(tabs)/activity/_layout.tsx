@@ -1,12 +1,14 @@
 import { Stack } from "expo-router";
-import { palette } from "../../../src/theme/tokens";
+import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
 
 export default function ActivityStackLayout() {
+  const { theme } = useThemeRuntime();
+
   return (
     <Stack
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: palette.appBackground },
+        contentStyle: { backgroundColor: theme.colors.canvas },
         animation: "none"
       }}
     />

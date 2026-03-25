@@ -1,6 +1,6 @@
-import { ScrollView, StyleSheet, View } from "react-native";
+import { ScrollView, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { surfaces } from "../../theme/tokens";
+import { surfaces, createRuntimeStyleSheet } from "../../theme/tokens";
 import { useAdaptiveShell } from "./adaptive.hooks";
 import type { AdaptiveScreenProps } from "./adaptive.types";
 
@@ -60,7 +60,7 @@ export function AdaptiveScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   safeArea: {
     flex: 1,
     backgroundColor: surfaces.app
@@ -81,4 +81,6 @@ const styles = StyleSheet.create({
   fixedFrame: {
     flex: 1
   }
-});
+}));
+
+

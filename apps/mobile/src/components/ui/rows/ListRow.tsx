@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { Pressable, View } from "react-native";
 import { AppText } from "../text/AppText";
-import { rowPresets } from "./row.presets";
+import { useRowPresets } from "./row.presets";
 
 type ListRowProps = {
   title: string;
@@ -23,6 +23,8 @@ export function ListRow({
   dense = false,
   style
 }: ListRowProps) {
+  const rowPresets = useRowPresets();
+
   return (
     <Pressable
       disabled={!onPress}

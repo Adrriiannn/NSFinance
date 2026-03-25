@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { Pressable } from "react-native";
-import { cardPresets, cardStateStyles, type CardVariant } from "./card.presets";
+import { useCardPresetStyles, type CardVariant } from "./card.presets";
 
 type CardProps = {
   children: ReactNode;
@@ -16,6 +16,8 @@ export function Card({
   onPress,
   style
 }: CardProps) {
+  const { cardPresets, cardStateStyles } = useCardPresetStyles();
+
   return (
     <Pressable
       onPress={onPress}

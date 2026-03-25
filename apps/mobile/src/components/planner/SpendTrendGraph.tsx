@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { LayoutChangeEvent, StyleSheet, Text, View } from "react-native";
-import { palette, typography } from "../../theme/tokens";
+import { LayoutChangeEvent, Text, View } from "react-native";
+import { palette, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type GraphPoint = {
   x: number;
@@ -238,7 +238,7 @@ export function SpendTrendGraph({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   graph: {
     position: "relative",
     width: "100%",
@@ -296,4 +296,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

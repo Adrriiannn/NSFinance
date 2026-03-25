@@ -1,12 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { useExpensePlanning } from "../../../src/features/expenseTracker/ExpensePlanningProvider";
-import { palette, radius, spacing, typography } from "../../../src/theme/tokens";
+import { palette, radius, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 export default function ExpensePlanPublishScreen() {
   const router = useRouter();
@@ -124,7 +124,7 @@ export default function ExpensePlanPublishScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   sectionCard: {
     gap: spacing[16]
   },
@@ -203,6 +203,7 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong,
     fontWeight: "600"
   }
-});
+}));
+
 
 

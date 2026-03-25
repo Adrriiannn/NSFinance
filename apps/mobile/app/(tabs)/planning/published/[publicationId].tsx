@@ -1,12 +1,11 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { PlanningHubScreen } from "../../../../src/components/planningHub/PlanningHubScreen";
 import { EmptyState } from "../../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../../src/components/ui/PrimaryButton";
 import { useExpensePlanning } from "../../../../src/features/expenseTracker/ExpensePlanningProvider";
-import { palette, spacing, typography } from "../../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../../src/theme/tokens";
 
 function formatAmount(amount: number) {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(amount);
@@ -122,7 +121,7 @@ export default function ExpensePlanPublicationDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   heroCard: {
     gap: spacing[12]
   },
@@ -213,7 +212,8 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+
 
 
 

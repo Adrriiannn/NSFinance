@@ -27,7 +27,7 @@ import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
-import { controls, palette, spacing, typography } from "../../src/theme/tokens";
+import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"fullName" | "email" | "password" | "confirmPassword", string>>;
 type FocusField = "fullName" | "email" | "password" | "confirmPassword" | null;
@@ -659,7 +659,7 @@ export default function RegisterScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   topRow: {
     marginTop: spacing[16],
     alignItems: "center",
@@ -837,4 +837,5 @@ const styles = StyleSheet.create({
   linkPressed: {
     opacity: 0.75
   }
-});
+}));
+

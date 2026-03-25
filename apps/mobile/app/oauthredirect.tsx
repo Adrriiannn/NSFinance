@@ -1,8 +1,8 @@
 import { router, useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useGoogleOAuthDebugState, pushGoogleOAuthDebugStep, updateGoogleOAuthDebugState } from "../src/features/auth/googleOAuthDebug";
-import { palette, surfaces, typography } from "../src/theme/tokens";
+import { palette, surfaces, typography, createRuntimeStyleSheet } from "../src/theme/tokens";
 
 const SUCCESS_REDIRECT_DELAY_MS = 600;
 
@@ -139,7 +139,7 @@ export default function OAuthRedirectScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   container: {
     flex: 1,
     alignItems: "center",
@@ -225,4 +225,5 @@ const styles = StyleSheet.create({
     ...typography.body2,
     fontWeight: "600"
   }
-});
+}));
+

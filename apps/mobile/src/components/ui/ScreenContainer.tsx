@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   RefreshControl,
   ScrollView,
@@ -16,7 +16,7 @@ import {
   getDockAwareContentBottomInset,
   getPlainContentBottomInset
 } from "../../layout/contentFrame";
-import { layout, palette, spacing, surfaces } from "../../theme/tokens";
+import { useThemeTokens } from "../../theme/tokens";
 import { AppBackgroundLayer } from "./surfaces/AppBackgroundLayer";
 
 type ScreenContainerProps = {
@@ -42,6 +42,27 @@ export function ScreenContainer({
   includeBottomSafeArea = !withBottomTabOffset,
   gestureHandlers
 }: ScreenContainerProps) {
+  const { layout, palette, spacing, surfaces } = useThemeTokens();
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        safeArea: {
+          flex: 1,
+          backgroundColor: surfaces.app
+        },
+        scrollContent: {
+          paddingHorizontal: CONTENT_FRAME_HORIZONTAL_PADDING,
+          paddingBottom: 0,
+          gap: layout.sectionGap
+        },
+        fixedContent: {
+          flex: 1,
+          paddingHorizontal: CONTENT_FRAME_HORIZONTAL_PADDING,
+          paddingBottom: 0
+        }
+      }),
+    [layout, surfaces]
+  );
   const insets = useSafeAreaInsets();
   const adaptiveShell = useOptionalAdaptiveShell();
   const flattenedContentStyle = StyleSheet.flatten(contentStyle) ?? {};
@@ -98,20 +119,3 @@ export function ScreenContainer({
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: surfaces.app
-  },
-  scrollContent: {
-    paddingHorizontal: CONTENT_FRAME_HORIZONTAL_PADDING,
-    paddingBottom: 0,
-    gap: layout.sectionGap
-  },
-  fixedContent: {
-    flex: 1,
-    paddingHorizontal: CONTENT_FRAME_HORIZONTAL_PADDING,
-    paddingBottom: 0
-  }
-});

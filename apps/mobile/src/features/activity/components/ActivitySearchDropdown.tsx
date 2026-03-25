@@ -1,8 +1,8 @@
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_CONSTANTS } from "../../../layout/header/header.constants";
 import { getFloatingTabBarContentInset } from "../../../theme/insets";
-import { zIndex, palette, spacing, surfaces, typography } from "../../../theme/tokens";
+import { zIndex, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 import { ActivitySearchFilterRow } from "./ActivitySearchFilterRow";
 import { CurrencySuggestionList } from "./CurrencySuggestionList";
 import { DateSuggestionList } from "./DateSuggestionList";
@@ -121,7 +121,7 @@ export function ActivitySearchDropdown({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   panel: {
     position: "absolute",
     top: 44,
@@ -147,4 +147,5 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.6
   }
-});
+}));
+

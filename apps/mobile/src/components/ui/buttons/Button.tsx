@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import type { AccessibilityProps, StyleProp, TextStyle, ViewStyle } from "react-native";
 import { AppText } from "../text/AppText";
-import { buttonPresets, buttonStateStyles, type ButtonVariant } from "./button.presets";
+import { useButtonPresetStyles, type ButtonVariant } from "./button.presets";
 
 type ButtonProps = AccessibilityProps & {
   label?: string;
@@ -29,6 +29,7 @@ export function Button({
   accessibilityLabel,
   ...props
 }: ButtonProps) {
+  const { buttonPresets, buttonStateStyles } = useButtonPresetStyles();
   const preset = buttonPresets[variant];
   const isDisabled = disabled || isLoading;
 
@@ -52,7 +53,13 @@ export function Button({
         <View style={styles.content}>
           {icon}
           {preset.iconOnly ? null : (
-            <AppText preset="buttonLabel" style={[preset.label, labelStyle]}>
+            <AppText
+              preset="buttonLabel"
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.9}
+              style={[styles.label, preset.label, labelStyle]}
+            >
               {label ?? ""}
             </AppText>
           )}
@@ -68,6 +75,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8
+    gap: 8,
+    minWidth: 0
+  },
+  label: {
+    minWidth: 0,
+    flexShrink: 1
   }
 });

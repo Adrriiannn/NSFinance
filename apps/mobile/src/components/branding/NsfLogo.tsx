@@ -1,5 +1,5 @@
-import { Image, StyleProp, StyleSheet, View, ViewStyle } from "react-native";
-import { palette, radius } from "../../theme/tokens";
+import { Image, StyleProp, View, ViewStyle } from "react-native";
+import { palette, radius, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type NsfLogoProps = {
   size?: number;
@@ -18,11 +18,12 @@ export function NsfLogo({ size = 56, style }: NsfLogoProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrap: {
     borderWidth: 1,
     borderColor: palette.borderStrong,
     overflow: "hidden",
     borderRadius: radius.medium
   }
-});
+}));
+

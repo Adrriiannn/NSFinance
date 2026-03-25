@@ -30,7 +30,7 @@ import {
   supportedTimezones
 } from "../../../src/lib/reference/geoData";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
-import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import {
   useUpdateUserProfileMutation,
   useUserProfileQuery
@@ -1175,7 +1175,7 @@ export default function ProfileSettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     paddingTop: 0
   },
@@ -1429,6 +1429,7 @@ const styles = StyleSheet.create({
     ...typography.body2,
     fontWeight: "600"
   }
-});
+}));
+
 
 

@@ -1,5 +1,5 @@
 import { usePathname, useRouter } from "expo-router";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { ScrollView, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMemo, type ReactNode, type RefObject } from "react";
 import { Ionicons } from "@expo/vector-icons";
@@ -10,7 +10,7 @@ import {
   CONTENT_FRAME_HORIZONTAL_PADDING,
   getDockAwareContentBottomInset
 } from "../../layout/contentFrame";
-import { palette } from "../../theme/tokens";
+import { palette, createRuntimeStyleSheet } from "../../theme/tokens";
 import { FloatingBottomNav } from "../layout/FloatingBottomNav";
 import { planningHubBottomNavItems } from "../layout/bottomNavConfigs";
 import { HeaderActionButton, HeaderShell } from "../../layout/appHeader";
@@ -132,7 +132,7 @@ export function PlanningHubScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   safeArea: {
     flex: 1,
     backgroundColor: palette.appBackground
@@ -145,6 +145,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: CONTENT_FRAME_HORIZONTAL_PADDING,
     gap: 20
   }
-});
+}));
+
+
 
 

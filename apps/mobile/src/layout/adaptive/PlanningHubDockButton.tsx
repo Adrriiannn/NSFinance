@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Pressable, StyleSheet } from "react-native";
-import { palette, shadows } from "../../theme/tokens";
+import { Pressable } from "react-native";
+import { palette, shadows, createRuntimeStyleSheet } from "../../theme/tokens";
 import type { PlanningHubDockButtonProps } from "./adaptive.types";
 
 export function PlanningHubDockButton({
@@ -32,7 +32,7 @@ export function PlanningHubDockButton({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   button: {
     alignItems: "center",
     justifyContent: "center",
@@ -45,4 +45,5 @@ const styles = StyleSheet.create({
     opacity: 0.92,
     transform: [{ scale: 0.97 }]
   }
-});
+}));
+

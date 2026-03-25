@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import type { ExpensePlanPublication } from "../../../features/expenseTracker/expensePlanningTypes";
-import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 
 function formatAmount(amount: number) {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(amount);
@@ -45,7 +45,7 @@ export function FeaturedPlanCarousel({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   rail: {
     gap: spacing[12],
     paddingRight: spacing[16]
@@ -89,4 +89,5 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.caption
   }
-});
+}));
+

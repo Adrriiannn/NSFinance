@@ -1,8 +1,9 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
+import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { type ComponentProps, useEffect, useMemo } from "react";
-import { TextInput } from "react-native";
+import { Text, TextInput } from "react-native";
 import { GlobalFlashToast } from "../src/components/feedback/GlobalFlashToast";
 import { AppProviders } from "../src/providers/AppProviders";
 import { ThemeRuntimeProvider, useThemeRuntime } from "../src/theme/runtime/ThemeRuntimeProvider";
@@ -11,9 +12,24 @@ type TextInputWithDefaults = typeof TextInput & {
   defaultProps?: ComponentProps<typeof TextInput>;
 };
 
+type TextWithDefaults = typeof Text & {
+  defaultProps?: ComponentProps<typeof Text>;
+};
+
 const textInputWithDefaults = TextInput as TextInputWithDefaults;
+const textWithDefaults = Text as TextWithDefaults;
 
 export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    "Inter-Regular": require("./assets/fonts/Inter-Regular.ttf"),
+    "Inter-Medium": require("./assets/fonts/Inter-Medium.ttf"),
+    "Inter-SemiBold": require("./assets/fonts/Inter-SemiBold.ttf")
+  });
+
+  if (!fontsLoaded) {
+    return null;
+  }
+
   return (
     <AppProviders>
       <ThemeRuntimeProvider>
@@ -28,8 +44,16 @@ function RootNavigator() {
   const caretColor = theme.colors.accent.primary;
 
   useEffect(() => {
+    textWithDefaults.defaultProps = {
+      ...(textWithDefaults.defaultProps ?? {}),
+      allowFontScaling: false,
+      maxFontSizeMultiplier: 1
+    };
+
     textInputWithDefaults.defaultProps = {
       ...(textInputWithDefaults.defaultProps ?? {}),
+      allowFontScaling: false,
+      maxFontSizeMultiplier: 1,
       selectionColor: caretColor,
       cursorColor: caretColor
     };
@@ -73,3 +97,5 @@ function RootNavigator() {
     </ThemeProvider>
   );
 }
+
+

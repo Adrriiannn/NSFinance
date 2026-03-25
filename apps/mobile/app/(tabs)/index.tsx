@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard";
@@ -29,7 +29,8 @@ import {
 } from "../../src/layout/contentFrame";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { usePlannerStore } from "../../src/providers/PlannerProvider";
-import { palette, spacing, typography } from "../../src/theme/tokens";
+import { useThemeRuntime } from "../../src/theme/runtime/ThemeRuntimeProvider";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 import type { AccountDto } from "../../src/types/api";
 
 type HeroCardItem = {
@@ -68,6 +69,7 @@ const HERO_PAGER_STEP = HERO_PAGER_DOT_SIZE + HERO_PAGER_DOT_GAP;
 const HERO_PAGER_ACTIVE_EXTRA = HERO_PAGER_DOT_ACTIVE_WIDTH - HERO_PAGER_DOT_SIZE;
 
 export default function DashboardTabScreen() {
+  useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)");
@@ -606,7 +608,7 @@ function DashboardLoading() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     flex: 1
   },
@@ -697,4 +699,5 @@ const styles = StyleSheet.create({
   loadingWrap: {
     gap: spacing[16]
   }
-});
+}));
+

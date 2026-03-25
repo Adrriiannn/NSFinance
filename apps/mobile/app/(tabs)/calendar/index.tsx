@@ -1,12 +1,14 @@
 import { useLocalSearchParams } from "expo-router";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { PlanningHubShell } from "../../../src/components/planningHub/PlanningHubShell";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
 import { HeaderShell } from "../../../src/layout/appHeader";
-import { spacing } from "../../../src/theme/tokens";
+import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
+import { spacing, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 export default function CalendarPlaceholderScreen() {
+  useThemeRuntime();
   const params = useLocalSearchParams<{ source?: string }>();
   const isPlanningContext = params.source === "planningHub" || params.source === "expense";
 
@@ -39,7 +41,7 @@ export default function CalendarPlaceholderScreen() {
   return <AdaptiveScreen contentStyle={styles.content}>{body}</AdaptiveScreen>;
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     flex: 1
   },
@@ -48,5 +50,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingBottom: spacing[24]
   }
-});
+}));
+
+
 

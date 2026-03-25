@@ -2,7 +2,7 @@ import { View } from "react-native";
 import { FieldError } from "./forms/FieldError";
 import { AppText } from "./text/AppText";
 import { Chip } from "./Chip";
-import { spacing } from "../../theme/tokens";
+import { useThemeTokens } from "../../theme/tokens";
 
 export type SelectOption = {
   label: string;
@@ -26,6 +26,8 @@ export function SelectField({
   error,
   compact = false
 }: SelectFieldProps) {
+  const { spacing } = useThemeTokens();
+
   return (
     <View style={{ gap: spacing[8] }}>
       <AppText preset="fieldLabel">{label}</AppText>

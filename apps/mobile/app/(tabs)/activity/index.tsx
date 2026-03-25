@@ -40,12 +40,14 @@ import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
-import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { TransactionDto } from "../../../src/types/api";
 
 const transactionSwipeHoldDelayMs = 1000;
 
 export default function ActivityTabScreen() {
+  useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const pageSwipeBlockedRef = useRef(false);
@@ -587,7 +589,7 @@ function SwipeableTransactionItem({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   container: {
     flex: 1
   },
@@ -665,7 +667,8 @@ const styles = StyleSheet.create({
     color: palette.negative,
     ...typography.caption
   }
-});
+}));
+
 
 
 

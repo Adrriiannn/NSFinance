@@ -1,9 +1,9 @@
 import { useMemo } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { AnimatedCurrencyText } from "../ui/AnimatedCurrencyText";
 import { AccountProviderBadge } from "../accounts/AccountProviderBadge";
 import type { AccountDto } from "../../types/api";
-import { palette, radius, shadows, spacing, surfaces, typography } from "../../theme/tokens";
+import { palette, radius, shadows, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type BalanceHeroCardProps = {
   totalBalance: number;
@@ -61,7 +61,7 @@ export function BalanceHeroCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   card: {
     borderRadius: radius.hero,
     borderWidth: 1,
@@ -111,4 +111,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

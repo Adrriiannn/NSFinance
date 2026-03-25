@@ -17,7 +17,7 @@ import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
-import { controls, palette, spacing, typography } from "../../src/theme/tokens";
+import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"email" | "password", string>>;
 type FocusField = "email" | "password" | null;
@@ -754,7 +754,7 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   topRow: {
     marginTop: spacing[16],
     alignItems: "center",
@@ -933,4 +933,5 @@ const styles = StyleSheet.create({
     color: palette.primaryGlow,
     fontWeight: "600"
   }
-});
+}));
+

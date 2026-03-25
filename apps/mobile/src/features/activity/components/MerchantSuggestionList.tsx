@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
+import { Pressable, Text, View } from "react-native";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 import type { ActivityMerchantSuggestion } from "../search/activitySearch.types";
 
 type MerchantSuggestionListProps = {
@@ -45,7 +45,7 @@ export function MerchantSuggestionList({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   list: {
     gap: spacing[8]
   },
@@ -107,4 +107,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

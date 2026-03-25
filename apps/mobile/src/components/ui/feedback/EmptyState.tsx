@@ -2,7 +2,7 @@ import type { StyleProp, ViewStyle } from "react-native";
 import { View } from "react-native";
 import { Button } from "../buttons/Button";
 import { AppText } from "../text/AppText";
-import { feedbackPresets } from "./feedback.presets";
+import { useFeedbackPresets } from "./feedback.presets";
 
 type EmptyStateProps = {
   title: string;
@@ -23,6 +23,8 @@ export function EmptyState({
   hideOrb = false,
   centerText = false
 }: EmptyStateProps) {
+  const { feedbackPresets } = useFeedbackPresets();
+
   return (
     <View style={[feedbackPresets.emptyState, style]}>
       {hideOrb ? null : <View style={feedbackPresets.emptyStateOrb} />}

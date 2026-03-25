@@ -1,7 +1,7 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import Svg, { Circle, G } from "react-native-svg";
 import { getExpenseTrackerVisual } from "../../features/expenseTracker/expenseTrackerModels";
-import { palette, typography } from "../../theme/tokens";
+import { palette, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type ChartSlice = {
   domainId: number | null;
@@ -101,7 +101,7 @@ function buildSlices(data: ChartSlice[]) {
   });
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrap: {
     alignItems: "center",
     justifyContent: "center"
@@ -131,4 +131,5 @@ const styles = StyleSheet.create({
     ...typography.amount,
     textAlign: "center"
   }
-});
+}));
+

@@ -1,5 +1,6 @@
+import { useMemo } from "react";
 import type { ViewStyle } from "react-native";
-import { borders, palette, radius, shadows, sizing, surfaces } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 
 export type CardVariant =
   | "default"
@@ -14,91 +15,109 @@ export type CardVariant =
   | "heroPanel"
   | "outlinedMuted";
 
-const baseCard: ViewStyle = {
-  backgroundColor: surfaces.card,
-  borderWidth: borders.width.thin,
-  borderColor: palette.border,
-  overflow: "hidden"
+type CardPresetStyles = {
+  cardPresets: Record<CardVariant, ViewStyle>;
+  cardStateStyles: {
+    pressed: ViewStyle;
+  };
 };
 
-export const cardPresets: Record<CardVariant, ViewStyle> = {
-  default: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.standard,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.standard
-  },
-  elevated: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.standard,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.standard,
-    ...shadows.soft
-  },
-  hero: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.hero,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.hero,
-    ...shadows.soft
-  },
-  insight: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.insight,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.standard,
-    backgroundColor: surfaces.field
-  },
-  compact: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.compact,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.compact
-  },
-  outlined: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.standard,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.standard,
-    backgroundColor: surfaces.section
-  },
-  panel: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.standard,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.standard
-  },
-  panelTitled: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.standard,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.standard
-  },
-  listRow: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.compact,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.compact,
-    backgroundColor: surfaces.field
-  },
-  heroPanel: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.hero,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.hero
-  },
-  outlinedMuted: {
-    ...baseCard,
-    minHeight: sizing.card.minHeights.standard,
-    borderRadius: radius.medium,
-    padding: sizing.card.padding.standard,
-    backgroundColor: surfaces.muted
-  }
-};
+export function useCardPresetStyles(): CardPresetStyles {
+  const { borders, palette, radius, shadows, sizing, surfaces } = useThemeTokens();
 
-export const cardStateStyles = {
-  pressed: {
-    opacity: 0.94,
-    transform: [{ scale: 0.992 }]
-  }
-} as const;
+  return useMemo(() => {
+    const baseCard: ViewStyle = {
+      backgroundColor: surfaces.card,
+      borderWidth: borders.width.thin,
+      borderColor: palette.border,
+      overflow: "hidden"
+    };
+
+    const cardPresets: Record<CardVariant, ViewStyle> = {
+      default: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.standard,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.standard
+      },
+      elevated: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.standard,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.standard,
+        ...shadows.soft
+      },
+      hero: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.hero,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.hero,
+        ...shadows.soft
+      },
+      insight: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.insight,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.standard,
+        backgroundColor: surfaces.field
+      },
+      compact: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.compact,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.compact
+      },
+      outlined: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.standard,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.standard,
+        backgroundColor: surfaces.section
+      },
+      panel: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.standard,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.standard
+      },
+      panelTitled: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.standard,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.standard
+      },
+      listRow: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.compact,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.compact,
+        backgroundColor: surfaces.field
+      },
+      heroPanel: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.hero,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.hero
+      },
+      outlinedMuted: {
+        ...baseCard,
+        minHeight: sizing.card.minHeights.standard,
+        borderRadius: radius.medium,
+        padding: sizing.card.padding.standard,
+        backgroundColor: surfaces.muted
+      }
+    };
+
+    const cardStateStyles = {
+      pressed: {
+        opacity: 0.94,
+        transform: [{ scale: 0.992 }]
+      } as ViewStyle
+    };
+
+    return {
+      cardPresets,
+      cardStateStyles
+    };
+  }, [borders, palette, radius, shadows, sizing, surfaces]);
+}

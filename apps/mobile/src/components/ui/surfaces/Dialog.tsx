@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Modal, Pressable, View } from "react-native";
 import { AppText } from "../text/AppText";
-import { surfacePresets } from "./surface.presets";
+import { useSurfacePresets } from "./surface.presets";
 
 type DialogProps = {
   visible: boolean;
@@ -12,6 +12,8 @@ type DialogProps = {
 };
 
 export function Dialog({ visible, onClose, title, children, footer }: DialogProps) {
+  const surfacePresets = useSurfacePresets();
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable

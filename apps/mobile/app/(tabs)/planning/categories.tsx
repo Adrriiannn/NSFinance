@@ -33,7 +33,7 @@ import {
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
 import { getFloatingTabBarInset } from "../../../src/theme/insets";
-import { navigation, palette, radius, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 export default function PlanningHubCategoriesScreen() {
   const router = useRouter();
@@ -762,7 +762,7 @@ export default function PlanningHubCategoriesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   screenWrap: {
     flex: 1
   },
@@ -988,4 +988,5 @@ const styles = StyleSheet.create({
     left: spacing[12],
     right: spacing[12]
   }
-});
+}));
+

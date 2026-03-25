@@ -1,4 +1,4 @@
-import { alphaColors, colors } from "../tokens/colors";
+import { colors } from "../tokens/colors";
 
 export const darkTheme = {
   name: "dark",

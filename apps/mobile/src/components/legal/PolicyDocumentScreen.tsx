@@ -1,9 +1,9 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { ErrorState } from "../feedback/ErrorState";
 import { ScreenContainer } from "../ui/ScreenContainer";
 import { SkeletonBlock } from "../ui/SkeletonBlock";
 import { HeaderShell } from "../../layout/appHeader";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import type { PolicyVersionDto } from "../../types/api";
 
 type PolicyDocumentScreenProps = {
@@ -93,7 +93,7 @@ export function PolicyDocumentScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {},
   loadingWrap: {
     gap: spacing[8]
@@ -130,4 +130,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.body2
   }
-});
+}));
+

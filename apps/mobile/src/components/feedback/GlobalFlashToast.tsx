@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Animated, StyleSheet, View } from "react-native";
+import { Animated, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { subscribeToFlashMessages, type FlashMessagePayload } from "../../lib/flashMessage";
-import { spacing, zIndex } from "../../theme/tokens";
+import { spacing, zIndex, createRuntimeStyleSheet } from "../../theme/tokens";
 import { Snackbar } from "../ui/feedback/Snackbar";
 
 export function GlobalFlashToast() {
@@ -107,7 +107,7 @@ export function GlobalFlashToast() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   host: {
     position: "absolute",
     top: 0,
@@ -115,4 +115,5 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: zIndex.toast
   }
-});
+}));
+

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { buildRecurringPaymentForecast } from "../../../src/features/planner/forecasting";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 function formatCountdown(daysUntilDue: number) {
   if (daysUntilDue <= 0) {
@@ -88,7 +88,7 @@ export default function RecurringSubscriptionsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {},
   summaryCard: {
     gap: spacing[8]
@@ -131,4 +131,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

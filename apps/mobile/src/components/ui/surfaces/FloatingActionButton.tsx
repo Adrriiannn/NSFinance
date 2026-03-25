@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getFloatingFabOffset } from "../../../theme/insets";
-import { palette, spacing } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 import { AppText } from "../text/AppText";
-import { surfacePresets } from "./surface.presets";
+import { useSurfacePresets } from "./surface.presets";
 
 type FloatingActionButtonProps = {
   icon: ReactNode;
@@ -19,6 +19,8 @@ export function FloatingActionButton({
   onPress,
   bottomOffset = 0
 }: FloatingActionButtonProps) {
+  const { palette, spacing } = useThemeTokens();
+  const surfacePresets = useSurfacePresets();
   const insets = useSafeAreaInsets();
   const computedBottom = getFloatingFabOffset(insets.bottom, bottomOffset);
 

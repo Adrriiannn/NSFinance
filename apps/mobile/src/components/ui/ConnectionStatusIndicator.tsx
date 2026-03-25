@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
-import { palette, spacing, surfaces, typography } from "../../theme/tokens";
+import { Text, View } from "react-native";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 export type ConnectionStatus =
   | "not_connected"
@@ -101,7 +101,7 @@ export function ConnectionStatusIndicator({ status, helperText }: ConnectionStat
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrap: {
     gap: spacing[8]
   },
@@ -136,4 +136,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

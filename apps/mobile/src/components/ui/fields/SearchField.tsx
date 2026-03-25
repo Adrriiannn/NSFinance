@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { TextInputProps } from "react-native";
-import { palette } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 import { TextField } from "./TextField";
 
 type SearchFieldProps = TextInputProps & {
@@ -10,6 +10,8 @@ type SearchFieldProps = TextInputProps & {
 };
 
 export function SearchField(props: SearchFieldProps) {
+  const { palette } = useThemeTokens();
+
   return (
     <TextField
       {...props}

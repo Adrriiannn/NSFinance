@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { Image, StyleSheet, Text, View } from "react-native";
+import { Image, Text, View } from "react-native";
 import { SvgUri } from "react-native-svg";
 import type { AccountDto } from "../../types/api";
-import { palette, spacing, surfaces, typography } from "../../theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import { resolveProviderBadge } from "../../features/accounts/providerBranding";
 
 type AccountProviderBadgeProps = {
@@ -72,7 +72,7 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   badge: {
     minWidth: 58,
     height: 38,
@@ -106,4 +106,5 @@ const styles = StyleSheet.create({
   monogramCompact: {
     fontSize: 11
   }
-});
+}));
+

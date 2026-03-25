@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { ExpensePlanPublication } from "../../../features/expenseTracker/expensePlanningTypes";
-import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 
 type PlanListCardVariant = "compact" | "full";
 
@@ -55,7 +55,7 @@ export function PlanListCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   card: {
     borderRadius: radius.large,
     borderWidth: 1,
@@ -96,4 +96,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

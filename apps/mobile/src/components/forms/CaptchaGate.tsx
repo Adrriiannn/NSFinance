@@ -5,7 +5,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { WebViewErrorEvent, WebViewHttpErrorEvent } from "react-native-webview/lib/WebViewTypes";
 import { apiConfig } from "../../lib/api/config";
 import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type TokenCaptchaProps = {
   token: string | null;
@@ -284,7 +284,7 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrap: {
     gap: spacing[8]
   },
@@ -436,4 +436,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.9
   }
-});
+}));
+

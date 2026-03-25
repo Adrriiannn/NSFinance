@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { GlassCard } from "../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
@@ -8,7 +8,7 @@ import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
-import { palette, spacing, typography } from "../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 export default function AuthEntryScreen() {
   const { sessionMessage, clearSessionMessage } = useAuthSession();
@@ -85,7 +85,7 @@ export default function AuthEntryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   hero: {
     marginTop: spacing[20],
     marginBottom: spacing[24],
@@ -121,5 +121,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing[8]
   }
-});
+}));
+
 

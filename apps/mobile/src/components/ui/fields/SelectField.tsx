@@ -2,11 +2,11 @@ import { Ionicons } from "@expo/vector-icons";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
-import { palette } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 import { FieldError } from "../forms/FieldError";
 import { FieldHint } from "../forms/FieldHint";
 import { AppText } from "../text/AppText";
-import { fieldPresets } from "./field.presets";
+import { useFieldPresets } from "./field.presets";
 
 type SelectFieldProps = {
   label?: string;
@@ -33,6 +33,9 @@ export function SelectField({
   trailing,
   containerStyle
 }: SelectFieldProps) {
+  const fieldPresets = useFieldPresets();
+  const { palette } = useThemeTokens();
+
   return (
     <View style={fieldPresets.wrapper}>
       {label ? <AppText preset="fieldLabel">{label}</AppText> : null}
@@ -48,7 +51,12 @@ export function SelectField({
         ]}
       >
         {leading}
-        <AppText preset="body" tone={value ? "default" : "secondary"} style={{ flex: 1 }}>
+        <AppText
+          preset="body"
+          tone={value ? "default" : "secondary"}
+          numberOfLines={1}
+          style={{ flex: 1, minWidth: 0 }}
+        >
           {value || placeholder}
         </AppText>
         {trailing ?? <Ionicons name="chevron-down" size={16} color={palette.textSecondary} />}

@@ -1,5 +1,6 @@
+import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { palette, radius, spacing, surfaces, typography } from "../../theme/tokens";
+import { useThemeTokens } from "../../theme/tokens";
 
 type StatPillProps = {
   label: string;
@@ -7,6 +8,33 @@ type StatPillProps = {
 };
 
 export function StatPill({ label, value }: StatPillProps) {
+  const { palette, radius, spacing, surfaces, typography } = useThemeTokens();
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        pill: {
+          flex: 1,
+          borderRadius: radius.medium,
+          borderWidth: 1,
+          borderColor: palette.border,
+          backgroundColor: surfaces.section,
+          paddingHorizontal: spacing[12],
+          paddingVertical: spacing[12]
+        },
+        value: {
+          color: palette.textPrimary,
+          ...typography.title2,
+          fontVariant: ["tabular-nums"]
+        },
+        label: {
+          marginTop: spacing[4],
+          color: palette.textSecondary,
+          ...typography.caption
+        }
+      }),
+    [palette, radius, spacing, surfaces, typography]
+  );
+
   return (
     <View style={styles.pill}>
       <Text style={styles.value}>{value}</Text>
@@ -14,25 +42,3 @@ export function StatPill({ label, value }: StatPillProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  pill: {
-    flex: 1,
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: surfaces.section,
-    paddingHorizontal: spacing[12],
-    paddingVertical: spacing[12]
-  },
-  value: {
-    color: palette.textPrimary,
-    ...typography.title2,
-    fontVariant: ["tabular-nums"]
-  },
-  label: {
-    marginTop: spacing[4],
-    color: palette.textSecondary,
-    ...typography.caption
-  }
-});

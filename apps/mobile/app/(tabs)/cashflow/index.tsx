@@ -2,15 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View
-} from "react-native";
+  Animated, Modal, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { SpendTrendGraph } from "../../../src/components/planner/SpendTrendGraph";
@@ -33,7 +25,8 @@ import {
 } from "../../../src/features/planner/forecasting";
 import { buildPlannerSuggestions } from "../../../src/features/planner/plannerInsights";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
-import { layout, palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
+import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 function formatCountdown(daysUntilDue: number) {
   if (daysUntilDue <= 0) {
@@ -78,6 +71,7 @@ function splitAbsoluteMonth(absoluteMonth: number) {
 }
 
 export default function CashflowScreen() {
+  useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/cashflow");
@@ -582,7 +576,7 @@ export default function CashflowScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     flex: 1
   },
@@ -856,6 +850,7 @@ const styles = StyleSheet.create({
     ...typography.body2,
     fontWeight: "600"
   }
-});
+}));
+
 
 

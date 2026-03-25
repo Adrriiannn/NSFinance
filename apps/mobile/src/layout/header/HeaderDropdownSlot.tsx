@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { ListRow } from "../../components/ui/rows/ListRow";
 import { ModalSheet } from "../../components/ui/surfaces/ModalSheet";
-import { palette, spacing } from "../../theme/tokens";
+import { palette, spacing, createRuntimeStyleSheet } from "../../theme/tokens";
 import { HEADER_SURFACES, HEADER_TYPOGRAPHY } from "./header.constants";
 import type { HeaderDropdownSlotProps } from "./header.types";
 
@@ -89,7 +89,7 @@ export function HeaderDropdownSlot({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   control: {
     flex: 1
   },
@@ -112,4 +112,5 @@ const styles = StyleSheet.create({
     ...HEADER_TYPOGRAPHY.headerButtonText,
     color: palette.primaryGlow
   }
-});
+}));
+

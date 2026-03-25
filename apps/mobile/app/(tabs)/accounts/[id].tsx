@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo } from "react";
-import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, Text, View } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,7 +19,7 @@ import { useAccountTransactionsQuery } from "../../../src/features/transactions/
 import { formatCurrency, formatDate } from "../../../src/lib/format";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
-import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
+import { layout, palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 function formatUtcDate(isoDate: string) {
   const date = new Date(isoDate);
@@ -261,7 +261,7 @@ export default function AccountDetailsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     paddingTop: layout.screenTopPadding,
     paddingBottom: 0
@@ -312,5 +312,6 @@ const styles = StyleSheet.create({
   loadingWrap: {
     gap: spacing[12]
   }
-});
+}));
+
 

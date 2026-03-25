@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { AmountText } from "../../../src/components/ui/AmountText";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
@@ -10,7 +10,7 @@ import { HeaderShell } from "../../../src/layout/appHeader";
 import { useTransactionDetailQuery } from "../../../src/features/transactions/useTransactions";
 import { formatDate, formatTime } from "../../../src/lib/format";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 export default function PlannerTransactionDetailScreen() {
   const router = useRouter();
@@ -88,7 +88,7 @@ function DetailLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {},
   heroCard: {
     gap: spacing[8]
@@ -126,5 +126,6 @@ const styles = StyleSheet.create({
   loadingWrap: {
     gap: spacing[12]
   }
-});
+}));
+
 

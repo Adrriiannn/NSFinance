@@ -2,10 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
-import { palette, surfaces } from "../../theme/tokens";
+import { useThemeTokens } from "../../theme/tokens";
 import { FieldError } from "./forms/FieldError";
 import { AppText } from "./text/AppText";
-import { fieldPresets } from "./fields/field.presets";
+import { useFieldPresets } from "./fields/field.presets";
 
 type PasswordFieldProps = Omit<TextInputProps, "secureTextEntry"> & {
   label: string;
@@ -34,6 +34,8 @@ export function PasswordField({
   autoHideOnBlur = true,
   ...props
 }: PasswordFieldProps) {
+  const fieldPresets = useFieldPresets();
+  const { palette, surfaces } = useThemeTokens();
   const [internalVisible, setInternalVisible] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const visible = typeof isPasswordVisible === "boolean" ? isPasswordVisible : internalVisible;
@@ -65,6 +67,8 @@ export function PasswordField({
           ref={inputRef}
           {...props}
           secureTextEntry={!visible}
+          allowFontScaling={props.allowFontScaling ?? false}
+          maxFontSizeMultiplier={props.maxFontSizeMultiplier ?? 1}
           selectionColor={props.selectionColor ?? palette.accent}
           cursorColor={props.cursorColor ?? palette.accent}
           autoCapitalize={props.autoCapitalize ?? "none"}

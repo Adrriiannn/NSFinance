@@ -1,5 +1,5 @@
-import { StyleSheet, Text, View } from "react-native";
-import { palette, typography } from "../../theme/tokens";
+import { Text, View } from "react-native";
+import { palette, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import { ADAPTIVE_TOKENS } from "./adaptive.constants";
 import { useAdaptiveShell } from "./adaptive.hooks";
 import type { AdaptiveHeaderProps } from "./adaptive.types";
@@ -52,7 +52,7 @@ export function AdaptiveHeader({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   container: {
     width: "100%"
   },
@@ -81,4 +81,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.body2
   }
-});
+}));
+

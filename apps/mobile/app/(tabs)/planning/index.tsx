@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Animated, Easing, Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { PlanningHubShell } from "../../../src/components/planningHub/PlanningHubShell";
@@ -24,7 +24,7 @@ import {
   getExpensePlanStatusMeta
 } from "../../../src/features/expenseTracker/expensePlanningUtils";
 import type { ExpensePlanStatus } from "../../../src/features/expenseTracker/expensePlanningTypes";
-import { layout, palette, radius, spacing, typography } from "../../../src/theme/tokens";
+import { layout, palette, radius, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 const quickActionConfig = [
   { key: "new", label: "New plan", icon: "add-circle-outline" },
@@ -440,7 +440,7 @@ export default function PlanningHubOverviewScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   screen: {
     flex: 1
   },
@@ -742,6 +742,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: "600"
   }
-});
+}));
+
 
 

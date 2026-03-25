@@ -2,14 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useMemo, useState, type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { requestOpenGlobalAppMenu } from "../components/layout/GlobalAppMenu";
 import { TextField } from "../components/ui/fields/TextField";
 import { ListRow } from "../components/ui/rows/ListRow";
 import { ModalSheet } from "../components/ui/surfaces/ModalSheet";
-import { layout, palette, spacing, surfaces, zIndex } from "../theme/tokens";
+import { layout, palette, spacing, surfaces, zIndex, createRuntimeStyleSheet } from "../theme/tokens";
 import { useOptionalAdaptiveShell } from "./adaptive/adaptive.hooks";
 
 type HeaderPresetName =
@@ -362,7 +362,7 @@ export function HeaderShell({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   shell: {
     zIndex: HEADER.zIndex,
     backgroundColor: surfaces.app
@@ -522,4 +522,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.88
   }
-});
+}));
+

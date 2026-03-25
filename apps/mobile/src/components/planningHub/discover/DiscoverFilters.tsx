@@ -1,5 +1,5 @@
-import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
-import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
+import { Pressable, ScrollView, Text } from "react-native";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 
 export type DiscoverFilterOption = {
   id: string;
@@ -46,7 +46,7 @@ export function DiscoverFilters({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   rail: {
     gap: spacing[8],
     paddingRight: spacing[16]
@@ -80,4 +80,5 @@ const styles = StyleSheet.create({
   selectedLabel: {
     color: palette.textPrimary
   }
-});
+}));
+

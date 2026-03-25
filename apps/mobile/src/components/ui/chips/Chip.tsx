@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 import { Pressable } from "react-native";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { AppText } from "../text/AppText";
-import { palette } from "../../../theme/tokens";
-import { chipPresets, chipSelectedStyle, chipToneStyles, type ChipTone, type ChipVariant } from "./chip.presets";
+import { useThemeTokens } from "../../../theme/tokens";
+import { useChipPresetStyles, type ChipTone, type ChipVariant } from "./chip.presets";
 
 type ChipProps = {
   label: string;
@@ -26,6 +26,8 @@ export function Chip({
   style,
   labelStyle
 }: ChipProps) {
+  const { palette } = useThemeTokens();
+  const { chipPresets, chipSelectedStyle, chipToneStyles } = useChipPresetStyles();
   const preset = chipPresets[variant];
 
   return (

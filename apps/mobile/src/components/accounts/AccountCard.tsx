@@ -1,7 +1,7 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { formatShortDate } from "../../lib/format";
 import type { AccountDto } from "../../types/api";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import { AmountText } from "../ui/AmountText";
 import { GlassCard } from "../ui/GlassCard";
 import { AccountProviderBadge } from "./AccountProviderBadge";
@@ -36,7 +36,7 @@ export function AccountCard({ account, onPress, compact = false }: AccountCardPr
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   compactCard: {
     width: 250
   },
@@ -67,4 +67,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

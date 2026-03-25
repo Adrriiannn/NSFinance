@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
@@ -21,7 +21,7 @@ import { formatUnknownError } from "../../../src/lib/api/errors";
 import { useFeedbackSound } from "../../../src/lib/sound/useFeedbackSound";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { TransactionDirection } from "../../../src/types/api";
 
 type FormErrors = Partial<
@@ -280,7 +280,7 @@ export default function AddTransactionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     gap: spacing[16]
   },
@@ -337,4 +337,5 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: palette.elevatedBackground
   }
-});
+}));
+

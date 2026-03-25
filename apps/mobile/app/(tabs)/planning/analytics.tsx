@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutAnimation, PanResponder, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { LayoutAnimation, PanResponder, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PlanningHubCategoryRadialChart } from "../../../src/components/planningHub/PlanningHubCategoryRadialChart";
 import { PlanningHubShell } from "../../../src/components/planningHub/PlanningHubShell";
@@ -24,7 +24,7 @@ import {
 import type { ExpenseAnalyticsMode } from "../../../src/features/expenseTracker/expensePlanningTypes";
 import { getExpenseTrackerVisual } from "../../../src/features/expenseTracker/expenseTrackerModels";
 import { HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
-import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { ExpenseTaxonomyDomainDto, ExpenseTrackerEntryDto } from "../../../src/types/api";
 
 const analyticsModes = [
@@ -460,7 +460,7 @@ export default function PlanningHubAnalyticsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   screen: {
     flex: 1
   },
@@ -681,7 +681,8 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: "600"
   }
-});
+}));
+
 
 
 

@@ -3,14 +3,14 @@ import { useEffect, useRef } from "react";
 import { Animated, Pressable, Text, View } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { TransactionDto } from "../../../types/api";
-import { palette } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 import {
   buildTransactionDetailDate,
   buildTransactionMetaLine
 } from "../../../features/transactions/activityGrouping";
 import { usePlannerStore } from "../../../providers/PlannerProvider";
 import { AmountText } from "../../ui/AmountText";
-import { rowPresets } from "./row.presets";
+import { useRowPresets } from "./row.presets";
 
 type TransactionRowProps = {
   transaction: TransactionDto;
@@ -35,6 +35,8 @@ export function TransactionRow({
   showTimestamp = false,
   rowStyle
 }: TransactionRowProps) {
+  const { palette } = useThemeTokens();
+  const rowPresets = useRowPresets();
   const plannerStore = usePlannerStore();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(10)).current;

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { spacing } from "../../theme/tokens";
 import { TertiaryButton } from "./TertiaryButton";
 import { AppText } from "./text/AppText";
@@ -20,10 +20,16 @@ export function SectionHeader({
   trailing
 }: SectionHeaderProps) {
   return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing[12] }}>
-      <View>
-        <AppText preset="sectionTitle">{title}</AppText>
-        {subtitle ? <AppText preset="secondary">{subtitle}</AppText> : null}
+    <View style={styles.row}>
+      <View style={styles.titleWrap}>
+        <AppText preset="sectionTitle" style={styles.titleText}>
+          {title}
+        </AppText>
+        {subtitle ? (
+          <AppText preset="secondary" style={styles.subtitleText}>
+            {subtitle}
+          </AppText>
+        ) : null}
       </View>
 
       {trailing}
@@ -34,3 +40,25 @@ export function SectionHeader({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing[12]
+  },
+  titleWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing[2]
+  },
+  titleText: {
+    minWidth: 0,
+    flexShrink: 1
+  },
+  subtitleText: {
+    minWidth: 0,
+    flexShrink: 1
+  }
+});

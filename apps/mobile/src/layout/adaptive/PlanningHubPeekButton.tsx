@@ -1,8 +1,8 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, Text, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { PEEK_UNDER_BAR_TRANSLATE_ADJUSTMENT } from "./planningHubPeek.constants";
-import { borders, palette, radius, spacing, typography } from "../../theme/tokens";
+import { borders, palette, radius, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type PlanningHubPeekAction = {
   label: string;
@@ -145,7 +145,7 @@ export function PlanningHubPeekButton({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   switcherMountAbove: {
     position: "absolute",
     bottom: "100%",
@@ -213,4 +213,5 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center"
   }
-});
+}));
+

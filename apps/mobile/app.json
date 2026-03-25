@@ -4,7 +4,7 @@
     "slug": "nsfinance-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "scheme": [
       "nsfinance",
       "com.nsfinance.mobile"

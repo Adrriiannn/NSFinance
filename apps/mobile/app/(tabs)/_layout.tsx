@@ -2,11 +2,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { Redirect, Tabs } from "expo-router";
 import { PremiumTabBar } from "../../src/components/layout/PremiumTabBar";
 import { AdaptiveAppShell } from "../../src/layout/adaptive/AdaptiveAppShell";
-import { palette } from "../../src/theme/tokens";
 import { useAuthSession } from "../../src/providers/AuthProvider";
+import { useThemeRuntime } from "../../src/theme/runtime/ThemeRuntimeProvider";
 
 export default function TabsLayout() {
   const { isBootstrapping, isAuthenticated } = useAuthSession();
+  const { theme } = useThemeRuntime();
 
   if (!isBootstrapping && !isAuthenticated) {
     return <Redirect href={"/login" as never} />;
@@ -18,7 +19,7 @@ export default function TabsLayout() {
         screenOptions={{
           headerShown: false,
           sceneStyle: {
-            backgroundColor: palette.appBackground
+            backgroundColor: theme.colors.canvas
           }
         }}
         tabBar={(props) => <PremiumTabBar {...props} />}

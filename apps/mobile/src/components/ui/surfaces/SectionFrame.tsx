@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { StyleSheet, View } from "react-native";
-import { borders, palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 import { AppText } from "../text/AppText";
 
 type SectionFrameProps = {
@@ -17,6 +17,30 @@ export function SectionFrame({
   style,
   contentStyle
 }: SectionFrameProps) {
+  const { borders, palette, radius, spacing, surfaces, typography } = useThemeTokens();
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        shell: {
+          borderWidth: borders.width.thin,
+          borderColor: palette.borderStrong,
+          borderRadius: radius.medium,
+          backgroundColor: surfaces.card,
+          paddingTop: spacing[12],
+          paddingHorizontal: spacing[12],
+          paddingBottom: spacing[12]
+        },
+        title: {
+          color: "#D8D8D8",
+          ...typography.cardTitle
+        },
+        content: {
+          marginTop: spacing[10]
+        }
+      }),
+    [borders, palette, radius, spacing, surfaces, typography]
+  );
+
   return (
     <View style={[styles.shell, style]}>
       <AppText style={styles.title}>{title}</AppText>
@@ -24,23 +48,3 @@ export function SectionFrame({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  shell: {
-    borderWidth: borders.width.thin,
-    borderColor: palette.borderStrong,
-    borderRadius: radius.medium,
-    backgroundColor: surfaces.card,
-    paddingTop: spacing[12],
-    paddingHorizontal: spacing[12],
-    paddingBottom: spacing[12]
-  },
-  title: {
-    color: "#D8D8D8",
-    ...typography.cardTitle
-  },
-  content: {
-    marginTop: spacing[10]
-  }
-});
-

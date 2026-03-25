@@ -2,15 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View
-} from "react-native";
+  Alert, Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import * as Sharing from "expo-sharing";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
@@ -37,7 +29,7 @@ import {
 import { ApiClientError, formatUnknownError } from "../../../src/lib/api/errors";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import type { BankConnectionStatus } from "../../../src/types/api";
-import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import {
   type PasswordBreachStatus,
   enforcePasswordMaxLength,
@@ -940,7 +932,7 @@ export default function SecuritySettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     paddingTop: 0
   },
@@ -1058,7 +1050,8 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.bodyStrong
   }
-});
+}));
+
 
 
 

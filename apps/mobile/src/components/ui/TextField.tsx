@@ -1,6 +1,6 @@
 import { AppText } from "./text/AppText";
 import { TextField as BaseTextField } from "./fields/TextField";
-import { palette, surfaces } from "../../theme/tokens";
+import { useThemeTokens } from "../../theme/tokens";
 
 type TextFieldProps = React.ComponentProps<typeof BaseTextField> & {
   label: string;
@@ -22,6 +22,8 @@ export function TextField({
   leadingText,
   ...props
 }: TextFieldProps) {
+  const { palette, surfaces } = useThemeTokens();
+
   return (
     <BaseTextField
       {...props}

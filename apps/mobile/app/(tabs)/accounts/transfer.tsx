@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
@@ -10,7 +10,7 @@ import { TextField } from "../../../src/components/ui/TextField";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAuthSession } from "../../../src/providers/AuthProvider";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 type TransferMode = "external" | "internal";
 type DropdownKey = "from-account" | "to-account" | "country" | "currency";
@@ -393,7 +393,7 @@ export default function TransferMoneyScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     flex: 1,
     gap: spacing[16]
@@ -522,4 +522,5 @@ const styles = StyleSheet.create({
   actions: {
     gap: spacing[12]
   }
-});
+}));
+

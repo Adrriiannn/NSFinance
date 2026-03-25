@@ -1,5 +1,5 @@
-import { StyleSheet, View } from "react-native";
-import { spacing } from "../../theme/tokens";
+import { View } from "react-native";
+import { spacing, createRuntimeStyleSheet } from "../../theme/tokens";
 import { EmptyState } from "./EmptyState";
 
 type TabEmptyStateCardProps = {
@@ -42,7 +42,7 @@ export function TabEmptyStateCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrap: {
     width: "100%"
   },
@@ -55,4 +55,6 @@ const styles = StyleSheet.create({
   none: {
     marginTop: 0
   }
-});
+}));
+
+

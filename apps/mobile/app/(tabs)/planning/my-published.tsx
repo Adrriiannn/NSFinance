@@ -1,10 +1,10 @@
 import { useRouter } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { useExpensePlanning } from "../../../src/features/expenseTracker/ExpensePlanningProvider";
-import { palette, radius, spacing, typography } from "../../../src/theme/tokens";
+import { palette, radius, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 export default function ExpensePlanCommunityDashboardScreen() {
   const router = useRouter();
@@ -58,7 +58,7 @@ export default function ExpensePlanCommunityDashboardScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   metricGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -119,7 +119,8 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: "600"
   }
-});
+}));
+
 
 
 

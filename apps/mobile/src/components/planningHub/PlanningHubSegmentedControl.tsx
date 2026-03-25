@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, radius, spacing, surfaces, typography } from "../../theme/tokens";
+import { Animated, Pressable, Text, View } from "react-native";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type SegmentedOption<T extends string> = {
   label: string;
@@ -104,7 +104,7 @@ export function PlanningHubSegmentedControl<T extends string>({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrapper: {
     gap: spacing[8]
   },
@@ -151,4 +151,5 @@ const styles = StyleSheet.create({
   segmentLabelSelected: {
     color: palette.textPrimary
   }
-});
+}));
+

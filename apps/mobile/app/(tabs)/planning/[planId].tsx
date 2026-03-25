@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
@@ -14,7 +14,7 @@ import {
   getExpensePlanStatusMeta
 } from "../../../src/features/expenseTracker/expensePlanningUtils";
 import { getExpenseTrackerSubcategoryVisual } from "../../../src/features/expenseTracker/expenseTrackerModels";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 function formatAmount(amount: number, currency: string) {
   return new Intl.NumberFormat("en-GB", {
@@ -209,7 +209,7 @@ export default function ExpensePlanDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   heroCard: {
     gap: spacing[16]
   },
@@ -344,7 +344,8 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.body2
   }
-});
+}));
+
 
 
 

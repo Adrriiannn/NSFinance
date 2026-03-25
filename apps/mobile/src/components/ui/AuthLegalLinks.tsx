@@ -1,5 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { Pressable, Text, View } from "react-native";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type AuthLegalLinksProps = {
   onPressTerms: () => void;
@@ -19,7 +19,7 @@ export function AuthLegalLinks({ onPressTerms, onPressPrivacy }: AuthLegalLinksP
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -33,4 +33,5 @@ const styles = StyleSheet.create({
   pressed: {
     opacity: 0.75
   }
-});
+}));
+

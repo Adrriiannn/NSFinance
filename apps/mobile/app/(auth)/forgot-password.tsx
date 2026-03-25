@@ -9,7 +9,7 @@ import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { TextField } from "../../src/components/ui/TextField";
 import { useForgotPasswordMutation } from "../../src/features/auth/useAuthMutations";
 import { formatUnknownError } from "../../src/lib/api/errors";
-import { palette, spacing, typography } from "../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 const INSET_OUTLINE_RADIUS = 6;
 const INSET_OUTLINE_WIDTH = 1;
@@ -191,7 +191,7 @@ export default function ForgotPasswordScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   centerWrap: {
     flex: 1,
     marginTop: spacing[32],
@@ -291,4 +291,5 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.body2
   }
-});
+}));
+

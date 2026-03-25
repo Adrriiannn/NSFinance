@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, Text, View } from "react-native";
 import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
 import { PlanningHubSegmentedControl } from "../../../src/components/planningHub/PlanningHubSegmentedControl";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
@@ -10,7 +10,7 @@ import { useExpensePlanning } from "../../../src/features/expenseTracker/Expense
 import { buildExpensePlanTaxonomyLookup } from "../../../src/features/expenseTracker/expensePlanningUtils";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
-import { palette, radius, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 const periodOptions = [
   { label: "Weekly", value: "weekly" },
@@ -290,7 +290,7 @@ export default function ExpensePlanBuilderScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   pageContent: {
     width: "100%",
     gap: spacing[20],
@@ -462,6 +462,7 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong,
     fontWeight: "600"
   }
-});
+}));
+
 
 

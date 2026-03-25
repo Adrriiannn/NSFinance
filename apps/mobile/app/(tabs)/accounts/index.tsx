@@ -2,15 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
-  Animated,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View
-} from "react-native";
+  Alert, Animated, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendingsCard";
@@ -39,7 +31,8 @@ import {
 } from "../../../src/features/accounts/useAccounts";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency } from "../../../src/lib/format";
-import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { AccountType } from "../../../src/types/api";
 
 const accountTypeOptions: { label: string; value: AccountType }[] = [
@@ -52,6 +45,7 @@ const accountTypeOptions: { label: string; value: AccountType }[] = [
 
 
 export default function AccountsTabScreen() {
+  useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/accounts");
@@ -431,7 +425,7 @@ function ActionItem({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     flex: 1
   },
@@ -619,6 +613,7 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   
-});
+}));
+
 
 

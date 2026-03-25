@@ -1,19 +1,8 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  findNodeHandle,
-  Keyboard,
-  KeyboardAvoidingView,
-  NativeSyntheticEvent,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  UIManager,
-  useWindowDimensions,
-  type NativeScrollEvent,
-} from "react-native";
+  findNodeHandle, Keyboard, KeyboardAvoidingView, NativeSyntheticEvent, Platform, ScrollView, TextInput, UIManager, useWindowDimensions, type NativeScrollEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { layout, palette, spacing } from "../../theme/tokens";
+import { layout, palette, spacing, createRuntimeStyleSheet } from "../../theme/tokens";
 import { AppBackgroundLayer } from "../ui/surfaces/AppBackgroundLayer";
 
 type AuthScreenProps = {
@@ -259,7 +248,7 @@ export function AuthScreen({ children, focusedInputExtraClearance = 0 }: AuthScr
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   safeArea: {
     flex: 1,
     backgroundColor: palette.appBackground
@@ -273,4 +262,5 @@ const styles = StyleSheet.create({
     paddingTop: spacing[24],
     paddingBottom: spacing[24]
   }
-});
+}));
+

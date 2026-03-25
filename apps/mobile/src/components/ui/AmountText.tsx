@@ -1,6 +1,6 @@
 import type { StyleProp, TextStyle } from "react-native";
 import { formatCurrency } from "../../lib/format";
-import { palette } from "../../theme/tokens";
+import { useThemeTokens } from "../../theme/tokens";
 import { AppText } from "./text/AppText";
 
 type AmountTextProps = {
@@ -16,6 +16,7 @@ export function AmountText({
   style,
   appearance = "default"
 }: AmountTextProps) {
+  const { palette } = useThemeTokens();
   const preset = amount < 0 ? "negativeMoney" : amount > 0 ? "positiveMoney" : "moneyValue";
   const transactionToneStyle =
     appearance === "transaction"

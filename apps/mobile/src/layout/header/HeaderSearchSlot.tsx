@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet } from "react-native";
+import { Pressable } from "react-native";
 import { TextField } from "../../components/ui/fields/TextField";
-import { palette } from "../../theme/tokens";
+import { palette, createRuntimeStyleSheet } from "../../theme/tokens";
 import { HEADER_CONSTANTS } from "./header.constants";
 import type { HeaderSearchSlotProps } from "./header.types";
 
@@ -35,7 +35,7 @@ export function HeaderSearchSlot({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   container: {
     minHeight: HEADER_CONSTANTS.searchHeight,
     borderRadius: HEADER_CONSTANTS.searchRadius,
@@ -50,5 +50,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   }
-});
+}));
+
+
 

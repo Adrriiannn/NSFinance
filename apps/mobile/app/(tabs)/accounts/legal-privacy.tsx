@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { ScrollView, Switch, Text, View } from "react-native";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
@@ -21,7 +21,7 @@ import {
 } from "../../../src/features/users/useUserSettings";
 import { useMyDeletionRequestsQuery } from "../../../src/features/support/useSupport";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
-import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 function formatVersion(version?: string) {
   return version ? `v${version}` : "loading";
@@ -301,7 +301,7 @@ function ToggleRow({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     gap: spacing[12]
   },
@@ -351,7 +351,8 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.body2
   }
-});
+}));
+
 
 
 

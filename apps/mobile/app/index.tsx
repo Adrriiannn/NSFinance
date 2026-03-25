@@ -1,7 +1,7 @@
 import { Redirect } from "expo-router";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { useAuthSession } from "../src/providers/AuthProvider";
-import { palette, typography } from "../src/theme/tokens";
+import { palette, typography, createRuntimeStyleSheet } from "../src/theme/tokens";
 
 export default function IndexScreen() {
   const { isBootstrapping, isAuthenticated } = useAuthSession();
@@ -18,7 +18,7 @@ export default function IndexScreen() {
   return <Redirect href={(isAuthenticated ? "/(tabs)" : "/login") as never} />;
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   loadingWrap: {
     flex: 1,
     backgroundColor: palette.appBackground,
@@ -30,5 +30,6 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.body
   }
-});
+}));
+
 

@@ -1,6 +1,5 @@
 import type {
   ExpenseTaxonomyDomainDto,
-  ExpenseTaxonomySubcategoryDto,
   ExpenseTrackerEntryDto
 } from "../../types/api";
 

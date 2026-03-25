@@ -1,9 +1,10 @@
 import { Redirect, Stack } from "expo-router";
 import { useAuthSession } from "../../src/providers/AuthProvider";
-import { palette } from "../../src/theme/tokens";
+import { useThemeRuntime } from "../../src/theme/runtime/ThemeRuntimeProvider";
 
 export default function AuthLayout() {
   const { isBootstrapping, isAuthenticated } = useAuthSession();
+  const { theme } = useThemeRuntime();
 
   if (!isBootstrapping && isAuthenticated) {
     return <Redirect href="/(tabs)" />;
@@ -14,7 +15,7 @@ export default function AuthLayout() {
       screenOptions={{
         headerShown: false,
         animation: "none",
-        contentStyle: { backgroundColor: palette.appBackground }
+        contentStyle: { backgroundColor: theme.colors.canvas }
       }}
     />
   );

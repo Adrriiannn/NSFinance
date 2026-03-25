@@ -1,14 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated,
-  PanResponder,
-  Pressable,
-  StyleSheet,
-  View
-} from "react-native";
-import { palette, spacing, zIndex } from "../../theme/tokens";
-import { surfacePresets } from "../../components/ui/surfaces/surface.presets";
+  Animated, PanResponder, Pressable, View } from "react-native";
+import { spacing, zIndex, useThemeTokens, createRuntimeStyleSheet } from "../../theme/tokens";
+import { useSurfacePresets } from "../../components/ui/surfaces/surface.presets";
 import { useAdaptiveShell } from "./adaptive.hooks";
 import { useAuthSession } from "../../providers/AuthProvider";
 import {
@@ -24,6 +19,8 @@ export function FloatingAssistantDock({
   accessibilityLabel = "Open NS Companion",
   hidden = false
 }: FloatingAssistantDockProps) {
+  const { palette } = useThemeTokens();
+  const surfacePresets = useSurfacePresets();
   const { metrics } = useAdaptiveShell();
   const { session } = useAuthSession();
   const userId = session?.user.id ?? null;
@@ -400,7 +397,7 @@ export function FloatingAssistantDock({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrapper: {
     position: "absolute",
     zIndex: zIndex.fab,
@@ -446,4 +443,5 @@ const styles = StyleSheet.create({
     opacity: 0.94,
     transform: [{ scale: 0.97 }]
   }
-});
+}));
+

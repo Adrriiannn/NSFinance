@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { palette } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 import { ListRow } from "./ListRow";
 
 type SettingsRowProps = {
@@ -10,6 +10,8 @@ type SettingsRowProps = {
 };
 
 export function SettingsRow({ title, subtitle, icon, onPress }: SettingsRowProps) {
+  const { palette } = useThemeTokens();
+
   return (
     <ListRow
       title={title}

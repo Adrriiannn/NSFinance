@@ -1,53 +1,18 @@
-import { activeTheme, gradients, shadows } from "./semantic";
+import { useMemo } from "react";
+import { gradients, shadows, type SemanticTheme } from "./semantic";
+import { useThemeRuntime } from "./runtime/ThemeRuntimeProvider";
+import { getRuntimeThemeSnapshot } from "./runtime/themeSnapshot";
 import { borders } from "./tokens/borders";
+import { motion } from "./tokens/motion";
 import { opacity } from "./tokens/opacity";
 import { radius as radiusScale } from "./tokens/radius";
 import { sizing } from "./tokens/sizing";
 import { spacing } from "./tokens/spacing";
 import { typography as typographyScale } from "./tokens/typography";
-import { motion } from "./tokens/motion";
 import { zIndex } from "./tokens/zIndex";
+export { createRuntimeStyleSheet } from "./runtime/createRuntimeStyleSheet";
 
-const theme = activeTheme;
-const isDarkTheme = theme.isDark;
-
-export const palette = {
-  appBackground: theme.colors.canvas,
-  elevatedBackground: theme.colors.elevatedCanvas,
-  cardSurface: theme.colors.surface.level1,
-  cardSurfaceMuted: theme.colors.surface.fieldStrong,
-  glassSurface: theme.colors.surface.level1,
-  tabBarSurface: theme.colors.surface.tabBar,
-  border: theme.colors.border.subtle,
-  borderStrong: theme.colors.border.strong,
-  primary: theme.colors.action.primary,
-  primaryGlow: theme.colors.action.primaryGlow,
-  accent: theme.colors.accent.primary,
-  accentStrong: theme.colors.accent.primaryStrong,
-  textPrimary: theme.colors.text.primary,
-  textSecondary: theme.colors.text.secondary,
-  textMuted: theme.colors.text.muted,
-  success: theme.colors.status.success,
-  caution: theme.colors.status.warning,
-  negative: theme.colors.status.danger,
-  moneyPositive: theme.colors.money.positive,
-  moneyNegative: theme.colors.money.negative,
-  overlay: theme.colors.overlay.strong
-} as const;
-
-export const surfaces = {
-  app: theme.colors.canvas,
-  section: theme.colors.surface.level0,
-  card: theme.colors.surface.level1,
-  floating: theme.colors.surface.floating,
-  sheet: theme.colors.surface.level2,
-  tabBar: theme.colors.surface.tabBar,
-  field: theme.colors.surface.field,
-  fieldStrong: theme.colors.surface.fieldStrong,
-  muted: theme.colors.surface.muted
-} as const;
-
-export const radius = {
+const radius = {
   none: radiusScale.none,
   small: radiusScale.small,
   medium: radiusScale.medium,
@@ -57,7 +22,7 @@ export const radius = {
   fab: radiusScale.fab
 } as const;
 
-export const layout = {
+const layout = {
   screenHorizontalPadding: spacing[12],
   screenTopPadding: spacing[20],
   sectionGap: spacing[20],
@@ -65,26 +30,7 @@ export const layout = {
   cardPadding: sizing.card.padding.standard
 } as const;
 
-export const controls = {
-  primaryHeight: sizing.button.heights.standard,
-  compactHeight: sizing.button.heights.compact,
-  fieldHeight: sizing.field.heights.standard,
-  denseFieldHeight: sizing.field.heights.dense,
-  iconButtonSize: sizing.iconButton.standard,
-  compactRadius: radiusScale.small,
-  fieldRadius: radiusScale.medium,
-  buttonRadius: radiusScale.medium,
-  controlSurface: surfaces.field,
-  controlSurfaceMuted: surfaces.field,
-  controlSurfaceStrong: surfaces.fieldStrong,
-  primaryFill: theme.colors.action.primary,
-  primaryBorder: theme.colors.action.primary,
-  activeFill: isDarkTheme ? "rgba(242, 140, 40, 0.18)" : "rgba(184, 94, 0, 0.12)",
-  activeBorder: isDarkTheme ? "rgba(242, 140, 40, 0.32)" : "rgba(184, 94, 0, 0.24)",
-  pressedScale: 0.985
-} as const;
-
-export const navigation = {
+const navigation = {
   floatingTabBarHeight: sizing.tabBar.height,
   floatingTabBarSideInset: 0,
   floatingTabBarOffset: 0,
@@ -94,7 +40,7 @@ export const navigation = {
   floatingFabClearance: 66
 } as const;
 
-export const typography = {
+const typography = {
   displayXL: typographyScale.display,
   displayL: typographyScale.display,
   title1: typographyScale.screenTitle,
@@ -120,14 +66,116 @@ export const typography = {
   helper: typographyScale.helper
 } as const;
 
-export {
-  theme,
-  spacing,
-  sizing,
-  shadows,
-  gradients,
-  borders,
-  opacity,
-  motion,
-  zIndex
-};
+export function createThemeTokens(theme: SemanticTheme) {
+  const isDarkTheme = theme.isDark;
+
+  const palette = {
+    appBackground: theme.colors.canvas,
+    elevatedBackground: theme.colors.elevatedCanvas,
+    cardSurface: theme.colors.surface.level1,
+    cardSurfaceMuted: theme.colors.surface.fieldStrong,
+    glassSurface: theme.colors.surface.level1,
+    tabBarSurface: theme.colors.surface.tabBar,
+    border: theme.colors.border.subtle,
+    borderStrong: theme.colors.border.strong,
+    primary: theme.colors.action.primary,
+    primaryGlow: theme.colors.action.primaryGlow,
+    accent: theme.colors.accent.primary,
+    accentStrong: theme.colors.accent.primaryStrong,
+    textPrimary: theme.colors.text.primary,
+    textSecondary: theme.colors.text.secondary,
+    textMuted: theme.colors.text.muted,
+    success: theme.colors.status.success,
+    caution: theme.colors.status.warning,
+    negative: theme.colors.status.danger,
+    moneyPositive: theme.colors.money.positive,
+    moneyNegative: theme.colors.money.negative,
+    overlay: theme.colors.overlay.strong
+  } as const;
+
+  const surfaces = {
+    app: theme.colors.canvas,
+    section: theme.colors.surface.level0,
+    card: theme.colors.surface.level1,
+    floating: theme.colors.surface.floating,
+    sheet: theme.colors.surface.level2,
+    tabBar: theme.colors.surface.tabBar,
+    field: theme.colors.surface.field,
+    fieldStrong: theme.colors.surface.fieldStrong,
+    muted: theme.colors.surface.muted
+  } as const;
+
+  const controls = {
+    primaryHeight: sizing.button.heights.standard,
+    compactHeight: sizing.button.heights.compact,
+    fieldHeight: sizing.field.heights.standard,
+    denseFieldHeight: sizing.field.heights.dense,
+    iconButtonSize: sizing.iconButton.standard,
+    compactRadius: radiusScale.small,
+    fieldRadius: radiusScale.medium,
+    buttonRadius: radiusScale.medium,
+    controlSurface: surfaces.field,
+    controlSurfaceMuted: surfaces.field,
+    controlSurfaceStrong: surfaces.fieldStrong,
+    primaryFill: theme.colors.action.primary,
+    primaryBorder: theme.colors.action.primary,
+    activeFill: isDarkTheme ? "rgba(242, 140, 40, 0.18)" : "rgba(184, 94, 0, 0.12)",
+    activeBorder: isDarkTheme ? "rgba(242, 140, 40, 0.32)" : "rgba(184, 94, 0, 0.24)",
+    pressedScale: 0.985
+  } as const;
+
+  return {
+    theme,
+    isDarkTheme,
+    palette,
+    surfaces,
+    radius,
+    layout,
+    controls,
+    navigation,
+    typography,
+    spacing,
+    sizing,
+    shadows,
+    gradients,
+    borders,
+    opacity,
+    motion,
+    zIndex
+  } as const;
+}
+
+export type ThemeTokens = ReturnType<typeof createThemeTokens>;
+
+export function getThemeTokensSnapshot(): ThemeTokens {
+  return createThemeTokens(getRuntimeThemeSnapshot());
+}
+
+export function useThemeTokens(): ThemeTokens {
+  const { theme } = useThemeRuntime();
+  return useMemo(() => createThemeTokens(theme), [theme]);
+}
+
+function createNamespaceProxy<T extends object>(pick: (tokens: ThemeTokens) => T): T {
+  return new Proxy({} as T, {
+    get(_target, property) {
+      const namespace = pick(getThemeTokensSnapshot()) as Record<PropertyKey, unknown>;
+      return namespace[property];
+    },
+    ownKeys() {
+      return Reflect.ownKeys(pick(getThemeTokensSnapshot()) as object);
+    },
+    getOwnPropertyDescriptor() {
+      return {
+        enumerable: true,
+        configurable: true
+      };
+    }
+  });
+}
+
+export const theme = createNamespaceProxy((tokens) => tokens.theme);
+export const palette = createNamespaceProxy((tokens) => tokens.palette);
+export const surfaces = createNamespaceProxy((tokens) => tokens.surfaces);
+export const controls = createNamespaceProxy((tokens) => tokens.controls);
+export { radius, layout, navigation, typography, spacing, sizing, shadows, gradients, borders, opacity, motion, zIndex };

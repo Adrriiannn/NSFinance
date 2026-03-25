@@ -1,12 +1,12 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, Text, TextInput, View } from "react-native";
 import { PlanningHubScreen } from "../../../../src/components/planningHub/PlanningHubScreen";
 import { GlassCard } from "../../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../../src/components/ui/PrimaryButton";
 import { useExpensePlanning } from "../../../../src/features/expenseTracker/ExpensePlanningProvider";
 import { expensePlanReportReasons } from "../../../../src/features/expenseTracker/expensePlanCommunityUtils";
 import type { ExpensePlanReportReason } from "../../../../src/features/expenseTracker/expensePlanningTypes";
-import { palette, radius, spacing, typography } from "../../../../src/theme/tokens";
+import { palette, radius, spacing, typography, createRuntimeStyleSheet } from "../../../../src/theme/tokens";
 import { useState } from "react";
 
 export default function ExpensePlanReportScreen() {
@@ -51,7 +51,7 @@ export default function ExpensePlanReportScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   sectionCard: {
     gap: spacing[16]
   },
@@ -95,6 +95,7 @@ const styles = StyleSheet.create({
     ...typography.body1,
     textAlignVertical: "top"
   }
-});
+}));
+
 
 

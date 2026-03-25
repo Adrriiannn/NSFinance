@@ -1,9 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { usePathname, useRouter } from "expo-router";
 import { useMemo, useState, type ReactNode } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { palette } from "../../theme/tokens";
+import { palette, createRuntimeStyleSheet } from "../../theme/tokens";
 import { planningHubBottomNavItems } from "../layout/bottomNavConfigs";
 import { FloatingBottomNav, type FloatingBottomNavItem } from "../layout/FloatingBottomNav";
 import { ModalSheet } from "../ui/surfaces/ModalSheet";
@@ -147,7 +147,7 @@ export function PlanningHubShell({ children }: PlanningHubShellProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   safeArea: {
     flex: 1,
     backgroundColor: palette.appBackground
@@ -159,5 +159,7 @@ const styles = StyleSheet.create({
   optionsList: {
     gap: 10
   }
-});
+}));
+
+
 

@@ -2,25 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated,
-  Alert,
-  Dimensions,
-  Easing,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  type KeyboardEvent,
-  Modal,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View
-} from "react-native";
+  Animated, Alert, Dimensions, Easing, FlatList, Keyboard, KeyboardAvoidingView, type KeyboardEvent, Modal, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { FloatingBottomNav } from "../components/layout/FloatingBottomNav";
 import { appBottomNavItems, planningHubBottomNavItems } from "../components/layout/bottomNavConfigs";
 import { GlassCard } from "../components/ui/GlassCard";
@@ -40,7 +22,7 @@ import {
 import { navigateWithProbe } from "../lib/perf/navigationTiming";
 import { getDockAwareContentBottomInset } from "../layout/contentFrame";
 import { getEffectiveBottomSystemInset } from "../theme/insets";
-import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography } from "../theme/tokens";
+import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet } from "../theme/tokens";
 
 type PromptSeed = {
   text: string;
@@ -370,34 +352,13 @@ function rankPrompts(input: string) {
 
 type CompanionScreenProps = {
   sourceOverride?: "app" | "planningHub";
-  sourceTabOverride?: "index" | "accounts" | "activity" | "cashflow" | "calendar";
 };
 
-export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverride }: CompanionScreenProps = {}) {
+export default function CashflowCompanionScreen({ sourceOverride }: CompanionScreenProps = {}) {
   const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourcePlanningHubTab?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const source = sourceOverride ?? (params.source === "planningHub" || params.source === "expense" ? "planningHub" : "app");
-  const sourceTab = sourceTabOverride ?? (
-    params.sourceTab === "index" ||
-    params.sourceTab === "accounts" ||
-    params.sourceTab === "activity" ||
-    params.sourceTab === "cashflow" ||
-    params.sourceTab === "calendar" ||
-    params.sourceTab === "planner"
-      ? params.sourceTab === "planner"
-        ? "cashflow"
-        : params.sourceTab
-      : "cashflow"
-  );
-  const sourcePlanningHubTab =
-    params.sourcePlanningHubTab === "overview" ||
-    params.sourcePlanningHubTab === "graphs" ||
-    params.sourcePlanningHubTab === "add" ||
-    params.sourcePlanningHubTab === "calendar" ||
-    params.sourcePlanningHubTab === "discover"
-      ? params.sourcePlanningHubTab
-      : "overview";
   const bottomNavItems = source === "planningHub" ? planningHubBottomNavItems : appBottomNavItems;
   const activeBottomKey = "__none__";
   const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -1303,7 +1264,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     paddingBottom: 0
   },
@@ -1615,5 +1576,6 @@ const styles = StyleSheet.create({
     ...typography.body2,
     fontWeight: "600"
   }
-});
+}));
+
 

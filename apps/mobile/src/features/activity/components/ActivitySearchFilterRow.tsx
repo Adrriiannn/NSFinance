@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
+import { Pressable, Text, View } from "react-native";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 import type { ActivitySearchFilterOption } from "../search/activitySearch.types";
 
 type ActivitySearchFilterRowProps = {
@@ -61,7 +61,7 @@ export function ActivitySearchFilterRow({ option, onPress }: ActivitySearchFilte
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   row: {
     minHeight: 52,
     borderRadius: 6,
@@ -108,4 +108,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     opacity: 0.82
   }
-});
+}));
+

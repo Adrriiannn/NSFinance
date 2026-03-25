@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { View, StyleSheet } from "react-native";
-import { borders, radius, spacing, surfaces } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 
 type FramedSurfaceProps = {
   children: ReactNode;
@@ -9,16 +9,20 @@ type FramedSurfaceProps = {
 };
 
 export function FramedSurface({ children, style }: FramedSurfaceProps) {
+  const { borders, radius, spacing, surfaces } = useThemeTokens();
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        base: {
+          borderWidth: borders.width.thin,
+          borderColor: borders.color.subtle,
+          borderRadius: radius.medium,
+          backgroundColor: surfaces.card,
+          padding: spacing[16]
+        }
+      }),
+    [borders, radius, spacing, surfaces]
+  );
+
   return <View style={[styles.base, style]}>{children}</View>;
 }
-
-const styles = StyleSheet.create({
-  base: {
-    borderWidth: borders.width.thin,
-    borderColor: borders.color.subtle,
-    borderRadius: radius.medium,
-    backgroundColor: surfaces.card,
-    padding: spacing[16]
-  }
-});
-

@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
+import { Pressable, Text, TextInput, View } from "react-native";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 import type {
   ActivityCategoryTokenValue,
   ActivitySearchToken as ActivitySearchTokenModel
@@ -105,7 +105,7 @@ export function ActivitySearchToken({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   token: {
     minHeight: 28,
     borderRadius: 6,
@@ -165,4 +165,5 @@ const styles = StyleSheet.create({
   removeButtonPressed: {
     opacity: 0.8
   }
-});
+}));
+

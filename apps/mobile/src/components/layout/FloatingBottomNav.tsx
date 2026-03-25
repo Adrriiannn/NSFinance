@@ -1,10 +1,10 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, PanResponder, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getEffectiveBottomSystemInset } from "../../theme/insets";
-import { navigation, palette, radius, spacing, typography } from "../../theme/tokens";
+import { useThemeTokens, type ThemeTokens } from "../../theme/tokens";
 import { PlanningHubPeekButton } from "../../layout/adaptive/PlanningHubPeekButton";
 import { useOptionalAdaptiveShell } from "../../layout/adaptive/adaptive.hooks";
 import {
@@ -16,7 +16,7 @@ import {
 } from "../../layout/adaptive/planningHubPeek.constants";
 import { usePlanningHubPeek } from "../../layout/adaptive/planningHubPeek.hooks";
 import { TabBarShell } from "../ui/surfaces/TabBarShell";
-import { surfacePresets } from "../ui/surfaces/surface.presets";
+import { useSurfacePresets } from "../ui/surfaces/surface.presets";
 
 export type FloatingBottomNavItem = {
   key: string;
@@ -50,7 +50,6 @@ type NavLayoutCache = {
 
 const navHighlightCache = new Map<string, NavLayoutCache>();
 const HIGHLIGHT_ANIMATION_DURATION = 240;
-const TAB_BAR_SEAM_COLOR = "rgba(242, 140, 40, 0.24)";
 const SWITCHER_WIDTH = 272;
 
 function renderNavIcon(
@@ -79,6 +78,18 @@ export function FloatingBottomNav({
   suppressActiveStateForKeys = [],
   switcherAction
 }: FloatingBottomNavProps) {
+  const { navigation, palette, radius, spacing, typography } = useThemeTokens();
+  const surfacePresets = useSurfacePresets();
+  const styles = useMemo(
+    () =>
+      createStyles({
+        palette,
+        radius,
+        spacing,
+        typography
+      }),
+    [palette, radius, spacing, typography]
+  );
   const adaptiveShell = useOptionalAdaptiveShell();
   const insets = useSafeAreaInsets();
   const androidBottomInset =
@@ -290,7 +301,7 @@ export function FloatingBottomNav({
         style={[
           surfacePresets.tabBarDocked,
           {
-            borderColor: TAB_BAR_SEAM_COLOR,
+            borderColor: palette.border,
             bottom: tabBarBottomOffset,
             paddingBottom: shellContentPaddingBottom
           }
@@ -427,50 +438,54 @@ export function FloatingBottomNav({
   );
 }
 
-const styles = StyleSheet.create({
-  wrapper: {
-    ...StyleSheet.absoluteFillObject
-  },
-  activeHighlight: {
-    position: "absolute",
-    top: spacing[6],
-    bottom: spacing[4],
-    borderRadius: radius.medium,
-    backgroundColor: "rgba(242,140,40,0.10)",
-    borderWidth: 1,
-    borderColor: "rgba(242,140,40,0.32)"
-  },
-  separatorLayer: {
-    position: "absolute",
-    justifyContent: "center"
-  },
-  separator: {
-    position: "absolute",
-    top: "28%",
-    height: "30%",
-    marginLeft: -1
-  },
-  item: {
-    flex: 1,
-    minHeight: 56,
-    borderRadius: radius.medium,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing[4],
-    paddingHorizontal: 2,
-    zIndex: 1
-  },
-  itemPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.98 }]
-  },
-  label: {
-    color: palette.textSecondary,
-    ...typography.caption,
-    textAlign: "center"
-  },
-  labelActive: {
-    color: palette.accent,
-    fontWeight: "500"
-  }
-});
+type FloatingBottomNavStyles = Pick<ThemeTokens, "palette" | "radius" | "spacing" | "typography">;
+
+function createStyles({ palette, radius, spacing, typography }: FloatingBottomNavStyles) {
+  return StyleSheet.create({
+    wrapper: {
+      ...StyleSheet.absoluteFillObject
+    },
+    activeHighlight: {
+      position: "absolute",
+      top: spacing[6],
+      bottom: spacing[4],
+      borderRadius: radius.medium,
+      backgroundColor: "rgba(242,140,40,0.10)",
+      borderWidth: 1,
+      borderColor: "rgba(242,140,40,0.32)"
+    },
+    separatorLayer: {
+      position: "absolute",
+      justifyContent: "center"
+    },
+    separator: {
+      position: "absolute",
+      top: "28%",
+      height: "30%",
+      marginLeft: -1
+    },
+    item: {
+      flex: 1,
+      minHeight: 56,
+      borderRadius: radius.medium,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: spacing[4],
+      paddingHorizontal: 2,
+      zIndex: 1
+    },
+    itemPressed: {
+      opacity: 0.88,
+      transform: [{ scale: 0.98 }]
+    },
+    label: {
+      color: palette.textSecondary,
+      ...typography.caption,
+      textAlign: "center"
+    },
+    labelActive: {
+      color: palette.accent,
+      fontWeight: "500"
+    }
+  });
+}

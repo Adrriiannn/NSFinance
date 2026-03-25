@@ -1,7 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { borders, palette, shadows, spacing, typography } from "../../theme/tokens";
+import { borders, palette, shadows, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import { useAdaptiveShell } from "./adaptive.hooks";
 import { PlanningHubDockButton } from "./PlanningHubDockButton";
 import type { AdaptiveTabBarItem, AdaptiveTabBarShellProps } from "./adaptive.types";
@@ -114,7 +114,7 @@ export function AdaptiveTabBarShell({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   shell: {
     position: "absolute"
   },
@@ -156,4 +156,5 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     fontWeight: "600"
   }
-});
+}));
+

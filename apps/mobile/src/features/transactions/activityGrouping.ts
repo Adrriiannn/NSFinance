@@ -1,4 +1,4 @@
-﻿import type { TransactionDto } from "../../types/api";
+import type { TransactionDto } from "../../types/api";
 import { formatLongDate, formatTime } from "../../lib/format";
 
 export type ActivityFilter =

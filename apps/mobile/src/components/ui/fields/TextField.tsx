@@ -4,8 +4,8 @@ import { Pressable, TextInput, View } from "react-native";
 import { FieldError } from "../forms/FieldError";
 import { FieldHint } from "../forms/FieldHint";
 import { AppText } from "../text/AppText";
-import { fieldPresets } from "./field.presets";
-import { palette } from "../../../theme/tokens";
+import { useFieldPresets } from "./field.presets";
+import { useThemeTokens } from "../../../theme/tokens";
 
 type SharedTextFieldProps = TextInputProps & {
   label?: string;
@@ -37,6 +37,8 @@ export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function Te
   },
   ref
 ) {
+  const fieldPresets = useFieldPresets();
+  const { palette } = useThemeTokens();
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<TextInput | null>(null);
 
@@ -73,6 +75,8 @@ export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function Te
           {...props}
           ref={assignRef}
           multiline={multiline}
+          allowFontScaling={props.allowFontScaling ?? false}
+          maxFontSizeMultiplier={props.maxFontSizeMultiplier ?? 1}
           selectionColor={props.selectionColor ?? palette.accent}
           cursorColor={props.cursorColor ?? palette.accent}
           onFocus={(event) => {

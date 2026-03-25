@@ -1,15 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View
-} from "react-native";
+  Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { formatCurrency } from "../../lib/format";
-import { palette, spacing, surfaces, typography } from "../../theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import type { TransactionDto } from "../../types/api";
 
 type DatePoint = {
@@ -513,7 +507,7 @@ export function CheckSpendingsCard({ transactions, currency }: CheckSpendingsCar
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   card: {
     borderRadius: 6,
     borderWidth: 1,
@@ -744,5 +738,6 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.body2
   }
-});
+}));
+
 

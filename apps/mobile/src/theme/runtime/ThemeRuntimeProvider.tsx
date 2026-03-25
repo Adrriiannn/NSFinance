@@ -1,4 +1,3 @@
-import * as Updates from "expo-updates";
 import * as SystemUI from "expo-system-ui";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -14,7 +13,6 @@ import {
 import {
   AccessibilityInfo,
   Animated,
-  DevSettings,
   Easing,
   StyleSheet,
   useColorScheme,
@@ -22,6 +20,7 @@ import {
   View
 } from "react-native";
 import { themes, type SemanticTheme } from "../semantic";
+import { setRuntimeThemeSnapshot } from "./themeSnapshot";
 import {
   cycleThemeMode,
   getStoredThemeModeSync,
@@ -31,9 +30,13 @@ import {
   type ThemeMode
 } from "./themePreference";
 
+type ThemeTransitionPhase = "idle" | "starting" | "running" | "finishing";
+
 type ThemeTransitionState = {
+  id: number;
   from: ResolvedThemeName;
   to: ResolvedThemeName;
+  phase: Exclude<ThemeTransitionPhase, "idle">;
 };
 
 type ThemeRuntimeContextValue = {
@@ -54,6 +57,8 @@ type ThemeRuntimeProviderProps = {
 const FEATHER_WIDTH = 44;
 const REDUCED_MOTION_DURATION_MS = 220;
 const FULL_MOTION_DURATION_MS = 560;
+const TRANSITION_CLEANUP_TIMEOUT_BUFFER_MS = 420;
+const FINISH_PHASE_MS = 60;
 
 function withAlpha(hexColor: string, alpha: number) {
   const normalized = hexColor.replace("#", "");
@@ -76,32 +81,29 @@ function withAlpha(hexColor: string, alpha: number) {
   return `rgba(${red},${green},${blue},${alpha})`;
 }
 
-async function reloadAppRuntime() {
-  try {
-    await Updates.reloadAsync();
-    return;
-  } catch {
-    if (__DEV__) {
-      DevSettings.reload();
-    }
-  }
-}
-
 export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
   const systemScheme = useColorScheme();
   const { width: viewportWidth } = useWindowDimensions();
   const startupModeRef = useRef<ThemeMode>(getStoredThemeModeSync());
   const [mode, setMode] = useState<ThemeMode>(startupModeRef.current);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [transitionState, setTransitionState] = useState<ThemeTransitionState | null>(null);
   const [reducedMotionEnabled, setReducedMotionEnabled] = useState(false);
+  const [transitionState, setTransitionState] = useState<ThemeTransitionState | null>(null);
+
   const transitionProgress = useRef(new Animated.Value(0)).current;
+  const transitionIdRef = useRef(0);
+  const isTransitioningRef = useRef(false);
+  const transitionAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resolvedThemeName = useMemo(
     () => resolveThemeName(mode, systemScheme),
     [mode, systemScheme]
   );
   const theme = themes[resolvedThemeName];
+  const isTransitioning = transitionState !== null;
+
+  setRuntimeThemeSnapshot(theme);
 
   useEffect(() => {
     void SystemUI.setBackgroundColorAsync(theme.colors.canvas).catch(() => {
@@ -135,18 +137,106 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
     };
   }, []);
 
-  const commitThemeMode = useCallback(
-    async (nextMode: ThemeMode) => {
-      await persistThemeMode(nextMode);
-      setMode(nextMode);
-      await reloadAppRuntime();
+  const clearTransitionTimers = useCallback(() => {
+    if (transitionTimeoutRef.current) {
+      clearTimeout(transitionTimeoutRef.current);
+      transitionTimeoutRef.current = null;
+    }
+
+    if (finishTimeoutRef.current) {
+      clearTimeout(finishTimeoutRef.current);
+      finishTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetTransition = useCallback(
+    (transitionId: number) => {
+      if (transitionIdRef.current !== transitionId) {
+        return;
+      }
+
+      clearTransitionTimers();
+      transitionAnimationRef.current?.stop();
+      transitionAnimationRef.current = null;
+      isTransitioningRef.current = false;
+      transitionProgress.stopAnimation(() => {
+        transitionProgress.setValue(0);
+      });
+      setTransitionState((current) => {
+        if (!current || current.id !== transitionId) {
+          return current;
+        }
+
+        return null;
+      });
     },
-    [setMode]
+    [clearTransitionTimers, transitionProgress]
+  );
+
+  const finishTransition = useCallback(
+    (transitionId: number, reason: "finished" | "interrupted" | "timeout") => {
+      if (transitionIdRef.current !== transitionId) {
+        return;
+      }
+
+      transitionAnimationRef.current = null;
+      clearTransitionTimers();
+
+      if (reason === "finished") {
+        setTransitionState((current) => {
+          if (!current || current.id !== transitionId) {
+            return current;
+          }
+
+          return { ...current, phase: "finishing" };
+        });
+
+        finishTimeoutRef.current = setTimeout(() => {
+          resetTransition(transitionId);
+        }, FINISH_PHASE_MS);
+        return;
+      }
+
+      resetTransition(transitionId);
+    },
+    [clearTransitionTimers, resetTransition]
+  );
+
+  const startTransitionAnimation = useCallback(
+    (transitionId: number, duration: number) => {
+      if (transitionIdRef.current !== transitionId) {
+        return;
+      }
+
+      setTransitionState((current) => {
+        if (!current || current.id !== transitionId) {
+          return current;
+        }
+
+        return { ...current, phase: "running" };
+      });
+
+      transitionAnimationRef.current = Animated.timing(transitionProgress, {
+        toValue: 1,
+        duration,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true
+      });
+
+      transitionAnimationRef.current.start(({ finished }) => {
+        finishTransition(transitionId, finished ? "finished" : "interrupted");
+      });
+
+      transitionTimeoutRef.current = setTimeout(() => {
+        finishTransition(transitionId, "timeout");
+      }, duration + TRANSITION_CLEANUP_TIMEOUT_BUFFER_MS);
+    },
+    [finishTransition, transitionProgress]
   );
 
   const setThemeMode = useCallback(
     (nextMode: ThemeMode) => {
-      if (isTransitioning || nextMode === mode) {
+      if (isTransitioningRef.current || nextMode === mode) {
         return;
       }
 
@@ -159,38 +249,37 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
         return;
       }
 
-      setIsTransitioning(true);
-      setTransitionState({
-        from: resolvedThemeName,
-        to: nextResolvedTheme
-      });
+      const transitionId = transitionIdRef.current + 1;
+      transitionIdRef.current = transitionId;
+      isTransitioningRef.current = true;
+      clearTransitionTimers();
+      transitionAnimationRef.current?.stop();
+      transitionAnimationRef.current = null;
       transitionProgress.setValue(0);
 
-      Animated.timing(transitionProgress, {
-        toValue: 1,
-        duration: reducedMotionEnabled ? REDUCED_MOTION_DURATION_MS : FULL_MOTION_DURATION_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false
-      }).start(({ finished }) => {
-        if (!finished) {
-          setIsTransitioning(false);
-          setTransitionState(null);
-          return;
-        }
+      setTransitionState({
+        id: transitionId,
+        from: resolvedThemeName,
+        to: nextResolvedTheme,
+        phase: "starting"
+      });
 
-        void commitThemeMode(nextMode).finally(() => {
-          setIsTransitioning(false);
-          setTransitionState(null);
-        });
+      setMode(nextMode);
+      void persistThemeMode(nextMode);
+
+      const transitionDuration = reducedMotionEnabled
+        ? REDUCED_MOTION_DURATION_MS
+        : FULL_MOTION_DURATION_MS;
+      requestAnimationFrame(() => {
+        startTransitionAnimation(transitionId, transitionDuration);
       });
     },
     [
-      commitThemeMode,
-      isTransitioning,
+      clearTransitionTimers,
       mode,
       reducedMotionEnabled,
       resolvedThemeName,
-      setMode,
+      startTransitionAnimation,
       systemScheme,
       transitionProgress
     ]
@@ -199,6 +288,15 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
   const cycleTheme = useCallback(() => {
     setThemeMode(cycleThemeMode(mode));
   }, [mode, setThemeMode]);
+
+  useEffect(() => {
+    return () => {
+      clearTransitionTimers();
+      transitionAnimationRef.current?.stop();
+      transitionAnimationRef.current = null;
+      isTransitioningRef.current = false;
+    };
+  }, [clearTransitionTimers]);
 
   const contextValue = useMemo<ThemeRuntimeContextValue>(
     () => ({
@@ -218,7 +316,7 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
         {children}
         {transitionState ? (
           <ThemeRevealOverlay
-            toThemeName={transitionState.to}
+            fromThemeName={transitionState.from}
             progress={transitionProgress}
             viewportWidth={viewportWidth}
             reducedMotionEnabled={reducedMotionEnabled}
@@ -230,61 +328,73 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
 }
 
 type ThemeRevealOverlayProps = {
-  toThemeName: ResolvedThemeName;
+  fromThemeName: ResolvedThemeName;
   progress: Animated.Value;
   viewportWidth: number;
   reducedMotionEnabled: boolean;
 };
 
 function ThemeRevealOverlay({
-  toThemeName,
+  fromThemeName,
   progress,
   viewportWidth,
   reducedMotionEnabled
 }: ThemeRevealOverlayProps) {
-  const nextTheme = themes[toThemeName];
-  const nextCanvas = nextTheme.colors.canvas;
+  const fromTheme = themes[fromThemeName];
+  const fromCanvas = fromTheme.colors.canvas;
 
   if (reducedMotionEnabled) {
+    const fadeOut = progress.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 0]
+    });
+
     return (
       <Animated.View
         pointerEvents="none"
         style={[
           styles.overlayFill,
           {
-            backgroundColor: nextCanvas,
-            opacity: progress
+            backgroundColor: fromCanvas,
+            opacity: fadeOut
           }
         ]}
       />
     );
   }
 
-  const revealWidth = progress.interpolate({
+  const translateX = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, viewportWidth + FEATHER_WIDTH]
+    outputRange: [0, -(viewportWidth + FEATHER_WIDTH)]
+  });
+
+  const opacity = progress.interpolate({
+    inputRange: [0, 0.96, 1],
+    outputRange: [1, 1, 0]
   });
 
   return (
     <View pointerEvents="none" style={styles.overlayFill}>
-      <View style={styles.revealAnchor}>
-        <Animated.View
-          style={[
-            styles.revealBody,
-            {
-              width: revealWidth,
-              backgroundColor: nextCanvas
-            }
-          ]}
-        >
-          <LinearGradient
-            colors={[withAlpha(nextCanvas, 0), nextCanvas]}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={styles.revealFeather}
-          />
-        </Animated.View>
-      </View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.revealBody,
+          {
+            width: viewportWidth + FEATHER_WIDTH,
+            backgroundColor: fromCanvas,
+            opacity,
+            transform: [{ translateX }]
+          }
+        ]}
+      >
+        <LinearGradient
+          pointerEvents="none"
+          colors={[fromCanvas, withAlpha(fromCanvas, 0)]}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={styles.revealFeather}
+        />
+      </Animated.View>
     </View>
   );
 }
@@ -305,16 +415,15 @@ const styles = StyleSheet.create({
   overlayFill: {
     ...StyleSheet.absoluteFillObject
   },
-  revealAnchor: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "flex-end"
-  },
   revealBody: {
-    height: "100%"
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0
   },
   revealFeather: {
     position: "absolute",
-    left: -FEATHER_WIDTH,
+    right: 0,
     top: 0,
     bottom: 0,
     width: FEATHER_WIDTH

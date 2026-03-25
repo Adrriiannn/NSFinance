@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import * as ExpoLinking from "expo-linking";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, Linking as NativeLinking, StyleSheet, Text, View } from "react-native";
+import { AppState, Linking as NativeLinking, Text, View } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import {
   ConnectionStatusIndicator,
@@ -22,7 +22,7 @@ import { formatUnknownError } from "../../../src/lib/api/errors";
 import { queryKeys } from "../../../src/lib/api/queryKeys";
 import { useFeedbackSound } from "../../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../../src/providers/AuthProvider";
-import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type {
   BankConnectionDto,
   BankConnectionStatus,
@@ -901,7 +901,7 @@ export default function AddAccountModalScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     flex: 1,
     paddingTop: spacing[20]
@@ -970,5 +970,6 @@ const styles = StyleSheet.create({
   syncNowButton: {
     flex: 0.35
   }
-});
+}));
+
 

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, ScrollView, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
@@ -21,7 +21,7 @@ import {
 } from "../../../src/features/support/useSupport";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { formatUnknownError } from "../../../src/lib/api/errors";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { SupportScreenshotUploadRequest } from "../../../src/types/api";
 
 const supportTaxonomy: Record<string, { label: string; options: { label: string; value: string }[] }> = {
@@ -404,7 +404,7 @@ export default function AccountSupportScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     paddingTop: 0
   },
@@ -490,6 +490,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   }
-});
+}));
+
 
 

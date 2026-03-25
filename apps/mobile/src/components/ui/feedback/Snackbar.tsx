@@ -1,7 +1,7 @@
-import { palette } from "../../../theme/tokens";
+import { useThemeTokens } from "../../../theme/tokens";
 import { View } from "react-native";
 import { AppText } from "../text/AppText";
-import { feedbackPresets, snackbarTonePresets, type FeedbackTone } from "./feedback.presets";
+import { useFeedbackPresets, type FeedbackTone } from "./feedback.presets";
 
 type SnackbarProps = {
   message: string;
@@ -9,6 +9,9 @@ type SnackbarProps = {
 };
 
 export function Snackbar({ message, tone = "info" }: SnackbarProps) {
+  const { palette } = useThemeTokens();
+  const { feedbackPresets, snackbarTonePresets } = useFeedbackPresets();
+
   return (
     <View style={[feedbackPresets.snackbar, snackbarTonePresets[tone]]}>
       <AppText preset="caption" style={{ color: palette.textPrimary, fontWeight: "500" }}>

@@ -1,8 +1,8 @@
-import { Linking, Pressable, StyleSheet, Text } from "react-native";
+import { Linking, Pressable, Text } from "react-native";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { HeaderShell } from "../../../src/layout/appHeader";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 export default function AboutScreen() {
   const appVersion = process.env.EXPO_PUBLIC_APP_VERSION || "0.1.0";
@@ -47,7 +47,7 @@ export default function AboutScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   content: {
     gap: spacing[12]
   },
@@ -74,6 +74,7 @@ const styles = StyleSheet.create({
     color: palette.primaryGlow,
     ...typography.caption
   }
-});
+}));
+
 
 

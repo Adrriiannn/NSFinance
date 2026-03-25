@@ -1,6 +1,6 @@
 import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 import { GlobalAppMenu } from "../../components/layout/GlobalAppMenu";
 import { getAccounts } from "../../features/accounts/accountsApi";
 import { getDashboardSummary } from "../../features/dashboard/dashboardApi";
@@ -10,7 +10,8 @@ import { queryKeys } from "../../lib/api/queryKeys";
 import { completeLatestNavigationProbe, navigateWithProbe } from "../../lib/perf/navigationTiming";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { queryClient } from "../../providers/QueryProvider";
-import { surfaces, zIndex } from "../../theme/tokens";
+import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
+import { surfaces, zIndex, createRuntimeStyleSheet } from "../../theme/tokens";
 import { getEffectiveBottomSystemInset } from "../../theme/insets";
 import { FloatingAssistantDock } from "./FloatingAssistantDock";
 import { AdaptiveLayoutContext, useAdaptiveLayoutMetrics } from "./adaptive.hooks";
@@ -76,6 +77,7 @@ function resolvePlanningHubSourceTab(
 }
 
 export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
+  useThemeRuntime();
   const metrics = useAdaptiveLayoutMetrics();
   const effectiveBottomSystemInset = getEffectiveBottomSystemInset(metrics.safeAreaInsets.bottom);
   const pathname = usePathname();
@@ -238,7 +240,7 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   root: {
     flex: 1,
     backgroundColor: surfaces.app
@@ -251,5 +253,6 @@ const styles = StyleSheet.create({
     backgroundColor: surfaces.tabBar,
     zIndex: zIndex.tabBar
   }
-});
+}));
+
 

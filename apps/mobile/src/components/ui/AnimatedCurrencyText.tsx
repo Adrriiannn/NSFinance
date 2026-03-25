@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, StyleProp, Text, TextStyle } from "react-native";
 import { formatCurrency } from "../../lib/format";
-import { palette } from "../../theme/tokens";
+import { useThemeTokens } from "../../theme/tokens";
 
 type AnimatedCurrencyTextProps = {
   value: number;
@@ -17,11 +17,15 @@ export function AnimatedCurrencyText({
   value,
   currency = "EUR",
   style,
-  baseColor = palette.textPrimary,
-  increaseColor = palette.success,
-  decreaseColor = palette.negative,
+  baseColor,
+  increaseColor,
+  decreaseColor,
   duration = 260
 }: AnimatedCurrencyTextProps) {
+  const { palette } = useThemeTokens();
+  const resolvedBaseColor = baseColor ?? palette.textPrimary;
+  const resolvedIncreaseColor = increaseColor ?? palette.success;
+  const resolvedDecreaseColor = decreaseColor ?? palette.negative;
   const animatedValue = useRef(new Animated.Value(value)).current;
   const previousValueRef = useRef(value);
   const toneResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,15 +79,15 @@ export function AnimatedCurrencyText({
 
   const color = useMemo(() => {
     if (tone === "up") {
-      return increaseColor;
+      return resolvedIncreaseColor;
     }
 
     if (tone === "down") {
-      return decreaseColor;
+      return resolvedDecreaseColor;
     }
 
-    return baseColor;
-  }, [baseColor, decreaseColor, increaseColor, tone]);
+    return resolvedBaseColor;
+  }, [resolvedBaseColor, resolvedDecreaseColor, resolvedIncreaseColor, tone]);
 
   return <Text style={[{ color }, style]}>{formatCurrency(displayValue, currency)}</Text>;
 }

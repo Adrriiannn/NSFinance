@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef } from "react";
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { Pressable, ScrollView, TextInput, View } from "react-native";
 import { HEADER_CONSTANTS } from "../../../layout/header/header.constants";
-import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 import { ActivitySearchDropdown } from "./ActivitySearchDropdown";
 import { ActivitySearchToken } from "./ActivitySearchToken";
 import type {
@@ -209,7 +209,7 @@ export function ActivitySearchBar({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   wrap: {
     width: "100%",
     position: "relative",
@@ -251,4 +251,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   }
-});
+}));
+

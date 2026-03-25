@@ -1,12 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, Text, View } from "react-native";
 import { useEntranceAnimation } from "../../hooks/useEntranceAnimation";
 import {
   getExpenseTrackerEntryCategoryLabel,
   getExpenseTrackerEntrySubcategoryLabel,
   getExpenseTrackerVisual
 } from "../../features/expenseTracker/expenseTrackerModels";
-import { palette, radius, spacing, typography } from "../../theme/tokens";
+import { palette, radius, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import type { ExpenseTrackerEntryDto } from "../../types/api";
 
 function formatAmount(amount: number, currency: string) {
@@ -70,7 +70,7 @@ export function ExpenseTrackerJournalItem({ entry, onPress }: ExpenseTrackerJour
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -155,4 +155,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...typography.caption
   }
-});
+}));
+

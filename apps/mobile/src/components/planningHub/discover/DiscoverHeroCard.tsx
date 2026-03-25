@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { GlassCard } from "../../ui/GlassCard";
-import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 
 type DiscoverHeroCardProps = {
   livePlansCount: number;
@@ -45,7 +45,7 @@ export function DiscoverHeroCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   card: {
     gap: spacing[12],
     borderColor: palette.border,
@@ -109,4 +109,5 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.caption
   }
-});
+}));
+

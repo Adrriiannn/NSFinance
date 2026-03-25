@@ -1,5 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
+import { Pressable, Text, View } from "react-native";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
 import {
   getActivityCurrencyMetadata
 } from "../search/activitySearch.currencies";
@@ -44,7 +44,7 @@ export function CurrencySuggestionList({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   list: {
     gap: spacing[8]
   },
@@ -81,4 +81,5 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: "500"
   }
-});
+}));
+

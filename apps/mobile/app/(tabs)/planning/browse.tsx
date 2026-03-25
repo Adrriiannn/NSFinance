@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { DiscoverFilters } from "../../../src/components/planningHub/discover/DiscoverFilters";
@@ -17,7 +17,7 @@ import { useExpensePlanning } from "../../../src/features/expenseTracker/Expense
 import { searchAndSortExpensePlanPublications } from "../../../src/features/expenseTracker/expensePlanCommunityUtils";
 import type { ExpensePlanPeriodType, ExpensePlanPublication } from "../../../src/features/expenseTracker/expensePlanningTypes";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 type DiscoverRankingSort = "trending" | "most_liked" | "most_downloaded" | "recently_added";
 type DiscoverPlanTypeFilter = "all" | ExpensePlanPeriodType | "templates";
@@ -252,7 +252,7 @@ export default function PlanningHubDiscoverScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = createRuntimeStyleSheet(() => ({
   screen: {
     flex: 1
   },
@@ -286,5 +286,6 @@ const styles = StyleSheet.create({
   listWrap: {
     gap: spacing[10]
   }
-});
+}));
+
 
