@@ -521,6 +521,7 @@ export default function DashboardTabScreen() {
                   <PrimaryButton
                     label="View activity"
                     onPress={() => router.push("/(tabs)/activity")}
+                    labelStyle={styles.viewActivityLabel}
                     icon={
                       <Ionicons
                         name="list-outline"
@@ -669,6 +670,9 @@ const styles = StyleSheet.create({
   },
   quickActionPrimary: {
     flex: 1
+  },
+  viewActivityLabel: {
+    color: palette.textPrimary
   },
   quickActionSecondary: {
     minWidth: 132
