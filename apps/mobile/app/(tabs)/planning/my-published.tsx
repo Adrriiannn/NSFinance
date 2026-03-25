@@ -1,4 +1,4 @@
-﻿import { useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
@@ -99,7 +99,7 @@ const styles = StyleSheet.create({
   planCardTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   planCardMeta: {
     color: palette.textSecondary,
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
   badge: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });
 

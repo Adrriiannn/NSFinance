@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { GlassCard } from "../../ui/GlassCard";
-import { palette, radius, spacing, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
 
 type DiscoverHeroCardProps = {
   livePlansCount: number;
@@ -48,8 +48,8 @@ export function DiscoverHeroCard({
 const styles = StyleSheet.create({
   card: {
     gap: spacing[12],
-    borderColor: "rgba(114,173,255,0.24)",
-    backgroundColor: "rgba(26,49,78,0.56)"
+    borderColor: palette.border,
+    backgroundColor: surfaces.card
   },
   headerRow: {
     flexDirection: "row",
@@ -62,8 +62,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "700"
+    ...typography.bodyStrong
   },
   copy: {
     color: palette.textSecondary,
@@ -73,8 +72,8 @@ const styles = StyleSheet.create({
     minWidth: 76,
     borderRadius: radius.medium,
     borderWidth: 1,
-    borderColor: "rgba(114,173,255,0.28)",
-    backgroundColor: "rgba(27,56,90,0.62)",
+    borderColor: palette.borderStrong,
+    backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[8],
@@ -83,8 +82,7 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "800"
+    ...typography.bodyStrong
   },
   metricLabel: {
     color: palette.textSecondary,
@@ -99,8 +97,8 @@ const styles = StyleSheet.create({
     minHeight: 36,
     borderRadius: radius.medium,
     borderWidth: 1,
-    borderColor: "rgba(205,223,255,0.14)",
-    backgroundColor: "rgba(16,32,52,0.7)",
+    borderColor: palette.border,
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     flexDirection: "row",
     alignItems: "center",
@@ -109,8 +107,6 @@ const styles = StyleSheet.create({
   },
   actionLabel: {
     color: palette.textPrimary,
-    ...typography.caption,
-    fontWeight: "700"
+    ...typography.caption
   }
 });
-

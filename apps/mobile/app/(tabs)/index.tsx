@@ -356,6 +356,8 @@ export default function DashboardTabScreen() {
               ctaLabel="Connect bank"
               onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
               verticalSpacingMode="tab-aligned"
+              hideOrb
+              centerText
             />
           ) : heroTotals ? (
             <>
@@ -527,10 +529,10 @@ export default function DashboardTabScreen() {
 function DashboardLoading() {
   return (
     <View style={styles.loadingWrap}>
-      <SkeletonBlock style={{ height: 184, borderRadius: 28 }} />
-      <SkeletonBlock style={{ height: 132, borderRadius: 20 }} />
-      <SkeletonBlock style={{ height: 110, borderRadius: 18 }} />
-      <SkeletonBlock style={{ height: 94, borderRadius: 18 }} />
+      <SkeletonBlock style={{ height: 184, borderRadius: 6 }} />
+      <SkeletonBlock style={{ height: 132, borderRadius: 6 }} />
+      <SkeletonBlock style={{ height: 110, borderRadius: 6 }} />
+      <SkeletonBlock style={{ height: 94, borderRadius: 6 }} />
     </View>
   );
 }
@@ -564,12 +566,12 @@ const styles = StyleSheet.create({
   heroPagerDot: {
     width: 6,
     height: 6,
-    borderRadius: 3,
-    backgroundColor: "rgba(220,232,255,0.35)"
+    borderRadius: 6,
+    backgroundColor: "rgba(242,140,40,0.35)"
   },
   heroPagerDotActive: {
     width: 16,
-    borderRadius: 999,
+    borderRadius: 6,
     backgroundColor: palette.accent
   },
   quickActionPrimary: {

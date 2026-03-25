@@ -120,16 +120,16 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.88)"
+    backgroundColor: "rgba(17,17,17,0.88)"
   },
   segmentHighlight: {
     position: "absolute",
     top: 4,
     bottom: 4,
     borderRadius: radius.small,
-    backgroundColor: "rgba(47,107,255,0.34)",
+    backgroundColor: "rgba(242,140,40,0.34)",
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.5)"
+    borderColor: "rgba(242,140,40,0.5)"
   },
   segment: {
     flex: 1,

@@ -202,6 +202,8 @@ export default function TransferMoneyScreen() {
           message="Connect your bank first to set a source account."
           actionLabel="Connect bank"
           onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+          hideOrb
+          centerText
         />
       ) : (
         <>
@@ -403,22 +405,22 @@ const styles = StyleSheet.create({
   modeChip: {
     flex: 1,
     minHeight: 40,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12]
   },
   modeChipActive: {
-    backgroundColor: "rgba(47,107,255,0.22)",
+    backgroundColor: "rgba(242,140,40,0.22)",
     borderColor: palette.primaryGlow
   },
   modeChipLabel: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   modeChipLabelActive: {
     color: palette.textPrimary
@@ -436,7 +438,7 @@ const styles = StyleSheet.create({
   },
   dropdownButton: {
     minHeight: 50,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: palette.elevatedBackground,
@@ -477,7 +479,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.74)",
+    backgroundColor: "rgba(9,9,9,0.74)",
     justifyContent: "flex-end"
   },
   modalSheet: {
@@ -485,7 +487,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
+    backgroundColor: "rgba(17,17,17,0.98)",
     padding: spacing[16],
     gap: spacing[12],
     maxHeight: "82%"
@@ -499,10 +501,10 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[8]
   },
   modalOption: {
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: "rgba(21,21,21,0.74)",
     minHeight: 46,
     justifyContent: "center",
     paddingHorizontal: spacing[12]

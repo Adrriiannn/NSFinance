@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../../theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
 import type { ActivityMerchantSuggestion } from "../search/activitySearch.types";
 
 type MerchantSuggestionListProps = {
@@ -34,7 +34,10 @@ export function MerchantSuggestionList({
           </View>
           <View style={styles.copyWrap}>
             <Text style={styles.title}>{item.displayName}</Text>
-            <Text style={styles.hint}>merchant: {item.displayName}</Text>
+            <Text style={styles.hint}>
+              <Text style={styles.hintPrefix}>merchant:</Text>{" "}
+              <Text style={styles.hintValue}>{item.displayName}</Text>
+            </Text>
           </View>
         </Pressable>
       ))}
@@ -48,10 +51,10 @@ const styles = StyleSheet.create({
   },
   row: {
     minHeight: 48,
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,35,58,0.96)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     flexDirection: "row",
@@ -64,10 +67,10 @@ const styles = StyleSheet.create({
   iconWrap: {
     width: 26,
     height: 26,
-    borderRadius: 10,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(147,181,230,0.12)"
+    backgroundColor: surfaces.fieldStrong
   },
   copyWrap: {
     flex: 1,
@@ -75,30 +78,33 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   },
   hint: {
-    color: palette.textSecondary,
     ...typography.caption
   },
+  hintPrefix: {
+    color: palette.accent,
+    fontWeight: "500"
+  },
+  hintValue: {
+    color: palette.textSecondary
+  },
   emptyWrap: {
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,35,58,0.84)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     gap: 2
   },
   emptyTitle: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   },
   emptyText: {
     color: palette.textSecondary,
     ...typography.caption
   }
 });
-

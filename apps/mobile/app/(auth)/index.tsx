@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
   brand: {
     color: palette.accent,
     ...typography.caption,
-    fontWeight: "700",
+    fontWeight: "600",
     letterSpacing: 1.2
   },
   title: {

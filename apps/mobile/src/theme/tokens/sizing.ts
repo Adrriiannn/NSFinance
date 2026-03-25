@@ -28,18 +28,18 @@ export const sizing = {
   field: {
     heights: {
       dense: 44,
-      standard: 52,
-      search: 52,
-      select: 52,
-      currency: 52
+      standard: 48,
+      search: 48,
+      select: 48,
+      currency: 48
     },
     multilineMinHeight: 96
   },
   row: {
     heights: {
-      compact: 52,
-      standard: 60,
-      large: 68
+      compact: 48,
+      standard: 56,
+      large: 64
     }
   },
   card: {

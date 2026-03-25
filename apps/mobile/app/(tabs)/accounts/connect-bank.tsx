@@ -922,8 +922,8 @@ const styles = StyleSheet.create({
   metadataCard: {
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
-    borderRadius: 12,
+    backgroundColor: "rgba(21,21,21,0.74)",
+    borderRadius: 6,
     padding: spacing[12],
     gap: spacing[8]
   },
@@ -945,7 +945,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,154,102,0.45)",
     backgroundColor: "rgba(51,30,14,0.5)",
-    borderRadius: 12,
+    borderRadius: 6,
     padding: spacing[12],
     gap: spacing[12]
   },

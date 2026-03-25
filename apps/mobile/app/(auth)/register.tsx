@@ -730,7 +730,7 @@ const styles = StyleSheet.create({
   },
   passwordStrengthValue: {
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   termsConsentRow: {
     minHeight: 28,
@@ -742,10 +742,10 @@ const styles = StyleSheet.create({
   termsCheckbox: {
     width: 20,
     height: 20,
-    borderRadius: 4,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.borderStrong,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: "rgba(21,21,21,0.74)",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -769,7 +769,7 @@ const styles = StyleSheet.create({
   termsConsentLink: {
     color: palette.primaryGlow,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   ctaGroup: {
     gap: spacing[14]
@@ -791,7 +791,7 @@ const styles = StyleSheet.create({
   loginLink: {
     color: palette.primaryGlow,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   socialDividerRow: {
     flexDirection: "row",
@@ -801,7 +801,7 @@ const styles = StyleSheet.create({
   socialDividerLine: {
     flex: 1,
     height: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(220,232,255,0.22)"
+    backgroundColor: "rgba(242,140,40,0.22)"
   },
   socialDividerText: {
     color: palette.textSecondary,

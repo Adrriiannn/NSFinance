@@ -5,26 +5,26 @@ export type FeedbackTone = "error" | "success" | "warning" | "info";
 
 export const bannerPresets: Record<FeedbackTone, ViewStyle> = {
   error: {
-    backgroundColor: "rgba(71, 22, 22, 0.94)",
-    borderColor: "rgba(255, 120, 120, 0.54)"
+    backgroundColor: "rgba(226, 90, 90, 0.12)",
+    borderColor: "rgba(226, 90, 90, 0.52)"
   },
   success: {
-    backgroundColor: "rgba(10, 58, 40, 0.92)",
-    borderColor: "rgba(28, 197, 131, 0.5)"
+    backgroundColor: "rgba(29, 186, 114, 0.12)",
+    borderColor: "rgba(29, 186, 114, 0.42)"
   },
   warning: {
-    backgroundColor: "rgba(72, 50, 12, 0.92)",
-    borderColor: "rgba(255, 177, 77, 0.46)"
+    backgroundColor: "rgba(240, 180, 76, 0.12)",
+    borderColor: "rgba(240, 180, 76, 0.42)"
   },
   info: {
-    backgroundColor: "rgba(12, 34, 68, 0.94)",
-    borderColor: "rgba(127, 174, 255, 0.52)"
+    backgroundColor: "rgba(154, 154, 154, 0.1)",
+    borderColor: "rgba(154, 154, 154, 0.34)"
   }
 };
 
 export const feedbackPresets = {
   banner: {
-    borderRadius: radius.large,
+    borderRadius: radius.medium,
     borderWidth: borders.width.thin,
     paddingHorizontal: spacing[16],
     paddingVertical: spacing[12],
@@ -39,7 +39,7 @@ export const feedbackPresets = {
     ...typography.body2
   } as TextStyle,
   snackbar: {
-    borderRadius: radius.pill,
+    borderRadius: radius.medium,
     borderWidth: borders.width.thin,
     minHeight: sizing.button.heights.compact + 2,
     alignItems: "center",
@@ -48,7 +48,7 @@ export const feedbackPresets = {
     ...shadows.floating
   } as ViewStyle,
   emptyState: {
-    borderRadius: radius.large,
+    borderRadius: radius.medium,
     borderWidth: borders.width.thin,
     borderColor: palette.border,
     backgroundColor: surfaces.muted,
@@ -59,8 +59,8 @@ export const feedbackPresets = {
   emptyStateOrb: {
     width: 56,
     height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(110, 168, 255, 0.24)"
+    borderRadius: radius.medium,
+    backgroundColor: "rgba(242, 140, 40, 0.16)"
   } as ViewStyle,
   skeleton: {
     borderRadius: radius.small,

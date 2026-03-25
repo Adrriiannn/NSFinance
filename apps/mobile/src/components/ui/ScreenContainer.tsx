@@ -17,6 +17,7 @@ import {
   getPlainContentBottomInset
 } from "../../layout/contentFrame";
 import { layout, palette, spacing, surfaces } from "../../theme/tokens";
+import { AppBackgroundLayer } from "./surfaces/AppBackgroundLayer";
 
 type ScreenContainerProps = {
   children: ReactNode;
@@ -60,6 +61,7 @@ export function ScreenContainer({
       edges={includeBottomSafeArea ? ["top", "left", "right", "bottom"] : ["top", "left", "right"]}
       {...gestureHandlers}
     >
+      <AppBackgroundLayer />
       {!adaptiveShell ? <GlobalAppMenu topOffset={menuAbsoluteTop} showTrigger={false} /> : null}
 
       {scrollable ? (

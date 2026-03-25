@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.large,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.82)",
+    backgroundColor: "rgba(21,21,21,0.82)",
     paddingVertical: 14,
     paddingHorizontal: spacing[16],
     overflow: "hidden"
@@ -97,7 +97,7 @@ const styles = StyleSheet.create({
   iconWrap: {
     width: 42,
     height: 42,
-    borderRadius: 16,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -118,7 +118,7 @@ const styles = StyleSheet.create({
   title: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   subtitle: {
     color: palette.textSecondary,
@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
   amount: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   amountPlanned: {
     color: "#F6D27D"
@@ -139,10 +139,10 @@ const styles = StyleSheet.create({
     gap: spacing[12]
   },
   categoryPill: {
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.16)",
-    backgroundColor: "rgba(127,174,255,0.1)",
+    borderColor: "rgba(242,140,40,0.16)",
+    backgroundColor: "rgba(242,140,40,0.1)",
     paddingHorizontal: spacing[8],
     paddingVertical: 4,
     flexShrink: 1

@@ -2,7 +2,7 @@ import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-n
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_CONSTANTS } from "../../../layout/header/header.constants";
 import { getFloatingTabBarContentInset } from "../../../theme/insets";
-import { zIndex, palette, spacing, typography } from "../../../theme/tokens";
+import { zIndex, palette, spacing, surfaces, typography } from "../../../theme/tokens";
 import { ActivitySearchFilterRow } from "./ActivitySearchFilterRow";
 import { CurrencySuggestionList } from "./CurrencySuggestionList";
 import { DateSuggestionList } from "./DateSuggestionList";
@@ -127,10 +127,10 @@ const styles = StyleSheet.create({
     top: 44,
     left: 0,
     right: 0,
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(9,20,36,0.97)",
+    backgroundColor: surfaces.sheet,
     zIndex: zIndex.dropdown + 6
   },
   content: {
@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700",
+    fontWeight: "500",
     textTransform: "uppercase",
     letterSpacing: 0.6
   }

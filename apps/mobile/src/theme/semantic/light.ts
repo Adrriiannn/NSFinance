@@ -4,60 +4,62 @@ export const lightTheme = {
   name: "light",
   isDark: false,
   colors: {
-    canvas: "#F4F7FC",
-    elevatedCanvas: colors.white,
+    canvas: "#F8F6F3",
+    elevatedCanvas: "#FFFFFF",
     surface: {
       level0: "#FFFFFF",
-      level1: "#FFFFFF",
-      level2: "#F8FBFF",
-      field: "#F5F8FE",
-      fieldStrong: "#EDF3FD",
+      level1: "#FCFAF7",
+      level2: "#F7F3EE",
+      field: "#F7F3EE",
+      fieldStrong: "#F2ECE3",
       tabBar: "rgba(255, 255, 255, 0.98)",
       floating: "#FFFFFF",
-      muted: "#EEF4FF"
+      muted: "#F5F0E8"
     },
     text: {
-      primary: "#142338",
-      secondary: "#51627F",
-      muted: "#7284A1",
+      primary: "#222222",
+      secondary: "#525252",
+      muted: "#767676",
       inverse: colors.white
     },
     border: {
-      subtle: "rgba(20, 35, 56, 0.08)",
-      strong: "rgba(20, 35, 56, 0.14)",
-      focus: colors.blue500,
-      divider: "rgba(20, 35, 56, 0.08)"
+      subtle: "rgba(217, 119, 6, 0.24)",
+      strong: "rgba(217, 119, 6, 0.36)",
+      focus: colors.accent500,
+      divider: "rgba(217, 119, 6, 0.2)"
     },
     action: {
-      primary: colors.blue600,
-      primaryStrong: colors.blue500,
-      primaryGlow: colors.blue400,
-      secondary: "#EEF4FF",
-      secondaryStrong: "#E4EDFC",
+      primary: colors.accent500,
+      primaryStrong: colors.accent600,
+      primaryGlow: colors.accent400,
+      secondary: "#FCFAF7",
+      secondaryStrong: "#F5F0E8",
       ghost: "transparent",
-      destructive: colors.red500
+      destructive: colors.danger
     },
     status: {
-      success: colors.green500,
-      successSurface: "rgba(28, 197, 131, 0.1)",
-      warning: colors.orange500,
-      warningSurface: "rgba(255, 154, 102, 0.12)",
-      danger: colors.red500,
-      dangerSurface: "rgba(244, 104, 119, 0.12)",
-      info: colors.blue500,
-      infoSurface: "rgba(47, 107, 255, 0.1)"
+      success: colors.success,
+      successSurface: "rgba(29, 186, 114, 0.12)",
+      warning: colors.warning,
+      warningSurface: "rgba(240, 180, 76, 0.12)",
+      danger: colors.danger,
+      dangerSurface: "rgba(226, 90, 90, 0.12)",
+      info: colors.info,
+      infoSurface: "rgba(154, 154, 154, 0.1)"
     },
     accent: {
-      cyan: colors.cyan400,
-      amber: colors.amber500
+      primary: colors.accent500,
+      primaryStrong: colors.accent600,
+      cyan: colors.accent500,
+      amber: colors.accent300
     },
     overlay: {
-      strong: "rgba(12, 18, 28, 0.34)",
-      soft: "rgba(12, 18, 28, 0.22)"
+      strong: "rgba(0, 0, 0, 0.4)",
+      soft: "rgba(0, 0, 0, 0.24)"
     },
     money: {
-      positive: "rgba(43, 154, 110, 0.82)",
-      negative: "rgba(212, 102, 118, 0.8)"
+      positive: colors.success,
+      negative: colors.danger
     }
   }
 } as const;

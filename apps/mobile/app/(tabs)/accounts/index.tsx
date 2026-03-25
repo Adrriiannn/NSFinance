@@ -190,9 +190,9 @@ export default function AccountsTabScreen() {
 
       {isInitialLoading ? (
         <View style={styles.loadingWrap}>
-          <SkeletonBlock style={{ height: 54, borderRadius: 14 }} />
-          <SkeletonBlock style={{ height: 156, borderRadius: 18 }} />
-          <SkeletonBlock style={{ height: 150, borderRadius: 18 }} />
+          <SkeletonBlock style={{ height: 54, borderRadius: 6 }} />
+          <SkeletonBlock style={{ height: 156, borderRadius: 6 }} />
+          <SkeletonBlock style={{ height: 150, borderRadius: 6 }} />
         </View>
       ) : accountsQuery.isError ? (
         <ErrorState
@@ -209,6 +209,8 @@ export default function AccountsTabScreen() {
           ctaLabel="Connect bank"
           onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
           verticalSpacingMode="tab-aligned"
+          hideOrb
+          centerText
         />
       ) : (
         <ScrollView
@@ -438,8 +440,8 @@ const styles = StyleSheet.create({
   headerIconAction: {
     width: 36,
     height: 36,
-    borderRadius: 12,
-    backgroundColor: "rgba(18,36,58,0.92)"
+    borderRadius: 6,
+    backgroundColor: "rgba(21,21,21,0.92)"
   },
   heroCard: {
     gap: spacing[8]
@@ -463,10 +465,10 @@ const styles = StyleSheet.create({
   },
   actionItem: {
     width: "48.7%",
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: "rgba(21,21,21,0.74)",
     minHeight: 52,
     paddingHorizontal: spacing[12],
     flexDirection: "row",
@@ -489,7 +491,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.74)",
+    backgroundColor: "rgba(9,9,9,0.74)",
     justifyContent: "flex-end"
   },
   modalSheet: {
@@ -497,7 +499,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
+    backgroundColor: "rgba(17,17,17,0.98)",
     padding: spacing[16],
     gap: spacing[12],
     maxHeight: "84%"
@@ -517,16 +519,16 @@ const styles = StyleSheet.create({
   },
   modalDivider: {
     height: 1,
-    backgroundColor: "rgba(220,232,255,0.12)",
+    backgroundColor: "rgba(242,140,40,0.12)",
     marginVertical: spacing[4]
   },
   modalItem: {
     flex: 1,
     minHeight: 74,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.75)",
+    backgroundColor: "rgba(21,21,21,0.75)",
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     justifyContent: "center",
@@ -549,10 +551,10 @@ const styles = StyleSheet.create({
   },
   modalItemEditButton: {
     minWidth: 68,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.92)",
+    backgroundColor: "rgba(21,21,21,0.92)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12],
@@ -561,13 +563,13 @@ const styles = StyleSheet.create({
   modalItemEditText: {
     color: palette.primaryGlow,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   createAccountItem: {
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.75)",
+    backgroundColor: "rgba(21,21,21,0.75)",
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     flexDirection: "row",
@@ -589,7 +591,7 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   deleteButton: {
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: "rgba(244,104,119,0.6)",
     backgroundColor: "rgba(90,16,30,0.45)",
@@ -600,7 +602,7 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     color: palette.negative,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   deleteWarning: {
     color: palette.textSecondary,

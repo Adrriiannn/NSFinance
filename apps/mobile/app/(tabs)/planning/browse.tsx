@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "800"
+    fontWeight: "600"
   },
   sectionCount: {
     color: palette.textSecondary,

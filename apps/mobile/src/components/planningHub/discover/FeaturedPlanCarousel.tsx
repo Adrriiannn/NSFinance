@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { ExpensePlanPublication } from "../../../features/expenseTracker/expensePlanningTypes";
-import { palette, radius, spacing, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
 
 function formatAmount(amount: number) {
   return new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(amount);
@@ -26,7 +26,7 @@ export function FeaturedPlanCarousel({
         >
           <View style={styles.headerRow}>
             <Text style={styles.title} numberOfLines={2}>{publication.publicTitle}</Text>
-            <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+            <Ionicons name="chevron-forward" size={18} color={palette.accent} />
           </View>
 
           <Text style={styles.creator}>{publication.creatorName} {publication.creatorTag}</Text>
@@ -55,8 +55,8 @@ const styles = StyleSheet.create({
     minHeight: 174,
     borderRadius: radius.large,
     borderWidth: 1,
-    borderColor: "rgba(109,170,255,0.4)",
-    backgroundColor: "rgba(22,45,74,0.72)",
+    borderColor: palette.border,
+    backgroundColor: surfaces.card,
     padding: spacing[16],
     gap: spacing[8]
   },
@@ -69,8 +69,7 @@ const styles = StyleSheet.create({
   title: {
     flex: 1,
     color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "800"
+    ...typography.bodyStrong
   },
   creator: {
     color: palette.textSecondary,
@@ -88,8 +87,6 @@ const styles = StyleSheet.create({
   },
   metricPill: {
     color: palette.textPrimary,
-    ...typography.caption,
-    fontWeight: "700"
+    ...typography.caption
   }
 });
-

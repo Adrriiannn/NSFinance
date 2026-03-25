@@ -11,7 +11,7 @@ export function HeaderMenuButton() {
         <Ionicons
           name="menu-outline"
           size={HEADER_CONSTANTS.iconSize}
-          color={palette.textPrimary}
+          color={palette.accent}
         />
       }
       accessibilityLabel="Open settings menu"
@@ -19,4 +19,3 @@ export function HeaderMenuButton() {
     />
   );
 }
-

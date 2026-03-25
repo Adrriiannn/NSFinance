@@ -132,16 +132,16 @@ const styles = StyleSheet.create({
   item: {
     flex: 1,
     minHeight: 52,
-    borderRadius: 16,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
     gap: spacing[4],
     paddingHorizontal: 2
   },
   itemActive: {
-    backgroundColor: "rgba(47,107,255,0.12)",
+    backgroundColor: "rgba(242,140,40,0.12)",
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.28)"
+    borderColor: "rgba(242,140,40,0.28)"
   },
   itemPressed: {
     opacity: 0.9,
@@ -154,6 +154,6 @@ const styles = StyleSheet.create({
   },
   labelActive: {
     color: palette.textPrimary,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });

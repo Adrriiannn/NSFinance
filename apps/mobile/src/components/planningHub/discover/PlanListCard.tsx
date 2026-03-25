@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { ExpensePlanPublication } from "../../../features/expenseTracker/expensePlanningTypes";
-import { palette, radius, spacing, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
 
 type PlanListCardVariant = "compact" | "full";
 
@@ -36,7 +36,7 @@ export function PlanListCard({
           <Text style={styles.title} numberOfLines={1}>{publication.publicTitle}</Text>
           <Text style={styles.creator} numberOfLines={1}>{publication.creatorName} {publication.creatorTag}</Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+        <Ionicons name="chevron-forward" size={18} color={palette.accent} />
       </View>
 
       {isFull ? (
@@ -59,8 +59,8 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.large,
     borderWidth: 1,
-    borderColor: "rgba(210,226,255,0.1)",
-    backgroundColor: "rgba(16,33,53,0.68)",
+    borderColor: palette.border,
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[14],
     paddingVertical: spacing[12],
     gap: spacing[8]
@@ -77,8 +77,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "700"
+    ...typography.bodyStrong
   },
   creator: {
     color: palette.textSecondary,
@@ -95,7 +94,6 @@ const styles = StyleSheet.create({
   },
   metric: {
     color: palette.textSecondary,
-    ...typography.caption,
-    fontWeight: "700"
+    ...typography.caption
   }
 });

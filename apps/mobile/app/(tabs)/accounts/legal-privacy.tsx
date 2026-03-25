@@ -295,7 +295,7 @@ function ToggleRow({
         value={value}
         onValueChange={onValueChange}
         thumbColor={palette.textPrimary}
-        trackColor={{ false: "rgba(134,154,184,0.4)", true: "rgba(47,107,255,0.8)" }}
+        trackColor={{ false: "rgba(80,80,80,0.55)", true: "rgba(242,140,40,0.8)" }}
       />
     </View>
   );
@@ -337,8 +337,8 @@ const styles = StyleSheet.create({
   toggleRow: {
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    borderRadius: 6,
+    backgroundColor: "rgba(21,21,21,0.72)",
     minHeight: 44,
     paddingHorizontal: spacing[12],
     flexDirection: "row",

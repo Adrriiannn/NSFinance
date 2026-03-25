@@ -29,13 +29,15 @@ type PlanningHubScreenProps = {
   children: ReactNode;
   scrollViewRef?: RefObject<ScrollView | null>;
   onBackPress?: () => void;
+  bottomOverlay?: ReactNode;
 };
 
 export function PlanningHubScreen({
   title,
   children,
   scrollViewRef,
-  onBackPress
+  onBackPress,
+  bottomOverlay
 }: PlanningHubScreenProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -80,6 +82,8 @@ export function PlanningHubScreen({
           {children}
         </ScrollView>
       </View>
+
+      {bottomOverlay}
 
       <FloatingBottomNav
         items={planningHubBottomNavItems}

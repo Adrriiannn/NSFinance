@@ -1,5 +1,5 @@
 import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
-import { palette, radius, spacing, typography } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
 
 export type DiscoverFilterOption = {
   id: string;
@@ -54,31 +54,30 @@ const styles = StyleSheet.create({
   chip: {
     minHeight: 34,
     paddingHorizontal: spacing[12],
-    borderRadius: radius.pill,
+    borderRadius: radius.medium,
     borderWidth: 1,
-    borderColor: "rgba(208,225,255,0.16)",
-    backgroundColor: "rgba(14,28,46,0.76)",
+    borderColor: palette.border,
+    backgroundColor: surfaces.field,
     justifyContent: "center"
   },
   secondaryChip: {
-    borderColor: "rgba(208,225,255,0.12)",
-    backgroundColor: "rgba(14,28,46,0.6)"
+    borderColor: palette.border,
+    backgroundColor: surfaces.field
   },
   primarySelected: {
-    borderColor: "rgba(94,161,255,0.8)",
-    backgroundColor: "rgba(58,114,196,0.32)"
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.14)"
   },
   secondarySelected: {
-    borderColor: "rgba(142,195,255,0.54)",
-    backgroundColor: "rgba(43,87,150,0.24)"
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.12)"
   },
   chipLabel: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "500"
   },
   selectedLabel: {
     color: palette.textPrimary
   }
 });
-

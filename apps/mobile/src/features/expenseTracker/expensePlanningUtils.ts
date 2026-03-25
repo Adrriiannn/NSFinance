@@ -151,15 +151,15 @@ export function buildExpensePlanTaxonomyLookup(domains: ExpenseTaxonomyDomainDto
 export function getExpensePlanStatusMeta(status: ExpensePlanStatus): ExpensePlanStatusMeta {
   switch (status) {
     case "active":
-      return { label: "Active", color: "#1CC583", tint: "rgba(28,197,131,0.16)", icon: "pulse-outline" };
+      return { label: "Active", color: "#1DBA72", tint: "rgba(29,186,114,0.16)", icon: "pulse-outline" };
     case "drafted":
-      return { label: "Drafted", color: "#FF9A66", tint: "rgba(255,154,102,0.16)", icon: "create-outline" };
+      return { label: "Drafted", color: "#F28C28", tint: "rgba(242,140,40,0.16)", icon: "create-outline" };
     case "scheduled":
-      return { label: "Scheduled", color: "#F6C75F", tint: "rgba(246,199,95,0.16)", icon: "time-outline" };
+      return { label: "Scheduled", color: "#F0B44C", tint: "rgba(240,180,76,0.16)", icon: "time-outline" };
     case "completed":
-      return { label: "Completed", color: "#6FA7FF", tint: "rgba(111,167,255,0.16)", icon: "checkmark-done-outline" };
+      return { label: "Completed", color: "#1DBA72", tint: "rgba(29,186,114,0.16)", icon: "checkmark-done-outline" };
     default:
-      return { label: status, color: "#A7B6D1", tint: "rgba(167,182,209,0.16)", icon: "ellipse-outline" };
+      return { label: status, color: "#9A9A9A", tint: "rgba(154,154,154,0.16)", icon: "ellipse-outline" };
   }
 }
 

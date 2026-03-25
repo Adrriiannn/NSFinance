@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   reasonLabel: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   reasonLabelActive: {
     color: palette.textPrimary

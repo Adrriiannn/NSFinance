@@ -11,7 +11,7 @@ export const fieldPresets = {
     gap: spacing[4]
   },
   label: {
-    color: palette.textPrimary,
+    color: palette.textSecondary,
     ...typography.fieldLabel
   },
   helper: {
@@ -37,7 +37,7 @@ export const fieldPresets = {
     minHeight: sizing.field.heights.dense
   } as ViewStyle,
   containerFocused: {
-    borderColor: palette.primaryGlow,
+    borderColor: palette.borderStrong,
     backgroundColor: surfaces.fieldStrong
   } as ViewStyle,
   containerError: {
@@ -47,7 +47,7 @@ export const fieldPresets = {
     flex: 1,
     color: palette.textPrimary,
     ...typography.body1,
-    paddingVertical: spacing[12]
+    paddingVertical: spacing[10]
   } as TextStyle,
   multilineInput: {
     minHeight: sizing.field.multilineMinHeight,

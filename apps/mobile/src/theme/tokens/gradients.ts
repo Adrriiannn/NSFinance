@@ -1,6 +1,6 @@
 export const gradients = {
-  hero: ["#2446A7", "#2F6BFF", "#122A4E"] as const,
-  cardHero: ["rgba(127, 174, 255, 0.2)", "rgba(111, 215, 255, 0.06)"] as const,
-  insight: ["rgba(47, 107, 255, 0.16)", "rgba(111, 215, 255, 0.04)"] as const,
-  bannerInfo: ["rgba(47, 107, 255, 0.22)", "rgba(111, 215, 255, 0.1)"] as const
+  hero: ["#050505", "#090909", "#111111"] as const,
+  cardHero: ["rgba(242, 140, 40, 0.08)", "rgba(255, 255, 255, 0.015)"] as const,
+  insight: ["rgba(242, 140, 40, 0.1)", "rgba(255, 255, 255, 0.015)"] as const,
+  bannerInfo: ["rgba(242, 140, 40, 0.14)", "rgba(242, 140, 40, 0.05)"] as const
 } as const;

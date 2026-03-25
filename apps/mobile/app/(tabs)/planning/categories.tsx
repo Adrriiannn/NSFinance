@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Easing, LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PlanningHubShell } from "../../../src/components/planningHub/PlanningHubShell";
 import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
@@ -33,7 +33,7 @@ import {
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
 import { getFloatingTabBarInset } from "../../../src/theme/insets";
-import { palette, radius, spacing, typography } from "../../../src/theme/tokens";
+import { navigation, palette, radius, spacing, typography } from "../../../src/theme/tokens";
 
 export default function PlanningHubCategoriesScreen() {
   const router = useRouter();
@@ -389,6 +389,22 @@ export default function PlanningHubCategoriesScreen() {
     router.back();
   };
 
+  const hasPendingSelection = isActivitySearchCategorySelection
+    ? Boolean(pendingHierarchySelection)
+    : Boolean(pendingSubcategoryId);
+  const confirmAnimation = useRef(new Animated.Value(hasPendingSelection ? 1 : 0)).current;
+  const confirmVisibleBottom = getFloatingTabBarInset(insets.bottom, 20);
+  const confirmHiddenTranslateY = confirmVisibleBottom + spacing[12];
+
+  useEffect(() => {
+    Animated.timing(confirmAnimation, {
+      toValue: hasPendingSelection ? 1 : 0,
+      duration: 220,
+      easing: hasPendingSelection ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      useNativeDriver: true
+    }).start();
+  }, [confirmAnimation, hasPendingSelection]);
+
   const content = (
     <>
         {taxonomyQuery.isError ? (
@@ -442,7 +458,7 @@ export default function PlanningHubCategoriesScreen() {
                           selected ? styles.searchResultRowSelected : null,
                           {
                             borderColor: selected ? visual.color : palette.border,
-                            backgroundColor: selected ? `${visual.color}18` : "rgba(18,36,58,0.82)"
+                            backgroundColor: selected ? `${visual.color}18` : "rgba(21,21,21,0.82)"
                           }
                         ]}
                         onPress={selectionMode ? () => handleSubcategoryPress(result.item.subcategoryId) : undefined}
@@ -612,7 +628,7 @@ export default function PlanningHubCategoriesScreen() {
                                               selected ? styles.subcategoryRowSelected : null,
                                               {
                                                 borderColor: selected ? subcategoryVisuals.color : palette.border,
-                                                backgroundColor: selected ? `${subcategoryVisuals.color}18` : "rgba(18,36,58,0.82)"
+                                                backgroundColor: selected ? `${subcategoryVisuals.color}18` : "rgba(21,21,21,0.82)"
                                               }
                                             ]}
                                             onPress={selectionMode ? () => handleSubcategoryPress(subcategory.id) : undefined}
@@ -670,12 +686,42 @@ export default function PlanningHubCategoriesScreen() {
     </>
   );
 
+  const selectionConfirmOverlay = selectionMode ? (
+    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+      <Animated.View
+        pointerEvents={hasPendingSelection ? "auto" : "none"}
+        style={[
+          styles.confirmBar,
+          {
+            bottom: confirmVisibleBottom,
+            opacity: confirmAnimation,
+            transform: [
+              {
+                translateY: confirmAnimation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [confirmHiddenTranslateY, 0]
+                })
+              }
+            ]
+          }
+        ]}
+      >
+        <PrimaryButton
+          label="Confirm selection"
+          onPress={confirmSelection}
+          disabled={!hasPendingSelection}
+        />
+      </Animated.View>
+    </View>
+  ) : null;
+
   return (
     <View style={styles.screenWrap}>
       {selectionMode ? (
         <PlanningHubScreen
           title="Select category"
           onBackPress={selectionReturnPath ? returnToSelectionOrigin : undefined}
+          bottomOverlay={selectionConfirmOverlay}
         >
           {content}
         </PlanningHubScreen>
@@ -712,18 +758,6 @@ export default function PlanningHubCategoriesScreen() {
           </View>
         </PlanningHubShell>
       )}
-
-      {selectionMode ? (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <View style={[styles.confirmBar, { bottom: getFloatingTabBarInset(insets.bottom, 4) }]}>
-            <PrimaryButton
-              label="Confirm selection"
-              onPress={confirmSelection}
-              disabled={isActivitySearchCategorySelection ? !pendingHierarchySelection : !pendingSubcategoryId}
-            />
-          </View>
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -756,7 +790,7 @@ const styles = StyleSheet.create({
   },
   searchResultRow: {
     minHeight: 58,
-    borderRadius: 18,
+    borderRadius: 6,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -773,7 +807,7 @@ const styles = StyleSheet.create({
   searchResultIconWrap: {
     width: 32,
     height: 32,
-    borderRadius: 11,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -784,7 +818,7 @@ const styles = StyleSheet.create({
   searchResultTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   searchResultPath: {
     color: palette.textSecondary,
@@ -795,7 +829,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.large,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.58)",
+    backgroundColor: "rgba(21,21,21,0.58)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[20],
@@ -804,7 +838,7 @@ const styles = StyleSheet.create({
   searchEmptyTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   searchEmptyText: {
     color: palette.textSecondary,
@@ -837,14 +871,14 @@ const styles = StyleSheet.create({
   domainIconWrap: {
     width: 30,
     height: 30,
-    borderRadius: 12,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
   domainTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   rowActionRail: {
     flexDirection: "row",
@@ -856,14 +890,14 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(148,176,221,0.56)",
-    backgroundColor: "rgba(18,36,58,0.9)",
+    borderColor: palette.border,
+    backgroundColor: "rgba(21,21,21,0.9)",
     alignItems: "center",
     justifyContent: "center"
   },
   selectionCheckboxChecked: {
-    borderColor: "rgba(127,174,255,0.9)",
-    backgroundColor: "rgba(66,113,182,0.55)"
+    borderColor: "rgba(242,140,40,0.9)",
+    backgroundColor: "rgba(242,140,40,0.2)"
   },
   selectionCheckboxPressed: {
     opacity: 0.88
@@ -876,7 +910,7 @@ const styles = StyleSheet.create({
   domainCategoryDivider: {
     width: "70%",
     height: 1,
-    borderRadius: 999,
+    borderRadius: 6,
     backgroundColor: "rgba(213, 229, 255, 0.08)"
   },
   categorySectionList: {
@@ -906,14 +940,14 @@ const styles = StyleSheet.create({
   categoryAccordionIconWrap: {
     width: 28,
     height: 28,
-    borderRadius: 10,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
   categoryHeading: {
     color: palette.textPrimary,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   subcategoryList: {
     gap: spacing[8],
@@ -922,7 +956,7 @@ const styles = StyleSheet.create({
   },
   subcategoryRow: {
     minHeight: 50,
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -939,7 +973,7 @@ const styles = StyleSheet.create({
   subcategoryIconWrap: {
     width: 30,
     height: 30,
-    borderRadius: 10,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -947,13 +981,11 @@ const styles = StyleSheet.create({
     flex: 1,
     color: palette.textPrimary,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   confirmBar: {
     position: "absolute",
-    left: 0,
-    right: 0
+    left: spacing[12],
+    right: spacing[12]
   }
 });
-
-

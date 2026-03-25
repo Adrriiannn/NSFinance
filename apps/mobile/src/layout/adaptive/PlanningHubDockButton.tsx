@@ -36,10 +36,10 @@ const styles = StyleSheet.create({
   button: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(47,107,255,0.98)",
+    backgroundColor: "rgba(242,140,40,0.98)",
     borderWidth: 1,
-    borderColor: "rgba(173,204,255,0.72)",
-    ...shadows.glow
+    borderColor: palette.borderStrong,
+    ...shadows.soft
   },
   buttonPressed: {
     opacity: 0.92,

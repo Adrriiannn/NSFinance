@@ -48,7 +48,7 @@ type UseActivitySearchParams = {
 
 function buildCategoryDisplayValue(value: ActivityCategoryTokenValue) {
   if (!value.domainName.trim()) {
-    return "Choose your category";
+    return "Select categories";
   }
 
   return value.domainName;
@@ -100,7 +100,7 @@ function createCategoryToken(): ActivitySearchToken {
     id: createActivityTokenId("category"),
     type: "category",
     label: "category",
-    displayValue: "Choose your category",
+    displayValue: "Select categories",
     rawValue: "",
     value,
     isDraft: false

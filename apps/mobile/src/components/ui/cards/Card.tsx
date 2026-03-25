@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import { Pressable, View } from "react-native";
+import { Pressable } from "react-native";
 import { cardPresets, cardStateStyles, type CardVariant } from "./card.presets";
 
 type CardProps = {
@@ -26,7 +26,6 @@ export function Card({
         onPress && pressed ? cardStateStyles.pressed : null
       ]}
     >
-      <View style={cardStateStyles.topEdge} />
       {children}
     </Pressable>
   );

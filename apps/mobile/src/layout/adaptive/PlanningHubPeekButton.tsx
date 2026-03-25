@@ -23,7 +23,7 @@ type PlanningHubPeekButtonProps = {
   bottomOffset?: number;
 };
 
-const TAB_BAR_SEAM_COLOR = "#263142";
+const TAB_BAR_SEAM_COLOR = "rgba(242, 140, 40, 0.24)";
 const SWITCHER_WIDTH = 272;
 const SWITCHER_HEIGHT = 70;
 const SWITCHER_VISIBLE_WIDTH = 152;
@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
   switcherLabel: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700",
+    fontWeight: "600",
     textAlign: "center"
   }
 });

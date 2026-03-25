@@ -15,7 +15,7 @@ export function HeaderBackButton({ fallbackHref }: { fallbackHref?: string }) {
         <Ionicons
           name="arrow-back"
           size={HEADER_CONSTANTS.iconSize}
-          color={palette.textPrimary}
+          color={palette.accent}
         />
       }
       accessibilityLabel="Go back"
@@ -35,4 +35,3 @@ export function HeaderBackButton({ fallbackHref }: { fallbackHref?: string }) {
     />
   );
 }
-

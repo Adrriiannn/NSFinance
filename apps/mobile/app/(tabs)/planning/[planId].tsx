@@ -1,4 +1,4 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { PlanningHubScreen } from "../../../src/components/planningHub/PlanningHubScreen";
@@ -234,14 +234,14 @@ const styles = StyleSheet.create({
   statusPill: {
     minHeight: 30,
     paddingHorizontal: spacing[12],
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center"
   },
   statusPillLabel: {
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   metadataRow: {
     flexDirection: "row",
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
   metadataChip: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   metricsGrid: {
     flexDirection: "row",
@@ -269,7 +269,7 @@ const styles = StyleSheet.create({
   metricValue: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   metricPositive: {
     color: palette.success
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   lineItemIconWrap: {
     width: 42,
     height: 42,
-    borderRadius: 14,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
   lineItemTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   lineItemMeta: {
     color: palette.textSecondary,
@@ -323,11 +323,11 @@ const styles = StyleSheet.create({
   lineItemAmount: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   lineItemVariance: {
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   unexpectedSpacerLabel: {
     marginTop: spacing[8],

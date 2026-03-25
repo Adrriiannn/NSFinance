@@ -78,7 +78,7 @@ const HEADER = {
   leadingSlotWidth: 44,
   trailingSlotWidth: 44,
   iconSize: 20,
-  iconButtonRadius: 14,
+  iconButtonRadius: 6,
   titleMaxWidthDefault: "56%",
   titleMaxWidthCentered: "62%",
   subtitleMaxWidth: "72%",
@@ -88,7 +88,7 @@ const HEADER = {
   inlineButtonHeight: 36,
   inlineButtonRadius: 18,
   iconButtonSize: 36,
-  iconButtonVisualRadius: 12,
+  iconButtonVisualRadius: 6,
   dropdownHeight: HEADER_CONTROL_HEIGHT,
   dropdownRadius: 12,
   searchHeight: HEADER_CONTROL_HEIGHT,
@@ -413,7 +413,7 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     fontSize: 18,
     lineHeight: 22,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   titleCenteredText: {
     textAlign: "center"
@@ -422,7 +422,7 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     fontSize: 22,
     lineHeight: 26,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   subtitle: {
     color: palette.textSecondary,
@@ -432,7 +432,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: HEADER.stickyDividerHeight,
-    backgroundColor: "rgba(220,232,255,0.18)"
+    backgroundColor: "rgba(242,140,40,0.18)"
   },
   iconButton: {
     width: HEADER.iconButtonSize,
@@ -440,7 +440,7 @@ const styles = StyleSheet.create({
     borderRadius: HEADER.iconButtonVisualRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.82)",
+    backgroundColor: "rgba(17,17,17,0.82)",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -460,7 +460,7 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     fontSize: 13,
     lineHeight: 16,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   fieldSlot: {
     flex: 1,
@@ -489,7 +489,7 @@ const styles = StyleSheet.create({
     color: palette.primaryGlow,
     fontSize: 13,
     lineHeight: 16,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   searchSlot: {
     height: HEADER.searchHeight,

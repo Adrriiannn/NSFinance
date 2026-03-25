@@ -290,6 +290,8 @@ export default function ActivityTabScreen() {
               ctaLabel="Connect bank"
               onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
               verticalSpacingMode="tab-aligned"
+              hideOrb
+              centerText
             />
           ) : (
             <SectionList
@@ -604,31 +606,31 @@ const styles = StyleSheet.create({
   },
   loadingRow: {
     height: 78,
-    borderRadius: 18
+    borderRadius: 6
   },
   swipeWrap: {
     position: "relative"
   },
   transactionSwipeWrap: {
-    borderRadius: 16
+    borderRadius: 6
   },
   transactionSwipeWrapArmed: {
-    shadowColor: "#6FD7FF",
+    shadowColor: "#FFBE7A",
     shadowOpacity: 0.24,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 0 },
     elevation: 6
   },
   transactionRowArmed: {
-    borderColor: "rgba(111,215,255,0.58)",
-    backgroundColor: "rgba(24,48,76,0.96)"
+    borderColor: "rgba(255,190,122,0.58)",
+    backgroundColor: "rgba(23,23,23,0.96)"
   },
   swipeBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(220,232,255,0.1)",
-    backgroundColor: "rgba(17,39,66,0.6)",
+    borderColor: "rgba(242,140,40,0.2)",
+    backgroundColor: "rgba(17,17,17,0.74)",
     paddingHorizontal: spacing[12],
     flexDirection: "row",
     alignItems: "center",
@@ -636,7 +638,7 @@ const styles = StyleSheet.create({
   },
   feedbackOverlay: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 16
+    borderRadius: 6
   },
   feedbackEssential: {
     backgroundColor: "rgba(28,197,131,0.18)"
@@ -645,7 +647,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(244,104,119,0.14)"
   },
   feedbackFocus: {
-    backgroundColor: "rgba(111,215,255,0.18)"
+    backgroundColor: "rgba(255,190,122,0.18)"
   },
   swipeRightText: {
     color: palette.success,

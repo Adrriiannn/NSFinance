@@ -50,7 +50,7 @@ type NavLayoutCache = {
 
 const navHighlightCache = new Map<string, NavLayoutCache>();
 const HIGHLIGHT_ANIMATION_DURATION = 240;
-const TAB_BAR_SEAM_COLOR = "#263142";
+const TAB_BAR_SEAM_COLOR = "rgba(242, 140, 40, 0.24)";
 const SWITCHER_WIDTH = 272;
 
 function renderNavIcon(
@@ -86,7 +86,9 @@ export function FloatingBottomNav({
   const shellContentPaddingBottom = spacing[8];
   const tabBarBottomOffset =
     Platform.OS === "android"
-      ? (androidBottomInset > 0 ? -2 + androidBottomInset : 0)
+      ? (androidBottomInset > 0
+          ? -2 + androidBottomInset
+          : -1)
       : -2;
   const [optimisticActiveKey, setOptimisticActiveKey] = useState<string | null>(null);
   const [itemLayouts, setItemLayouts] = useState<Partial<Record<string, { x: number; width: number }>>>({});
@@ -377,7 +379,7 @@ export function FloatingBottomNav({
         {items.map((item) => {
           const isActive = item.key === resolvedActiveKey;
           const isVisuallyActive = isActive && !suppressActiveStateForKeys.includes(item.key);
-          const color = isVisuallyActive ? palette.textPrimary : palette.textSecondary;
+          const color = isVisuallyActive ? palette.accent : palette.textSecondary;
           return (
             <Pressable
               key={item.key}
@@ -434,9 +436,9 @@ const styles = StyleSheet.create({
     top: spacing[6],
     bottom: spacing[4],
     borderRadius: radius.medium,
-    backgroundColor: "rgba(47,107,255,0.10)",
+    backgroundColor: "rgba(242,140,40,0.10)",
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.3)"
+    borderColor: "rgba(242,140,40,0.32)"
   },
   separatorLayer: {
     position: "absolute",
@@ -468,7 +470,7 @@ const styles = StyleSheet.create({
     textAlign: "center"
   },
   labelActive: {
-    color: palette.textPrimary,
-    fontWeight: "700"
+    color: palette.accent,
+    fontWeight: "500"
   }
 });

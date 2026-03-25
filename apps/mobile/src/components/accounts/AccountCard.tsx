@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import { formatShortDate } from "../../lib/format";
 import type { AccountDto } from "../../types/api";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../theme/tokens";
 import { AmountText } from "../ui/AmountText";
 import { GlassCard } from "../ui/GlassCard";
 
@@ -62,10 +62,12 @@ const styles = StyleSheet.create({
   badge: {
     minWidth: 28,
     minHeight: 28,
-    borderRadius: 14,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(110,168,255,0.22)"
+    backgroundColor: surfaces.fieldStrong
   },
   badgeText: {
     color: palette.textPrimary,

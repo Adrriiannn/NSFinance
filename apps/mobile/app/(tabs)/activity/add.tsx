@@ -194,6 +194,8 @@ export default function AddTransactionScreen() {
           message="Connect your bank first before adding transactions."
           actionLabel="Connect bank"
           onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+          hideOrb
+          centerText
         />
       ) : (
         <>
@@ -302,7 +304,7 @@ const styles = StyleSheet.create({
   },
   categoryPickerButton: {
     minHeight: 56,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: palette.elevatedBackground,
@@ -332,7 +334,7 @@ const styles = StyleSheet.create({
   },
   loadingField: {
     height: 54,
-    borderRadius: 14,
+    borderRadius: 6,
     backgroundColor: palette.elevatedBackground
   }
 });

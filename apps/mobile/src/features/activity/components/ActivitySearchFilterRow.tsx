@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../../theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
 import type { ActivitySearchFilterOption } from "../search/activitySearch.types";
 
 type ActivitySearchFilterRowProps = {
@@ -64,10 +64,10 @@ export function ActivitySearchFilterRow({ option, onPress }: ActivitySearchFilte
 const styles = StyleSheet.create({
   row: {
     minHeight: 52,
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.95)",
+    backgroundColor: "rgba(21,21,21,0.95)",
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     flexDirection: "row",
@@ -83,10 +83,10 @@ const styles = StyleSheet.create({
   iconWrap: {
     width: 26,
     height: 26,
-    borderRadius: 10,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(147,181,230,0.12)"
+    backgroundColor: surfaces.fieldStrong
   },
   copyWrap: {
     flex: 1,
@@ -94,16 +94,15 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   },
   hint: {
     color: palette.textSecondary,
     ...typography.caption
   },
   hintPrefix: {
-    color: "rgba(164, 196, 238, 0.96)",
-    fontWeight: "700"
+    color: palette.accent,
+    fontWeight: "500"
   },
   hintValue: {
     color: palette.textSecondary,

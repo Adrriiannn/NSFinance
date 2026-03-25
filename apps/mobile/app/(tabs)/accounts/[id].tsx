@@ -192,9 +192,9 @@ export default function AccountDetailsScreen() {
       >
         {isInitialLoading ? (
           <View style={styles.loadingWrap}>
-            <SkeletonBlock style={{ height: 168, borderRadius: 18 }} />
-            <SkeletonBlock style={{ height: 130, borderRadius: 18 }} />
-            <SkeletonBlock style={{ height: 130, borderRadius: 18 }} />
+            <SkeletonBlock style={{ height: 168, borderRadius: 6 }} />
+            <SkeletonBlock style={{ height: 130, borderRadius: 6 }} />
+            <SkeletonBlock style={{ height: 130, borderRadius: 6 }} />
           </View>
         ) : error ? (
           <ErrorState

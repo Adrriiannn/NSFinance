@@ -7,7 +7,7 @@ export const rowPresets = {
     borderRadius: radius.medium,
     borderWidth: borders.width.thin,
     borderColor: palette.border,
-    backgroundColor: surfaces.section,
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     flexDirection: "row",
@@ -33,14 +33,14 @@ export const rowPresets = {
   leadingIcon: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: radius.small,
     alignItems: "center",
     justifyContent: "center"
   } as ViewStyle,
   title: {
     color: palette.textPrimary,
     ...typography.body1,
-    fontWeight: "600"
+    fontWeight: "500"
   } as TextStyle,
   subtitle: {
     color: palette.textSecondary,

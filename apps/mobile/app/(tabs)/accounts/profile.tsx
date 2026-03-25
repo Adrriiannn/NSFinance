@@ -1205,10 +1205,10 @@ const styles = StyleSheet.create({
   avatarCircle: {
     width: 62,
     height: 62,
-    borderRadius: 31,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.85)",
-    backgroundColor: "rgba(47,107,255,0.22)",
+    borderColor: "rgba(242,140,40,0.85)",
+    backgroundColor: "rgba(242,140,40,0.22)",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -1218,12 +1218,12 @@ const styles = StyleSheet.create({
   avatarText: {
     color: palette.textPrimary,
     ...typography.body1,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   avatarImage: {
     width: "100%",
     height: "100%",
-    borderRadius: 31
+    borderRadius: 6
   },
   avatarBadge: {
     position: "absolute",
@@ -1231,10 +1231,10 @@ const styles = StyleSheet.create({
     bottom: -2,
     width: 20,
     height: 20,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.85)",
-    backgroundColor: "rgba(47,107,255,0.9)",
+    borderColor: "rgba(242,140,40,0.85)",
+    backgroundColor: "rgba(242,140,40,0.9)",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -1283,7 +1283,7 @@ const styles = StyleSheet.create({
     flex: 1
       ,
     minHeight: 52,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
     backgroundColor: palette.elevatedBackground,
@@ -1301,7 +1301,7 @@ const styles = StyleSheet.create({
   dateFieldValue: {
     color: palette.textPrimary,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   focusWrap: {
     flexDirection: "row",
@@ -1309,10 +1309,10 @@ const styles = StyleSheet.create({
     gap: spacing[8]
   },
   focusChip: {
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.76)",
+    backgroundColor: "rgba(21,21,21,0.76)",
     paddingHorizontal: spacing[12],
     minHeight: 34,
     alignItems: "center",
@@ -1320,7 +1320,7 @@ const styles = StyleSheet.create({
   },
   focusChipSelected: {
     borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.24)"
+    backgroundColor: "rgba(242,140,40,0.24)"
   },
   focusChipPressed: {
     opacity: 0.88
@@ -1331,7 +1331,7 @@ const styles = StyleSheet.create({
   },
   focusChipTextSelected: {
     color: palette.textPrimary,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   errorText: {
     color: palette.negative,
@@ -1343,7 +1343,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.72)",
+    backgroundColor: "rgba(9,9,9,0.72)",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: spacing[16]
@@ -1353,10 +1353,10 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: "100%",
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
+    backgroundColor: "rgba(17,17,17,0.98)",
     padding: spacing[16],
     gap: spacing[12]
   },
@@ -1382,10 +1382,10 @@ const styles = StyleSheet.create({
   },
   dialWheelWrap: {
     height: DIAL_ITEM_HEIGHT * 4,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: "rgba(21,21,21,0.74)",
     overflow: "hidden"
   },
   dialWheelContent: {
@@ -1409,12 +1409,12 @@ const styles = StyleSheet.create({
     height: DIAL_ITEM_HEIGHT,
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: "rgba(127,174,255,0.55)",
-    backgroundColor: "rgba(47,107,255,0.1)"
+    borderColor: "rgba(242,140,40,0.55)",
+    backgroundColor: "rgba(242,140,40,0.1)"
   },
   discardButton: {
     minHeight: 42,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: "rgba(244,104,119,0.52)",
     backgroundColor: "rgba(90,16,30,0.26)",
@@ -1427,7 +1427,7 @@ const styles = StyleSheet.create({
   discardText: {
     color: palette.negative,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });
 

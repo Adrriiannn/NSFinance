@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { layout, palette, spacing } from "../../theme/tokens";
+import { AppBackgroundLayer } from "../ui/surfaces/AppBackgroundLayer";
 
 type AuthScreenProps = {
   children: ReactNode;
@@ -236,6 +237,7 @@ export function AuthScreen({ children, focusedInputExtraClearance = 0 }: AuthScr
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right", "bottom"]}>
+      <AppBackgroundLayer />
       <KeyboardAvoidingView style={styles.keyboardWrap}>
         <ScrollView
           ref={scrollViewRef}

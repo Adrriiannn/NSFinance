@@ -9,7 +9,7 @@
       "nsfinance",
       "com.nsfinance.mobile"
     ],
-    "backgroundColor": "#07111F",
+    "backgroundColor": "#050505",
     "userInterfaceStyle": "automatic",
     "plugins": [
       "expo-router",

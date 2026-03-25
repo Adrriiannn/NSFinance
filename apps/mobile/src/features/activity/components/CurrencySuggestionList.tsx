@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../../theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
 import {
   getActivityCurrencyMetadata
 } from "../search/activitySearch.currencies";
@@ -50,10 +50,10 @@ const styles = StyleSheet.create({
   },
   row: {
     minHeight: 44,
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,35,58,0.96)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     flexDirection: "row",
@@ -61,16 +61,15 @@ const styles = StyleSheet.create({
     gap: spacing[10]
   },
   rowSelected: {
-    borderColor: "rgba(127,174,255,0.58)",
-    backgroundColor: "rgba(36,58,89,0.94)"
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.14)"
   },
   rowPressed: {
     opacity: 0.9
   },
   currencyCode: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   },
   currencyMeta: {
     flex: 1,
@@ -78,9 +77,8 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   selectedLabel: {
-    color: palette.primaryGlow,
+    color: palette.accent,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "500"
   }
 });
-

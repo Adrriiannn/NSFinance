@@ -13,7 +13,7 @@ const appNavigationTheme = {
     background: palette.appBackground,
     card: palette.appBackground,
     text: palette.textPrimary,
-    border: "rgba(220,232,255,0.16)",
+    border: "rgba(242,140,40,0.2)",
     notification: palette.accent
   }
 };

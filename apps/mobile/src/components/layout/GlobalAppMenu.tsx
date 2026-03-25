@@ -15,7 +15,7 @@ import {
 import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
-import { layout, palette, spacing, typography } from "../../theme/tokens";
+import { layout, palette, spacing, surfaces, typography } from "../../theme/tokens";
 
 type GlobalAppMenuProps = {
   topOffset?: number;
@@ -229,7 +229,7 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
                     <Ionicons
                       name={item.icon}
                       size={16}
-                      color={isActive ? palette.primaryGlow : palette.textSecondary}
+                      color={isActive ? palette.accent : palette.textSecondary}
                     />
                     <Text style={[styles.menuItemText, isActive ? styles.menuItemTextActive : null]}>
                       {item.label}
@@ -333,10 +333,10 @@ const styles = StyleSheet.create({
   trigger: {
     width: 42,
     height: 42,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.92)",
+    backgroundColor: "rgba(17,17,17,0.92)",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -351,13 +351,13 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(3,9,18,0.66)"
+    backgroundColor: palette.overlay
   },
   drawer: {
     width: "84%",
     maxWidth: 340,
     minHeight: "100%",
-    backgroundColor: "rgba(9,20,35,0.98)",
+    backgroundColor: surfaces.app,
     borderLeftWidth: 1,
     borderLeftColor: palette.border,
     paddingTop: 76,
@@ -366,10 +366,10 @@ const styles = StyleSheet.create({
     gap: spacing[16]
   },
   profileHeader: {
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.78)",
+    backgroundColor: surfaces.card,
     padding: spacing[12],
     flexDirection: "row",
     alignItems: "center",
@@ -378,22 +378,22 @@ const styles = StyleSheet.create({
   avatarWrap: {
     width: 54,
     height: 54,
-    borderRadius: 27,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.8)",
-    backgroundColor: "rgba(47,107,255,0.22)",
+    borderColor: "rgba(242,140,40,0.8)",
+    backgroundColor: "rgba(242,140,40,0.12)",
     alignItems: "center",
     justifyContent: "center"
   },
   avatarText: {
     color: palette.textPrimary,
     ...typography.body1,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   avatarImage: {
     width: "100%",
     height: "100%",
-    borderRadius: 27
+    borderRadius: 6
   },
   profileMeta: {
     flex: 1,
@@ -404,7 +404,7 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong
   },
   handle: {
-    color: palette.primaryGlow,
+    color: palette.accent,
     ...typography.caption
   },
   subtitle: {
@@ -416,25 +416,25 @@ const styles = StyleSheet.create({
   },
   menuItem: {
     minHeight: 44,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     flexDirection: "row",
     alignItems: "center",
     gap: spacing[8]
   },
   menuItemActive: {
-    borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.2)"
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.12)"
   },
   menuItemText: {
     color: palette.textPrimary,
     ...typography.body1
   },
   menuItemTextActive: {
-    fontWeight: "700"
+    fontWeight: "600"
   },
   menuItemPressed: {
     opacity: 0.86
@@ -451,35 +451,36 @@ const styles = StyleSheet.create({
   hubButton: {
     flex: 1,
     minHeight: 40,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[10]
   },
   financeHubButton: {
-    borderColor: "rgba(118, 156, 218, 0.6)",
-    backgroundColor: "rgba(18, 37, 70, 0.94)"
+    borderColor: palette.border,
+    backgroundColor: surfaces.field
   },
   planningHubButton: {
-    borderColor: "rgba(135, 230, 235, 0.68)",
-    backgroundColor: "rgba(43, 125, 144, 0.9)"
+    borderColor: palette.border,
+    backgroundColor: surfaces.field
   },
   hubButtonHighlighted: {
-    opacity: 1
+    opacity: 1,
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.12)"
   },
   hubButtonDimmed: {
     opacity: 0.38
   },
   hubButtonText: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   },
   footer: {
     paddingTop: spacing[12],
     borderTopWidth: 1,
-    borderTopColor: "rgba(220,232,255,0.12)",
+    borderTopColor: palette.border,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -491,16 +492,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: spacing[8],
     minHeight: 38,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12]
   },
   logoutText: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "600"
+    ...typography.body2
   },
   linkIconRow: {
     flexDirection: "row",
@@ -510,10 +510,10 @@ const styles = StyleSheet.create({
   linkIconButton: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   },

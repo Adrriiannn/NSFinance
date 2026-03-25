@@ -18,7 +18,7 @@ const toneStyles: Record<AppTextTone, TextStyle> = {
   secondary: { color: palette.textSecondary },
   positive: { color: palette.success },
   negative: { color: palette.negative },
-  accent: { color: palette.primaryGlow }
+  accent: { color: palette.accent }
 };
 
 export function AppText({

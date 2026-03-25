@@ -321,6 +321,8 @@ export default function CashflowScreen() {
             ctaLabel="Connect bank"
             onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
             verticalSpacingMode="tab-aligned"
+            hideOrb
+            centerText
           />
         ) : (
           <>
@@ -663,10 +665,10 @@ const styles = StyleSheet.create({
     ...typography.body2
   },
   upcomingPaymentsCard: {
-    borderRadius: 18,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.82)",
+    backgroundColor: "rgba(21,21,21,0.82)",
     padding: spacing[12],
     gap: spacing[8]
   },
@@ -717,23 +719,23 @@ const styles = StyleSheet.create({
   },
   loadingHero: {
     height: 210,
-    borderRadius: 24
+    borderRadius: 6
   },
   loadingCard: {
     height: 108,
-    borderRadius: 18
+    borderRadius: 6
   },
   pickerOverlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.72)",
+    backgroundColor: "rgba(9,9,9,0.72)",
     justifyContent: "center",
     paddingHorizontal: spacing[16]
   },
   pickerSheet: {
-    borderRadius: 20,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
+    backgroundColor: "rgba(17,17,17,0.98)",
     padding: spacing[16],
     gap: spacing[12]
   },
@@ -751,21 +753,21 @@ const styles = StyleSheet.create({
   yearChip: {
     width: YEAR_CHIP_WIDTH,
     minHeight: 36,
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.76)",
+    backgroundColor: "rgba(21,21,21,0.76)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12]
   },
   yearChipActive: {
     borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.22)"
+    backgroundColor: "rgba(242,140,40,0.22)"
   },
   yearChipDisabled: {
-    borderColor: "rgba(220,232,255,0.16)",
-    backgroundColor: "rgba(18,36,58,0.42)"
+    borderColor: "rgba(242,140,40,0.16)",
+    backgroundColor: "rgba(21,21,21,0.42)"
   },
   yearChipText: {
     color: palette.textSecondary,
@@ -773,17 +775,17 @@ const styles = StyleSheet.create({
   },
   yearChipTextActive: {
     color: palette.textPrimary,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   yearChipTextDisabled: {
-    color: "rgba(220,232,255,0.38)"
+    color: "rgba(242,140,40,0.38)"
   },
   monthWheelWrap: {
     height: MONTH_ROW_HEIGHT * MONTH_WHEEL_VISIBLE_ROWS,
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     overflow: "hidden"
   },
   monthWheelHighlight: {
@@ -794,8 +796,8 @@ const styles = StyleSheet.create({
     height: MONTH_ROW_HEIGHT,
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: "rgba(111,215,255,0.24)",
-    backgroundColor: "rgba(111,215,255,0.08)"
+    borderColor: "rgba(255,190,122,0.24)",
+    backgroundColor: "rgba(255,190,122,0.08)"
   },
   monthWheelContent: {
     paddingVertical: MONTH_ROW_HEIGHT * 2
@@ -814,7 +816,7 @@ const styles = StyleSheet.create({
     ...typography.bodyStrong
   },
   monthWheelTextDisabled: {
-    color: "rgba(220,232,255,0.34)"
+    color: "rgba(242,140,40,0.34)"
   },
   pickerActionRow: {
     flexDirection: "row",
@@ -824,7 +826,7 @@ const styles = StyleSheet.create({
   pickerSecondaryButton: {
     minWidth: 88,
     minHeight: 38,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
     alignItems: "center",
@@ -838,10 +840,10 @@ const styles = StyleSheet.create({
   pickerPrimaryButton: {
     minWidth: 88,
     minHeight: 38,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(111,215,255,0.32)",
-    backgroundColor: "rgba(47,107,255,0.34)",
+    borderColor: "rgba(255,190,122,0.32)",
+    backgroundColor: "rgba(242,140,40,0.34)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12]
@@ -852,7 +854,7 @@ const styles = StyleSheet.create({
   pickerPrimaryText: {
     color: palette.textPrimary,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });
 

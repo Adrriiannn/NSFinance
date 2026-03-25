@@ -9,7 +9,7 @@ import {
   View
 } from "react-native";
 import { formatCurrency } from "../../lib/format";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../theme/tokens";
 import type { TransactionDto } from "../../types/api";
 
 type DatePoint = {
@@ -515,10 +515,10 @@ export function CheckSpendingsCard({ transactions, currency }: CheckSpendingsCar
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 18,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.8)",
+    backgroundColor: "rgba(21,21,21,0.8)",
     padding: spacing[12],
     gap: spacing[12]
   },
@@ -534,10 +534,10 @@ const styles = StyleSheet.create({
   addButton: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: palette.borderStrong,
-    backgroundColor: "rgba(47,107,255,0.34)",
+    borderColor: palette.border,
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -546,18 +546,13 @@ const styles = StyleSheet.create({
   },
   dateChip: {
     minHeight: 38,
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.7)",
-    backgroundColor: "rgba(32,64,109,0.62)",
+    borderColor: palette.borderStrong,
+    backgroundColor: surfaces.fieldStrong,
     paddingHorizontal: spacing[12],
     alignItems: "center",
-    justifyContent: "center",
-    shadowColor: palette.primaryGlow,
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 5
+    justifyContent: "center"
   },
   dateChipText: {
     color: palette.textPrimary,
@@ -619,15 +614,15 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.74)",
+    backgroundColor: "rgba(9,9,9,0.74)",
     justifyContent: "flex-end"
   },
   modalSheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.99)",
+    backgroundColor: "rgba(17,17,17,0.99)",
     padding: spacing[16],
     gap: spacing[12],
     maxHeight: "86%"
@@ -652,16 +647,16 @@ const styles = StyleSheet.create({
     gap: spacing[8]
   },
   yearChip: {
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8]
   },
   yearChipActive: {
-    borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.28)"
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.14)"
   },
   yearChipText: {
     color: palette.textPrimary,
@@ -674,17 +669,17 @@ const styles = StyleSheet.create({
   },
   monthChip: {
     width: "23%",
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     alignItems: "center",
     justifyContent: "center",
     minHeight: 36
   },
   monthChipActive: {
-    borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.28)"
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.14)"
   },
   monthChipText: {
     color: palette.textPrimary,
@@ -697,10 +692,10 @@ const styles = StyleSheet.create({
     gap: spacing[8]
   },
   dayOption: {
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     alignItems: "center",
@@ -710,8 +705,8 @@ const styles = StyleSheet.create({
     width: DAY_CHIP_WIDTH
   },
   dayOptionActive: {
-    borderColor: palette.primaryGlow,
-    backgroundColor: "rgba(47,107,255,0.28)"
+    borderColor: palette.borderStrong,
+    backgroundColor: "rgba(242,140,40,0.14)"
   },
   dayOptionText: {
     color: palette.textPrimary,
@@ -724,22 +719,22 @@ const styles = StyleSheet.create({
   modalActionButton: {
     flex: 1,
     minHeight: 44,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(18,36,58,0.78)"
+    backgroundColor: "rgba(21,21,21,0.78)"
   },
   modalActionButtonPrimary: {
     flex: 1,
     minHeight: 44,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.borderStrong,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(47,107,255,0.34)"
+    backgroundColor: "rgba(242,140,40,0.34)"
   },
   modalActionText: {
     color: palette.textPrimary,
@@ -747,7 +742,6 @@ const styles = StyleSheet.create({
   },
   modalActionTextPrimary: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   }
 });

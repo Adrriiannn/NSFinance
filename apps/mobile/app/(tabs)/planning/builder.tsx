@@ -317,21 +317,21 @@ const styles = StyleSheet.create({
   toggleChip: {
     minHeight: 38,
     paddingHorizontal: spacing[16],
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: "rgba(21,21,21,0.74)",
     alignItems: "center",
     justifyContent: "center"
   },
   toggleChipActive: {
-    backgroundColor: "rgba(47,107,255,0.24)",
-    borderColor: "rgba(127,174,255,0.36)"
+    backgroundColor: "rgba(242,140,40,0.24)",
+    borderColor: "rgba(242,140,40,0.36)"
   },
   toggleChipLabel: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   sectionHeaderRow: {
     flexDirection: "row",
@@ -342,7 +342,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "800",
+    fontWeight: "600",
     letterSpacing: 1.1,
     textTransform: "uppercase"
   },
@@ -353,8 +353,8 @@ const styles = StyleSheet.create({
   addLineTextLabel: {
     color: palette.primaryGlow,
     ...typography.caption,
-    fontWeight: "700",
-    textShadowColor: "rgba(127,174,255,0.28)",
+    fontWeight: "600",
+    textShadowColor: "rgba(242,140,40,0.28)",
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 8
   },
@@ -372,22 +372,22 @@ const styles = StyleSheet.create({
   lineItemIndex: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   removeButton: {
     width: 32,
     height: 32,
-    borderRadius: 12,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(18,36,58,0.72)"
+    backgroundColor: "rgba(21,21,21,0.72)"
   },
   selectCategoryButton: {
     minHeight: 62,
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     paddingHorizontal: spacing[16],
     flexDirection: "row",
     alignItems: "center",
@@ -396,10 +396,10 @@ const styles = StyleSheet.create({
   selectCategoryIconWrap: {
     width: 38,
     height: 38,
-    borderRadius: 14,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(47,107,255,0.24)"
+    backgroundColor: "rgba(242,140,40,0.24)"
   },
   selectCategoryTextWrap: {
     flex: 1,
@@ -408,7 +408,7 @@ const styles = StyleSheet.create({
   selectCategoryLabel: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   selectCategoryMeta: {
     color: palette.textSecondary,
@@ -446,21 +446,21 @@ const styles = StyleSheet.create({
   actionButtonLabel: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   cancelBuilderButton: {
     minHeight: 42,
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     alignItems: "center",
     justifyContent: "center"
   },
   cancelBuilderLabel: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });
 

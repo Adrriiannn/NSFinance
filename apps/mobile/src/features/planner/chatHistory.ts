@@ -10,7 +10,7 @@ const CHAT_SUMMARY_PREFIX = "nsfinance.companion.chat.summary.";
 const CHAT_MEMORY_PREFIX = "nsfinance.companion.chat.memory.";
 const CHAT_RETRIEVAL_PREFIX = "nsfinance.companion.chat.retrieval.";
 const CHAT_INDEX_PREFIX = "nsfinance.companion.chat.index.";
-const DEFAULT_CHAT_COLOR: CompanionChatColor = "blue";
+const DEFAULT_CHAT_COLOR: CompanionChatColor = "orange";
 let companionChatsCache: CompanionChat[] | null = null;
 let companionChatsLoadPromise: Promise<CompanionChat[]> | null = null;
 

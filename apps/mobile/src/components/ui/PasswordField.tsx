@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
-import { palette } from "../../theme/tokens";
+import { palette, surfaces } from "../../theme/tokens";
 import { FieldError } from "./forms/FieldError";
 import { AppText } from "./text/AppText";
 import { fieldPresets } from "./fields/field.presets";
@@ -55,7 +55,7 @@ export function PasswordField({
         style={[
           fieldPresets.container,
           dense ? fieldPresets.containerDense : null,
-          surfaceMode === "solid" ? { backgroundColor: "#162D48" } : null,
+          surfaceMode === "solid" ? { backgroundColor: surfaces.fieldStrong } : null,
           forceFocused ? fieldPresets.containerFocused : null,
           error ? fieldPresets.containerError : null,
           containerStyle

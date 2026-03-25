@@ -10,14 +10,13 @@ import { queryKeys } from "../../lib/api/queryKeys";
 import { completeLatestNavigationProbe, navigateWithProbe } from "../../lib/perf/navigationTiming";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { queryClient } from "../../providers/QueryProvider";
-import { borders, surfaces, zIndex } from "../../theme/tokens";
+import { surfaces, zIndex } from "../../theme/tokens";
 import { getEffectiveBottomSystemInset } from "../../theme/insets";
 import { FloatingAssistantDock } from "./FloatingAssistantDock";
 import { AdaptiveLayoutContext, useAdaptiveLayoutMetrics } from "./adaptive.hooks";
 import type { AdaptiveAppShellProps, AdaptiveShellFrame } from "./adaptive.types";
 
 const ROOT_TAB_PATHS = new Set(["/", "/accounts", "/activity", "/cashflow", "/calendar"]);
-const TAB_BAR_SEAM_COLOR = "#263142";
 
 function resolveSourceTab(pathname: string | null): "index" | "accounts" | "activity" | "cashflow" | "calendar" {
   if (pathname?.startsWith("/accounts")) {
@@ -250,12 +249,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: surfaces.tabBar,
-    borderTopWidth: borders.width.thin,
-    borderTopColor: TAB_BAR_SEAM_COLOR,
-    borderLeftWidth: borders.width.thin,
-    borderLeftColor: TAB_BAR_SEAM_COLOR,
-    borderRightWidth: borders.width.thin,
-    borderRightColor: TAB_BAR_SEAM_COLOR,
     zIndex: zIndex.tabBar
   }
 });

@@ -19,7 +19,7 @@ const styles = StyleSheet.create({
   },
   line: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(220,232,255,0.22)"
+    backgroundColor: "rgba(242,140,40,0.22)"
   }
 });
 

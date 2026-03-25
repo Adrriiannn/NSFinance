@@ -48,18 +48,18 @@ type SavingsMonthMetric = {
 const analyticsModeOrder: PlanningAnalyticsMode[] = ["actual", "planned", "variance", "savings"];
 const SAVINGS_DOMAIN_MATCH = ["saving", "invest"];
 const SAVINGS_MONTH_COLORS = [
-  "#58D2E6",
-  "#4EA8FF",
-  "#39C6A8",
-  "#7DD3FC",
-  "#60A5FA",
-  "#2DD4BF",
-  "#38BDF8",
-  "#5EEAD4",
-  "#34D399",
-  "#22D3EE",
-  "#7DD3FC",
-  "#67E8F9"
+  "#F28C28",
+  "#FF9F43",
+  "#FFBE7A",
+  "#F0B44C",
+  "#D97706",
+  "#B85E00",
+  "#9A9A9A",
+  "#B5B5B5",
+  "#7C7C7C",
+  "#1DBA72",
+  "#E25A5A",
+  "#F28C28"
 ];
 const monthLabelFormatter = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" });
 
@@ -498,10 +498,10 @@ const styles = StyleSheet.create({
     gap: 12
   },
   topMonthChip: {
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     paddingHorizontal: spacing[10],
     paddingVertical: spacing[8],
     flexDirection: "row",
@@ -514,7 +514,7 @@ const styles = StyleSheet.create({
   topMonthChipTitle: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   topMonthChipAmount: {
     color: palette.textSecondary,
@@ -535,7 +535,7 @@ const styles = StyleSheet.create({
   legendDot: {
     width: 10,
     height: 10,
-    borderRadius: 999
+    borderRadius: 6
   },
   legendLabel: {
     color: palette.textPrimary,
@@ -545,7 +545,7 @@ const styles = StyleSheet.create({
   legendValue: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   breakdownWrap: {
     gap: spacing[12]
@@ -568,7 +568,7 @@ const styles = StyleSheet.create({
   monthLabel: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   monthMetricsColumn: {
     alignItems: "flex-end",
@@ -577,7 +577,7 @@ const styles = StyleSheet.create({
   monthAmount: {
     color: palette.textPrimary,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   monthMeta: {
     color: palette.textSecondary,
@@ -585,13 +585,13 @@ const styles = StyleSheet.create({
   },
   monthProgressTrack: {
     height: 10,
-    borderRadius: 999,
+    borderRadius: 6,
     backgroundColor: "rgba(226,236,255,0.12)",
     overflow: "hidden"
   },
   monthProgressFill: {
     height: "100%",
-    borderRadius: 999
+    borderRadius: 6
   },
   categoryCard: {
     gap: spacing[12]
@@ -607,7 +607,7 @@ const styles = StyleSheet.create({
   categoryIconWrap: {
     width: 44,
     height: 44,
-    borderRadius: 14,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -619,19 +619,19 @@ const styles = StyleSheet.create({
   categoryName: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   progressTrackWrap: {
     width: "72%"
   },
   progressTrack: {
     height: 10,
-    borderRadius: 999,
+    borderRadius: 6,
     overflow: "hidden"
   },
   progressFill: {
     height: "100%",
-    borderRadius: 999
+    borderRadius: 6
   },
   categoryMetricsColumn: {
     width: 90,
@@ -641,7 +641,7 @@ const styles = StyleSheet.create({
   categoryMetricPrimary: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700",
+    fontWeight: "600",
     textAlign: "right"
   },
   categoryMetricSecondary: {
@@ -665,21 +665,21 @@ const styles = StyleSheet.create({
   subcategoryAmount: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   drillDownButton: {
     minHeight: 40,
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     alignItems: "center",
     justifyContent: "center"
   },
   drillDownLabel: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });
 

@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
   segment: {
     position: "absolute",
     height: 2.4,
-    borderRadius: 2
+    borderRadius: 6
   },
   yGridRow: {
     position: "absolute",
@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
   gridLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "rgba(220,232,255,0.1)"
+    backgroundColor: "rgba(242,140,40,0.1)"
   },
   xAxisBase: {
     position: "absolute",
@@ -274,17 +274,17 @@ const styles = StyleSheet.create({
     right: RIGHT_GUTTER,
     bottom: BOTTOM_GUTTER,
     height: 1,
-    backgroundColor: "rgba(220,232,255,0.16)"
+    backgroundColor: "rgba(242,140,40,0.16)"
   },
   xGuideLine: {
     position: "absolute",
     width: 1,
-    backgroundColor: "rgba(220,232,255,0.1)"
+    backgroundColor: "rgba(242,140,40,0.1)"
   },
   xMinorTick: {
     position: "absolute",
     width: 1,
-    backgroundColor: "rgba(220,232,255,0.16)"
+    backgroundColor: "rgba(242,140,40,0.16)"
   },
   xCheckpointWrap: {
     position: "absolute",

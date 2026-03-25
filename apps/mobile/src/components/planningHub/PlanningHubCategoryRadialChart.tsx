@@ -37,7 +37,7 @@ export function PlanningHubCategoryRadialChart({ data, totalLabel, centerLabel =
               cx={CENTER}
               cy={CENTER}
               r={RADIUS}
-              stroke="rgba(226,236,255,0.08)"
+              stroke="rgba(242,140,40,0.12)"
               strokeWidth={STROKE_WIDTH}
               fill="none"
             />
@@ -68,7 +68,7 @@ export function PlanningHubCategoryRadialChart({ data, totalLabel, centerLabel =
           </G>
         </Svg>
 
-        <View style={styles.centerBubble}>
+        <View style={styles.centerContent}>
           <Text style={styles.centerLabel}>{centerLabel}</Text>
           <Text style={styles.centerValue}>{totalLabel}</Text>
         </View>
@@ -113,14 +113,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     position: "relative"
   },
-  centerBubble: {
+  centerContent: {
     position: "absolute",
     width: 88,
     height: 88,
-    borderRadius: 44,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8
@@ -132,8 +128,7 @@ const styles = StyleSheet.create({
   centerValue: {
     marginTop: 4,
     color: palette.textPrimary,
-    ...typography.bodyStrong,
-    fontWeight: "700",
+    ...typography.amount,
     textAlign: "center"
   }
 });

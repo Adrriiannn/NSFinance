@@ -21,9 +21,11 @@ export const palette = {
   borderStrong: theme.colors.border.strong,
   primary: theme.colors.action.primary,
   primaryGlow: theme.colors.action.primaryGlow,
-  accent: theme.colors.accent.cyan,
+  accent: theme.colors.accent.primary,
+  accentStrong: theme.colors.accent.primaryStrong,
   textPrimary: theme.colors.text.primary,
   textSecondary: theme.colors.text.secondary,
+  textMuted: theme.colors.text.muted,
   success: theme.colors.status.success,
   caution: theme.colors.status.warning,
   negative: theme.colors.status.danger,
@@ -45,9 +47,10 @@ export const surfaces = {
 } as const;
 
 export const radius = {
+  none: radiusScale.none,
   small: radiusScale.small,
-  medium: radiusScale.large,
-  large: radiusScale.xl,
+  medium: radiusScale.medium,
+  large: radiusScale.large,
   hero: radiusScale.hero,
   pill: radiusScale.pill,
   fab: radiusScale.fab
@@ -69,14 +72,14 @@ export const controls = {
   iconButtonSize: sizing.iconButton.standard,
   compactRadius: radiusScale.small,
   fieldRadius: radiusScale.medium,
-  buttonRadius: radiusScale.hero,
+  buttonRadius: radiusScale.medium,
   controlSurface: surfaces.field,
   controlSurfaceMuted: surfaces.field,
   controlSurfaceStrong: surfaces.fieldStrong,
   primaryFill: theme.colors.action.primary,
-  primaryBorder: "rgba(127, 174, 255, 0.4)",
-  activeFill: "rgba(47, 107, 255, 0.26)",
-  activeBorder: "rgba(127, 174, 255, 0.36)",
+  primaryBorder: theme.colors.action.primary,
+  activeFill: "rgba(242, 140, 40, 0.18)",
+  activeBorder: "rgba(242, 140, 40, 0.32)",
   pressedScale: 0.985
 } as const;
 
@@ -105,7 +108,7 @@ export const typography = {
   body: typographyScale.body,
   bodyStrong: {
     ...typographyScale.body,
-    fontWeight: "600" as const
+    fontWeight: "500" as const
   },
   cardTitle: typographyScale.cardTitle,
   amount: typographyScale.amount,

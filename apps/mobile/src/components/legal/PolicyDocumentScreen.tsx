@@ -40,9 +40,9 @@ export function PolicyDocumentScreen({
         />
       ) : isLoading ? (
         <View style={styles.loadingWrap}>
-          <SkeletonBlock style={{ height: 24, borderRadius: 8 }} />
-          <SkeletonBlock style={{ height: 18, borderRadius: 8 }} />
-          <SkeletonBlock style={{ height: 280, borderRadius: 12 }} />
+          <SkeletonBlock style={{ height: 24, borderRadius: 6 }} />
+          <SkeletonBlock style={{ height: 18, borderRadius: 6 }} />
+          <SkeletonBlock style={{ height: 280, borderRadius: 6 }} />
         </View>
       ) : policy ? (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>

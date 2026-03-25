@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { HEADER_CONSTANTS } from "../../../layout/header/header.constants";
-import { palette, radius, spacing } from "../../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography } from "../../../theme/tokens";
 import { ActivitySearchDropdown } from "./ActivitySearchDropdown";
 import { ActivitySearchToken } from "./ActivitySearchToken";
 import type {
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.small,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(19,38,60,0.96)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[10],
     flexDirection: "row",
     alignItems: "center",
@@ -237,9 +237,7 @@ const styles = StyleSheet.create({
   mainInput: {
     minWidth: 120,
     color: palette.textPrimary,
-    fontSize: 13,
-    lineHeight: 17,
-    fontWeight: "600",
+    ...typography.caption,
     paddingVertical: 0
   },
   mainInputWithTokens: {

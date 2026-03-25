@@ -459,7 +459,7 @@ const styles = StyleSheet.create({
   sectionEyebrow: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "800",
+    fontWeight: "600",
     letterSpacing: 1.1,
     textTransform: "uppercase"
   },
@@ -477,9 +477,9 @@ const styles = StyleSheet.create({
   heroActionButton: {
     minHeight: 48,
     borderRadius: radius.medium,
-    backgroundColor: "rgba(47,107,255,0.24)",
+    backgroundColor: "rgba(242,140,40,0.24)",
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.34)",
+    borderColor: "rgba(242,140,40,0.34)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -488,7 +488,7 @@ const styles = StyleSheet.create({
   heroActionLabel: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   heroRail: {
     gap: 0,
@@ -525,14 +525,14 @@ const styles = StyleSheet.create({
   statusPill: {
     minHeight: 30,
     paddingHorizontal: spacing[12],
-    borderRadius: 999,
+    borderRadius: 6,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center"
   },
   statusPillLabel: {
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   heroMetricsGrid: {
     flexDirection: "row",
@@ -550,7 +550,7 @@ const styles = StyleSheet.create({
   metricValue: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   metricPositive: {
     color: palette.success
@@ -569,18 +569,18 @@ const styles = StyleSheet.create({
   progressLabel: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   progressTrack: {
     height: 10,
-    borderRadius: 999,
+    borderRadius: 6,
     backgroundColor: "rgba(226,236,255,0.08)",
     overflow: "hidden"
   },
   progressFill: {
     height: "100%",
     backgroundColor: palette.primary,
-    borderRadius: 999
+    borderRadius: 6
   },
   paceSignal: {
     color: palette.textPrimary,
@@ -602,17 +602,17 @@ const styles = StyleSheet.create({
   quickActionIconWrap: {
     width: 48,
     height: 48,
-    borderRadius: 16,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(47,107,255,0.2)",
+    backgroundColor: "rgba(242,140,40,0.2)",
     borderWidth: 1,
-    borderColor: "rgba(127,174,255,0.26)"
+    borderColor: "rgba(242,140,40,0.26)"
   },
   quickActionLabel: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700",
+    fontWeight: "600",
     textAlign: "center"
   },
   quickActionHint: {
@@ -621,10 +621,10 @@ const styles = StyleSheet.create({
     top: 12,
     width: 30,
     height: 30,
-    borderRadius: 15,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(12,25,43,0.82)",
+    backgroundColor: "rgba(17,17,17,0.82)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)"
   },
@@ -653,19 +653,19 @@ const styles = StyleSheet.create({
     minWidth: 24,
     height: 24,
     paddingHorizontal: 6,
-    borderRadius: 12,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },
   statusCountText: {
     color: "#041120",
     ...typography.caption,
-    fontWeight: "800"
+    fontWeight: "600"
   },
   statusIconWrap: {
     width: 48,
     height: 48,
-    borderRadius: 16,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1
@@ -676,7 +676,7 @@ const styles = StyleSheet.create({
   statusCardLabel: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700",
+    fontWeight: "600",
     textAlign: "center"
   },
   statusCardLabelSelected: {
@@ -685,17 +685,17 @@ const styles = StyleSheet.create({
   clearFilterButton: {
     minHeight: 34,
     paddingHorizontal: spacing[12],
-    borderRadius: 999,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(18,36,58,0.72)",
+    backgroundColor: "rgba(21,21,21,0.72)",
     borderWidth: 1,
     borderColor: palette.border
   },
   clearFilterLabel: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   planList: {
     gap: spacing[12]
@@ -716,7 +716,7 @@ const styles = StyleSheet.create({
   planCardTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   planCardMeta: {
     color: palette.textSecondary,
@@ -740,7 +740,7 @@ const styles = StyleSheet.create({
   planIndicator: {
     color: palette.textSecondary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });
 

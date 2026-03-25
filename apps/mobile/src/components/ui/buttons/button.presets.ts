@@ -28,25 +28,25 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
     container: {
       ...baseContainer,
       minHeight: sizing.button.heights.standard,
-      borderRadius: radius.hero,
+      borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.standard,
       backgroundColor: controls.primaryFill,
       borderColor: controls.primaryBorder
     },
     label: {
       ...baseLabel,
-      color: palette.textPrimary
+      color: "#FFFFFF"
     },
-    activityColor: palette.textPrimary
+    activityColor: "#FFFFFF"
   },
   secondary: {
     container: {
       ...baseContainer,
       minHeight: sizing.button.heights.standard,
-      borderRadius: radius.hero,
+      borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.standard,
-      backgroundColor: surfaces.section,
-      borderColor: palette.borderStrong
+      backgroundColor: "#141414",
+      borderColor: "rgba(255, 255, 255, 0.08)"
     },
     label: {
       ...baseLabel,
@@ -58,25 +58,25 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
     container: {
       ...baseContainer,
       minHeight: sizing.button.heights.standard,
-      borderRadius: radius.hero,
+      borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.standard,
       backgroundColor: "transparent",
       borderColor: "transparent"
     },
     label: {
       ...baseLabel,
-      color: palette.primaryGlow
+      color: palette.accent
     },
-    activityColor: palette.primaryGlow
+    activityColor: palette.accent
   },
   destructive: {
     container: {
       ...baseContainer,
       minHeight: sizing.button.heights.standard,
-      borderRadius: radius.hero,
+      borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.standard,
-      backgroundColor: "rgba(244, 104, 119, 0.16)",
-      borderColor: "rgba(244, 104, 119, 0.34)"
+      backgroundColor: "rgba(226, 90, 90, 0.12)",
+      borderColor: "rgba(226, 90, 90, 0.52)"
     },
     label: {
       ...baseLabel,
@@ -90,7 +90,7 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
       width: sizing.button.heights.icon,
       height: sizing.button.heights.icon,
       borderRadius: radius.medium,
-      backgroundColor: surfaces.fieldStrong,
+      backgroundColor: "#141414",
       borderColor: palette.border
     },
     label: {
@@ -104,16 +104,16 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
     container: {
       ...baseContainer,
       minHeight: sizing.button.heights.compact,
-      borderRadius: radius.hero,
+      borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.compact,
-      backgroundColor: surfaces.section,
+      backgroundColor: "#141414",
       borderColor: palette.border
     },
     label: {
       ...baseLabel,
       color: palette.textPrimary,
       ...typography.caption,
-      fontWeight: "700"
+      fontWeight: "500"
     },
     activityColor: palette.textPrimary
   },
@@ -121,10 +121,10 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
     container: {
       ...baseContainer,
       minHeight: sizing.button.heights.pillAction,
-      borderRadius: radius.pill,
+      borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.standard,
-      backgroundColor: "rgba(47, 107, 255, 0.22)",
-      borderColor: "rgba(127, 174, 255, 0.4)"
+      backgroundColor: "#141414",
+      borderColor: palette.border
     },
     label: {
       ...baseLabel,

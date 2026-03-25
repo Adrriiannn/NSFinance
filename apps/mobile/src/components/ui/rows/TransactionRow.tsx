@@ -80,8 +80,8 @@ export function TransactionRow({
             {
               backgroundColor:
                 transaction.direction === "Expense"
-                  ? "rgba(244, 91, 105, 0.32)"
-                  : "rgba(24, 195, 126, 0.32)"
+                  ? "rgba(226, 90, 90, 0.26)"
+                  : "rgba(29, 186, 114, 0.22)"
             }
           ]}
         >

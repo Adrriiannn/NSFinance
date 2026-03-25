@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../theme/tokens";
 
 export type ConnectionStatus =
   | "not_connected"
@@ -23,7 +23,7 @@ const statusConfig: Record<
 > = {
   not_connected: {
     label: "Not connected",
-    color: "rgba(200,210,228,0.46)",
+    color: palette.textMuted,
     helper: "Connect your bank to import linked accounts, balances, and transactions."
   },
   opening_bank: {
@@ -113,10 +113,10 @@ const styles = StyleSheet.create({
   ledGlow: {
     width: 18,
     height: 18,
-    borderRadius: 9,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(9,19,33,0.85)",
+    backgroundColor: surfaces.field,
     shadowOpacity: 0.58,
     shadowRadius: 9,
     shadowOffset: { width: 0, height: 0 },

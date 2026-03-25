@@ -21,6 +21,8 @@ export default function CalendarPlaceholderScreen() {
               ? "This shared calendar is currently showing the planning-hub context."
               : "This shared calendar is currently showing the finance-hub context."
           }
+          hideOrb
+          centerText
         />
       </View>
     </>

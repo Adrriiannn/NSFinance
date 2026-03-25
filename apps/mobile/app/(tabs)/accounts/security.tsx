@@ -476,7 +476,7 @@ export default function SecuritySettingsScreen() {
               value={biometricEnabled}
               onValueChange={setBiometricEnabled}
               thumbColor={palette.textPrimary}
-              trackColor={{ false: "rgba(134,154,184,0.4)", true: "rgba(47,107,255,0.8)" }}
+              trackColor={{ false: "rgba(80,80,80,0.55)", true: "rgba(242,140,40,0.8)" }}
             />
           </View>
 
@@ -874,24 +874,24 @@ const styles = StyleSheet.create({
     gap: spacing[8],
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
-    backgroundColor: "rgba(18,36,58,0.6)",
+    borderRadius: 6,
+    backgroundColor: "rgba(21,21,21,0.6)",
     padding: spacing[12]
   },
   bankRow: {
     gap: spacing[8],
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
-    backgroundColor: "rgba(18,36,58,0.6)",
+    borderRadius: 6,
+    backgroundColor: "rgba(21,21,21,0.6)",
     padding: spacing[12]
   },
   requestRow: {
     gap: spacing[8],
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
-    backgroundColor: "rgba(18,36,58,0.6)",
+    borderRadius: 6,
+    backgroundColor: "rgba(21,21,21,0.6)",
     padding: spacing[12]
   },
   sessionTitle: {
@@ -925,10 +925,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
+    borderRadius: 6,
     minHeight: 44,
     paddingHorizontal: spacing[12],
-    backgroundColor: "rgba(18,36,58,0.74)"
+    backgroundColor: "rgba(21,21,21,0.74)"
   },
   toggleLabel: {
     color: palette.textPrimary,
@@ -936,17 +936,17 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(4,11,23,0.74)",
+    backgroundColor: "rgba(9,9,9,0.74)",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: spacing[16]
   },
   modalCard: {
     width: "100%",
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.98)",
+    backgroundColor: "rgba(17,17,17,0.98)",
     padding: spacing[16],
     gap: spacing[12]
   },

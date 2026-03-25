@@ -7,8 +7,8 @@ export const surfacePresets = {
     backgroundColor: palette.overlay
   } as ViewStyle,
   modalSheet: {
-    borderTopLeftRadius: radius.hero,
-    borderTopRightRadius: radius.hero,
+    borderTopLeftRadius: radius.medium,
+    borderTopRightRadius: radius.medium,
     borderWidth: borders.width.thin,
     borderColor: palette.border,
     backgroundColor: surfaces.sheet,
@@ -16,33 +16,33 @@ export const surfacePresets = {
     paddingTop: spacing[20],
     paddingBottom: spacing[24],
     gap: spacing[16],
-    ...shadows.raised
+    ...shadows.soft
   } as ViewStyle,
   modalHandle: {
     alignSelf: "center",
     width: sizing.modalSheet.handleWidth,
     height: sizing.modalSheet.handleHeight,
-    borderRadius: radius.pill,
+    borderRadius: radius.small,
     backgroundColor: palette.borderStrong
   } as ViewStyle,
   dialog: {
     width: "100%",
     maxWidth: 360,
-    borderRadius: radius.hero,
+    borderRadius: radius.medium,
     borderWidth: borders.width.thin,
     borderColor: palette.border,
     backgroundColor: surfaces.sheet,
     padding: spacing[20],
     gap: spacing[16],
-    ...shadows.raised
+    ...shadows.soft
   } as ViewStyle,
   fab: {
     minHeight: sizing.fab.extendedHeight,
-    borderRadius: radius.fab,
+    borderRadius: radius.medium,
     borderWidth: borders.width.thin,
     borderColor: palette.borderStrong,
     backgroundColor: surfaces.floating,
-    ...shadows.floating
+    ...shadows.soft
   } as ViewStyle,
   fabCompact: {
     width: sizing.fab.size,
@@ -51,8 +51,8 @@ export const surfacePresets = {
   } as ViewStyle,
   tabBarShell: {
     minHeight: sizing.tabBar.height,
-    borderTopLeftRadius: radius.hero,
-    borderTopRightRadius: radius.hero,
+    borderTopLeftRadius: radius.small,
+    borderTopRightRadius: radius.small,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
     borderWidth: borders.width.thin,
@@ -62,7 +62,7 @@ export const surfacePresets = {
     alignItems: "center",
     paddingHorizontal: spacing[8],
     paddingVertical: spacing[8],
-    ...shadows.floating
+    ...shadows.none
   } as ViewStyle,
   tabBarDocked: {
     position: "absolute",

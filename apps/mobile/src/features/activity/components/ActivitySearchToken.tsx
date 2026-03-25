@@ -1,7 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { palette, spacing, typography } from "../../../theme/tokens";
-import type { ActivitySearchToken as ActivitySearchTokenModel } from "../search/activitySearch.types";
+import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
+import type {
+  ActivityCategoryTokenValue,
+  ActivitySearchToken as ActivitySearchTokenModel
+} from "../search/activitySearch.types";
 
 type ActivitySearchTokenProps = {
   token: ActivitySearchTokenModel;
@@ -24,6 +27,10 @@ export function ActivitySearchToken({
   onPressToken,
   onOpenCategoryPicker
 }: ActivitySearchTokenProps) {
+  const categoryValue =
+    token.type === "category" ? (token.value as ActivityCategoryTokenValue) : null;
+  const isCategoryPlaceholder =
+    token.type === "category" && !categoryValue?.domainName?.trim();
   const showDraftInput =
     isActive &&
     (token.type === "transaction" ||
@@ -68,9 +75,19 @@ export function ActivitySearchToken({
           }}
           style={({ pressed }) => [styles.valueWrap, pressed ? styles.valuePressed : null]}
         >
-          <Text numberOfLines={1} style={styles.value}>
-            {token.displayValue || "Set value"}
-          </Text>
+          <View
+            style={[
+              isCategoryPlaceholder ? styles.valueHintWrap : null,
+              isCategoryPlaceholder ? styles.valueHintUnderline : null
+            ]}
+          >
+            <Text
+              numberOfLines={1}
+              style={[styles.value, isCategoryPlaceholder ? styles.valueHint : null]}
+            >
+              {token.displayValue || "Set value"}
+            </Text>
+          </View>
         </Pressable>
       )}
 
@@ -89,10 +106,10 @@ export function ActivitySearchToken({
 const styles = StyleSheet.create({
   token: {
     minHeight: 28,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(23,44,69,0.92)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[6],
     flexDirection: "row",
     alignItems: "center",
@@ -100,13 +117,13 @@ const styles = StyleSheet.create({
     maxWidth: 228
   },
   tokenActive: {
-    borderColor: "rgba(127,174,255,0.7)",
-    backgroundColor: "rgba(32,59,94,0.94)"
+    borderColor: palette.borderStrong,
+    backgroundColor: surfaces.fieldStrong
   },
   label: {
-    color: palette.textSecondary,
+    color: palette.accent,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "500"
   },
   valueWrap: {
     flexShrink: 1
@@ -118,6 +135,17 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...typography.caption
   },
+  valueHint: {
+    color: palette.textSecondary
+  },
+  valueHintWrap: {
+    alignSelf: "flex-start"
+  },
+  valueHintUnderline: {
+    borderBottomWidth: 1,
+    borderBottomColor: palette.accent,
+    paddingBottom: 1
+  },
   tokenInput: {
     color: palette.textPrimary,
     ...typography.caption,
@@ -128,7 +156,7 @@ const styles = StyleSheet.create({
   removeButton: {
     width: 18,
     height: 18,
-    borderRadius: 9,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center"
   },

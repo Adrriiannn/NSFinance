@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Pressable } from "react-native";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { AppText } from "../text/AppText";
+import { palette } from "../../../theme/tokens";
 import { chipPresets, chipSelectedStyle, chipToneStyles, type ChipTone, type ChipVariant } from "./chip.presets";
 
 type ChipProps = {
@@ -42,7 +43,7 @@ export function Chip({
       {icon}
       <AppText
         preset={variant === "compact" ? "caption" : "fieldLabel"}
-        style={[preset.label, selected ? { color: "#E2ECFF" } : null, labelStyle]}
+        style={[preset.label, selected ? { color: palette.textPrimary } : null, labelStyle]}
       >
         {label}
       </AppText>

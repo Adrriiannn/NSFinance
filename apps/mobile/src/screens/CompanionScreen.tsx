@@ -148,16 +148,16 @@ type ChatColorTheme = {
 
 const CHAT_COLOR_THEMES: Record<CompanionChatColor, ChatColorTheme> = {
   blue: {
-    label: "Blue",
-    borderColor: "rgba(82,140,255,0.52)",
-    backgroundColor: "rgba(18,36,58,0.8)",
-    swatchColor: "#3C74FF"
+    label: "Slate",
+    borderColor: "rgba(154,154,154,0.42)",
+    backgroundColor: "rgba(21,21,21,0.8)",
+    swatchColor: "#9A9A9A"
   },
   yellow: {
     label: "Yellow",
-    borderColor: "rgba(237,190,78,0.56)",
+    borderColor: "rgba(240,180,76,0.56)",
     backgroundColor: "rgba(63,50,18,0.78)",
-    swatchColor: "#E5B947"
+    swatchColor: "#F0B44C"
   },
   green: {
     label: "Green",
@@ -166,34 +166,34 @@ const CHAT_COLOR_THEMES: Record<CompanionChatColor, ChatColorTheme> = {
     swatchColor: "#4DD690"
   },
   pink: {
-    label: "Pink",
-    borderColor: "rgba(242,122,187,0.56)",
-    backgroundColor: "rgba(76,29,67,0.78)",
-    swatchColor: "#F27ABB"
+    label: "Rose",
+    borderColor: "rgba(226,90,90,0.56)",
+    backgroundColor: "rgba(70,34,34,0.78)",
+    swatchColor: "#E25A5A"
   },
   red: {
     label: "Red",
-    borderColor: "rgba(244,104,119,0.56)",
+    borderColor: "rgba(226,90,90,0.56)",
     backgroundColor: "rgba(82,22,35,0.76)",
-    swatchColor: "#F46877"
+    swatchColor: "#E25A5A"
   },
   white: {
-    label: "White",
-    borderColor: "rgba(225,235,252,0.7)",
-    backgroundColor: "rgba(90,110,140,0.34)",
-    swatchColor: "#EAF1FF"
+    label: "Silver",
+    borderColor: "rgba(216,216,216,0.7)",
+    backgroundColor: "rgba(58,58,58,0.62)",
+    swatchColor: "#D8D8D8"
   },
   orange: {
     label: "Orange",
-    borderColor: "rgba(255,166,94,0.56)",
+    borderColor: "rgba(242,140,40,0.56)",
     backgroundColor: "rgba(88,45,15,0.78)",
-    swatchColor: "#FF9F4A"
+    swatchColor: "#F28C28"
   },
   purple: {
-    label: "Purple",
-    borderColor: "rgba(160,128,255,0.56)",
-    backgroundColor: "rgba(52,35,86,0.78)",
-    swatchColor: "#9F79FF"
+    label: "Charcoal",
+    borderColor: "rgba(154,154,154,0.56)",
+    backgroundColor: "rgba(42,42,42,0.78)",
+    swatchColor: "#9A9A9A"
   },
   brown: {
     label: "Brown",
@@ -218,7 +218,7 @@ const CHAT_COLOR_ORDER: CompanionChatColor[] = [
 const CHAT_TITLE_MAX_LENGTH = 56;
 
 const getChatColorTheme = (color: CompanionChatColor | undefined): ChatColorTheme => {
-  return CHAT_COLOR_THEMES[color ?? "blue"];
+  return CHAT_COLOR_THEMES[color ?? "orange"];
 };
 
 const sortChatsByPinAndRecency = (items: CompanionChat[]): CompanionChat[] => {
@@ -247,7 +247,7 @@ const createChat = (): CompanionChat => {
     createdUtc: now,
     updatedUtc: now,
     messages: [],
-    color: "blue",
+    color: "orange",
     isPinned: false,
     pinnedUtc: null
   };
@@ -408,7 +408,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
   const [editChatVisible, setEditChatVisible] = useState(false);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingChatTitle, setEditingChatTitle] = useState("");
-  const [editingChatColor, setEditingChatColor] = useState<CompanionChatColor>("blue");
+  const [editingChatColor, setEditingChatColor] = useState<CompanionChatColor>("orange");
   const [introPair, setIntroPair] = useState<IntroPromptPair>(() => pickPromptPair());
   const [defaultPromptSet, setDefaultPromptSet] = useState<string[]>(() =>
     rotateStarterPrompts()
@@ -1303,11 +1303,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing[12]
   },
   userBubble: {
-    borderColor: "rgba(82,140,255,0.46)",
-    backgroundColor: "rgba(26,43,70,0.9)"
+    borderColor: "rgba(242,140,40,0.46)",
+    backgroundColor: "rgba(23,23,23,0.9)"
   },
   assistantBubble: {
-    borderColor: "rgba(111,215,255,0.3)",
+    borderColor: "rgba(255,190,122,0.3)",
     backgroundColor: surfaces.card
   },
   chatText: {
@@ -1325,7 +1325,7 @@ const styles = StyleSheet.create({
   emptyIntro: {
     color: palette.textPrimary,
     ...typography.title2,
-    fontWeight: "700",
+    fontWeight: "600",
     textAlign: "center"
   },
   inputArea: {
@@ -1346,7 +1346,7 @@ const styles = StyleSheet.create({
     minHeight: sizing.chip.heights.standard,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: "rgba(220,232,255,0.2)",
+    borderColor: "rgba(242,140,40,0.2)",
     backgroundColor: surfaces.fieldStrong,
     justifyContent: "center",
     paddingHorizontal: sizing.chip.horizontalPadding.standard
@@ -1446,7 +1446,7 @@ const styles = StyleSheet.create({
     height: sizing.chip.heights.large,
     borderRadius: radius.small,
     borderWidth: 1,
-    borderColor: "rgba(161,190,230,0.35)",
+    borderColor: "rgba(242,140,40,0.2)",
     backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center"
@@ -1456,14 +1456,14 @@ const styles = StyleSheet.create({
     height: sizing.chip.heights.large,
     borderRadius: radius.small,
     borderWidth: 1,
-    borderColor: "rgba(161,190,230,0.35)",
+    borderColor: "rgba(242,140,40,0.2)",
     backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center"
   },
   historyPinButtonActive: {
-    borderColor: "rgba(82,140,255,0.56)",
-    backgroundColor: "rgba(26,52,91,0.76)"
+    borderColor: "rgba(242,140,40,0.52)",
+    backgroundColor: "rgba(242,140,40,0.2)"
   },
   historyDeleteButton: {
     width: sizing.chip.heights.large,
@@ -1491,7 +1491,7 @@ const styles = StyleSheet.create({
   },
   historyPinnedDivider: {
     height: 1,
-    backgroundColor: "rgba(134,154,184,0.34)"
+    backgroundColor: "rgba(242,140,40,0.2)"
   },
   historyPinnedLabel: {
     color: palette.textSecondary,
@@ -1544,7 +1544,7 @@ const styles = StyleSheet.create({
     height: sizing.button.heights.compact,
     borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: "rgba(134,154,184,0.42)",
+    borderColor: "rgba(242,140,40,0.22)",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: surfaces.field
@@ -1556,7 +1556,7 @@ const styles = StyleSheet.create({
   colorSwatchDot: {
     width: 20,
     height: 20,
-    borderRadius: 10
+    borderRadius: 6
   },
   editActions: {
     flexDirection: "row",
@@ -1569,7 +1569,7 @@ const styles = StyleSheet.create({
     minWidth: 94,
     borderRadius: radius.small,
     borderWidth: 1,
-    borderColor: "rgba(161,190,230,0.35)",
+    borderColor: "rgba(242,140,40,0.2)",
     backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center",

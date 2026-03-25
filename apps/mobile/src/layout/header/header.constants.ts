@@ -13,21 +13,21 @@ export const HEADER_CONSTANTS = {
   leadingSlotWidth: 44,
   trailingSlotWidth: 44,
   iconSize: 20,
-  iconButtonRadius: 14,
+  iconButtonRadius: 6,
   titleMaxWidthDefault: "56%",
   titleMaxWidthCentered: "62%",
   subtitleMaxWidth: "72%",
   inlineButtonHeight: 36,
-  inlineButtonRadius: 18,
+  inlineButtonRadius: 6,
   dropdownHeight: 36,
-  dropdownRadius: 18,
+  dropdownRadius: 6,
   searchHeight: 36,
-  searchRadius: 18,
+  searchRadius: 6,
   stickyDividerHeight: 1,
   stickyElevatedOpacity: 0.94,
   scrollTransitionDuration: 160,
   zIndex: zIndex.tabBar + 5,
-  blurOrTintOpacity: 0.18,
+  blurOrTintOpacity: 0.22,
   greetingTitleMaxWidth: "72%",
   greetingSubtitleMaxWidth: "100%",
   greetingTitleSubtitleGap: 2
@@ -36,40 +36,46 @@ export const HEADER_CONSTANTS = {
 export const HEADER_TYPOGRAPHY = {
   headerTitle: {
     color: palette.textPrimary,
-    fontSize: 18,
+    fontSize: 17,
     lineHeight: 22,
-    fontWeight: "700"
+    fontWeight: "600",
+    fontFamily: "Inter-SemiBold"
   } satisfies TextStyle,
   headerSubtitle: {
     color: palette.textSecondary,
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: "500"
+    fontWeight: "400",
+    fontFamily: "Inter-Regular"
   } satisfies TextStyle,
   headerCenteredTitle: {
     color: palette.textPrimary,
-    fontSize: 18,
+    fontSize: 17,
     lineHeight: 22,
-    fontWeight: "700",
+    fontWeight: "600",
+    fontFamily: "Inter-SemiBold",
     textAlign: "center"
   } satisfies TextStyle,
   headerGreetingTitle: {
     color: palette.textPrimary,
     fontSize: 22,
     lineHeight: 26,
-    fontWeight: "700"
+    fontWeight: "600",
+    fontFamily: "Inter-SemiBold"
   } satisfies TextStyle,
   headerDropdownText: {
     color: palette.textPrimary,
     fontSize: 14,
     lineHeight: 18,
-    fontWeight: "600"
+    fontWeight: "500",
+    fontFamily: "Inter-Medium"
   } satisfies TextStyle,
   headerButtonText: {
     color: palette.textPrimary,
     fontSize: 13,
     lineHeight: 16,
-    fontWeight: "700"
+    fontWeight: "500",
+    fontFamily: "Inter-Medium"
   } satisfies TextStyle
 } as const;
 
@@ -78,7 +84,7 @@ export const HEADER_SURFACES = {
     backgroundColor: surfaces.app
   } satisfies ViewStyle,
   divider: {
-    backgroundColor: `rgba(220,232,255,${HEADER_CONSTANTS.blurOrTintOpacity})`
+    backgroundColor: `rgba(242,140,40,${HEADER_CONSTANTS.blurOrTintOpacity})`
   } satisfies ViewStyle,
   iconButton: {
     width: HEADER_CONSTANTS.touchTarget,
@@ -86,7 +92,7 @@ export const HEADER_SURFACES = {
     borderRadius: HEADER_CONSTANTS.iconButtonRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(12,25,43,0.82)",
+    backgroundColor: "rgba(17,17,17,0.96)",
     alignItems: "center",
     justifyContent: "center"
   } satisfies ViewStyle,

@@ -1,4 +1,4 @@
-﻿import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { PlanningHubScreen } from "../../../../src/components/planningHub/PlanningHubScreen";
@@ -146,7 +146,7 @@ const styles = StyleSheet.create({
   metricPill: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   sectionCard: {
     gap: spacing[12]
@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
   lineItemTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   lineItemMeta: {
     color: palette.textSecondary,
@@ -183,7 +183,7 @@ const styles = StyleSheet.create({
   lineItemAmount: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   actionStack: {
     gap: spacing[12]
@@ -203,7 +203,7 @@ const styles = StyleSheet.create({
   eventTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   eventMeta: {
     color: palette.textSecondary,

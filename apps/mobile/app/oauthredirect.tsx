@@ -2,7 +2,7 @@ import { router, useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useGoogleOAuthDebugState, pushGoogleOAuthDebugStep, updateGoogleOAuthDebugState } from "../src/features/auth/googleOAuthDebug";
-import { palette, typography } from "../src/theme/tokens";
+import { palette, surfaces, typography } from "../src/theme/tokens";
 
 const SUCCESS_REDIRECT_DELAY_MS = 600;
 
@@ -83,44 +83,58 @@ export default function OAuthRedirectScreen() {
 
   return (
     <View style={styles.container}>
-      <ActivityIndicator color={palette.primaryGlow} />
-      <Text style={styles.text}>Completing Google sign-in...</Text>
-      <Text style={styles.text}>Current step: {debugState.currentStep}</Text>
-      <Text style={styles.text}>idToken present: {debugState.idTokenPresent ? "yes" : "no"}</Text>
-      <Text style={styles.text}>idToken length: {debugState.idTokenLength}</Text>
-      <Text style={styles.text}>idToken prefix: {debugState.idTokenPrefix || "-"}</Text>
-      <Text style={styles.text}>Backend called: {debugState.backendCalled ? "yes" : "no"}</Text>
-      <Text style={styles.text}>Backend outcome: {debugState.backendOutcome}</Text>
-      {debugState.backendMessage ? <Text style={styles.errorText}>Backend message: {debugState.backendMessage}</Text> : null}
-      <View style={styles.fieldsBlock}>
-        <Text style={styles.sectionTitle}>Auth response fields</Text>
-        {responseFieldSummary.map((line) => (
-          <Text key={line} style={styles.text}>
-            {line}
-          </Text>
-        ))}
+      <View style={styles.card}>
+        <Text style={styles.eyebrow}>NSFinance Google Sign-In</Text>
+        <Text style={styles.title}>Completing sign-in</Text>
+        <View style={styles.statusRow}>
+          <ActivityIndicator color={palette.accent} size="small" />
+          <Text style={styles.statusText}>Current step: {debugState.currentStep}</Text>
+        </View>
+
+        <View style={styles.fieldsBlock}>
+          <Text style={styles.sectionTitle}>Callback status</Text>
+          <Text style={styles.text}>idToken present: {debugState.idTokenPresent ? "yes" : "no"}</Text>
+          <Text style={styles.text}>idToken length: {debugState.idTokenLength}</Text>
+          <Text style={styles.text}>idToken prefix: {debugState.idTokenPrefix || "-"}</Text>
+          <Text style={styles.text}>Backend called: {debugState.backendCalled ? "yes" : "no"}</Text>
+          <Text style={styles.text}>Backend outcome: {debugState.backendOutcome}</Text>
+          {debugState.backendMessage ? (
+            <Text style={styles.errorText}>Backend message: {debugState.backendMessage}</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.fieldsBlock}>
+          <Text style={styles.sectionTitle}>Auth response fields</Text>
+          {responseFieldSummary.map((line) => (
+            <Text key={line} style={styles.text}>
+              {line}
+            </Text>
+          ))}
+        </View>
+
+        <View style={styles.fieldsBlock}>
+          <Text style={styles.sectionTitle}>Debug timeline</Text>
+          {debugState.lines.map((line) => (
+            <Text key={line} style={styles.timelineText}>
+              {line}
+            </Text>
+          ))}
+        </View>
+
+        {canReturnToLogin ? (
+          <Pressable
+            style={({ pressed }) => [styles.backButton, pressed ? styles.backButtonPressed : null]}
+            onPress={() =>
+              router.replace({
+                pathname: "/login",
+                params: { googleError: debugState.backendMessage || "Google sign-in did not complete." }
+              } as never)
+            }
+          >
+            <Text style={styles.backButtonText}>Return to login</Text>
+          </Pressable>
+        ) : null}
       </View>
-      <View style={styles.fieldsBlock}>
-        <Text style={styles.sectionTitle}>Debug timeline</Text>
-        {debugState.lines.map((line) => (
-          <Text key={line} style={styles.timelineText}>
-            {line}
-          </Text>
-        ))}
-      </View>
-      {canReturnToLogin ? (
-        <Pressable
-          style={({ pressed }) => [styles.backButton, pressed ? styles.backButtonPressed : null]}
-          onPress={() =>
-            router.replace({
-              pathname: "/login",
-              params: { googleError: debugState.backendMessage || "Google sign-in did not complete." }
-            } as never)
-          }
-        >
-          <Text style={styles.backButtonText}>Return to login</Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -130,33 +144,62 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     backgroundColor: palette.appBackground
+  },
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    borderRadius: 6,
+    backgroundColor: surfaces.card,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 10
+  },
+  eyebrow: {
+    color: palette.textSecondary,
+    ...typography.caption,
+    letterSpacing: 1.1,
+    fontWeight: "500",
+    textTransform: "uppercase"
+  },
+  title: {
+    color: palette.textPrimary,
+    ...typography.title2,
+    fontWeight: "600"
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
+  statusText: {
+    color: palette.textSecondary,
+    ...typography.body2
   },
   text: {
     color: palette.textSecondary,
     ...typography.body2
   },
   errorText: {
+    marginTop: 4,
     color: palette.negative,
-    ...typography.caption,
-    textAlign: "center"
+    ...typography.caption
   },
   fieldsBlock: {
     width: "100%",
-    maxWidth: 360,
-    marginTop: 4,
     padding: 10,
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 10,
-    backgroundColor: "rgba(18,36,58,0.38)"
+    borderRadius: 6,
+    backgroundColor: surfaces.field
   },
   sectionTitle: {
     color: palette.textPrimary,
     ...typography.caption,
-    fontWeight: "700",
+    fontWeight: "500",
     marginBottom: 4
   },
   timelineText: {
@@ -164,21 +207,21 @@ const styles = StyleSheet.create({
     ...typography.caption
   },
   backButton: {
-    marginTop: 8,
-    minHeight: 42,
+    marginTop: 2,
+    minHeight: 44,
     paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: palette.borderStrong,
-    backgroundColor: "rgba(18,36,58,0.78)",
+    borderColor: palette.accent,
+    backgroundColor: palette.accent,
     alignItems: "center",
     justifyContent: "center"
   },
   backButtonPressed: {
-    opacity: 0.85
+    opacity: 0.9
   },
   backButtonText: {
-    color: palette.textPrimary,
+    color: palette.appBackground,
     ...typography.body2,
     fontWeight: "600"
   }

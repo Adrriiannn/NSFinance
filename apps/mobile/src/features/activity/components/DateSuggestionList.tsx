@@ -1,12 +1,39 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, spacing, typography } from "../../../theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../theme/tokens";
 import type { ActivityDateSuggestion } from "../search/activitySearch.types";
 
 type DateSuggestionListProps = {
   suggestions: ActivityDateSuggestion[];
   onSelect: (selection: ActivityDateSuggestion) => void;
 };
+
+const HINT_PREFIX_PATTERN = /(transaction:|merchant:|category:|currency:|amount:|date:)/gi;
+
+function renderHintWithPrefix(hint: string) {
+  const parts = hint.split(HINT_PREFIX_PATTERN);
+
+  return parts.map((part, index) => {
+    if (!part) {
+      return null;
+    }
+
+    const normalized = part.toLowerCase();
+    const isPrefix =
+      normalized === "transaction:" ||
+      normalized === "merchant:" ||
+      normalized === "category:" ||
+      normalized === "currency:" ||
+      normalized === "amount:" ||
+      normalized === "date:";
+
+    return (
+      <Text key={`${part}-${index}`} style={isPrefix ? styles.hintPrefix : styles.hintValue}>
+        {part}
+      </Text>
+    );
+  });
+}
 
 export function DateSuggestionList({ suggestions, onSelect }: DateSuggestionListProps) {
   if (suggestions.length === 0) {
@@ -33,9 +60,7 @@ export function DateSuggestionList({ suggestions, onSelect }: DateSuggestionList
           </View>
           <View style={styles.copyWrap}>
             <Text style={styles.title}>{item.label}</Text>
-            <Text style={styles.hint}>
-              {item.hintLabel ?? `date: ${item.mode === "weekday" ? "weekday" : "exact date"}`}
-            </Text>
+            <Text style={styles.hint}>{renderHintWithPrefix(item.hintLabel ?? `date: ${item.mode === "weekday" ? "weekday" : "exact date"}`)}</Text>
           </View>
         </Pressable>
       ))}
@@ -49,10 +74,10 @@ const styles = StyleSheet.create({
   },
   row: {
     minHeight: 48,
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,35,58,0.96)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     flexDirection: "row",
@@ -65,10 +90,10 @@ const styles = StyleSheet.create({
   iconWrap: {
     width: 26,
     height: 26,
-    borderRadius: 10,
+    borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(147,181,230,0.12)"
+    backgroundColor: surfaces.fieldStrong
   },
   copyWrap: {
     flex: 1,
@@ -76,26 +101,30 @@ const styles = StyleSheet.create({
   },
   title: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   },
   hint: {
-    color: palette.textSecondary,
     ...typography.caption
   },
+  hintPrefix: {
+    color: palette.accent,
+    fontWeight: "500"
+  },
+  hintValue: {
+    color: palette.textSecondary
+  },
   emptyWrap: {
-    borderRadius: 14,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,35,58,0.84)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     gap: 2
   },
   emptyTitle: {
     color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
+    ...typography.body2
   },
   emptyText: {
     color: palette.textSecondary,

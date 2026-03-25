@@ -441,9 +441,9 @@ const styles = StyleSheet.create({
   requestRow: {
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 12,
+    borderRadius: 6,
     padding: spacing[12],
-    backgroundColor: "rgba(18,36,58,0.66)",
+    backgroundColor: "rgba(21,21,21,0.66)",
     gap: spacing[4]
   },
   requestTitle: {
@@ -469,7 +469,7 @@ const styles = StyleSheet.create({
   attachmentItem: {
     width: 74,
     height: 74,
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
     overflow: "hidden",
@@ -485,7 +485,7 @@ const styles = StyleSheet.create({
     top: 2,
     width: 18,
     height: 18,
-    borderRadius: 9,
+    borderRadius: 6,
     backgroundColor: "rgba(9,20,35,0.9)",
     alignItems: "center",
     justifyContent: "center"

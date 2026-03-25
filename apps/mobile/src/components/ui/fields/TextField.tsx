@@ -5,6 +5,7 @@ import { FieldError } from "../forms/FieldError";
 import { FieldHint } from "../forms/FieldHint";
 import { AppText } from "../text/AppText";
 import { fieldPresets } from "./field.presets";
+import { palette } from "../../../theme/tokens";
 
 type SharedTextFieldProps = TextInputProps & {
   label?: string;
@@ -80,7 +81,7 @@ export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function Te
             setFocused(false);
             onBlur?.(event);
           }}
-          placeholderTextColor="#A7B6D1"
+          placeholderTextColor={palette.textSecondary}
           style={[
             fieldPresets.input,
             multiline ? fieldPresets.multilineInput : null,

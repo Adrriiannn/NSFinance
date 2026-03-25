@@ -1,8 +1,7 @@
-import { LinearGradient } from "expo-linear-gradient";
 import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { AnimatedCurrencyText } from "../ui/AnimatedCurrencyText";
-import { gradients, palette, radius, shadows, spacing, typography } from "../../theme/tokens";
+import { palette, radius, shadows, spacing, surfaces, typography } from "../../theme/tokens";
 
 type BalanceHeroCardProps = {
   totalBalance: number;
@@ -31,8 +30,7 @@ export function BalanceHeroCard({
   );
 
   return (
-    <LinearGradient colors={gradients.hero} style={styles.card}>
-      <View style={styles.glowDot} />
+    <View style={styles.card}>
       <View style={styles.topRow}>
         <Text style={styles.label}>{title}</Text>
         <View style={styles.badge}>
@@ -48,7 +46,7 @@ export function BalanceHeroCard({
       />
       <Text style={styles.subtitle}>{subtitle}</Text>
       {currencyNote ? <Text style={styles.currencyNote}>{currencyNote}</Text> : null}
-    </LinearGradient>
+    </View>
   );
 }
 
@@ -56,19 +54,10 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.hero,
     borderWidth: 1,
-    borderColor: "rgba(226,236,255,0.24)",
-    overflow: "hidden",
+    borderColor: palette.border,
+    backgroundColor: surfaces.card,
     padding: spacing[20],
-    ...shadows.floating
-  },
-  glowDot: {
-    position: "absolute",
-    top: -36,
-    right: -24,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    backgroundColor: "rgba(110,168,255,0.18)"
+    ...shadows.soft
   },
   topRow: {
     flexDirection: "row",
@@ -82,8 +71,10 @@ const styles = StyleSheet.create({
   badge: {
     paddingHorizontal: spacing[8],
     paddingVertical: spacing[4],
-    borderRadius: 999,
-    backgroundColor: "rgba(4,11,23,0.35)"
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: surfaces.fieldStrong
   },
   badgeText: {
     color: palette.accent,
@@ -102,7 +93,7 @@ const styles = StyleSheet.create({
   },
   currencyNote: {
     marginTop: spacing[4],
-    color: "rgba(226,236,255,0.82)",
+    color: palette.textSecondary,
     ...typography.caption
   }
 });

@@ -1,5 +1,6 @@
 import { AppText } from "./text/AppText";
 import { TextField as BaseTextField } from "./fields/TextField";
+import { palette, surfaces } from "../../theme/tokens";
 
 type TextFieldProps = React.ComponentProps<typeof BaseTextField> & {
   label: string;
@@ -30,8 +31,8 @@ export function TextField({
       inputStyle={style}
       leading={leadingText ? <AppText preset="secondary">{leadingText}</AppText> : undefined}
       containerStyle={[
-        surfaceMode === "solid" ? { backgroundColor: "#162D48" } : null,
-        forceFocused ? { borderColor: "#7FAEFF", backgroundColor: "#162D48" } : null,
+        surfaceMode === "solid" ? { backgroundColor: surfaces.fieldStrong } : null,
+        forceFocused ? { borderColor: palette.borderStrong, backgroundColor: surfaces.fieldStrong } : null,
         containerStyle
       ]}
     />

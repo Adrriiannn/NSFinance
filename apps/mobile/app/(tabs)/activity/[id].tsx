@@ -31,8 +31,8 @@ export default function PlannerTransactionDetailScreen() {
         />
       ) : transactionQuery.isLoading && !transactionQuery.data ? (
         <View style={styles.loadingWrap}>
-          <SkeletonBlock style={{ height: 148, borderRadius: 18 }} />
-          <SkeletonBlock style={{ height: 196, borderRadius: 18 }} />
+          <SkeletonBlock style={{ height: 148, borderRadius: 6 }} />
+          <SkeletonBlock style={{ height: 196, borderRadius: 6 }} />
         </View>
       ) : transactionQuery.isError ? (
         <ErrorState

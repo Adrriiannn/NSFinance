@@ -846,10 +846,10 @@ const styles = StyleSheet.create({
   rememberEmailCheckbox: {
     width: 20,
     height: 20,
-    borderRadius: 4,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.borderStrong,
-    backgroundColor: "rgba(18,36,58,0.74)",
+    backgroundColor: "rgba(21,21,21,0.74)",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -892,7 +892,7 @@ const styles = StyleSheet.create({
   socialDividerLine: {
     flex: 1,
     height: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(220,232,255,0.22)"
+    backgroundColor: "rgba(242,140,40,0.22)"
   },
   socialDividerText: {
     color: palette.textSecondary,
@@ -916,7 +916,7 @@ const styles = StyleSheet.create({
   signUpLink: {
     color: palette.primaryGlow,
     ...typography.body2,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   linkPressed: {
     opacity: 0.75
@@ -927,6 +927,6 @@ const styles = StyleSheet.create({
   },
   googleSignInMessageAccent: {
     color: palette.primaryGlow,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });

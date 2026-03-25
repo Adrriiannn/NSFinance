@@ -42,7 +42,7 @@ public static class TrueLayerCallbackEndpoint
         var appReturnUrl = BuildAppReturnUrl(outcome.AppReturnUri, appResult, outcome.Code, outcome.ConnectionId);
         var appReturnUrlForHref = WebUtility.HtmlEncode(appReturnUrl);
         var appReturnUrlForScript = appReturnUrl.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
-        var headingColor = outcome.Succeeded ? "#7ef0b8" : "#ff9f8d";
+        var headingColor = outcome.Succeeded ? "#1DBA72" : "#E25A5A";
         var buttonLabel = outcome.Succeeded ? "Return to NSFinance" : "Return to NSFinance and retry";
         var helperText = outcome.Succeeded
             ? "If NSFinance does not open automatically, use the button below and the app will continue from your saved connection state."
@@ -62,22 +62,141 @@ public static class TrueLayerCallbackEndpoint
                   <meta charset="utf-8" />
                   <meta name="viewport" content="width=device-width, initial-scale=1" />
                   <title>{{title}}</title>
+                  <meta name="theme-color" content="#050505" />
+                  <style>
+                    :root {
+                      color-scheme: dark;
+                    }
+
+                    * {
+                      box-sizing: border-box;
+                    }
+
+                    body {
+                      margin: 0;
+                      min-height: 100vh;
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      padding: 24px;
+                      background: radial-gradient(circle at 14% 8%, rgba(242, 140, 40, 0.08), rgba(5, 5, 5, 0) 44%), #050505;
+                      color: #F2F2F2;
+                      font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                    }
+
+                    .panel {
+                      width: min(100%, 540px);
+                      border-radius: 6px;
+                      border: 1px solid rgba(242, 140, 40, 0.32);
+                      background: #111111;
+                      padding: 26px 24px;
+                    }
+
+                    .eyebrow {
+                      margin: 0 0 10px;
+                      color: #D8D8D8;
+                      font-size: 12px;
+                      letter-spacing: 0.11em;
+                      text-transform: uppercase;
+                    }
+
+                    h1 {
+                      margin: 0 0 12px;
+                      color: #F2F2F2;
+                      font-size: 38px;
+                      line-height: 1.12;
+                      font-weight: 600;
+                    }
+
+                    .lead {
+                      margin: 0 0 12px;
+                      color: #F2F2F2;
+                      font-size: 17px;
+                      line-height: 1.5;
+                    }
+
+                    .helper {
+                      margin: 0 0 20px;
+                      color: #B5B5B5;
+                      font-size: 15px;
+                      line-height: 1.55;
+                    }
+
+                    .status {
+                      color: {{headingColor}};
+                    }
+
+                    .next-step {
+                      margin: 0 0 20px;
+                      border-radius: 6px;
+                      border: 1px solid rgba(242, 140, 40, 0.18);
+                      background: #151515;
+                      padding: 14px 14px 12px;
+                    }
+
+                    .next-step-title {
+                      margin: 0 0 6px;
+                      color: #F2F2F2;
+                      font-size: 15px;
+                      line-height: 1.3;
+                      font-weight: 500;
+                    }
+
+                    .next-step-copy {
+                      margin: 0;
+                      color: #B5B5B5;
+                      font-size: 15px;
+                      line-height: 1.5;
+                    }
+
+                    .return-link {
+                      display: inline-flex;
+                      align-items: center;
+                      justify-content: center;
+                      margin-top: 2px;
+                      min-height: 44px;
+                      border-radius: 6px;
+                      border: 1px solid #F28C28;
+                      background: #F28C28;
+                      padding: 0 18px;
+                      color: #050505;
+                      text-decoration: none;
+                      font-size: 18px;
+                      line-height: 1.2;
+                      font-weight: 600;
+                    }
+
+                    .return-link:active {
+                      opacity: 0.92;
+                    }
+
+                    .meta {
+                      margin: 16px 0 0;
+                      color: #7C7C7C;
+                      font-size: 13px;
+                      line-height: 1.4;
+                    }
+
+                    .meta + .meta {
+                      margin-top: 8px;
+                    }
+                  </style>
                 </head>
-                <body style="margin:0; font-family: Arial, sans-serif; background:#081423; color:#e9f1ff; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
-                  <main style="width:min(100%, 520px); border:1px solid rgba(150,190,255,0.25); background:rgba(16,34,57,0.96); border-radius:20px; padding:28px; box-shadow:0 18px 48px rgba(0,0,0,0.28);">
-                    <p style="margin:0 0 8px; color:{{headingColor}}; font-size:12px; letter-spacing:0.12em; text-transform:uppercase;">NSFinance bank connection</p>
-                    <h1 style="margin:0 0 12px; font-size:28px; line-height:1.15;">{{title}}</h1>
-                    <p style="margin:0 0 12px; font-size:16px; line-height:1.5;">{{message}}</p>
-                    <p style="margin:0 0 20px; color:#b6c9e8; font-size:14px; line-height:1.5;">{{helperText}}</p>
-                    <div style="margin:0 0 20px; padding:14px 16px; border-radius:14px; background:rgba(255,255,255,0.05); color:#b6c9e8; font-size:14px;">
-                      <div style="font-weight:600; color:#e9f1ff; margin-bottom:6px;">What to do next</div>
-                      <div>{{nextStepText}}</div>
+                <body>
+                  <main class="panel">
+                    <p class="eyebrow">NSFinance bank connection</p>
+                    <h1 class="status">{{title}}</h1>
+                    <p class="lead">{{message}}</p>
+                    <p class="helper">{{helperText}}</p>
+                    <div class="next-step">
+                      <p class="next-step-title">What to do next</p>
+                      <p class="next-step-copy">{{nextStepText}}</p>
                     </div>
-                    <a id="return-link" href="{{appReturnUrlForHref}}" style="display:inline-block; margin-top:4px; padding:14px 18px; border-radius:14px; background:linear-gradient(180deg, #3e86ff 0%, #2b6cff 100%); color:#ffffff; text-decoration:none; font-weight:600;">
+                    <a id="return-link" class="return-link" href="{{appReturnUrlForHref}}">
                       {{buttonLabel}}
                     </a>
-                    <p style="margin:18px 0 0; opacity:0.75; font-size:13px;">Code: {{statusCode}}</p>
-                    <p style="margin:10px 0 0; opacity:0.75; font-size:13px;" id="return-status">{{autoReturnMessage}}</p>
+                    <p class="meta">Code: {{statusCode}}</p>
+                    <p class="meta" id="return-status">{{autoReturnMessage}}</p>
                   </main>
                   <script>
                     (function () {

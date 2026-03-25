@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
   planChipLabel: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   planChipLabelActive: {
     color: palette.textPrimary
@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
   inputLabel: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   },
   textInput: {
     minHeight: 52,
@@ -201,7 +201,7 @@ const styles = StyleSheet.create({
   feedbackText: {
     color: palette.textPrimary,
     ...typography.bodyStrong,
-    fontWeight: "700"
+    fontWeight: "600"
   }
 });
 
