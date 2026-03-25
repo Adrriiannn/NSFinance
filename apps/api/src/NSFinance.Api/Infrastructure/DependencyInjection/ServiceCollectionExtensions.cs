@@ -5,6 +5,7 @@ using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
@@ -124,6 +125,11 @@ public static class ServiceCollectionExtensions
             configuration.GetSection(TurnstileOptions.SectionName).Bind(options);
         });
 
+        services.Configure<PasswordPolicyOptions>(options =>
+        {
+            configuration.GetSection(PasswordPolicyOptions.SectionName).Bind(options);
+        });
+
         var jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
         var signingKeyFromEnv = ResolveEnvironmentValue(
             configuration,
@@ -217,6 +223,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TokenSecretService>();
         services.AddScoped<IGoogleIdTokenVerifier, GoogleIdTokenVerifier>();
         services.AddScoped<GoogleAuthService>();
+        services.AddHttpClient<PwnedPasswordService>((sp, client) =>
+        {
+            var passwordPolicyOptions = sp.GetRequiredService<IOptions<PasswordPolicyOptions>>().Value;
+            client.BaseAddress = new Uri(passwordPolicyOptions.BreachApiBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(2, passwordPolicyOptions.BreachApiTimeoutSeconds));
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("NSFinance.Api/1.0");
+        });
+        services.AddScoped<PasswordPolicyService>();
         services.AddHttpClient<TurnstileVerificationService>();
         services.AddScoped<AuthAbuseService>();
         services.AddScoped<SessionService>();
@@ -389,6 +403,17 @@ public static class ServiceCollectionExtensions
                         AutoReplenishment = true,
                         PermitLimit = 6,
                         Window = TimeSpan.FromMinutes(5),
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("password-policy-check", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveClientPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 30,
+                        Window = TimeSpan.FromMinutes(1),
                         QueueLimit = 0
                     }));
 

@@ -33,7 +33,7 @@ const INSET_OUTLINE_WIDTH = 1;
 const INSET_LABEL_LEFT = 18;
 const INSET_LABEL_NOTCH_PADDING = 6;
 const INSET_LABEL_TOP = -8;
-const INSET_BORDER_IDLE = "rgba(164, 191, 234, 0.72)";
+const INSET_BORDER_IDLE = palette.borderStrong;
 
 type LoginErrorBannerState =
   | { kind: "temporary_error"; id: number; title: string; message: string; highlightTarget: ErrorFieldTarget }
@@ -154,6 +154,10 @@ function toOpaqueColor(color: string): string {
 
   const [, red, green, blue] = rgbaMatch;
   return `rgb(${red}, ${green}, ${blue})`;
+}
+
+function removeWhitespace(value: string): string {
+  return value.replace(/\s+/g, "");
 }
 
 type InsetFieldShellProps = {
@@ -619,7 +623,7 @@ export default function LoginScreen() {
                     <TextField
                       label="Email"
                       value={email}
-                      onChangeText={setEmail}
+                      onChangeText={(value) => setEmail(removeWhitespace(value))}
                       autoCapitalize="none"
                       keyboardType="email-address"
                       placeholder="you@example.com"
@@ -639,7 +643,7 @@ export default function LoginScreen() {
                     <PasswordField
                       label="Password"
                       value={password}
-                      onChangeText={setPassword}
+                      onChangeText={(value) => setPassword(removeWhitespace(value))}
                       placeholder="Password"
                       showLabel={false}
                       dense
@@ -670,7 +674,7 @@ export default function LoginScreen() {
                           pressed ? styles.rememberEmailCheckboxPressed : null
                         ]}
                       >
-                        {rememberEmail ? <Ionicons name="checkmark" size={14} color={palette.appBackground} /> : null}
+                        {rememberEmail ? <Ionicons name="checkmark" size={14} color={palette.primary} /> : null}
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
@@ -857,8 +861,8 @@ const styles = StyleSheet.create({
     opacity: 0.86
   },
   rememberEmailCheckboxChecked: {
-    borderColor: palette.success,
-    backgroundColor: palette.success
+    borderColor: palette.primary,
+    backgroundColor: "rgba(242,140,40,0.14)"
   },
   rememberEmailLabel: {
     color: palette.textPrimary,

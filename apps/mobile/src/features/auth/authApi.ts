@@ -9,6 +9,8 @@ import type {
   GoogleLoginRequest,
   GoogleAuthOptionsDto,
   LoginRequest,
+  PasswordPolicyCheckRequest,
+  PasswordPolicyCheckResponse,
   RefreshTokenRequest,
   RegisterRequest,
   RequestEmailVerificationRequest,
@@ -27,6 +29,13 @@ export function register(payload: RegisterRequest): Promise<AuthTokenResponse> {
 
 export function login(payload: LoginRequest): Promise<AuthTokenResponse> {
   return apiRequest<AuthTokenResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function checkPasswordPolicy(payload: PasswordPolicyCheckRequest): Promise<PasswordPolicyCheckResponse> {
+  return apiRequest<PasswordPolicyCheckResponse>("/api/auth/password-policy/check", {
     method: "POST",
     body: JSON.stringify(payload)
   });

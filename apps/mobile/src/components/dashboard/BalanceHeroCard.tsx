@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { AnimatedCurrencyText } from "../ui/AnimatedCurrencyText";
+import { AccountProviderBadge } from "../accounts/AccountProviderBadge";
+import type { AccountDto } from "../../types/api";
 import { palette, radius, shadows, spacing, surfaces, typography } from "../../theme/tokens";
 
 type BalanceHeroCardProps = {
@@ -10,8 +12,12 @@ type BalanceHeroCardProps = {
   transactionCount?: number;
   title?: string;
   subtitleOverride?: string;
-  badgeLabel?: string;
+  badgeLabel?: string | null;
   currencyNote?: string | null;
+  providerBranding?: Pick<
+    AccountDto,
+    "providerId" | "providerDisplayName" | "providerIconUrl" | "providerLogoUrl"
+  > | null;
 };
 
 export function BalanceHeroCard({
@@ -22,7 +28,8 @@ export function BalanceHeroCard({
   title = "Total balance",
   subtitleOverride,
   badgeLabel = "Live",
-  currencyNote
+  currencyNote,
+  providerBranding = null
 }: BalanceHeroCardProps) {
   const subtitle = useMemo(
     () => subtitleOverride ?? `${accountCount} accounts | ${transactionCount} transactions`,
@@ -33,9 +40,13 @@ export function BalanceHeroCard({
     <View style={styles.card}>
       <View style={styles.topRow}>
         <Text style={styles.label}>{title}</Text>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{badgeLabel}</Text>
-        </View>
+        {providerBranding ? (
+          <AccountProviderBadge account={providerBranding} />
+        ) : badgeLabel ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{badgeLabel}</Text>
+          </View>
+        ) : null}
       </View>
 
       <AnimatedCurrencyText

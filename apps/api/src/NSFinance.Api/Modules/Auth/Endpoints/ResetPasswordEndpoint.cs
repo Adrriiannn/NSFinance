@@ -10,9 +10,19 @@ public static class ResetPasswordEndpoint
     public static async Task<IResult> HandleAsync(
         ResetPasswordRequest request,
         AuthService authService,
+        PasswordPolicyService passwordPolicyService,
         CancellationToken cancellationToken)
     {
         var errors = ResetPasswordRequestValidator.Validate(request);
+        if (errors.Count == 0)
+        {
+            var passwordPolicy = await passwordPolicyService.EvaluateAsync(request.NewPassword, cancellationToken);
+            foreach (var entry in PasswordPolicyService.ToValidationErrors("newPassword", passwordPolicy))
+            {
+                errors[entry.Key] = entry.Value;
+            }
+        }
+
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);

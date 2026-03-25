@@ -30,16 +30,21 @@ import {
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { usePlannerStore } from "../../src/providers/PlannerProvider";
 import { palette, spacing, typography } from "../../src/theme/tokens";
+import type { AccountDto } from "../../src/types/api";
 
 type HeroCardItem = {
   key: string;
   accountId: string | null;
   title: string;
-  badgeLabel: string;
+  badgeLabel: string | null;
   balance: number;
   currency: string;
   subtitle: string;
   currencyNote?: string | null;
+  providerBranding?: Pick<
+    AccountDto,
+    "providerId" | "providerDisplayName" | "providerIconUrl" | "providerLogoUrl"
+  > | null;
 };
 
 type HeroCarouselItem = HeroCardItem & {
@@ -156,18 +161,25 @@ export default function DashboardTabScreen() {
       balance: heroTotals.totalBalance,
       currency: heroTotals.currency,
       subtitle: `${accounts.length} accounts | ${transactions.length} transactions`,
-      currencyNote: heroTotals.currencyNote
+      currencyNote: heroTotals.currencyNote,
+      providerBranding: null
     };
 
     const accountItems = accounts.map((account) => ({
       key: account.id,
       accountId: account.id,
       title: "Account balance",
-      badgeLabel: "Account",
+      badgeLabel: null,
       balance: account.currentBalance,
       currency: account.currency,
       subtitle: `${account.name} | ${account.transactionCount} transactions`,
-      currencyNote: null
+      currencyNote: null,
+      providerBranding: {
+        providerId: account.providerId,
+        providerDisplayName: account.providerDisplayName,
+        providerIconUrl: account.providerIconUrl,
+        providerLogoUrl: account.providerLogoUrl
+      }
     }));
 
     return [totalItem, ...accountItems];
@@ -433,6 +445,7 @@ export default function DashboardTabScreen() {
                           badgeLabel={item.badgeLabel}
                           subtitleOverride={item.subtitle}
                           currencyNote={item.currencyNote}
+                          providerBranding={item.providerBranding ?? null}
                         />
                       </Pressable>
                     ))}

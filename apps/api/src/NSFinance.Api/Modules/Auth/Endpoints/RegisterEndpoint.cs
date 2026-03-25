@@ -10,10 +10,20 @@ public static class RegisterEndpoint
     public static async Task<IResult> HandleAsync(
         RegisterRequest request,
         AuthService authService,
+        PasswordPolicyService passwordPolicyService,
         TurnstileVerificationService turnstileVerificationService,
         CancellationToken cancellationToken)
     {
         var errors = RegisterRequestValidator.Validate(request);
+        if (errors.Count == 0)
+        {
+            var passwordPolicy = await passwordPolicyService.EvaluateAsync(request.Password, cancellationToken);
+            foreach (var entry in PasswordPolicyService.ToValidationErrors("password", passwordPolicy))
+            {
+                errors[entry.Key] = entry.Value;
+            }
+        }
+
         if (errors.Count > 0)
         {
             return Results.ValidationProblem(errors);

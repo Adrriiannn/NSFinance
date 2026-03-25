@@ -1,9 +1,10 @@
 import { StyleSheet, Text, View } from "react-native";
 import { formatShortDate } from "../../lib/format";
 import type { AccountDto } from "../../types/api";
-import { palette, spacing, surfaces, typography } from "../../theme/tokens";
+import { palette, spacing, typography } from "../../theme/tokens";
 import { AmountText } from "../ui/AmountText";
 import { GlassCard } from "../ui/GlassCard";
+import { AccountProviderBadge } from "./AccountProviderBadge";
 
 type AccountCardProps = {
   account: AccountDto;
@@ -18,12 +19,10 @@ export function AccountCard({ account, onPress, compact = false }: AccountCardPr
         <View style={styles.titleWrap}>
           <Text style={styles.name}>{account.name}</Text>
           <Text style={styles.meta}>
-            {account.type} | {account.currency}
+            {account.type} | {account.currency} | {account.transactionCount} transactions
           </Text>
         </View>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{account.transactionCount}</Text>
-        </View>
+        <AccountProviderBadge account={account} compact />
       </View>
 
       <AmountText
@@ -57,20 +56,6 @@ const styles = StyleSheet.create({
   meta: {
     marginTop: spacing[4],
     color: palette.textSecondary,
-    ...typography.caption
-  },
-  badge: {
-    minWidth: 28,
-    minHeight: 28,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: palette.border,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: surfaces.fieldStrong
-  },
-  badgeText: {
-    color: palette.textPrimary,
     ...typography.caption
   },
   amount: {

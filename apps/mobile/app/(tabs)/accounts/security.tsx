@@ -27,7 +27,8 @@ import {
   requestAccountDeletionCode,
   requestPasswordChangeCode,
   verifyPasswordChangeCode,
-  confirmPasswordChangeWithCode
+  confirmPasswordChangeWithCode,
+  checkPasswordPolicy
 } from "../../../src/features/auth/authApi";
 import {
   useConnectedBanksQuery,
@@ -37,6 +38,15 @@ import { ApiClientError, formatUnknownError } from "../../../src/lib/api/errors"
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import type { BankConnectionStatus } from "../../../src/types/api";
 import { palette, spacing, typography } from "../../../src/theme/tokens";
+import {
+  type PasswordBreachStatus,
+  enforcePasswordMaxLength,
+  hasNumberOrSymbol,
+  isLengthWithinPolicy,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  sanitizePasswordInput
+} from "../../../src/features/auth/passwordPolicy";
 import {
   useCreateDeletionRequestMutation,
   useCreateExportRequestMutation,
@@ -173,6 +183,8 @@ export default function SecuritySettingsScreen() {
   const [passwordCodeError, setPasswordCodeError] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordBreachStatus, setPasswordBreachStatus] = useState<PasswordBreachStatus>("idle");
+  const [passwordBreachMessage, setPasswordBreachMessage] = useState<string | null>(null);
 
   const [deletionNote, setDeletionNote] = useState("");
   const [deletionConfirmationText, setDeletionConfirmationText] = useState("");
@@ -317,6 +329,60 @@ export default function SecuritySettingsScreen() {
 
   const hasPasswordMismatch =
     confirmNewPassword.length > 0 && newPassword !== confirmNewPassword;
+  const hasStartedNewPassword = newPassword.length > 0;
+  const hasPasswordLengthIssue = hasStartedNewPassword && !isLengthWithinPolicy(newPassword);
+  const hasPasswordNumberSymbolIssue = hasStartedNewPassword && !hasNumberOrSymbol(newPassword);
+  const hasPasswordReachedMaximum = hasStartedNewPassword && newPassword.length >= PASSWORD_MAX_LENGTH;
+
+  useEffect(() => {
+    if (!passwordResetModalVisible) {
+      return;
+    }
+
+    if (!newPassword || !isLengthWithinPolicy(newPassword)) {
+      setPasswordBreachStatus("idle");
+      setPasswordBreachMessage(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setPasswordBreachStatus("checking");
+      setPasswordBreachMessage(null);
+
+      try {
+        const response = await checkPasswordPolicy({ password: newPassword });
+        if (cancelled) {
+          return;
+        }
+
+        if (response.breachStatus === "compromised") {
+          setPasswordBreachStatus("compromised");
+          setPasswordBreachMessage("This password has appeared in known data breaches.");
+          return;
+        }
+
+        if (response.breachStatus === "unavailable") {
+          setPasswordBreachStatus("unavailable");
+          setPasswordBreachMessage("Could not verify compromised-password status right now.");
+          return;
+        }
+
+        setPasswordBreachStatus("safe");
+        setPasswordBreachMessage(null);
+      } catch {
+        if (!cancelled) {
+          setPasswordBreachStatus("unavailable");
+          setPasswordBreachMessage("Could not verify compromised-password status right now.");
+        }
+      }
+    }, 550);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [newPassword, passwordResetModalVisible]);
 
   const persistBiometricSetting = async () => {
     if (!profileQuery.data) {
@@ -369,6 +435,10 @@ export default function SecuritySettingsScreen() {
       await verifyPasswordChangeCode({ code: passwordCode.trim() });
       setVerifiedPasswordCode(passwordCode.trim());
       setPasswordCodeModalVisible(false);
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setPasswordBreachStatus("idle");
+      setPasswordBreachMessage(null);
       setPasswordResetModalVisible(true);
     } catch {
       setPasswordCode("");
@@ -377,7 +447,12 @@ export default function SecuritySettingsScreen() {
   };
 
   const completePasswordChange = async () => {
-    if (hasPasswordMismatch) {
+    if (
+      hasPasswordMismatch
+      || hasPasswordLengthIssue
+      || hasPasswordNumberSymbolIssue
+      || passwordBreachStatus !== "safe")
+    {
       return;
     }
 
@@ -783,13 +858,35 @@ export default function SecuritySettingsScreen() {
             <TextField
               label="New password"
               value={newPassword}
-              onChangeText={setNewPassword}
+              onChangeText={(value) => {
+                const sanitized = sanitizePasswordInput(value);
+                setNewPassword(enforcePasswordMaxLength(sanitized));
+              }}
+              maxLength={PASSWORD_MAX_LENGTH}
               secureTextEntry
             />
+            {hasPasswordLengthIssue ? (
+              <Text style={styles.errorText}>
+                Use {PASSWORD_MIN_LENGTH} to {PASSWORD_MAX_LENGTH} characters.
+              </Text>
+            ) : null}
+            {hasPasswordNumberSymbolIssue ? (
+              <Text style={styles.errorText}>Add a number or symbol.</Text>
+            ) : null}
+            {hasPasswordReachedMaximum ? (
+              <Text style={styles.errorText}>
+                You&apos;ve reached the maximum password length of {PASSWORD_MAX_LENGTH} characters.
+              </Text>
+            ) : null}
+            {passwordBreachMessage ? <Text style={styles.errorText}>{passwordBreachMessage}</Text> : null}
             <TextField
               label="Confirm new password"
               value={confirmNewPassword}
-              onChangeText={setConfirmNewPassword}
+              onChangeText={(value) => {
+                const sanitized = sanitizePasswordInput(value);
+                setConfirmNewPassword(enforcePasswordMaxLength(sanitized));
+              }}
+              maxLength={PASSWORD_MAX_LENGTH}
               secureTextEntry
               error={hasPasswordMismatch ? "Passwords do not match." : undefined}
             />
@@ -798,7 +895,14 @@ export default function SecuritySettingsScreen() {
               onPress={() => {
                 void completePasswordChange();
               }}
-              disabled={!newPassword.trim() || !confirmNewPassword.trim() || hasPasswordMismatch}
+              disabled={
+                !newPassword.trim()
+                || !confirmNewPassword.trim()
+                || hasPasswordMismatch
+                || hasPasswordLengthIssue
+                || hasPasswordNumberSymbolIssue
+                || passwordBreachStatus !== "safe"
+              }
             />
           </Pressable>
         </Pressable>

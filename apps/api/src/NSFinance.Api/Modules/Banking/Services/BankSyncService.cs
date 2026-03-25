@@ -217,6 +217,7 @@ public sealed class BankSyncService(
         var accountsSynced = 0;
         var balancesSynced = 0;
         var transactionsImported = 0;
+        var providerBrandingRefreshAttempted = false;
 
         foreach (var providerAccount in accountsResult.Value!)
         {
@@ -225,12 +226,41 @@ public sealed class BankSyncService(
 
             if (!string.IsNullOrWhiteSpace(providerAccount.ProviderId))
             {
+                connection.ProviderId = providerAccount.ProviderId;
                 connection.ProviderConnectionReference = providerAccount.ProviderId;
             }
 
             if (!string.IsNullOrWhiteSpace(providerAccount.ProviderDisplayName))
             {
                 connection.ProviderDisplayName = providerAccount.ProviderDisplayName;
+            }
+
+            ApplyProviderBrandingFromAccount(connection, providerAccount, now);
+
+            if (!providerBrandingRefreshAttempted
+                && ShouldRefreshProviderBranding(connection, now)
+                && !string.IsNullOrWhiteSpace(connection.ProviderId))
+            {
+                providerBrandingRefreshAttempted = true;
+
+                var brandingResult = await dataService.GetProviderBrandingAsync(
+                    configuration,
+                    accessToken,
+                    connection.ProviderId!,
+                    cancellationToken);
+
+                if (brandingResult.Succeeded && brandingResult.Value is not null)
+                {
+                    ApplyProviderBrandingFromProviderLookup(connection, brandingResult.Value, now);
+                }
+                else if (!brandingResult.Succeeded)
+                {
+                    logger.LogWarning(
+                        "Provider branding refresh failed connectionId={ConnectionId} providerId={ProviderId} code={Code}",
+                        connection.Id,
+                        connection.ProviderId,
+                        brandingResult.Error?.Code);
+                }
             }
 
             var balanceResult = await dataService.GetBalanceAsync(
@@ -538,6 +568,90 @@ public sealed class BankSyncService(
             "CASH" => "Cash",
             _ => "Other"
         };
+    }
+
+    private static void ApplyProviderBrandingFromAccount(
+        OpenBankingConnection connection,
+        TrueLayerAccountRecord providerAccount,
+        DateTime now)
+    {
+        var updated = false;
+
+        if (!string.IsNullOrWhiteSpace(providerAccount.ProviderIconUri))
+        {
+            connection.ProviderIconUri = providerAccount.ProviderIconUri;
+            updated = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(providerAccount.ProviderLogoUri))
+        {
+            connection.ProviderLogoUri = providerAccount.ProviderLogoUri;
+            updated = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(providerAccount.ProviderBrandBgColor))
+        {
+            connection.ProviderBrandBgColor = providerAccount.ProviderBrandBgColor;
+            updated = true;
+        }
+
+        if (updated)
+        {
+            connection.BrandingLastSyncedAtUtc = now;
+        }
+    }
+
+    private static void ApplyProviderBrandingFromProviderLookup(
+        OpenBankingConnection connection,
+        TrueLayerProviderBranding branding,
+        DateTime now)
+    {
+        if (!string.IsNullOrWhiteSpace(branding.ProviderId))
+        {
+            connection.ProviderId = branding.ProviderId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(branding.ProviderDisplayName))
+        {
+            connection.ProviderDisplayName = branding.ProviderDisplayName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(branding.ProviderIconUri))
+        {
+            connection.ProviderIconUri = branding.ProviderIconUri;
+        }
+
+        if (!string.IsNullOrWhiteSpace(branding.ProviderLogoUri))
+        {
+            connection.ProviderLogoUri = branding.ProviderLogoUri;
+        }
+
+        if (!string.IsNullOrWhiteSpace(branding.ProviderBrandBgColor))
+        {
+            connection.ProviderBrandBgColor = branding.ProviderBrandBgColor;
+        }
+
+        connection.BrandingLastSyncedAtUtc = now;
+    }
+
+    private static bool ShouldRefreshProviderBranding(OpenBankingConnection connection, DateTime now)
+    {
+        if (string.IsNullOrWhiteSpace(connection.ProviderId))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(connection.ProviderIconUri))
+        {
+            return true;
+        }
+
+        if (!connection.BrandingLastSyncedAtUtc.HasValue)
+        {
+            return true;
+        }
+
+        return connection.BrandingLastSyncedAtUtc.Value < now.AddDays(-30);
     }
 }
 

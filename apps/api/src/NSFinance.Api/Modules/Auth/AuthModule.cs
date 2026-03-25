@@ -17,6 +17,10 @@ public static class AuthModule
             .WithName("Login")
             .RequireRateLimiting("auth-write");
 
+        group.MapPost("/password-policy/check", PasswordPolicyCheckEndpoint.HandleAsync)
+            .WithName("CheckPasswordPolicy")
+            .RequireRateLimiting("password-policy-check");
+
         group.MapPost("/google", GoogleLoginEndpoint.HandleAsync)
             .WithName("GoogleLogin")
             .RequireRateLimiting("auth-write");

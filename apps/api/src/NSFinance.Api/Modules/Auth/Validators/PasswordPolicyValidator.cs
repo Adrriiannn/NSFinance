@@ -2,6 +2,9 @@ namespace NSFinance.Api.Modules.Auth.Validators;
 
 public static class PasswordPolicyValidator
 {
+    private const int MinimumLength = 12;
+    private const int MaximumLength = 64;
+
     public static string[] Validate(string password)
     {
         var errors = new List<string>();
@@ -12,29 +15,20 @@ public static class PasswordPolicyValidator
             return errors.ToArray();
         }
 
-        if (password.Length < 10)
+        if (password.Length < MinimumLength)
         {
-            errors.Add("Password must contain at least 10 characters.");
+            errors.Add($"Password must be at least {MinimumLength} characters.");
         }
 
-        if (password.Length > 128)
+        if (password.Length > MaximumLength)
         {
-            errors.Add("Password must not exceed 128 characters.");
+            errors.Add($"Password must be {MaximumLength} characters or fewer.");
         }
 
-        if (!password.Any(char.IsUpper))
+        var hasNumberOrSymbol = password.Any(char.IsDigit) || password.Any(ch => !char.IsLetterOrDigit(ch));
+        if (!hasNumberOrSymbol)
         {
-            errors.Add("Password must include at least one uppercase letter.");
-        }
-
-        if (!password.Any(char.IsLower))
-        {
-            errors.Add("Password must include at least one lowercase letter.");
-        }
-
-        if (!password.Any(char.IsDigit))
-        {
-            errors.Add("Password must include at least one number.");
+            errors.Add("Password must include at least one number or symbol.");
         }
 
         return errors.ToArray();

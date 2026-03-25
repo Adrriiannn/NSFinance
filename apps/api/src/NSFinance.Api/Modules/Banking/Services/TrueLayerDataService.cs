@@ -59,6 +59,9 @@ public sealed class TrueLayerDataService(
                     GetString(item, "account_sub_type"),
                     GetString(provider, "provider_id"),
                     GetString(provider, "display_name"),
+                    GetProviderBrandingString(provider, "icon_uri"),
+                    GetProviderBrandingString(provider, "logo_uri"),
+                    GetProviderBrandingString(provider, "bg_color"),
                     accountNumberMetadata,
                     item.GetRawText()));
             }
@@ -70,6 +73,76 @@ public sealed class TrueLayerDataService(
             return ServiceResult<IReadOnlyList<TrueLayerAccountRecord>>.Fail(
                 "TrueLayer accounts response could not be parsed.",
                 "truelayer_accounts_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
+    public async Task<ServiceResult<TrueLayerProviderBranding?>> GetProviderBrandingAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        string providerId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            return ServiceResult<TrueLayerProviderBranding?>.Ok(null);
+        }
+
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/providers/{providerId}";
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogWarning(
+                "Failed to fetch TrueLayer provider branding providerId={ProviderId} status={StatusCode}",
+                providerId,
+                response.Error?.StatusCode);
+            return ServiceResult<TrueLayerProviderBranding?>.Fail(
+                "TrueLayer provider branding request failed.",
+                "truelayer_provider_branding_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            var root = document.RootElement;
+            var providerNode = root;
+
+            if (root.TryGetProperty("results", out var resultsNode)
+                && resultsNode.ValueKind == JsonValueKind.Array
+                && resultsNode.GetArrayLength() > 0)
+            {
+                providerNode = resultsNode[0];
+            }
+            else if (root.TryGetProperty("results", out var singleResult)
+                     && singleResult.ValueKind == JsonValueKind.Object)
+            {
+                providerNode = singleResult;
+            }
+            else if (root.TryGetProperty("provider", out var providerWrapper)
+                     && providerWrapper.ValueKind == JsonValueKind.Object)
+            {
+                providerNode = providerWrapper;
+            }
+
+            var resolvedProviderId =
+                GetProviderBrandingString(providerNode, "provider_id")
+                ?? GetProviderBrandingString(providerNode, "id")
+                ?? providerId;
+
+            return ServiceResult<TrueLayerProviderBranding?>.Ok(
+                new TrueLayerProviderBranding(
+                    resolvedProviderId,
+                    GetProviderBrandingString(providerNode, "display_name"),
+                    GetProviderBrandingString(providerNode, "icon_uri"),
+                    GetProviderBrandingString(providerNode, "logo_uri"),
+                    GetProviderBrandingString(providerNode, "bg_color")));
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<TrueLayerProviderBranding?>.Fail(
+                "TrueLayer provider branding response could not be parsed.",
+                "truelayer_provider_branding_payload_invalid",
                 StatusCodes.Status502BadGateway);
         }
     }
@@ -235,5 +308,22 @@ public sealed class TrueLayerDataService(
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(stableTransactionId));
         return Convert.ToHexString(bytes);
+    }
+
+    private static string? GetProviderBrandingString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Null || property.ValueKind == JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        var value = property.ValueKind == JsonValueKind.String ? property.GetString() : property.ToString();
+        var trimmed = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
     }
 }

@@ -9,6 +9,12 @@ export type AccountDto = {
   currentBalance: number;
   transactionCount: number;
   createdUtc: string;
+  providerId: string | null;
+  providerDisplayName: string | null;
+  providerIconUrl: string | null;
+  providerLogoUrl: string | null;
+  providerBrandBgColor: string | null;
+  hasProviderBranding: boolean;
 };
 
 export type CreateAccountRequest = {
@@ -287,6 +293,18 @@ export type ConfirmPasswordChangeCodeRequest = {
   newPassword: string;
 };
 
+export type PasswordPolicyCheckRequest = {
+  password: string;
+};
+
+export type PasswordPolicyCheckResponse = {
+  breachStatus: "safe" | "compromised" | "unavailable";
+  minLength: number;
+  maxLength: number;
+  hasNumberOrSymbol: boolean;
+  isLengthValid: boolean;
+};
+
 export type UserProfileDetailsDto = {
   id: string;
   primaryEmail: string;
@@ -486,8 +504,13 @@ export type BankConnectionStatus =
 export type BankConnectionDto = {
   id: string;
   provider: string;
+  providerId: string | null;
   providerEnvironment: string;
   providerDisplayName: string | null;
+  providerIconUrl: string | null;
+  providerLogoUrl: string | null;
+  providerBrandBgColor: string | null;
+  brandingLastSyncedAtUtc: string | null;
   status: BankConnectionStatus;
   createdUtc: string;
   updatedUtc: string;
@@ -509,6 +532,11 @@ export type LinkedBankAccountDto = {
   id: string;
   connectionId: string;
   providerAccountId: string;
+  providerId: string | null;
+  providerDisplayName: string | null;
+  providerIconUrl: string | null;
+  providerLogoUrl: string | null;
+  providerBrandBgColor: string | null;
   displayName: string;
   accountType: string | null;
   accountSubType: string | null;

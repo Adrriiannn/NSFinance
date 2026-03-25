@@ -19,8 +19,18 @@ public sealed record TrueLayerAccountRecord(
     string? AccountSubType,
     string? ProviderId,
     string? ProviderDisplayName,
+    string? ProviderIconUri,
+    string? ProviderLogoUri,
+    string? ProviderBrandBgColor,
     string? AccountNumberMetadataJson,
     string RawPayloadJson);
+
+public sealed record TrueLayerProviderBranding(
+    string? ProviderId,
+    string? ProviderDisplayName,
+    string? ProviderIconUri,
+    string? ProviderLogoUri,
+    string? ProviderBrandBgColor);
 
 public sealed record TrueLayerBalanceRecord(
     decimal? Available,

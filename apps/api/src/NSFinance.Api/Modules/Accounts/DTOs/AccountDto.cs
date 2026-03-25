@@ -7,4 +7,10 @@ public sealed record AccountDto(
     string Currency,
     decimal CurrentBalance,
     int TransactionCount,
-    DateTime CreatedUtc);
+    DateTime CreatedUtc,
+    string? ProviderId,
+    string? ProviderDisplayName,
+    string? ProviderIconUrl,
+    string? ProviderLogoUrl,
+    string? ProviderBrandBgColor,
+    bool HasProviderBranding);

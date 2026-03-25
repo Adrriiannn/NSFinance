@@ -14,7 +14,11 @@ public class OpenBankingConnectionConfiguration : IEntityTypeConfiguration<OpenB
         builder.Property(x => x.ProviderName).HasMaxLength(40).IsRequired();
         builder.Property(x => x.ProviderEnvironment).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ProviderConnectionReference).HasMaxLength(180);
+        builder.Property(x => x.ProviderId).HasMaxLength(180);
         builder.Property(x => x.ProviderDisplayName).HasMaxLength(180);
+        builder.Property(x => x.ProviderIconUri).HasMaxLength(1024);
+        builder.Property(x => x.ProviderLogoUri).HasMaxLength(1024);
+        builder.Property(x => x.ProviderBrandBgColor).HasMaxLength(32);
         builder.Property(x => x.Status).HasMaxLength(40).IsRequired();
         builder.Property(x => x.LastErrorCode).HasMaxLength(80);
         builder.Property(x => x.LastErrorReason).HasMaxLength(512);

@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendingsCard";
+import { AccountProviderBadge } from "../../../src/components/accounts/AccountProviderBadge";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
@@ -225,7 +226,10 @@ export default function AccountsTabScreen() {
           bounces={false}
         >
           <GlassCard style={styles.heroCard}>
-            <Text style={styles.heroType}>{selectedAccount.type} account</Text>
+            <View style={styles.heroTopRow}>
+              <Text style={styles.heroType}>{selectedAccount.type} account</Text>
+              <AccountProviderBadge account={selectedAccount} />
+            </View>
             <AnimatedCurrencyText
               value={selectedAccount.currentBalance}
               currency={selectedAccount.currency}
@@ -445,6 +449,12 @@ const styles = StyleSheet.create({
   },
   heroCard: {
     gap: spacing[8]
+  },
+  heroTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[10]
   },
   heroType: {
     color: palette.textSecondary,

@@ -11,6 +11,17 @@ import { PasswordField } from "../../src/components/ui/PasswordField";
 import { Button } from "../../src/components/ui/buttons/Button";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { TextField } from "../../src/components/ui/TextField";
+import { checkPasswordPolicy } from "../../src/features/auth/authApi";
+import {
+  type PasswordBreachStatus,
+  type PasswordStrengthResult,
+  evaluatePasswordStrength,
+  hasNumberOrSymbol,
+  enforcePasswordMaxLength,
+  isLengthWithinPolicy,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+} from "../../src/features/auth/passwordPolicy";
 import { useRegisterMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
@@ -22,38 +33,10 @@ type FormErrors = Partial<Record<"fullName" | "email" | "password" | "confirmPas
 type FocusField = "fullName" | "email" | "password" | "confirmPassword" | null;
 
 type PasswordRequirement = {
-  key: "personalInfo" | "minLength" | "numberOrSymbol";
+  key: "breached" | "length" | "numberOrSymbol";
   label: string;
-  isMet: boolean;
+  state: "neutral" | "pending" | "met" | "unmet" | "error";
 };
-
-type PasswordStrength = {
-  score: number;
-  label: "weak" | "fair" | "good" | "strong" | "very strong";
-  color: string;
-};
-
-const COMMON_PASSWORDS = new Set([
-  "password",
-  "password1",
-  "123456",
-  "12345678",
-  "qwerty",
-  "letmein",
-  "welcome",
-  "admin",
-  "abc123",
-  "iloveyou",
-  "secret",
-  "football",
-  "monkey"
-]);
-
-const SEQUENCE_PATTERNS = [
-  "0123456789",
-  "abcdefghijklmnopqrstuvwxyz",
-  "qwertyuiopasdfghjklzxcvbnm"
-];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -61,6 +44,10 @@ function clamp(value: number, min: number, max: number): number {
 
 function normalizeFullName(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function stripWhitespace(value: string): string {
+  return value.replace(/\s+/g, "");
 }
 
 function toOpaqueColor(color: string): string {
@@ -76,112 +63,6 @@ function toOpaqueColor(color: string): string {
   return `rgb(${red}, ${green}, ${blue})`;
 }
 
-function extractPersonalFragments(fullName: string, email: string): string[] {
-  const nameFragments = normalizeFullName(fullName)
-    .toLowerCase()
-    .split(" ")
-    .filter((part) => part.length >= 3);
-
-  const emailLocalPart = email.trim().toLowerCase().split("@")[0] ?? "";
-  const emailFragments = emailLocalPart
-    .split(/[._\-+]/)
-    .filter((part) => part.length >= 3);
-
-  return Array.from(new Set([...nameFragments, ...emailFragments]));
-}
-
-function containsPersonalInfo(password: string, fullName: string, email: string): boolean {
-  const normalizedPassword = password.toLowerCase();
-  if (!normalizedPassword) {
-    return false;
-  }
-
-  return extractPersonalFragments(fullName, email).some((fragment) => normalizedPassword.includes(fragment));
-}
-
-function evaluatePasswordStrength(password: string, fullName: string, email: string): PasswordStrength {
-  if (!password) {
-    return { score: 0, label: "weak", color: palette.negative };
-  }
-
-  const normalized = password.toLowerCase();
-  const length = password.length;
-  const digitMatches = password.match(/\d/g) ?? [];
-  const symbolMatches = password.match(/[^A-Za-z0-9]/g) ?? [];
-  const hasLower = /[a-z]/.test(password);
-  const hasUpper = /[A-Z]/.test(password);
-  const hasDigit = digitMatches.length > 0;
-  const hasSymbol = symbolMatches.length > 0;
-  const uniqueChars = new Set(password).size;
-  const uniqueRatio = uniqueChars / length;
-  const hasLongRepeat = /(.)\1{2,}/.test(password);
-  const containsPersonal = containsPersonalInfo(password, fullName, email);
-  const isCommon = COMMON_PASSWORDS.has(normalized);
-
-  let score = 0;
-
-  score += clamp(length * 2.7, 0, 30);
-
-  const typeCount = [hasLower, hasUpper, hasDigit, hasSymbol].filter(Boolean).length;
-  score += typeCount * 5;
-
-  score += clamp(digitMatches.length * 2, 0, 8);
-  score += clamp(symbolMatches.length * 3, 0, 12);
-
-  const hasDigitInMiddle = /\D\d\D/.test(password);
-  const hasSymbolInMiddle = /\w[^A-Za-z0-9]\w/.test(password);
-  if (hasDigitInMiddle) {
-    score += 6;
-  }
-  if (hasSymbolInMiddle) {
-    score += 8;
-  }
-
-  score += clamp(uniqueRatio * 14, 0, 14);
-
-  const hasSequentialRun = SEQUENCE_PATTERNS.some((sequence) => {
-    for (let index = 0; index <= sequence.length - 4; index += 1) {
-      const part = sequence.slice(index, index + 4);
-      if (normalized.includes(part) || normalized.includes(part.split("").reverse().join(""))) {
-        return true;
-      }
-    }
-    return false;
-  });
-
-  if (hasLongRepeat) {
-    score -= 12;
-  }
-  if (hasSequentialRun) {
-    score -= 12;
-  }
-  if (/^[A-Za-z]+$/.test(password) || /^\d+$/.test(password)) {
-    score -= 15;
-  }
-  if (containsPersonal) {
-    score -= 22;
-  }
-  if (isCommon) {
-    score -= 30;
-  }
-
-  const clampedScore = clamp(Math.round(score), 0, 100);
-
-  if (clampedScore >= 90) {
-    return { score: clampedScore, label: "very strong", color: palette.success };
-  }
-  if (clampedScore >= 75) {
-    return { score: clampedScore, label: "strong", color: palette.success };
-  }
-  if (clampedScore >= 60) {
-    return { score: clampedScore, label: "good", color: palette.primaryGlow };
-  }
-  if (clampedScore >= 40) {
-    return { score: clampedScore, label: "fair", color: palette.caution };
-  }
-  return { score: clampedScore, label: "weak", color: palette.negative };
-}
-
 type InsetFieldShellProps = {
   label: string;
   color: string;
@@ -193,7 +74,7 @@ const INSET_OUTLINE_WIDTH = 1;
 const INSET_LABEL_LEFT = 18;
 const INSET_LABEL_NOTCH_PADDING = 6;
 const INSET_LABEL_TOP = -8;
-const INSET_BORDER_IDLE = "rgba(164, 191, 234, 0.72)";
+const INSET_BORDER_IDLE = palette.borderStrong;
 
 function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
   const [shellWidth, setShellWidth] = useState(0);
@@ -268,11 +149,42 @@ function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
   );
 }
 
-function RequirementRow({ label, isMet }: { label: string; isMet: boolean }) {
-  const color = isMet ? palette.success : "rgba(190,204,226,0.72)";
+function getStrengthColor(strength: PasswordStrengthResult | null): string {
+  if (!strength) {
+    return palette.textSecondary;
+  }
+
+  switch (strength.tier) {
+    case "very_weak":
+      return palette.negative;
+    case "weak":
+      return palette.caution;
+    case "fair":
+      return palette.caution;
+    case "strong":
+      return palette.success;
+    case "very_strong":
+      return palette.success;
+    default:
+      return palette.textSecondary;
+  }
+}
+
+function RequirementRow({ label, state }: { label: string; state: PasswordRequirement["state"] }) {
+  const iconName =
+    state === "met" ? "checkmark" : state === "pending" ? "time-outline" : "close";
+  const color =
+    state === "met"
+      ? palette.success
+      : state === "error"
+        ? palette.negative
+        : state === "pending"
+          ? palette.caution
+          : palette.textSecondary;
+
   return (
     <View style={styles.requirementRow}>
-      <Ionicons name={isMet ? "checkmark" : "close"} size={14} color={color} />
+      <Ionicons name={iconName} size={14} color={color} />
       <Text style={[styles.requirementText, { color }]}>{label}</Text>
     </View>
   );
@@ -309,40 +221,112 @@ export default function RegisterScreen() {
     setEmail((current) => current || prefilledEmail);
   }, [prefilledEmail]);
 
-  const passwordContainsPersonalInfo = useMemo(
-    () => containsPersonalInfo(password, fullName, email),
-    [email, fullName, password]
-  );
-  const passwordStrength = useMemo(
-    () => evaluatePasswordStrength(password, fullName, email),
-    [email, fullName, password]
-  );
+  const [passwordBreachStatus, setPasswordBreachStatus] = useState<PasswordBreachStatus>("idle");
+  const [passwordBreachMessage, setPasswordBreachMessage] = useState<string | null>(null);
 
-  const passwordRequirements = useMemo<PasswordRequirement[]>(
-    () => [
+  const passwordStrength = useMemo(() => evaluatePasswordStrength(password), [password]);
+  const hasNumberOrSymbolRequirement = useMemo(() => hasNumberOrSymbol(password), [password]);
+  const isLengthValidRequirement = useMemo(() => isLengthWithinPolicy(password), [password]);
+  const hasPasswordReachedMaximum = password.length >= PASSWORD_MAX_LENGTH;
+
+  useEffect(() => {
+    if (!password || !isLengthValidRequirement || !hasNumberOrSymbolRequirement) {
+      setPasswordBreachStatus("idle");
+      setPasswordBreachMessage(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setPasswordBreachStatus("checking");
+      setPasswordBreachMessage(null);
+
+      try {
+        const response = await checkPasswordPolicy({ password });
+        if (cancelled) {
+          return;
+        }
+
+        if (response.breachStatus === "compromised") {
+          setPasswordBreachStatus("compromised");
+          setPasswordBreachMessage("This password has appeared in known data breaches.");
+          return;
+        }
+
+        if (response.breachStatus === "unavailable") {
+          setPasswordBreachStatus("unavailable");
+          setPasswordBreachMessage("Could not verify compromised-password status right now.");
+          return;
+        }
+
+        setPasswordBreachStatus("safe");
+        setPasswordBreachMessage(null);
+      } catch {
+        if (!cancelled) {
+          setPasswordBreachStatus("unavailable");
+          setPasswordBreachMessage("Could not verify compromised-password status right now.");
+        }
+      }
+    }, 550);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [hasNumberOrSymbolRequirement, isLengthValidRequirement, password]);
+
+  const passwordRequirements = useMemo<PasswordRequirement[]>(() => {
+    const breachedState: PasswordRequirement["state"] =
+      !password
+        ? "neutral"
+        : !isLengthValidRequirement || !hasNumberOrSymbolRequirement
+        ? "neutral"
+        : passwordBreachStatus === "safe"
+          ? "met"
+          : passwordBreachStatus === "checking"
+            ? "pending"
+            : passwordBreachStatus === "compromised" || passwordBreachStatus === "unavailable"
+              ? "error"
+              : "unmet";
+
+    const lengthState: PasswordRequirement["state"] =
+      !password
+        ? "neutral"
+        : password.length > PASSWORD_MAX_LENGTH
+          ? "error"
+          : isLengthValidRequirement
+            ? "met"
+            : "unmet";
+
+    const numberState: PasswordRequirement["state"] =
+      !password ? "neutral" : hasNumberOrSymbolRequirement ? "met" : "unmet";
+
+    return [
       {
-        key: "personalInfo",
-        label: "Cannot contain your name or email address",
-        isMet: password.length > 0 && !passwordContainsPersonalInfo
+        key: "breached",
+        label: "Not found in common or breached password lists",
+        state: breachedState
       },
       {
-        key: "minLength",
-        label: "At least 8 characters",
-        isMet: password.length >= 8
+        key: "length",
+        label: `${PASSWORD_MIN_LENGTH} to ${PASSWORD_MAX_LENGTH} characters`,
+        state: lengthState
       },
       {
         key: "numberOrSymbol",
         label: "Contains a number or symbol",
-        isMet: /\d/.test(password) || /[^A-Za-z0-9]/.test(password)
+        state: numberState
       }
-    ],
-    [password, passwordContainsPersonalInfo]
-  );
+    ];
+  }, [hasNumberOrSymbolRequirement, isLengthValidRequirement, password, passwordBreachStatus]);
 
-  const allPasswordRequirementsMet = passwordRequirements.every((requirement) => requirement.isMet);
+  const allPasswordRequirementsMet =
+    isLengthValidRequirement &&
+    hasNumberOrSymbolRequirement &&
+    passwordBreachStatus === "safe";
   const hasConfirmInput = confirmPassword.trim().length > 0;
   const passwordsMatch = hasConfirmInput && password === confirmPassword;
-  const showPasswordRequirements = focusedField === "password";
+  const showPasswordRequirements = focusedField === "password" || password.length > 0;
 
   const canSubmit = useMemo(
     () =>
@@ -366,8 +350,14 @@ export default function RegisterScreen() {
       nextErrors.email = "Email is required.";
     }
 
-    if (!allPasswordRequirementsMet) {
-      nextErrors.password = "Password does not meet requirements.";
+    if (!isLengthValidRequirement) {
+      nextErrors.password = `Use ${PASSWORD_MIN_LENGTH} to ${PASSWORD_MAX_LENGTH} characters.`;
+    } else if (!hasNumberOrSymbolRequirement) {
+      nextErrors.password = "Add a number or symbol.";
+    } else if (passwordBreachStatus === "compromised") {
+      nextErrors.password = "This password has appeared in known data breaches.";
+    } else if (passwordBreachStatus === "unavailable" || passwordBreachStatus === "checking") {
+      nextErrors.password = "Could not verify password safety right now. Please try again.";
     }
 
     if (password !== confirmPassword) {
@@ -482,7 +472,7 @@ export default function RegisterScreen() {
               <TextField
                 label="Email"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(value) => setEmail(stripWhitespace(value))}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 placeholder="you@example.com"
@@ -502,8 +492,12 @@ export default function RegisterScreen() {
               <PasswordField
                 label="Password"
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(value) => {
+                  const sanitized = stripWhitespace(value);
+                  setPassword(enforcePasswordMaxLength(sanitized));
+                }}
                 placeholder="Create a password"
+                maxLength={PASSWORD_MAX_LENGTH}
                 showLabel={false}
                 dense
                 containerStyle={styles.insetFieldContainer}
@@ -522,18 +516,29 @@ export default function RegisterScreen() {
             <View style={[styles.passwordRequirementCard, styles.narrowBlock]}>
               <View style={styles.requirementRow}>
                 <Ionicons
-                  name={passwordStrength.score >= 60 ? "checkmark" : "close"}
+                  name={passwordStrength ? "checkmark" : "remove"}
                   size={14}
-                  color={passwordStrength.score >= 60 ? palette.success : "rgba(190,204,226,0.72)"}
+                  color={getStrengthColor(passwordStrength)}
                 />
                 <Text style={styles.requirementText}>
-                  Password strength: <Text style={[styles.passwordStrengthValue, { color: passwordStrength.color }]}>{passwordStrength.label}</Text>
+                  Password strength:{" "}
+                  <Text style={[styles.passwordStrengthValue, { color: getStrengthColor(passwordStrength) }]}>
+                    {passwordStrength?.label ?? "Not calculated yet"}
+                  </Text>
                 </Text>
               </View>
 
               {passwordRequirements.map((requirement) => (
-                <RequirementRow key={requirement.key} label={requirement.label} isMet={requirement.isMet} />
+                <RequirementRow key={requirement.key} label={requirement.label} state={requirement.state} />
               ))}
+
+              {hasPasswordReachedMaximum ? (
+                <Text style={styles.passwordLengthLimitWarning}>
+                  You&apos;ve reached the maximum password length of {PASSWORD_MAX_LENGTH} characters.
+                </Text>
+              ) : null}
+
+              {passwordBreachMessage ? <Text style={styles.passwordBreachMessage}>{passwordBreachMessage}</Text> : null}
             </View>
           ) : null}
 
@@ -542,8 +547,12 @@ export default function RegisterScreen() {
               <PasswordField
                 label="Confirm Password"
                 value={confirmPassword}
-                onChangeText={setConfirmPassword}
+                onChangeText={(value) => {
+                  const sanitized = stripWhitespace(value);
+                  setConfirmPassword(enforcePasswordMaxLength(sanitized));
+                }}
                 placeholder="Repeat your password"
+                maxLength={PASSWORD_MAX_LENGTH}
                 showLabel={false}
                 dense
                 containerStyle={styles.insetFieldContainer}
@@ -570,7 +579,7 @@ export default function RegisterScreen() {
                   pressed ? styles.termsCheckboxPressed : null
                 ]}
               >
-                {agreedToTerms ? <Ionicons name="checkmark" size={14} color={palette.appBackground} /> : null}
+                {agreedToTerms ? <Ionicons name="checkmark" size={14} color={palette.primary} /> : null}
               </Pressable>
 
               <View style={styles.termsConsentTextRow}>
@@ -726,11 +735,19 @@ const styles = StyleSheet.create({
   },
   requirementText: {
     ...typography.caption,
-    color: "rgba(190,204,226,0.72)"
+    color: palette.textSecondary
   },
   passwordStrengthValue: {
     ...typography.caption,
     fontWeight: "600"
+  },
+  passwordLengthLimitWarning: {
+    ...typography.caption,
+    color: palette.negative
+  },
+  passwordBreachMessage: {
+    ...typography.caption,
+    color: palette.negative
   },
   termsConsentRow: {
     minHeight: 28,
@@ -753,8 +770,8 @@ const styles = StyleSheet.create({
     opacity: 0.86
   },
   termsCheckboxChecked: {
-    borderColor: palette.success,
-    backgroundColor: palette.success
+    borderColor: palette.primary,
+    backgroundColor: "rgba(242,140,40,0.14)"
   },
   termsConsentTextRow: {
     flex: 1,

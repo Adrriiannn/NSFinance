@@ -7,7 +7,12 @@ public class OpenBankingConnection
     public string ProviderName { get; set; } = string.Empty;
     public string ProviderEnvironment { get; set; } = "sandbox";
     public string? ProviderConnectionReference { get; set; }
+    public string? ProviderId { get; set; }
     public string? ProviderDisplayName { get; set; }
+    public string? ProviderIconUri { get; set; }
+    public string? ProviderLogoUri { get; set; }
+    public string? ProviderBrandBgColor { get; set; }
+    public DateTime? BrandingLastSyncedAtUtc { get; set; }
     public string Status { get; set; } = "not_connected";
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }

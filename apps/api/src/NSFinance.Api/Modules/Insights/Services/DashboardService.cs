@@ -22,7 +22,13 @@ public sealed class DashboardService(AppDbContext dbContext, ICurrentUserProvide
                 x.Currency,
                 x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m,
                 x.Transactions.Count,
-                x.CreatedUtc))
+                x.CreatedUtc,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false))
             .ToListAsync(cancellationToken);
 
         var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);

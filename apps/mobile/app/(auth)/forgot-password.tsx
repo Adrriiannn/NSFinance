@@ -16,7 +16,7 @@ const INSET_OUTLINE_WIDTH = 1;
 const INSET_LABEL_LEFT = 18;
 const INSET_LABEL_NOTCH_PADDING = 6;
 const INSET_LABEL_TOP = -8;
-const INSET_BORDER_IDLE = "rgba(164, 191, 234, 0.72)";
+const INSET_BORDER_IDLE = palette.borderStrong;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));

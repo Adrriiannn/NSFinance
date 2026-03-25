@@ -14,12 +14,13 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
             .AsNoTracking()
             .Where(x => x.UserId == currentUserProvider.UserId)
             .OrderBy(x => x.CreatedUtc)
-            .Select(x => new AccountDto(
+            .Select(x => new
+            {
                 x.Id,
                 x.Name,
                 x.Type,
                 x.Currency,
-                dbContext.LinkedBankAccounts
+                CurrentBalance = dbContext.LinkedBankAccounts
                     .Where(linked => linked.FinancialAccountId == x.Id)
                     .Select(linked => dbContext.BankBalanceSnapshots
                         .Where(balance => balance.LinkedBankAccountId == linked.Id)
@@ -27,8 +28,38 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
                         .Select(balance => (decimal?)(balance.Current ?? balance.Available))
                         .FirstOrDefault())
                     .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
-                x.Transactions.Count,
-                x.CreatedUtc))
+                TransactionCount = x.Transactions.Count,
+                x.CreatedUtc,
+                Provider = dbContext.LinkedBankAccounts
+                    .Where(linked => linked.FinancialAccountId == x.Id && linked.Connection != null)
+                    .OrderByDescending(linked => linked.UpdatedUtc)
+                    .Select(linked => new
+                    {
+                        linked.Connection!.ProviderId,
+                        linked.Connection.ProviderDisplayName,
+                        ProviderIconUrl = linked.Connection.ProviderIconUri,
+                        ProviderLogoUrl = linked.Connection.ProviderLogoUri,
+                        linked.Connection.ProviderBrandBgColor
+                    })
+                    .FirstOrDefault()
+            })
+            .Select(x => new AccountDto(
+                x.Id,
+                x.Name,
+                x.Type,
+                x.Currency,
+                x.CurrentBalance,
+                x.TransactionCount,
+                x.CreatedUtc,
+                x.Provider != null ? x.Provider.ProviderId : null,
+                x.Provider != null ? x.Provider.ProviderDisplayName : null,
+                x.Provider != null ? x.Provider.ProviderIconUrl : null,
+                x.Provider != null ? x.Provider.ProviderLogoUrl : null,
+                x.Provider != null ? x.Provider.ProviderBrandBgColor : null,
+                x.Provider != null
+                    && (x.Provider.ProviderIconUrl != null
+                        || x.Provider.ProviderLogoUrl != null
+                        || x.Provider.ProviderDisplayName != null)))
             .ToListAsync(cancellationToken);
     }
 
@@ -37,12 +68,13 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
         return await dbContext.FinancialAccounts
             .AsNoTracking()
             .Where(x => x.Id == accountId && x.UserId == currentUserProvider.UserId)
-            .Select(x => new AccountDto(
+            .Select(x => new
+            {
                 x.Id,
                 x.Name,
                 x.Type,
                 x.Currency,
-                dbContext.LinkedBankAccounts
+                CurrentBalance = dbContext.LinkedBankAccounts
                     .Where(linked => linked.FinancialAccountId == x.Id)
                     .Select(linked => dbContext.BankBalanceSnapshots
                         .Where(balance => balance.LinkedBankAccountId == linked.Id)
@@ -50,8 +82,38 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
                         .Select(balance => (decimal?)(balance.Current ?? balance.Available))
                         .FirstOrDefault())
                     .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
-                x.Transactions.Count,
-                x.CreatedUtc))
+                TransactionCount = x.Transactions.Count,
+                x.CreatedUtc,
+                Provider = dbContext.LinkedBankAccounts
+                    .Where(linked => linked.FinancialAccountId == x.Id && linked.Connection != null)
+                    .OrderByDescending(linked => linked.UpdatedUtc)
+                    .Select(linked => new
+                    {
+                        linked.Connection!.ProviderId,
+                        linked.Connection.ProviderDisplayName,
+                        ProviderIconUrl = linked.Connection.ProviderIconUri,
+                        ProviderLogoUrl = linked.Connection.ProviderLogoUri,
+                        linked.Connection.ProviderBrandBgColor
+                    })
+                    .FirstOrDefault()
+            })
+            .Select(x => new AccountDto(
+                x.Id,
+                x.Name,
+                x.Type,
+                x.Currency,
+                x.CurrentBalance,
+                x.TransactionCount,
+                x.CreatedUtc,
+                x.Provider != null ? x.Provider.ProviderId : null,
+                x.Provider != null ? x.Provider.ProviderDisplayName : null,
+                x.Provider != null ? x.Provider.ProviderIconUrl : null,
+                x.Provider != null ? x.Provider.ProviderLogoUrl : null,
+                x.Provider != null ? x.Provider.ProviderBrandBgColor : null,
+                x.Provider != null
+                    && (x.Provider.ProviderIconUrl != null
+                        || x.Provider.ProviderLogoUrl != null
+                        || x.Provider.ProviderDisplayName != null)))
             .SingleOrDefaultAsync(cancellationToken);
     }
 
@@ -95,7 +157,13 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
             account.Currency,
             openingBalance,
             openingBalance == 0 ? 0 : 1,
-            account.CreatedUtc);
+            account.CreatedUtc,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false);
     }
 
     public async Task<AccountDto?> UpdateAccountAsync(
@@ -132,7 +200,13 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
             account.Currency,
             currentBalance,
             transactionCount,
-            account.CreatedUtc);
+            account.CreatedUtc,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false);
     }
 
     public async Task<bool> DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
