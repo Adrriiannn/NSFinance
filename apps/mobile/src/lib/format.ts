@@ -14,6 +14,13 @@ export function formatDate(isoDate: string): string {
   }).format(new Date(isoDate));
 }
 
+export function formatLongDate(isoDate: string): string {
+  return new Intl.DateTimeFormat("en-IE", {
+    day: "2-digit",
+    month: "long"
+  }).format(new Date(isoDate));
+}
+
 export function formatShortDate(isoDate: string): string {
   return new Intl.DateTimeFormat("en-IE", {
     day: "2-digit",

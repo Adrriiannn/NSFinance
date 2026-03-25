@@ -1,5 +1,5 @@
-import type { TransactionDto } from "../../types/api";
-import { formatShortDate, formatTime } from "../../lib/format";
+﻿import type { TransactionDto } from "../../types/api";
+import { formatLongDate, formatTime } from "../../lib/format";
 
 export type ActivityFilter =
   | "All"
@@ -132,9 +132,9 @@ export function buildTransactionMetaLine(
   categoryOverride?: string | null
 ): string {
   const category = categoryOverride ?? transaction.categoryName ?? "Uncategorized";
-  return `${transaction.accountName} | ${category}`;
+  return category;
 }
 
 export function buildTransactionDetailDate(transaction: TransactionDto): string {
-  return `${formatShortDate(transaction.bookedAtUtc)} · ${formatTime(transaction.bookedAtUtc)}`;
+  return `${formatLongDate(transaction.bookedAtUtc)} | ${formatTime(transaction.bookedAtUtc)}`;
 }
