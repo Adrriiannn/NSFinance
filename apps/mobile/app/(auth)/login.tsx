@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { NsfLogo } from "../../src/components/branding/NsfLogo";
+import Svg, { Path } from "react-native-svg";
 import { CaptchaGate } from "../../src/components/forms/CaptchaGate";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { AuthLegalLinks } from "../../src/components/ui/AuthLegalLinks";
@@ -28,6 +28,12 @@ const LOGIN_ERROR_BANNER_DURATION_MS = 5000;
 const LOGIN_ERROR_SHAKE_DURATION_MS = 60;
 const LOCKOUT_READY_NOTICE_DURATION_MS = 5000;
 const LOGIN_LOCKOUT_UNTIL_KEY = "nsfinance.auth.login.lockout_until_utc_ms";
+const INSET_OUTLINE_RADIUS = 6;
+const INSET_OUTLINE_WIDTH = 1;
+const INSET_LABEL_LEFT = 18;
+const INSET_LABEL_NOTCH_PADDING = 6;
+const INSET_LABEL_TOP = -8;
+const INSET_BORDER_IDLE = "rgba(164, 191, 234, 0.72)";
 
 type LoginErrorBannerState =
   | { kind: "temporary_error"; id: number; title: string; message: string; highlightTarget: ErrorFieldTarget }
@@ -131,6 +137,102 @@ function runShake(animationValue: Animated.Value) {
       useNativeDriver: true
     })
   ]).start();
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function toOpaqueColor(color: string): string {
+  const rgbaMatch = color.match(
+    /^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(0|0?\.\d+|1(?:\.0+)?)\s*\)$/i
+  );
+
+  if (!rgbaMatch) {
+    return color;
+  }
+
+  const [, red, green, blue] = rgbaMatch;
+  return `rgb(${red}, ${green}, ${blue})`;
+}
+
+type InsetFieldShellProps = {
+  label: string;
+  color: string;
+  children: ReactNode;
+};
+
+function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
+  const [shellWidth, setShellWidth] = useState(0);
+  const [shellHeight, setShellHeight] = useState(0);
+  const [labelWidth, setLabelWidth] = useState(0);
+
+  const outlinePath = useMemo(() => {
+    if (shellWidth <= 0 || shellHeight <= 0) {
+      return "";
+    }
+
+    const stroke = INSET_OUTLINE_WIDTH;
+    const x0 = stroke / 2;
+    const y0 = stroke / 2;
+    const x1 = shellWidth - stroke / 2;
+    const y1 = shellHeight - stroke / 2;
+    const radius = clamp(
+      INSET_OUTLINE_RADIUS,
+      0,
+      Math.min((x1 - x0) / 2, (y1 - y0) / 2)
+    );
+
+    const minGapStart = x0 + radius + 2;
+    const maxGapEnd = x1 - radius - 2;
+    const preferredGapStart = INSET_LABEL_LEFT - INSET_LABEL_NOTCH_PADDING;
+    const preferredGapEnd =
+      INSET_LABEL_LEFT + Math.max(labelWidth, 24) + INSET_LABEL_NOTCH_PADDING;
+
+    const notchStart = clamp(preferredGapStart, minGapStart, maxGapEnd - 10);
+    const notchEnd = clamp(preferredGapEnd, notchStart + 10, maxGapEnd);
+
+    return [
+      `M ${notchEnd} ${y0}`,
+      `H ${x1 - radius}`,
+      `A ${radius} ${radius} 0 0 1 ${x1} ${y0 + radius}`,
+      `V ${y1 - radius}`,
+      `A ${radius} ${radius} 0 0 1 ${x1 - radius} ${y1}`,
+      `H ${x0 + radius}`,
+      `A ${radius} ${radius} 0 0 1 ${x0} ${y1 - radius}`,
+      `V ${y0 + radius}`,
+      `A ${radius} ${radius} 0 0 1 ${x0 + radius} ${y0}`,
+      `H ${notchStart}`
+    ].join(" ");
+  }, [labelWidth, shellHeight, shellWidth]);
+
+  return (
+    <View
+      style={styles.insetFieldWrap}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setShellWidth(width);
+        setShellHeight(height);
+      }}
+    >
+      {children}
+      {outlinePath ? (
+        <Svg pointerEvents="none" style={styles.insetOutlineSvg}>
+          <Path d={outlinePath} stroke={color} strokeWidth={INSET_OUTLINE_WIDTH} fill="none" />
+        </Svg>
+      ) : null}
+      <View pointerEvents="none" style={styles.insetFieldLabelChip}>
+        <Text
+          onLayout={(event) => {
+            setLabelWidth(event.nativeEvent.layout.width);
+          }}
+          style={[styles.insetFieldLabelText, { color: toOpaqueColor(color) }]}
+        >
+          {label}
+        </Text>
+      </View>
+    </View>
+  );
 }
 
 export default function LoginScreen() {
@@ -310,6 +412,14 @@ export default function LoginScreen() {
   const showPasswordFieldError =
     loginErrorBanner?.kind === "temporary_error" &&
     (loginErrorBanner.highlightTarget === "password" || loginErrorBanner.highlightTarget === "both");
+  const emailBorderColor =
+    errors.email || showEmailFieldError ? palette.negative : focusedField === "email" ? palette.primaryGlow : INSET_BORDER_IDLE;
+  const passwordBorderColor =
+    errors.password || showPasswordFieldError
+      ? palette.negative
+      : focusedField === "password"
+        ? palette.primaryGlow
+        : INSET_BORDER_IDLE;
 
   const lockoutRemainingSeconds =
     loginErrorBanner?.kind === "lockout_countdown"
@@ -473,10 +583,9 @@ export default function LoginScreen() {
     <AuthScreen>
       <View style={styles.topRow}>
         <View style={styles.headerTextWrap}>
-          <Text style={styles.title}>Welcome back</Text>
+          <Text style={styles.title}>Welcome back!</Text>
           <Text style={styles.subtitle}>Sign in to continue managing your finances.</Text>
         </View>
-        <NsfLogo size={52} />
       </View>
 
       <View style={styles.centerWrap}>
@@ -506,38 +615,44 @@ export default function LoginScreen() {
             <View style={styles.loginCoreLifted}>
               <View style={styles.form}>
                 <Animated.View style={[styles.narrowBlock, { transform: [{ translateX: emailShakeX }] }]}>
-                  <TextField
-                    label="Email"
-                    value={email}
-                    onChangeText={setEmail}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    placeholder="you@example.com"
-                    dense
-                    containerStyle={[styles.authFieldContainer, showEmailFieldError ? styles.authFieldTransientError : null]}
-                    style={styles.authFieldInput}
-                    error={errors.email}
-                    onFocus={() => setFocusedField("email")}
-                    forceFocused={focusedField === "email"}
-                  />
+                  <InsetFieldShell label="Email" color={emailBorderColor}>
+                    <TextField
+                      label="Email"
+                      value={email}
+                      onChangeText={setEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      placeholder="you@example.com"
+                      showLabel={false}
+                      dense
+                      containerStyle={styles.insetFieldContainer}
+                      style={styles.authFieldInput}
+                      error={errors.email}
+                      onFocus={() => setFocusedField("email")}
+                      forceFocused={focusedField === "email"}
+                    />
+                  </InsetFieldShell>
                 </Animated.View>
 
                 <Animated.View style={[styles.narrowBlock, { transform: [{ translateX: passwordShakeX }] }]}>
-                  <PasswordField
-                    label="Password"
-                    value={password}
-                    onChangeText={setPassword}
-                    placeholder="Password"
-                    dense
-                    containerStyle={[styles.authFieldContainer, showPasswordFieldError ? styles.authFieldTransientError : null]}
-                    style={styles.authFieldInput}
-                    error={errors.password}
-                    onFocus={() => setFocusedField("password")}
-                    forceFocused={focusedField === "password"}
-                    isPasswordVisible={passwordVisible}
-                    onPasswordVisibilityChange={setPasswordVisible}
-                    autoHideOnBlur={false}
-                  />
+                  <InsetFieldShell label="Password" color={passwordBorderColor}>
+                    <PasswordField
+                      label="Password"
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="Password"
+                      showLabel={false}
+                      dense
+                      containerStyle={styles.insetFieldContainer}
+                      style={styles.authFieldInput}
+                      error={errors.password}
+                      onFocus={() => setFocusedField("password")}
+                      forceFocused={focusedField === "password"}
+                      isPasswordVisible={passwordVisible}
+                      onPasswordVisibilityChange={setPasswordVisible}
+                      autoHideOnBlur={false}
+                    />
+                  </InsetFieldShell>
                 </Animated.View>
 
                 {shouldShowCaptcha ? <CaptchaGate token={captchaToken} onTokenChange={setCaptchaToken} showLabel={false} /> : null}
@@ -638,22 +753,23 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   topRow: {
     marginTop: spacing[16],
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: spacing[12]
+    alignItems: "center",
+    gap: spacing[8]
   },
   headerTextWrap: {
-    flex: 1,
+    width: "100%",
+    alignItems: "center",
     gap: spacing[8]
   },
   title: {
     color: palette.textPrimary,
-    ...typography.title1
+    ...typography.title1,
+    textAlign: "center"
   },
   subtitle: {
     color: palette.textSecondary,
-    ...typography.body2
+    ...typography.body2,
+    textAlign: "center"
   },
   centerWrap: {
     flex: 1,
@@ -684,16 +800,36 @@ const styles = StyleSheet.create({
   loginCoreLifted: {
     transform: [{ translateY: -18 }]
   },
-  authFieldContainer: {
-    minHeight: 36,
-    borderRadius: 12,
-    paddingHorizontal: 12
+  insetFieldWrap: {
+    position: "relative"
+  },
+  insetOutlineSvg: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2
+  },
+  insetFieldLabelChip: {
+    position: "absolute",
+    top: INSET_LABEL_TOP,
+    left: INSET_LABEL_LEFT,
+    zIndex: 4
+  },
+  insetFieldLabelText: {
+    ...typography.caption,
+    fontWeight: "600"
+  },
+  insetFieldContainer: {
+    minHeight: 44,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    borderWidth: 0,
+    shadowColor: "transparent",
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0
   },
   authFieldInput: {
     paddingVertical: 8
-  },
-  authFieldTransientError: {
-    borderColor: palette.negative
   },
   rememberEmailRow: {
     minHeight: 28,
@@ -735,8 +871,8 @@ const styles = StyleSheet.create({
   },
   authButton: {
     flex: 1,
-    borderRadius: 18,
-    minHeight: 50
+    borderRadius: 6,
+    minHeight: 44
   },
   loginButton: {
     marginTop: spacing[6]

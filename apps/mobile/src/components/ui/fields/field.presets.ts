@@ -1,5 +1,5 @@
 import type { TextStyle, ViewStyle } from "react-native";
-import { borders, palette, radius, shadows, sizing, spacing, surfaces, typography } from "../../../theme/tokens";
+import { borders, palette, radius, sizing, spacing, surfaces, typography } from "../../../theme/tokens";
 
 export type FieldVariant = "text" | "search" | "select" | "currency" | "multiline";
 
@@ -38,8 +38,7 @@ export const fieldPresets = {
   } as ViewStyle,
   containerFocused: {
     borderColor: palette.primaryGlow,
-    backgroundColor: surfaces.fieldStrong,
-    ...shadows.glow
+    backgroundColor: surfaces.fieldStrong
   } as ViewStyle,
   containerError: {
     borderColor: palette.negative
