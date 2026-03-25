@@ -1,6 +1,6 @@
+using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
-using System.Text;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Infrastructure.RequestContext;
 using NSFinance.Api.Modules.Audit.Services;
@@ -22,6 +22,7 @@ public sealed class SupportService(
 {
     private const string PurposeAccountDeletion = "account_deletion";
     private static readonly TimeSpan ExportRetentionWindow = TimeSpan.FromMinutes(15);
+    private const string ExportFormatXlsx = "xlsx";
 
     public async Task<ServiceResult<SupportRequestDto>> CreateSupportRequestAsync(
         CreateSupportRequestRequest request,
@@ -205,10 +206,19 @@ public sealed class SupportService(
         await ExpireReadyExportsAsync(userId, cancellationToken);
 
         var now = DateTime.UtcNow;
-        ServiceResult<string> artifactResult;
+        var format = NormalizeExportFormat(request.Format);
+        if (!string.Equals(format, ExportFormatXlsx, StringComparison.OrdinalIgnoreCase))
+        {
+            return ServiceResult<ExportRequestDto>.Fail(
+                "Only XLSX export format is currently supported.",
+                "unsupported_export_format",
+                StatusCodes.Status400BadRequest);
+        }
+
+        ServiceResult<ExportArtifactResult> artifactResult;
         try
         {
-            artifactResult = await BuildExportPackageAsync(userId, cancellationToken);
+            artifactResult = await BuildExportPackageAsync(userId, request, format, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -223,9 +233,13 @@ public sealed class SupportService(
         {
             return ServiceResult<ExportRequestDto>.Fail(
                 artifactResult.Error!.Message,
-                artifactResult.Error.Code,
-                artifactResult.Error.StatusCode);
+            artifactResult.Error.Code,
+            artifactResult.Error.StatusCode);
         }
+
+        var selectedConnectionLabel = await ResolveConnectionLabelAsync(userId, request.ConnectionId, cancellationToken);
+
+        var normalizedDates = NormalizeDateRange(request.StartDate, request.EndDate);
 
         var existingRequests = await dbContext.ExportRequests
             .Where(x => x.UserId == userId)
@@ -242,8 +256,16 @@ public sealed class SupportService(
                 Status = "ready",
                 RequestedUtc = now,
                 UpdatedUtc = now,
+                Format = format,
+                ConnectionId = request.ConnectionId,
+                ConnectionLabel = selectedConnectionLabel,
+                FinancialAccountId = request.FinancialAccountId,
+                StartDate = normalizedDates.StartDate,
+                EndDate = normalizedDates.EndDate,
+                PeriodPreset = NormalizeNullable(request.PeriodPreset),
+                FileSizeBytes = artifactResult.Value!.FileSizeBytes,
                 Notes = NormalizeNullable(request.Notes),
-                ArtifactReference = artifactResult.Value
+                ArtifactReference = artifactResult.Value!.FilePath
             };
             dbContext.ExportRequests.Add(exportRequest);
         }
@@ -254,11 +276,19 @@ public sealed class SupportService(
             exportRequest.Status = "ready";
             exportRequest.RequestedUtc = now;
             exportRequest.UpdatedUtc = now;
+            exportRequest.Format = format;
+            exportRequest.ConnectionId = request.ConnectionId;
+            exportRequest.ConnectionLabel = selectedConnectionLabel;
+            exportRequest.FinancialAccountId = request.FinancialAccountId;
+            exportRequest.StartDate = normalizedDates.StartDate;
+            exportRequest.EndDate = normalizedDates.EndDate;
+            exportRequest.PeriodPreset = NormalizeNullable(request.PeriodPreset);
+            exportRequest.FileSizeBytes = artifactResult.Value!.FileSizeBytes;
             exportRequest.Notes = NormalizeNullable(request.Notes);
-            exportRequest.ArtifactReference = artifactResult.Value;
+            exportRequest.ArtifactReference = artifactResult.Value!.FilePath;
 
             if (!string.IsNullOrWhiteSpace(previousArtifact)
-                && !string.Equals(previousArtifact, artifactResult.Value, StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(previousArtifact, artifactResult.Value!.FilePath, StringComparison.OrdinalIgnoreCase))
             {
                 TryDeleteFile(previousArtifact);
             }
@@ -289,13 +319,7 @@ public sealed class SupportService(
             metadata: null,
             cancellationToken);
 
-        return ServiceResult<ExportRequestDto>.Ok(new ExportRequestDto(
-            exportRequest.Id,
-            exportRequest.UserId,
-            exportRequest.Status,
-            exportRequest.RequestedUtc,
-            exportRequest.UpdatedUtc,
-            exportRequest.Notes));
+        return ServiceResult<ExportRequestDto>.Ok(ToExportRequestDto(exportRequest));
     }
 
     public async Task<ServiceResult<IReadOnlyList<ExportRequestDto>>> GetMyExportRequestsAsync(
@@ -333,13 +357,7 @@ public sealed class SupportService(
 
         var requests = allRequests
             .Take(1)
-            .Select(x => new ExportRequestDto(
-                x.Id,
-                x.UserId,
-                x.Status,
-                x.RequestedUtc,
-                x.UpdatedUtc,
-                x.Notes))
+            .Select(ToExportRequestDto)
             .ToList();
 
         return ServiceResult<IReadOnlyList<ExportRequestDto>>.Ok(requests);
@@ -433,12 +451,105 @@ public sealed class SupportService(
 
         var fileBytes = await File.ReadAllBytesAsync(request.ArtifactReference, cancellationToken);
         var fileName = Path.GetFileName(request.ArtifactReference);
-        return ServiceResult<ExportDownloadPayload>.Ok(new ExportDownloadPayload(fileName, "application/json", fileBytes));
+        var requestFormat = NormalizeExportFormat(request.Format);
+        request.FileSizeBytes = fileBytes.LongLength;
+        request.Format = requestFormat;
+        request.UpdatedUtc = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return ServiceResult<ExportDownloadPayload>.Ok(new ExportDownloadPayload(
+            fileName,
+            ResolveExportContentType(requestFormat),
+            fileBytes));
     }
+
+    private sealed record ExportArtifactResult(string FilePath, long FileSizeBytes);
+
+    private sealed record NormalizedDateRange(
+        DateOnly? StartDate,
+        DateOnly? EndDate,
+        DateTime? StartUtc,
+        DateTime? EndUtc);
 
     private static string? NormalizeNullable(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string NormalizeExportFormat(string? requestedFormat)
+    {
+        if (string.IsNullOrWhiteSpace(requestedFormat))
+        {
+            return ExportFormatXlsx;
+        }
+
+        return requestedFormat.Trim().ToLowerInvariant();
+    }
+
+    private static string ResolveExportContentType(string format)
+    {
+        return string.Equals(format, ExportFormatXlsx, StringComparison.OrdinalIgnoreCase)
+            ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            : "application/octet-stream";
+    }
+
+    private static NormalizedDateRange NormalizeDateRange(DateOnly? startDate, DateOnly? endDate)
+    {
+        if (startDate.HasValue && !endDate.HasValue)
+        {
+            endDate = startDate;
+        }
+        else if (!startDate.HasValue && endDate.HasValue)
+        {
+            startDate = endDate;
+        }
+
+        if (startDate.HasValue && endDate.HasValue && startDate.Value > endDate.Value)
+        {
+            (startDate, endDate) = (endDate, startDate);
+        }
+
+        var startUtc = startDate?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var endUtc = endDate?.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc);
+
+        return new NormalizedDateRange(startDate, endDate, startUtc, endUtc);
+    }
+
+    private async Task<string?> ResolveConnectionLabelAsync(
+        Guid userId,
+        Guid? connectionId,
+        CancellationToken cancellationToken)
+    {
+        if (!connectionId.HasValue)
+        {
+            return null;
+        }
+
+        return await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && x.Id == connectionId.Value)
+            .Select(x => x.ProviderDisplayName ?? x.ProviderName)
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    private static ExportRequestDto ToExportRequestDto(ExportRequest request)
+    {
+        var format = NormalizeExportFormat(request.Format);
+        return new ExportRequestDto(
+            request.Id,
+            request.UserId,
+            request.Status,
+            request.RequestedUtc,
+            request.UpdatedUtc,
+            request.Notes,
+            format,
+            request.ConnectionId,
+            request.ConnectionLabel,
+            request.FinancialAccountId,
+            request.StartDate,
+            request.EndDate,
+            request.PeriodPreset,
+            request.FileSizeBytes);
     }
 
     private static bool IsExpiredReadyExport(ExportRequest request, DateTime nowUtc)
@@ -460,6 +571,7 @@ public sealed class SupportService(
 
         request.Status = "expired";
         request.ArtifactReference = null;
+        request.FileSizeBytes = null;
         request.UpdatedUtc = nowUtc;
     }
 
@@ -508,198 +620,268 @@ public sealed class SupportService(
         }
     }
 
-    private async Task<ServiceResult<string>> BuildExportPackageAsync(
+    private async Task<ServiceResult<ExportArtifactResult>> BuildExportPackageAsync(
         Guid userId,
+        CreateExportRequestRequest request,
+        string format,
         CancellationToken cancellationToken)
     {
-        var user = await dbContext.Users
+        var userExists = await dbContext.Users
             .AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+            .AnyAsync(x => x.Id == userId, cancellationToken);
 
-        if (user is null)
+        if (!userExists)
         {
-            return ServiceResult<string>.Fail(
+            return ServiceResult<ExportArtifactResult>.Fail(
                 "User not found.",
                 "user_not_found",
                 StatusCodes.Status404NotFound);
         }
 
-        var preferences = await dbContext.UserPreferences
-            .AsNoTracking()
-            .Where(x => x.UserId == userId)
-            .Select(x => new
+        if (request.ConnectionId.HasValue)
+        {
+            var hasConnection = await dbContext.OpenBankingConnections
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.UserId == userId && x.Id == request.ConnectionId.Value,
+                    cancellationToken);
+
+            if (!hasConnection)
             {
-                x.UserId,
-                x.AdviceTonePreference,
-                x.DigestFrequency,
-                x.ReminderPreference,
-                x.NotificationPreferencesJson,
-                x.PrivacyPreferencesJson,
-                x.EssentialCategoryPreferencesJson,
-                x.FutureGoalConfigurationJson,
-                x.UpdatedUtc
-            })
-            .SingleOrDefaultAsync(cancellationToken);
-        var connections = await dbContext.OpenBankingConnections
+                return ServiceResult<ExportArtifactResult>.Fail(
+                    "Selected bank connection was not found.",
+                    "export_connection_not_found",
+                    StatusCodes.Status400BadRequest);
+            }
+        }
+
+        if (request.FinancialAccountId.HasValue)
+        {
+            var hasFinancialAccount = await dbContext.FinancialAccounts
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.UserId == userId && x.Id == request.FinancialAccountId.Value,
+                    cancellationToken);
+
+            if (!hasFinancialAccount)
+            {
+                return ServiceResult<ExportArtifactResult>.Fail(
+                    "Selected account was not found.",
+                    "export_account_not_found",
+                    StatusCodes.Status400BadRequest);
+            }
+        }
+
+        var normalizedDates = NormalizeDateRange(request.StartDate, request.EndDate);
+
+        var connectionsQuery = dbContext.OpenBankingConnections
             .AsNoTracking()
-            .Where(x => x.UserId == userId)
+            .Where(x => x.UserId == userId);
+
+        if (request.ConnectionId.HasValue)
+        {
+            connectionsQuery = connectionsQuery.Where(x => x.Id == request.ConnectionId.Value);
+        }
+
+        var connections = await connectionsQuery
             .OrderByDescending(x => x.UpdatedUtc)
             .Select(x => new
             {
                 x.Id,
-                x.ProviderName,
-                x.ProviderEnvironment,
-                x.ProviderConnectionReference,
-                x.ProviderDisplayName,
-                x.Status,
-                x.CreatedUtc,
-                x.UpdatedUtc,
-                x.LastSuccessfulSyncUtc,
-                x.LastSyncAttemptedUtc,
-                x.LastErrorCode,
-                x.LastErrorReason
+                Label = x.ProviderDisplayName ?? x.ProviderName
             })
             .ToListAsync(cancellationToken);
-        var linkedAccounts = await dbContext.LinkedBankAccounts
+
+        var linkedAccountsQuery = dbContext.LinkedBankAccounts
             .AsNoTracking()
-            .Where(x => x.Connection != null && x.Connection.UserId == userId)
+            .Where(x => x.Connection != null && x.Connection.UserId == userId);
+
+        if (request.ConnectionId.HasValue)
+        {
+            linkedAccountsQuery = linkedAccountsQuery.Where(x => x.ConnectionId == request.ConnectionId.Value);
+        }
+
+        var linkedAccounts = await linkedAccountsQuery
             .Select(x => new
             {
                 x.Id,
                 x.ConnectionId,
-                x.ProviderAccountId,
-                x.AccountType,
-                x.AccountSubType,
                 x.DisplayName,
-                x.Currency,
-                x.AccountNumberMetadataJson,
-                x.CurrentConnectionHealth,
-                x.RawPayloadJson,
                 x.FinancialAccountId,
-                x.CreatedUtc,
-                x.UpdatedUtc
+                ConnectionLabel = x.Connection!.ProviderDisplayName ?? x.Connection.ProviderName
             })
             .ToListAsync(cancellationToken);
-        var financialAccounts = await dbContext.FinancialAccounts
+
+        var financialAccountsQuery = dbContext.FinancialAccounts
             .AsNoTracking()
-            .Where(x => x.UserId == userId)
+            .Where(x => x.UserId == userId);
+
+        if (request.FinancialAccountId.HasValue)
+        {
+            financialAccountsQuery = financialAccountsQuery.Where(x => x.Id == request.FinancialAccountId.Value);
+        }
+        else if (request.ConnectionId.HasValue)
+        {
+            var linkedFinancialAccountIds = linkedAccounts
+                .Where(x => x.FinancialAccountId.HasValue)
+                .Select(x => x.FinancialAccountId!.Value)
+                .Distinct()
+                .ToList();
+
+            if (linkedFinancialAccountIds.Count == 0)
+            {
+                financialAccountsQuery = financialAccountsQuery.Where(_ => false);
+            }
+            else
+            {
+                financialAccountsQuery = financialAccountsQuery.Where(x => linkedFinancialAccountIds.Contains(x.Id));
+            }
+        }
+
+        var financialAccounts = await financialAccountsQuery
             .Select(x => new
             {
                 x.Id,
-                x.UserId,
                 x.Name,
                 x.Type,
                 x.Currency,
                 x.CreatedUtc
             })
             .ToListAsync(cancellationToken);
+
         var financialAccountIds = financialAccounts.Select(x => x.Id).ToList();
-        var transactions = await dbContext.Transactions
+
+        var transactionsQuery = dbContext.Transactions
             .AsNoTracking()
-            .Where(x => financialAccountIds.Contains(x.FinancialAccountId))
+            .Where(x => financialAccountIds.Contains(x.FinancialAccountId));
+
+        if (normalizedDates.StartUtc.HasValue)
+        {
+            transactionsQuery = transactionsQuery.Where(x => x.BookedAtUtc >= normalizedDates.StartUtc.Value);
+        }
+
+        if (normalizedDates.EndUtc.HasValue)
+        {
+            transactionsQuery = transactionsQuery.Where(x => x.BookedAtUtc <= normalizedDates.EndUtc.Value);
+        }
+
+        var transactions = await transactionsQuery
             .OrderByDescending(x => x.BookedAtUtc)
             .Select(x => new
             {
                 x.Id,
                 x.FinancialAccountId,
+                x.Description,
                 x.Amount,
                 x.Currency,
-                x.Description,
                 x.BookedAtUtc,
-                x.CategoryId,
+                CategoryName = x.Category != null ? x.Category.Name : null,
                 x.CreatedUtc
             })
             .ToListAsync(cancellationToken);
-        var linkedAccountIds = linkedAccounts.Select(x => x.Id).ToList();
-        var balanceSnapshots = await dbContext.BankBalanceSnapshots
-            .AsNoTracking()
-            .Where(x => linkedAccountIds.Contains(x.LinkedBankAccountId))
-            .OrderByDescending(x => x.CapturedUtc)
-            .Select(x => new
-            {
-                x.Id,
-                x.LinkedBankAccountId,
-                x.Available,
-                x.Current,
-                x.Overdraft,
-                x.Currency,
-                x.CapturedUtc,
-                x.RawPayloadJson
-            })
-            .ToListAsync(cancellationToken);
-        var supportRequests = await dbContext.SupportRequests
-            .AsNoTracking()
-            .Where(x => x.UserId == userId)
-            .OrderByDescending(x => x.CreatedUtc)
-            .Select(x => new
-            {
-                x.Id,
-                x.Category,
-                x.Subcategory,
-                x.Title,
-                x.Status,
-                x.CreatedUtc,
-                x.UpdatedUtc
-            })
-            .ToListAsync(cancellationToken);
-        var policyAcceptances = await dbContext.PolicyAcceptances
-            .AsNoTracking()
-            .Where(x => x.UserId == userId)
-            .OrderByDescending(x => x.AcceptedUtc)
-            .Select(x => new
-            {
-                x.PolicyType,
-                x.PolicyVersion,
-                x.AcceptedUtc,
-                x.AcceptanceContext,
-                x.Platform,
-                x.AppVersion
-            })
-            .ToListAsync(cancellationToken);
 
-        var payload = new
-        {
-            generatedUtc = DateTime.UtcNow,
-            profile = new
-            {
-                user.Id,
-                user.PrimaryEmail,
-                user.FullName,
-                user.DisplayName,
-                user.ProfileSubtitle,
-                user.PhoneNumber,
-                user.DateOfBirth,
-                user.CountryRegion,
-                user.Timezone,
-                user.PreferredCurrency,
-                user.CreatedUtc,
-                user.LastLoginUtc
-            },
-            preferences,
-            openBanking = new
-            {
-                connections,
-                linkedAccounts,
-                balanceSnapshots
-            },
-            accounts = financialAccounts,
-            transactions,
-            supportRequests,
-            policyAcceptances
-        };
+        var bankByAccountId = linkedAccounts
+            .Where(x => x.FinancialAccountId.HasValue)
+            .GroupBy(x => x.FinancialAccountId!.Value)
+            .ToDictionary(
+                x => x.Key,
+                x => x.Select(item => item.ConnectionLabel).FirstOrDefault() ?? "Not linked");
 
-        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        var accountById = financialAccounts.ToDictionary(x => x.Id, x => x);
+
+        using var workbook = new XLWorkbook();
+
+        var detailsSheet = workbook.Worksheets.Add("Export details");
+        detailsSheet.Cell(1, 1).Value = "Generated UTC";
+        detailsSheet.Cell(1, 2).Value = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
+        detailsSheet.Cell(2, 1).Value = "Format";
+        detailsSheet.Cell(2, 2).Value = format.ToUpperInvariant();
+        detailsSheet.Cell(3, 1).Value = "Bank filter";
+        detailsSheet.Cell(3, 2).Value = request.ConnectionId.HasValue
+            ? connections.Select(x => x.Label).FirstOrDefault() ?? "Selected bank"
+            : "All";
+        detailsSheet.Cell(4, 1).Value = "Date range";
+        detailsSheet.Cell(4, 2).Value = normalizedDates.StartDate.HasValue && normalizedDates.EndDate.HasValue
+            ? $"{normalizedDates.StartDate:yyyy-MM-dd} to {normalizedDates.EndDate:yyyy-MM-dd}"
+            : "All time";
+        detailsSheet.Cell(5, 1).Value = "Period preset";
+        detailsSheet.Cell(5, 2).Value = NormalizeNullable(request.PeriodPreset) ?? "Custom";
+        detailsSheet.Cell(6, 1).Value = "Accounts included";
+        detailsSheet.Cell(6, 2).Value = financialAccounts.Count;
+        detailsSheet.Cell(7, 1).Value = "Transactions included";
+        detailsSheet.Cell(7, 2).Value = transactions.Count;
+        detailsSheet.Range(1, 1, 7, 1).Style.Font.Bold = true;
+
+        var accountsSheet = workbook.Worksheets.Add("Accounts");
+        accountsSheet.Cell(1, 1).Value = "Bank";
+        accountsSheet.Cell(1, 2).Value = "Account name";
+        accountsSheet.Cell(1, 3).Value = "Type";
+        accountsSheet.Cell(1, 4).Value = "Currency";
+        accountsSheet.Cell(1, 5).Value = "Created (UTC)";
+        accountsSheet.Cell(1, 6).Value = "Account ID";
+
+        for (var index = 0; index < financialAccounts.Count; index++)
         {
-            WriteIndented = true
-        });
+            var account = financialAccounts[index];
+            var row = index + 2;
+
+            accountsSheet.Cell(row, 1).Value = bankByAccountId.TryGetValue(account.Id, out var bankLabel)
+                ? bankLabel
+                : "Not linked";
+            accountsSheet.Cell(row, 2).Value = account.Name;
+            accountsSheet.Cell(row, 3).Value = account.Type;
+            accountsSheet.Cell(row, 4).Value = account.Currency;
+            accountsSheet.Cell(row, 5).Value = account.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss");
+            accountsSheet.Cell(row, 6).Value = account.Id.ToString();
+        }
+
+        var transactionsSheet = workbook.Worksheets.Add("Transactions");
+        transactionsSheet.Cell(1, 1).Value = "Bank";
+        transactionsSheet.Cell(1, 2).Value = "Account";
+        transactionsSheet.Cell(1, 3).Value = "Description";
+        transactionsSheet.Cell(1, 4).Value = "Category";
+        transactionsSheet.Cell(1, 5).Value = "Amount";
+        transactionsSheet.Cell(1, 6).Value = "Currency";
+        transactionsSheet.Cell(1, 7).Value = "Booked at (UTC)";
+        transactionsSheet.Cell(1, 8).Value = "Created at (UTC)";
+        transactionsSheet.Cell(1, 9).Value = "Transaction ID";
+
+        for (var index = 0; index < transactions.Count; index++)
+        {
+            var transaction = transactions[index];
+            var row = index + 2;
+            accountById.TryGetValue(transaction.FinancialAccountId, out var sourceAccount);
+
+            transactionsSheet.Cell(row, 1).Value = bankByAccountId.TryGetValue(transaction.FinancialAccountId, out var bankLabel)
+                ? bankLabel
+                : "Not linked";
+            transactionsSheet.Cell(row, 2).Value = sourceAccount?.Name ?? "Unknown account";
+            transactionsSheet.Cell(row, 3).Value = transaction.Description;
+            transactionsSheet.Cell(row, 4).Value = transaction.CategoryName ?? "Uncategorized";
+            transactionsSheet.Cell(row, 5).Value = Convert.ToDouble(transaction.Amount);
+            transactionsSheet.Cell(row, 6).Value = transaction.Currency;
+            transactionsSheet.Cell(row, 7).Value = transaction.BookedAtUtc.ToString("yyyy-MM-dd HH:mm:ss");
+            transactionsSheet.Cell(row, 8).Value = transaction.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss");
+            transactionsSheet.Cell(row, 9).Value = transaction.Id.ToString();
+        }
+
+        detailsSheet.Columns().AdjustToContents();
+        accountsSheet.Row(1).Style.Font.Bold = true;
+        accountsSheet.Columns().AdjustToContents();
+        transactionsSheet.Row(1).Style.Font.Bold = true;
+        transactionsSheet.Columns().AdjustToContents();
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         var artifactRoot = Path.Combine(Path.GetTempPath(), "nsfinance-export-artifacts");
         Directory.CreateDirectory(artifactRoot);
-        var fileName = $"nsfinance-export-{userId:N}-{DateTime.UtcNow:yyyyMMddHHmmss}.json";
+        var fileName = $"nsfinance-statements-{userId:N}-{DateTime.UtcNow:yyyyMMddHHmmss}.xlsx";
         var fullPath = Path.Combine(artifactRoot, fileName);
-        await File.WriteAllTextAsync(fullPath, json, Encoding.UTF8, cancellationToken);
 
-        return ServiceResult<string>.Ok(fullPath);
+        workbook.SaveAs(fullPath);
+
+        var fileInfo = new FileInfo(fullPath);
+        return ServiceResult<ExportArtifactResult>.Ok(new ExportArtifactResult(fullPath, fileInfo.Length));
     }
 
     private async Task<string?> StoreSupportAttachmentsAsync(

@@ -1,8 +1,8 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo } from "react";
-import { Alert, ScrollView, Text, View } from "react-native";
-import * as FileSystem from "expo-file-system/legacy";
+import { Alert, Platform, ScrollView, Text, View } from "react-native";
 import * as Sharing from "expo-sharing";
+import { useMutation } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
@@ -15,26 +15,12 @@ import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
 import { useBankConnectionsQuery } from "../../../src/features/banking/useBanking";
+import { useCreateExportRequestMutation } from "../../../src/features/support/useSupport";
+import { downloadExportRequestFile } from "../../../src/features/support/supportApi";
 import { useAccountTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency, formatDate } from "../../../src/lib/format";
-import { usePlannerStore } from "../../../src/providers/PlannerProvider";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
-
-function formatUtcDate(isoDate: string) {
-  const date = new Date(isoDate);
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function formatUtcTime(isoDate: string) {
-  const date = new Date(isoDate);
-  const hours = String(date.getUTCHours()).padStart(2, "0");
-  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
-}
 
 function formatDateTime(isoDate?: string | null) {
   if (!isoDate) {
@@ -56,39 +42,19 @@ function formatDateTime(isoDate?: string | null) {
   }).format(parsed);
 }
 
-function csvCell(value: string | number | null | undefined) {
-  const normalized = value === null || value === undefined ? "" : String(value);
-  return `"${normalized.replace(/"/g, '""')}"`;
-}
-
-function formatExportTimestamp(now = new Date()) {
-  const day = String(now.getDate()).padStart(2, "0");
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const year = String(now.getFullYear()).slice(-2);
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
-  return `${day}-${month}-${year}_${hours}-${minutes}`;
-}
-
-function toSafeAccountSlug(accountName: string) {
-  return accountName
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-");
-}
-
 export default function AccountDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id?: string }>();
   const accountId = params.id ?? "";
-  const plannerStore = usePlannerStore();
 
   const accountQuery = useAccountDetailQuery(accountId);
   const transactionsQuery = useAccountTransactionsQuery(accountId);
   const connectionsQuery = useBankConnectionsQuery();
+  const createExportMutation = useCreateExportRequestMutation();
+  const downloadExportMutation = useMutation({
+    mutationFn: async (requestId: string) => downloadExportRequestFile(requestId)
+  });
   const latestConnection = useMemo(() => {
     const list = connectionsQuery.data ?? [];
     return [...list].sort((left, right) => {
@@ -124,57 +90,40 @@ export default function AccountDetailsScreen() {
     getFloatingTabBarContentInset(insets.bottom, spacing[12])
   );
 
-  const exportCsv = async () => {
+  const exportExcel = async () => {
     if (!account) {
       return;
     }
 
     try {
-      const header = "Date,Time,Transaction,Account,Category,Amount,Currency,Notes";
-      const rows = transactions.map((item) => {
-        const annotation = plannerStore.annotations[item.id];
-        const category =
-          annotation?.category ??
-          item.categoryName ??
-          (item.direction === "Income" ? "Income" : "Uncategorized");
-        const amount = Number(item.amount).toFixed(2);
-        const notes = annotation?.notes ?? "";
-
-        return [
-          csvCell(formatUtcDate(item.bookedAtUtc)),
-          csvCell(formatUtcTime(item.bookedAtUtc)),
-          csvCell(item.description),
-          csvCell(item.accountName),
-          csvCell(category),
-          csvCell(amount),
-          csvCell(item.currency),
-          csvCell(notes)
-        ].join(",");
-      });
-      const csvText = [header, ...rows].join("\n");
-
-      const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-      if (!directory) {
-        throw new Error("No writable directory available");
-      }
-
-      const accountSlug = toSafeAccountSlug(account.name) || "account";
-      const timestamp = formatExportTimestamp();
-      const fileUri = `${directory}nsfinance-${accountSlug}-transactions-${timestamp}.csv`;
-      await FileSystem.writeAsStringAsync(fileUri, csvText, {
-        encoding: FileSystem.EncodingType.UTF8
+      const exportRequest = await createExportMutation.mutateAsync({
+        notes: `User exported account-level statement for ${account.name}.`,
+        format: "xlsx",
+        financialAccountId: account.id
       });
 
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: "text/csv",
-          dialogTitle: "Export transactions"
+      const downloadResult = await downloadExportMutation.mutateAsync(exportRequest.id);
+
+      if (Platform.OS === "android" && downloadResult.usedAndroidDownloadManager) {
+        Alert.alert(
+          "Excel downloading",
+          "Your export is downloading to your Downloads folder. You can open it from notifications or Files."
+        );
+      } else if (Platform.OS === "android") {
+        Alert.alert(
+          "Excel downloaded",
+          "Your export was downloaded to app storage. Use a preview/dev build for Download Manager notifications."
+        );
+      } else if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(downloadResult.uri, {
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          dialogTitle: "Export statements"
         });
       } else {
-        Alert.alert("CSV exported", `Saved to ${fileUri}`);
+        Alert.alert("Excel exported", `Saved to ${downloadResult.uri}`);
       }
     } catch (caughtError) {
-      const message = caughtError instanceof Error ? caughtError.message : "Unknown export error";
+      const message = caughtError instanceof Error ? caughtError.message : "Unknown export error.";
       Alert.alert("Export failed", message);
     }
   };
@@ -229,7 +178,11 @@ export default function AccountDetailsScreen() {
             </GlassCard>
 
             <View style={styles.primaryActions}>
-              <PrimaryButton label="Export to CSV" onPress={() => void exportCsv()} />
+              <PrimaryButton
+                label="Export to Excel"
+                onPress={() => void exportExcel()}
+                isLoading={createExportMutation.isPending || downloadExportMutation.isPending}
+              />
               <PrimaryButton
                 label="Get Help"
                 onPress={() => router.push("/(tabs)/accounts/support")}

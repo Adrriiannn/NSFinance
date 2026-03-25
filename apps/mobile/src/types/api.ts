@@ -469,6 +469,12 @@ export type DeletionRequestDto = {
 
 export type CreateExportRequestRequest = {
   notes?: string | null;
+  format?: "xlsx" | "csv" | null;
+  connectionId?: string | null;
+  financialAccountId?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  periodPreset?: string | null;
 };
 
 export type ExportRequestDto = {
@@ -478,6 +484,14 @@ export type ExportRequestDto = {
   requestedUtc: string;
   updatedUtc: string;
   notes: string | null;
+  format: string;
+  connectionId: string | null;
+  connectionLabel: string | null;
+  financialAccountId: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  periodPreset: string | null;
+  fileSizeBytes: number | null;
 };
 
 export type GoogleAuthOptionsDto = {

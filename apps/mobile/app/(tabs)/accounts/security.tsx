@@ -1,9 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert, Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
-import * as Sharing from "expo-sharing";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
@@ -41,18 +39,14 @@ import {
 } from "../../../src/features/auth/passwordPolicy";
 import {
   useCreateDeletionRequestMutation,
-  useCreateExportRequestMutation,
-  useMyDeletionRequestsQuery,
-  useMyExportRequestsQuery
+  useMyDeletionRequestsQuery
 } from "../../../src/features/support/useSupport";
-import { downloadExportRequestFile } from "../../../src/features/support/supportApi";
 import {
   useUpdateUserProfileMutation,
   useUserProfileQuery
 } from "../../../src/features/users/useUserSettings";
 
 const sessionKey = ["auth", "sessions"] as const;
-const EXPORT_RETENTION_MS = 15 * 60 * 1000;
 
 function formatDateTime(value?: string | null) {
   if (!value) {
@@ -111,7 +105,6 @@ function formatBankConnectionStatus(status: BankConnectionStatus) {
 }
 
 export default function SecuritySettingsScreen() {
-  const params = useLocalSearchParams<{ focus?: string }>();
   const queryClient = useQueryClient();
   const profileQuery = useUserProfileQuery();
   const updateProfileMutation = useUpdateUserProfileMutation();
@@ -119,9 +112,7 @@ export default function SecuritySettingsScreen() {
   const googleAuthQuery = useQuery({ queryKey: ["auth", "google-options"], queryFn: getGoogleAuthOptions });
   const connectedBanksQuery = useConnectedBanksQuery();
   const disconnectMutation = useDisconnectBankConnectionMutation();
-  const exportRequestsQuery = useMyExportRequestsQuery();
   const deletionRequestsQuery = useMyDeletionRequestsQuery();
-  const createExportMutation = useCreateExportRequestMutation();
   const createDeletionMutation = useCreateDeletionRequestMutation();
 
   const revokeMutation = useMutation({
@@ -183,126 +174,10 @@ export default function SecuritySettingsScreen() {
   const [deletionCodeModalVisible, setDeletionCodeModalVisible] = useState(false);
   const [deletionCode, setDeletionCode] = useState("");
   const [deletionCodeError, setDeletionCodeError] = useState<string | null>(null);
-  const [timeNowMs, setTimeNowMs] = useState(() => Date.now());
-  const securityScrollRef = useRef<ScrollView>(null);
-  const currentScrollYRef = useRef(0);
-  const scrollAnimationFrameRef = useRef<number | null>(null);
-  const [exportSectionY, setExportSectionY] = useState<number | null>(null);
-  const [hasAutoScrolledToExport, setHasAutoScrolledToExport] = useState(false);
-
-  const cancelAutoScrollAnimation = useCallback(() => {
-    if (scrollAnimationFrameRef.current !== null) {
-      cancelAnimationFrame(scrollAnimationFrameRef.current);
-      scrollAnimationFrameRef.current = null;
-    }
-  }, []);
-
-  const animateScrollTo = useCallback(
-    (targetY: number, durationMs = 900) => {
-      cancelAutoScrollAnimation();
-
-      const startY = currentScrollYRef.current;
-      const delta = targetY - startY;
-      if (Math.abs(delta) < 1) {
-        securityScrollRef.current?.scrollTo({ y: targetY, animated: false });
-        currentScrollYRef.current = targetY;
-        return;
-      }
-
-      const startedAt = Date.now();
-      const easeOutCubic = (t: number) => 1 - (1 - t) ** 3;
-
-      const tick = () => {
-        const elapsed = Date.now() - startedAt;
-        const progress = Math.min(elapsed / durationMs, 1);
-        const easedProgress = easeOutCubic(progress);
-        const nextY = startY + delta * easedProgress;
-
-        securityScrollRef.current?.scrollTo({ y: nextY, animated: false });
-        currentScrollYRef.current = nextY;
-
-        if (progress < 1) {
-          scrollAnimationFrameRef.current = requestAnimationFrame(tick);
-          return;
-        }
-
-        scrollAnimationFrameRef.current = null;
-      };
-
-      scrollAnimationFrameRef.current = requestAnimationFrame(tick);
-    },
-    [cancelAutoScrollAnimation]
-  );
-
-  const downloadExportMutation = useMutation({
-    mutationFn: async (requestId: string) => {
-      const uri = await downloadExportRequestFile(requestId);
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          mimeType: "application/json",
-          dialogTitle: "Share your NSFinance export"
-        });
-      }
-
-      return uri;
-    },
-    onSuccess: (uri) => {
-      showFlashMessage(`Export package ready at ${uri}`, { tone: "success", durationMs: 2600 });
-    },
-    onError: async (error) => {
-      if (
-        error instanceof ApiClientError &&
-        (error.code === "export_expired" || error.status === 410)
-      ) {
-        Alert.alert(
-          "Export expired",
-          "This download has expired. Please generate the file again."
-        );
-      } else {
-        showFlashMessage(formatUnknownError(error), { tone: "error", durationMs: 2800 });
-      }
-
-      await queryClient.invalidateQueries({ queryKey: ["support", "export-requests"] });
-    }
-  });
 
   useEffect(() => {
     setBiometricEnabled(profileQuery.data?.biometricUnlockEnabled ?? false);
   }, [profileQuery.data?.biometricUnlockEnabled]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeNowMs(Date.now());
-    }, 30_000);
-
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (params.focus === "data-export") {
-      setHasAutoScrolledToExport(false);
-    }
-  }, [params.focus]);
-
-  useEffect(() => {
-    if (params.focus !== "data-export" || hasAutoScrolledToExport || exportSectionY === null) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      animateScrollTo(Math.max(exportSectionY - spacing[16], 0));
-      setHasAutoScrolledToExport(true);
-    }, 120);
-
-    return () => clearTimeout(timer);
-  }, [animateScrollTo, params.focus, hasAutoScrolledToExport, exportSectionY]);
-
-  useEffect(() => {
-    return () => {
-      cancelAutoScrollAnimation();
-    };
-  }, [cancelAutoScrollAnimation]);
 
   const activeSessions = useMemo(
     () => (sessionsQuery.data ?? []).filter(isActiveSession),
@@ -522,13 +397,8 @@ export default function SecuritySettingsScreen() {
       <HeaderShell preset="secondaryDetail" title="Security" />
 
       <ScrollView
-        ref={securityScrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
-        onScroll={(event) => {
-          currentScrollYRef.current = event.nativeEvent.contentOffset.y;
-        }}
-        scrollEventThrottle={16}
       >
         <GlassCard style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Login & authentication</Text>
@@ -717,55 +587,6 @@ export default function SecuritySettingsScreen() {
           ) : null}
         </GlassCard>
 
-        <View
-          onLayout={(event) => {
-            setExportSectionY(event.nativeEvent.layout.y);
-          }}
-        >
-          <GlassCard style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Data export</Text>
-            <Text style={styles.hintText}>Request a downloadable package of your account and finance data.</Text>
-            <PrimaryButton
-              label="Generate JSON"
-              onPress={() => {
-                void createExportMutation.mutateAsync({
-                  notes: "User requested data export from Security settings."
-                });
-              }}
-              isLoading={createExportMutation.isPending}
-            />
-            {(exportRequestsQuery.data ?? []).slice(0, 1).map((request) => (
-              <View key={request.id} style={styles.requestRow}>
-                {(() => {
-                  const requestedAtMs = new Date(request.requestedUtc).getTime();
-                  const isTimeExpired =
-                    request.status === "ready" &&
-                    Number.isFinite(requestedAtMs) &&
-                    timeNowMs - requestedAtMs >= EXPORT_RETENTION_MS;
-                  const displayStatus = isTimeExpired ? "expired" : request.status;
-                  const canDownload = request.status === "ready" && !isTimeExpired;
-
-                  return (
-                    <>
-                      <Text style={styles.metaLine}>Status: {displayStatus}</Text>
-                      <Text style={styles.metaLine}>Requested: {formatDateTime(request.requestedUtc)}</Text>
-                      {canDownload ? (
-                        <SecondaryButton
-                          label="Download JSON"
-                          onPress={() => {
-                            void downloadExportMutation.mutateAsync(request.id);
-                          }}
-                          disabled={downloadExportMutation.isPending}
-                        />
-                      ) : null}
-                    </>
-                  );
-                })()}
-              </View>
-            ))}
-          </GlassCard>
-        </View>
-
         <GlassCard style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Delete account</Text>
           <Text style={styles.warningText}>
@@ -804,9 +625,6 @@ export default function SecuritySettingsScreen() {
         ) : null}
         {logoutAllMutation.isError ? (
           <Text style={styles.errorText}>{formatUnknownError(logoutAllMutation.error)}</Text>
-        ) : null}
-        {downloadExportMutation.isError ? (
-          <Text style={styles.errorText}>{formatUnknownError(downloadExportMutation.error)}</Text>
         ) : null}
       </ScrollView>
 
@@ -975,14 +793,6 @@ const styles = createRuntimeStyleSheet(() => ({
     padding: spacing[12]
   },
   bankRow: {
-    gap: spacing[8],
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 6,
-    backgroundColor: surfaces.field,
-    padding: spacing[12]
-  },
-  requestRow: {
     gap: spacing[8],
     borderWidth: 1,
     borderColor: palette.border,

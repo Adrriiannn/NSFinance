@@ -12,6 +12,9 @@ public class ExportRequestConfiguration : IEntityTypeConfiguration<ExportRequest
 
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Status).HasMaxLength(40).IsRequired();
+        builder.Property(x => x.Format).HasMaxLength(16).IsRequired();
+        builder.Property(x => x.ConnectionLabel).HasMaxLength(200);
+        builder.Property(x => x.PeriodPreset).HasMaxLength(50);
         builder.Property(x => x.Notes).HasMaxLength(4000);
         builder.Property(x => x.ArtifactReference).HasMaxLength(512);
         builder.Property(x => x.RequestedUtc).HasDefaultValueSql("timezone('utc', now())");

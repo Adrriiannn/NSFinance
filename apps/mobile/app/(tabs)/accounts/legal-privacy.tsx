@@ -253,16 +253,11 @@ export default function LegalPrivacyScreen() {
         <GlassCard style={styles.itemCard}>
           <Text style={styles.itemTitle}>Privacy rights</Text>
           <Text style={styles.itemBody}>
-            Export requests and account deletion are handled from Security so identity verification stays in one place.
+            Statement exports and account deletion are available in dedicated security surfaces.
           </Text>
           <SecondaryButton
             label="Download my data"
-            onPress={() =>
-              router.push({
-                pathname: "/(tabs)/accounts/security",
-                params: { focus: "data-export" }
-              })
-            }
+            onPress={() => router.push("/(tabs)/accounts/statements")}
           />
           <SecondaryButton
             label="Delete my account"

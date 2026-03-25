@@ -6,4 +6,12 @@ public sealed record ExportRequestDto(
     string Status,
     DateTime RequestedUtc,
     DateTime UpdatedUtc,
-    string? Notes);
+    string? Notes,
+    string Format,
+    Guid? ConnectionId,
+    string? ConnectionLabel,
+    Guid? FinancialAccountId,
+    DateOnly? StartDate,
+    DateOnly? EndDate,
+    string? PeriodPreset,
+    long? FileSizeBytes);

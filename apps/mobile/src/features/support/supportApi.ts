@@ -2,7 +2,7 @@ import { apiRequest, getApiAccessToken } from "../../lib/api/client";
 import { apiConfig } from "../../lib/api/config";
 import { ApiClientError, parseApiErrorBody } from "../../lib/api/errors";
 import * as FileSystem from "expo-file-system/legacy";
-import { Platform } from "react-native";
+import { NativeModules, Platform } from "react-native";
 import type {
   CreateDeletionRequestRequest,
   CreateExportRequestRequest,
@@ -51,7 +51,12 @@ export function getMyDeletionRequests(): Promise<DeletionRequestDto[]> {
   return apiRequest<DeletionRequestDto[]>("/api/support/deletion-requests/me");
 }
 
-export async function downloadExportRequestFile(requestId: string): Promise<string> {
+export type ExportDownloadResult = {
+  uri: string;
+  usedAndroidDownloadManager: boolean;
+};
+
+export async function downloadExportRequestFile(requestId: string): Promise<ExportDownloadResult> {
   const accessToken = getApiAccessToken();
   if (!accessToken) {
     throw new Error("You need to be signed in to download exports.");
@@ -92,7 +97,53 @@ export async function downloadExportRequestFile(requestId: string): Promise<stri
     );
   }
 
-  const destinationPath = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}nsfinance-export-${requestId}.json`;
+  const requestedExtension = "xlsx";
+  const mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const exportFileName = `nsfinance-export-${requestId}-${new Date().toISOString().replace(/[:.]/g, "-")}.${requestedExtension}`;
+  const turboModuleProxy = (globalThis as { __turboModuleProxy?: ((name: string) => unknown) | null }).__turboModuleProxy;
+  const hasTurboBlobUtil =
+    typeof turboModuleProxy === "function" && Boolean(turboModuleProxy("ReactNativeBlobUtil"));
+  const hasLegacyBlobUtil = Boolean((NativeModules as Record<string, unknown>).ReactNativeBlobUtil);
+  const canUseNativeAndroidDownloadManager =
+    Platform.OS === "android" && (hasLegacyBlobUtil || hasTurboBlobUtil);
+
+  if (canUseNativeAndroidDownloadManager) {
+    try {
+      const blobUtilModule = await import("react-native-blob-util");
+      const RNBlobUtil = blobUtilModule.default;
+      const downloadPath = `${RNBlobUtil.fs.dirs.DownloadDir}/${exportFileName}`;
+      const downloadResult = await RNBlobUtil
+        .config({
+          fileCache: false,
+          path: downloadPath,
+          addAndroidDownloads: {
+            useDownloadManager: true,
+            notification: true,
+            mediaScannable: true,
+            title: exportFileName,
+            description: "NSFinance statements export",
+            mime: mimeType,
+            path: downloadPath
+          }
+        })
+        .fetch("GET", url, headers);
+
+      const statusCode = Number(downloadResult.info().status ?? 200);
+      if (statusCode >= 400) {
+        throw new ApiClientError(`Export download failed with status ${statusCode}.`, statusCode);
+      }
+
+      const path = downloadResult.path();
+      return {
+        uri: path.startsWith("file://") ? path : `file://${path}`,
+        usedAndroidDownloadManager: true
+      };
+    } catch {
+      // Fallback path for environments where native Download Manager integration is unavailable.
+    }
+  }
+
+  const destinationPath = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}nsfinance-export-${requestId}.${requestedExtension}`;
 
   const result = await FileSystem.downloadAsync(url, destinationPath, {
     headers
@@ -102,5 +153,8 @@ export async function downloadExportRequestFile(requestId: string): Promise<stri
     throw new ApiClientError(`Export download failed with status ${result.status}.`, result.status ?? 500);
   }
 
-  return result.uri;
+  return {
+    uri: result.uri,
+    usedAndroidDownloadManager: false
+  };
 }

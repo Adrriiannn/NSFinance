@@ -34,6 +34,7 @@ export function requestOpenGlobalAppMenu() {
 
 const menuItems = [
   { label: "Profile", path: "/(tabs)/accounts/profile", icon: "person-outline" },
+  { label: "Statements", path: "/(tabs)/accounts/statements", icon: "document-attach-outline" },
   { label: "Security", path: "/(tabs)/accounts/security", icon: "shield-checkmark-outline" },
   { label: "Legal & Privacy", path: "/(tabs)/accounts/legal-privacy", icon: "document-text-outline" },
   { label: "Support", path: "/(tabs)/accounts/support", icon: "help-circle-outline" },
