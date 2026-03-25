@@ -4,36 +4,36 @@ export const lightTheme = {
   name: "light",
   isDark: false,
   colors: {
-    canvas: "#F8F6F3",
-    elevatedCanvas: "#FFFFFF",
+    canvas: "#F7F6F3",
+    elevatedCanvas: "#F2F0EC",
     surface: {
       level0: "#FFFFFF",
-      level1: "#FCFAF7",
-      level2: "#F7F3EE",
-      field: "#F7F3EE",
-      fieldStrong: "#F2ECE3",
+      level1: "#FBFAF7",
+      level2: "#F3F1EC",
+      field: "#F6F4EF",
+      fieldStrong: "#EEEAE3",
       tabBar: "rgba(255, 255, 255, 0.98)",
       floating: "#FFFFFF",
-      muted: "#F5F0E8"
+      muted: "#F3F1EC"
     },
     text: {
-      primary: "#222222",
-      secondary: "#525252",
-      muted: "#767676",
+      primary: "#111111",
+      secondary: "#3F3F3F",
+      muted: "#6B6B6B",
       inverse: colors.white
     },
     border: {
-      subtle: "rgba(217, 119, 6, 0.24)",
-      strong: "rgba(217, 119, 6, 0.36)",
-      focus: colors.accent500,
-      divider: "rgba(217, 119, 6, 0.2)"
+      subtle: "rgba(184, 94, 0, 0.14)",
+      strong: "rgba(184, 94, 0, 0.36)",
+      focus: "#B85E00",
+      divider: "rgba(17, 17, 17, 0.08)"
     },
     action: {
-      primary: colors.accent500,
-      primaryStrong: colors.accent600,
-      primaryGlow: colors.accent400,
-      secondary: "#FCFAF7",
-      secondaryStrong: "#F5F0E8",
+      primary: "#B85E00",
+      primaryStrong: "#A44C00",
+      primaryGlow: "#CC6D08",
+      secondary: "#FFFFFF",
+      secondaryStrong: "#EEEAE3",
       ghost: "transparent",
       destructive: colors.danger
     },
@@ -48,14 +48,14 @@ export const lightTheme = {
       infoSurface: "rgba(154, 154, 154, 0.1)"
     },
     accent: {
-      primary: colors.accent500,
-      primaryStrong: colors.accent600,
-      cyan: colors.accent500,
-      amber: colors.accent300
+      primary: "#B85E00",
+      primaryStrong: "#A44C00",
+      cyan: "#CC6D08",
+      amber: "#D77A1A"
     },
     overlay: {
-      strong: "rgba(0, 0, 0, 0.4)",
-      soft: "rgba(0, 0, 0, 0.24)"
+      strong: "rgba(12, 12, 12, 0.18)",
+      soft: "rgba(12, 12, 12, 0.1)"
     },
     money: {
       positive: colors.success,

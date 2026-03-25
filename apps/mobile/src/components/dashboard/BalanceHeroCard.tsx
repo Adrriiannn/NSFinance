@@ -73,19 +73,23 @@ const styles = StyleSheet.create({
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center"
+    alignItems: "center",
+    minHeight: 38
   },
   label: {
     color: palette.textSecondary,
     ...typography.caption
   },
   badge: {
-    paddingHorizontal: spacing[8],
-    paddingVertical: spacing[4],
+    minWidth: 58,
+    height: 38,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.fieldStrong
+    backgroundColor: surfaces.fieldStrong,
+    paddingHorizontal: spacing[10],
+    alignItems: "center",
+    justifyContent: "center"
   },
   badgeText: {
     color: palette.accent,

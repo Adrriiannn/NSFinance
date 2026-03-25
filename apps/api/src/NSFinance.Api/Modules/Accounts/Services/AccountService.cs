@@ -1,16 +1,264 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using NSFinance.Api.Modules.Accounts.DTOs;
 using NSFinance.Api.Modules.Users.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
+using Npgsql;
+using System.Text.Json;
 
 namespace NSFinance.Api.Modules.Accounts.Services;
 
-public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider currentUserProvider)
+public sealed class AccountService(
+    AppDbContext dbContext,
+    ICurrentUserProvider currentUserProvider,
+    ILogger<AccountService> logger)
 {
     public async Task<IReadOnlyList<AccountDto>> GetAccountsAsync(CancellationToken cancellationToken)
     {
-        return await dbContext.FinancialAccounts
+        try
+        {
+            var accounts = await QueryAccountsWithBranding()
+                .ToListAsync(cancellationToken);
+
+            return await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedColumn)
+        {
+            logger.LogWarning(
+                exception,
+                "Provider branding columns are missing in the current database schema. Falling back to accounts without provider branding metadata.");
+
+            var accounts = await QueryAccountsWithoutBranding()
+                .ToListAsync(cancellationToken);
+
+            return await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
+        }
+    }
+
+    public async Task<AccountDto?> GetAccountByIdAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var account = await QueryAccountByIdWithBranding(accountId)
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (account is null)
+            {
+                return null;
+            }
+
+            var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync([account], cancellationToken);
+            return enriched.FirstOrDefault();
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedColumn)
+        {
+            logger.LogWarning(
+                exception,
+                "Provider branding columns are missing in the current database schema. Falling back to account details without provider branding metadata.");
+
+            var account = await QueryAccountByIdWithoutBranding(accountId)
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (account is null)
+            {
+                return null;
+            }
+
+            var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync([account], cancellationToken);
+            return enriched.FirstOrDefault();
+        }
+    }
+
+    private async Task<IReadOnlyList<AccountDto>> TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(
+        IReadOnlyList<AccountDto> accounts,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await EnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Provider branding enrichment failed. Returning base account payload without raw-payload branding fallback.");
+            return accounts;
+        }
+    }
+
+    private async Task<IReadOnlyList<AccountDto>> EnrichMissingBrandingFromLinkedAccountPayloadAsync(
+        IReadOnlyList<AccountDto> accounts,
+        CancellationToken cancellationToken)
+    {
+        if (accounts.Count == 0)
+        {
+            return accounts;
+        }
+
+        var accountIdsNeedingFallback = accounts
+            .Where(NeedsBrandingFallback)
+            .Select(x => x.Id)
+            .Distinct()
+            .ToArray();
+
+        if (accountIdsNeedingFallback.Length == 0)
+        {
+            return accounts;
+        }
+
+        var linkedPayloadRows = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.FinancialAccountId.HasValue
+                && accountIdsNeedingFallback.Contains(x.FinancialAccountId.Value))
+            .OrderByDescending(x => x.UpdatedUtc)
+            .Select(x => new
+            {
+                FinancialAccountId = x.FinancialAccountId!.Value,
+                x.RawPayloadJson
+            })
+            .ToListAsync(cancellationToken);
+
+        if (linkedPayloadRows.Count == 0)
+        {
+            return accounts;
+        }
+
+        var fallbackByAccountId = new Dictionary<Guid, ProviderBrandingFallback>();
+        foreach (var row in linkedPayloadRows)
+        {
+            if (fallbackByAccountId.ContainsKey(row.FinancialAccountId))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(row.RawPayloadJson))
+            {
+                continue;
+            }
+
+            var fallback = ParseProviderBrandingFallback(row.RawPayloadJson);
+            if (fallback is null)
+            {
+                continue;
+            }
+
+            fallbackByAccountId[row.FinancialAccountId] = fallback;
+        }
+
+        if (fallbackByAccountId.Count == 0)
+        {
+            return accounts;
+        }
+
+        return accounts
+            .Select(account =>
+            {
+                if (!fallbackByAccountId.TryGetValue(account.Id, out var fallback))
+                {
+                    return account;
+                }
+
+                var providerId = CoalesceNonEmpty(account.ProviderId, fallback.ProviderId);
+                var providerDisplayName = CoalesceNonEmpty(account.ProviderDisplayName, fallback.ProviderDisplayName);
+                var providerIconUrl = CoalesceNonEmpty(account.ProviderIconUrl, fallback.ProviderIconUrl);
+                var providerLogoUrl = CoalesceNonEmpty(account.ProviderLogoUrl, fallback.ProviderLogoUrl);
+                var providerBrandBgColor = CoalesceNonEmpty(account.ProviderBrandBgColor, fallback.ProviderBrandBgColor);
+                var hasProviderBranding =
+                    !string.IsNullOrWhiteSpace(providerIconUrl)
+                    || !string.IsNullOrWhiteSpace(providerLogoUrl)
+                    || !string.IsNullOrWhiteSpace(providerDisplayName);
+
+                return account with
+                {
+                    ProviderId = providerId,
+                    ProviderDisplayName = providerDisplayName,
+                    ProviderIconUrl = providerIconUrl,
+                    ProviderLogoUrl = providerLogoUrl,
+                    ProviderBrandBgColor = providerBrandBgColor,
+                    HasProviderBranding = hasProviderBranding
+                };
+            })
+            .ToList();
+    }
+
+    private static bool NeedsBrandingFallback(AccountDto account)
+    {
+        var hasProviderVisualAsset =
+            !string.IsNullOrWhiteSpace(account.ProviderIconUrl)
+            || !string.IsNullOrWhiteSpace(account.ProviderLogoUrl);
+
+        return !hasProviderVisualAsset;
+    }
+
+    private static ProviderBrandingFallback? ParseProviderBrandingFallback(string? rawPayloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawPayloadJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawPayloadJson);
+            var root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var providerNode = root;
+            if (root.TryGetProperty("provider", out var providerElement) && providerElement.ValueKind == JsonValueKind.Object)
+            {
+                providerNode = providerElement;
+            }
+
+            return new ProviderBrandingFallback(
+                ProviderId: ReadJsonString(providerNode, "provider_id"),
+                ProviderDisplayName: ReadJsonString(providerNode, "display_name"),
+                ProviderIconUrl: ReadJsonString(providerNode, "icon_uri"),
+                ProviderLogoUrl: ReadJsonString(providerNode, "logo_uri"),
+                ProviderBrandBgColor: ReadJsonString(providerNode, "bg_color"));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadJsonString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Null || property.ValueKind == JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        var value = property.ValueKind == JsonValueKind.String ? property.GetString() : property.ToString();
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? CoalesceNonEmpty(string? primary, string? fallback)
+    {
+        return !string.IsNullOrWhiteSpace(primary) ? primary : fallback;
+    }
+
+    private sealed record ProviderBrandingFallback(
+        string? ProviderId,
+        string? ProviderDisplayName,
+        string? ProviderIconUrl,
+        string? ProviderLogoUrl,
+        string? ProviderBrandBgColor);
+
+    private IQueryable<AccountDto> QueryAccountsWithBranding()
+    {
+        return dbContext.FinancialAccounts
             .AsNoTracking()
             .Where(x => x.UserId == currentUserProvider.UserId)
             .OrderBy(x => x.CreatedUtc)
@@ -59,13 +307,41 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
                 x.Provider != null
                     && (x.Provider.ProviderIconUrl != null
                         || x.Provider.ProviderLogoUrl != null
-                        || x.Provider.ProviderDisplayName != null)))
-            .ToListAsync(cancellationToken);
+                        || x.Provider.ProviderDisplayName != null)));
     }
 
-    public async Task<AccountDto?> GetAccountByIdAsync(Guid accountId, CancellationToken cancellationToken)
+    private IQueryable<AccountDto> QueryAccountsWithoutBranding()
     {
-        return await dbContext.FinancialAccounts
+        return dbContext.FinancialAccounts
+            .AsNoTracking()
+            .Where(x => x.UserId == currentUserProvider.UserId)
+            .OrderBy(x => x.CreatedUtc)
+            .Select(x => new AccountDto(
+                x.Id,
+                x.Name,
+                x.Type,
+                x.Currency,
+                dbContext.LinkedBankAccounts
+                    .Where(linked => linked.FinancialAccountId == x.Id)
+                    .Select(linked => dbContext.BankBalanceSnapshots
+                        .Where(balance => balance.LinkedBankAccountId == linked.Id)
+                        .OrderByDescending(balance => balance.CapturedUtc)
+                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .FirstOrDefault())
+                    .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
+                x.Transactions.Count,
+                x.CreatedUtc,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false));
+    }
+
+    private IQueryable<AccountDto> QueryAccountByIdWithBranding(Guid accountId)
+    {
+        return dbContext.FinancialAccounts
             .AsNoTracking()
             .Where(x => x.Id == accountId && x.UserId == currentUserProvider.UserId)
             .Select(x => new
@@ -113,8 +389,35 @@ public sealed class AccountService(AppDbContext dbContext, ICurrentUserProvider 
                 x.Provider != null
                     && (x.Provider.ProviderIconUrl != null
                         || x.Provider.ProviderLogoUrl != null
-                        || x.Provider.ProviderDisplayName != null)))
-            .SingleOrDefaultAsync(cancellationToken);
+                        || x.Provider.ProviderDisplayName != null)));
+    }
+
+    private IQueryable<AccountDto> QueryAccountByIdWithoutBranding(Guid accountId)
+    {
+        return dbContext.FinancialAccounts
+            .AsNoTracking()
+            .Where(x => x.Id == accountId && x.UserId == currentUserProvider.UserId)
+            .Select(x => new AccountDto(
+                x.Id,
+                x.Name,
+                x.Type,
+                x.Currency,
+                dbContext.LinkedBankAccounts
+                    .Where(linked => linked.FinancialAccountId == x.Id)
+                    .Select(linked => dbContext.BankBalanceSnapshots
+                        .Where(balance => balance.LinkedBankAccountId == linked.Id)
+                        .OrderByDescending(balance => balance.CapturedUtc)
+                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .FirstOrDefault())
+                    .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
+                x.Transactions.Count,
+                x.CreatedUtc,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false));
     }
 
     public async Task<AccountDto> CreateAccountAsync(CreateAccountRequest request, CancellationToken cancellationToken)

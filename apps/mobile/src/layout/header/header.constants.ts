@@ -92,7 +92,7 @@ export const HEADER_SURFACES = {
     borderRadius: HEADER_CONSTANTS.iconButtonRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.96)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   } satisfies ViewStyle,

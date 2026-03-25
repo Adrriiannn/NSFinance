@@ -10,7 +10,7 @@ import { useExpensePlanning } from "../../../src/features/expenseTracker/Expense
 import { buildExpensePlanTaxonomyLookup } from "../../../src/features/expenseTracker/expensePlanningUtils";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
-import { palette, radius, spacing, typography } from "../../../src/theme/tokens";
+import { palette, radius, spacing, surfaces, typography } from "../../../src/theme/tokens";
 
 const periodOptions = [
   { label: "Weekly", value: "weekly" },
@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.74)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -380,14 +380,14 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(21,21,21,0.72)"
+    backgroundColor: surfaces.field
   },
   selectCategoryButton: {
     minHeight: 62,
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[16],
     flexDirection: "row",
     alignItems: "center",
@@ -453,7 +453,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   },

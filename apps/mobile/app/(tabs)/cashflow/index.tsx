@@ -33,7 +33,7 @@ import {
 } from "../../../src/features/planner/forecasting";
 import { buildPlannerSuggestions } from "../../../src/features/planner/plannerInsights";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
-import { layout, palette, spacing, typography } from "../../../src/theme/tokens";
+import { layout, palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 
 function formatCountdown(daysUntilDue: number) {
   if (daysUntilDue <= 0) {
@@ -668,7 +668,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.82)",
+    backgroundColor: surfaces.card,
     padding: spacing[12],
     gap: spacing[8]
   },
@@ -727,7 +727,7 @@ const styles = StyleSheet.create({
   },
   pickerOverlay: {
     flex: 1,
-    backgroundColor: "rgba(9,9,9,0.72)",
+    backgroundColor: palette.overlay,
     justifyContent: "center",
     paddingHorizontal: spacing[16]
   },
@@ -735,7 +735,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.98)",
+    backgroundColor: surfaces.sheet,
     padding: spacing[16],
     gap: spacing[12]
   },
@@ -756,7 +756,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.76)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12]
@@ -767,7 +767,7 @@ const styles = StyleSheet.create({
   },
   yearChipDisabled: {
     borderColor: "rgba(242,140,40,0.16)",
-    backgroundColor: "rgba(21,21,21,0.42)"
+    backgroundColor: surfaces.muted
   },
   yearChipText: {
     color: palette.textSecondary,
@@ -785,7 +785,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     overflow: "hidden"
   },
   monthWheelHighlight: {

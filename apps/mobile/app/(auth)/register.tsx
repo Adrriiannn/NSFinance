@@ -27,7 +27,7 @@ import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
-import { palette, spacing, typography } from "../../src/theme/tokens";
+import { controls, palette, spacing, typography } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"fullName" | "email" | "password" | "confirmPassword", string>>;
 type FocusField = "fullName" | "email" | "password" | "confirmPassword" | null;
@@ -762,7 +762,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.borderStrong,
-    backgroundColor: "rgba(21,21,21,0.74)",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -771,7 +771,7 @@ const styles = StyleSheet.create({
   },
   termsCheckboxChecked: {
     borderColor: palette.primary,
-    backgroundColor: "rgba(242,140,40,0.14)"
+    backgroundColor: controls.activeFill
   },
   termsConsentTextRow: {
     flex: 1,

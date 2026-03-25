@@ -37,7 +37,7 @@ import {
 import { ApiClientError, formatUnknownError } from "../../../src/lib/api/errors";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import type { BankConnectionStatus } from "../../../src/types/api";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 import {
   type PasswordBreachStatus,
   enforcePasswordMaxLength,
@@ -550,8 +550,8 @@ export default function SecuritySettingsScreen() {
             <Switch
               value={biometricEnabled}
               onValueChange={setBiometricEnabled}
-              thumbColor={palette.textPrimary}
-              trackColor={{ false: "rgba(80,80,80,0.55)", true: "rgba(242,140,40,0.8)" }}
+              thumbColor="#FFFFFF"
+              trackColor={{ false: "rgba(120,120,120,0.45)", true: "rgba(242,140,40,0.8)" }}
             />
           </View>
 
@@ -979,7 +979,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
     borderRadius: 6,
-    backgroundColor: "rgba(21,21,21,0.6)",
+    backgroundColor: surfaces.field,
     padding: spacing[12]
   },
   bankRow: {
@@ -987,7 +987,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
     borderRadius: 6,
-    backgroundColor: "rgba(21,21,21,0.6)",
+    backgroundColor: surfaces.field,
     padding: spacing[12]
   },
   requestRow: {
@@ -995,7 +995,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
     borderRadius: 6,
-    backgroundColor: "rgba(21,21,21,0.6)",
+    backgroundColor: surfaces.field,
     padding: spacing[12]
   },
   sessionTitle: {
@@ -1032,7 +1032,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     minHeight: 44,
     paddingHorizontal: spacing[12],
-    backgroundColor: "rgba(21,21,21,0.74)"
+    backgroundColor: surfaces.field
   },
   toggleLabel: {
     color: palette.textPrimary,
@@ -1040,7 +1040,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(9,9,9,0.74)",
+    backgroundColor: palette.overlay,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: spacing[16]
@@ -1050,7 +1050,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.98)",
+    backgroundColor: surfaces.sheet,
     padding: spacing[16],
     gap: spacing[12]
   },

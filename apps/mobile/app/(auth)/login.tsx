@@ -17,7 +17,7 @@ import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
-import { palette, spacing, typography } from "../../src/theme/tokens";
+import { controls, palette, spacing, typography } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"email" | "password", string>>;
 type FocusField = "email" | "password" | null;
@@ -853,7 +853,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.borderStrong,
-    backgroundColor: "rgba(21,21,21,0.74)",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center"
   },
@@ -862,7 +862,7 @@ const styles = StyleSheet.create({
   },
   rememberEmailCheckboxChecked: {
     borderColor: palette.primary,
-    backgroundColor: "rgba(242,140,40,0.14)"
+    backgroundColor: controls.activeFill
   },
   rememberEmailLabel: {
     color: palette.textPrimary,

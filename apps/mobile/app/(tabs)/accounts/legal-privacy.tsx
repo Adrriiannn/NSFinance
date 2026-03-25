@@ -21,7 +21,7 @@ import {
 } from "../../../src/features/users/useUserSettings";
 import { useMyDeletionRequestsQuery } from "../../../src/features/support/useSupport";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 
 function formatVersion(version?: string) {
   return version ? `v${version}` : "loading";
@@ -294,7 +294,7 @@ function ToggleRow({
       <Switch
         value={value}
         onValueChange={onValueChange}
-        thumbColor={palette.textPrimary}
+        thumbColor="#FFFFFF"
         trackColor={{ false: "rgba(80,80,80,0.55)", true: "rgba(242,140,40,0.8)" }}
       />
     </View>
@@ -338,7 +338,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
     borderRadius: 6,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     minHeight: 44,
     paddingHorizontal: spacing[12],
     flexDirection: "row",

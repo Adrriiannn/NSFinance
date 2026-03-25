@@ -15,6 +15,7 @@ import {
 import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
+import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
 import { layout, palette, spacing, surfaces, typography } from "../../theme/tokens";
 
 type GlobalAppMenuProps = {
@@ -96,6 +97,7 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   const pathname = usePathname();
   const params = useGlobalSearchParams<{ source?: string }>();
   const { isAuthenticated, session, logout } = useAuthSession();
+  const { mode, cycleTheme, isTransitioning } = useThemeRuntime();
   const profileQuery = useUserProfileQuery();
   const [isOpen, setIsOpen] = useState(false);
   const slideProgress = useRef(new Animated.Value(0)).current;
@@ -142,6 +144,8 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
     formatMemberSince(profile?.createdUtc ?? session?.user.createdUtc);
   const profileImageUrl = profile?.profileImageUrl ?? session?.user.profileImageUrl ?? null;
   const initials = extractInitials(fullName);
+  const themeIconName = mode === "dark" ? "moon" : mode === "light" ? "sunny" : "phone-portrait";
+  const themeLabel = mode === "dark" ? "Dark" : mode === "light" ? "Light" : "System";
 
   if (!isAuthenticated) {
     return null;
@@ -207,6 +211,24 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
                   {subtitle}
                 </Text>
               </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Theme: ${themeLabel}. Tap to change theme.`}
+                disabled={isTransitioning}
+                onPress={cycleTheme}
+                style={({ pressed }) => [
+                  styles.themeButton,
+                  pressed && !isTransitioning ? styles.menuItemPressed : null,
+                  isTransitioning ? styles.themeButtonDisabled : null
+                ]}
+              >
+                <Ionicons
+                  name={themeIconName}
+                  size={16}
+                  color={palette.accent}
+                />
+                <Text style={styles.themeButtonText}>{themeLabel}</Text>
+              </Pressable>
             </View>
 
             <View style={styles.menuItems}>
@@ -336,7 +358,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.92)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -398,6 +420,25 @@ const styles = StyleSheet.create({
   profileMeta: {
     flex: 1,
     gap: 2
+  },
+  themeButton: {
+    minWidth: 76,
+    minHeight: 40,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: surfaces.field,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    paddingHorizontal: spacing[8]
+  },
+  themeButtonDisabled: {
+    opacity: 0.5
+  },
+  themeButtonText: {
+    color: palette.textPrimary,
+    ...typography.caption
   },
   fullName: {
     color: palette.textPrimary,

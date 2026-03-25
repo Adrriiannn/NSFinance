@@ -10,6 +10,7 @@ export function GlobalFlashToast() {
   const [payload, setPayload] = useState<FlashMessagePayload | null>(null);
   const toastTranslateY = useRef(new Animated.Value(-60)).current;
   const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastShadowProgress = useRef(new Animated.Value(0)).current;
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTopOffset = insets.top + 40;
 
@@ -23,17 +24,23 @@ export function GlobalFlashToast() {
       setPayload(nextPayload);
       toastTranslateY.setValue(-60);
       toastOpacity.setValue(0);
+      toastShadowProgress.setValue(0);
 
       Animated.parallel([
         Animated.timing(toastTranslateY, {
           toValue: 0,
           duration: 180,
-          useNativeDriver: true
+          useNativeDriver: false
         }),
         Animated.timing(toastOpacity, {
           toValue: 1,
           duration: 180,
-          useNativeDriver: true
+          useNativeDriver: false
+        }),
+        Animated.timing(toastShadowProgress, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: false
         })
       ]).start(() => {
         hideTimerRef.current = setTimeout(() => {
@@ -41,12 +48,17 @@ export function GlobalFlashToast() {
             Animated.timing(toastTranslateY, {
               toValue: -60,
               duration: 180,
-              useNativeDriver: true
+              useNativeDriver: false
             }),
             Animated.timing(toastOpacity, {
               toValue: 0,
               duration: 180,
-              useNativeDriver: true
+              useNativeDriver: false
+            }),
+            Animated.timing(toastShadowProgress, {
+              toValue: 0,
+              duration: 180,
+              useNativeDriver: false
             })
           ]).start(() => {
             setPayload((current) => (current?.id === nextPayload.id ? null : current));
@@ -54,7 +66,7 @@ export function GlobalFlashToast() {
         }, nextPayload.durationMs ?? 1800);
       });
     });
-  }, [toastOpacity, toastTranslateY]);
+  }, [toastOpacity, toastShadowProgress, toastTranslateY]);
 
   useEffect(() => {
     return () => {
@@ -75,6 +87,17 @@ export function GlobalFlashToast() {
           marginTop: toastTopOffset,
           marginHorizontal: spacing[16],
           opacity: toastOpacity,
+          shadowColor: "#000000",
+          shadowOffset: { width: 0, height: 4 },
+          shadowRadius: 10,
+          shadowOpacity: toastShadowProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 0.16]
+          }),
+          elevation: toastShadowProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 4]
+          }),
           transform: [{ translateY: toastTranslateY }]
         }}
       >

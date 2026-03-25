@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
+import { SvgUri } from "react-native-svg";
 import type { AccountDto } from "../../types/api";
 import { palette, spacing, surfaces, typography } from "../../theme/tokens";
 import { resolveProviderBadge } from "../../features/accounts/providerBranding";
@@ -26,7 +27,12 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
     [account.providerDisplayName, account.providerIconUrl, account.providerId, account.providerLogoUrl]
   );
 
+  useEffect(() => {
+    setRemoteImageFailed(false);
+  }, [resolved.remoteIconUrl]);
+
   const remoteIconUrl = remoteImageFailed ? null : resolved.remoteIconUrl;
+  const isSvgLogo = Boolean(remoteIconUrl && /\.svg(?:$|[?#])/i.test(remoteIconUrl));
   const accessibilityLabel = resolved.displayName
     ? `${resolved.displayName} logo`
     : "Connected bank logo";
@@ -38,12 +44,21 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
       style={[styles.badge, compact ? styles.badgeCompact : null]}
     >
       {remoteIconUrl ? (
-        <Image
-          source={{ uri: remoteIconUrl }}
-          style={[styles.logo, compact ? styles.logoCompact : null]}
-          resizeMode="contain"
-          onError={() => setRemoteImageFailed(true)}
-        />
+        isSvgLogo ? (
+          <SvgUri
+            uri={remoteIconUrl}
+            width={compact ? 24 : 30}
+            height={compact ? 18 : 22}
+            onError={() => setRemoteImageFailed(true)}
+          />
+        ) : (
+          <Image
+            source={{ uri: remoteIconUrl }}
+            style={[styles.logo, compact ? styles.logoCompact : null]}
+            resizeMode="contain"
+            onError={() => setRemoteImageFailed(true)}
+          />
+        )
       ) : resolved.monogram ? (
         <Text style={[styles.monogram, compact ? styles.monogramCompact : null]}>{resolved.monogram}</Text>
       ) : (
@@ -92,4 +107,3 @@ const styles = StyleSheet.create({
     fontSize: 11
   }
 });
-

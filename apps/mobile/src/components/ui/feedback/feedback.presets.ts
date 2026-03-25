@@ -1,5 +1,5 @@
 import type { TextStyle, ViewStyle } from "react-native";
-import { borders, palette, radius, shadows, sizing, spacing, surfaces, typography } from "../../../theme/tokens";
+import { borders, palette, radius, sizing, spacing, surfaces, theme, typography } from "../../../theme/tokens";
 
 export type FeedbackTone = "error" | "success" | "warning" | "info";
 
@@ -22,6 +22,40 @@ export const bannerPresets: Record<FeedbackTone, ViewStyle> = {
   }
 };
 
+const snackbarTonePresetsDark: Record<FeedbackTone, ViewStyle> = {
+  error: {
+    backgroundColor: "#5A2626"
+  },
+  success: {
+    backgroundColor: "#1E4F3A"
+  },
+  warning: {
+    backgroundColor: "#5A4A22"
+  },
+  info: {
+    backgroundColor: "#3E3E3E"
+  }
+};
+
+const snackbarTonePresetsLight: Record<FeedbackTone, ViewStyle> = {
+  error: {
+    backgroundColor: "#F9DEDE"
+  },
+  success: {
+    backgroundColor: "#D7F1E5"
+  },
+  warning: {
+    backgroundColor: "#FDEBCF"
+  },
+  info: {
+    backgroundColor: "#EAEAEA"
+  }
+};
+
+export const snackbarTonePresets: Record<FeedbackTone, ViewStyle> = theme.isDark
+  ? snackbarTonePresetsDark
+  : snackbarTonePresetsLight;
+
 export const feedbackPresets = {
   banner: {
     borderRadius: radius.medium,
@@ -40,12 +74,11 @@ export const feedbackPresets = {
   } as TextStyle,
   snackbar: {
     borderRadius: radius.medium,
-    borderWidth: borders.width.thin,
-    minHeight: sizing.button.heights.compact + 2,
+    borderWidth: 0,
+    minHeight: sizing.button.heights.compact + 4,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: spacing[16],
-    ...shadows.floating
+    paddingHorizontal: spacing[16]
   } as ViewStyle,
   emptyState: {
     borderRadius: radius.medium,

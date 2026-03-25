@@ -39,7 +39,7 @@ import {
 } from "../../../src/features/accounts/useAccounts";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency } from "../../../src/lib/format";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 import type { AccountType } from "../../../src/types/api";
 
 const accountTypeOptions: { label: string; value: AccountType }[] = [
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 6,
-    backgroundColor: "rgba(21,21,21,0.92)"
+    backgroundColor: surfaces.field
   },
   heroCard: {
     gap: spacing[8]
@@ -478,7 +478,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.74)",
+    backgroundColor: surfaces.field,
     minHeight: 52,
     paddingHorizontal: spacing[12],
     flexDirection: "row",
@@ -501,7 +501,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(9,9,9,0.74)",
+    backgroundColor: palette.overlay,
     justifyContent: "flex-end"
   },
   modalSheet: {
@@ -509,7 +509,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.98)",
+    backgroundColor: surfaces.sheet,
     padding: spacing[16],
     gap: spacing[12],
     maxHeight: "84%"
@@ -538,7 +538,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.75)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     justifyContent: "center",
@@ -564,7 +564,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.92)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[12],
@@ -579,7 +579,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.75)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[12],
     flexDirection: "row",

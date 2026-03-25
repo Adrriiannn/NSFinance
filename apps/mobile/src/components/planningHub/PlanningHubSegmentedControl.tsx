@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, radius, spacing, typography } from "../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography } from "../../theme/tokens";
 
 type SegmentedOption<T extends string> = {
   label: string;
@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.88)"
+    backgroundColor: surfaces.field
   },
   segmentHighlight: {
     position: "absolute",

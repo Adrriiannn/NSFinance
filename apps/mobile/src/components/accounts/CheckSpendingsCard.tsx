@@ -518,7 +518,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.8)",
+    backgroundColor: surfaces.card,
     padding: spacing[12],
     gap: spacing[12]
   },
@@ -614,7 +614,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(9,9,9,0.74)",
+    backgroundColor: palette.overlay,
     justifyContent: "flex-end"
   },
   modalSheet: {
@@ -622,7 +622,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.99)",
+    backgroundColor: surfaces.sheet,
     padding: spacing[16],
     gap: spacing[12],
     maxHeight: "86%"
@@ -650,7 +650,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8]
   },
@@ -672,7 +672,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center",
     minHeight: 36
@@ -695,7 +695,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     alignItems: "center",
@@ -724,7 +724,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(21,21,21,0.78)"
+    backgroundColor: surfaces.field
   },
   modalActionButtonPrimary: {
     flex: 1,
@@ -745,3 +745,4 @@ const styles = StyleSheet.create({
     ...typography.body2
   }
 });
+

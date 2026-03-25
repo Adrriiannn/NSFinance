@@ -420,7 +420,7 @@ const styles = StyleSheet.create({
     borderRadius: HEADER.iconButtonRadius,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.82)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   },

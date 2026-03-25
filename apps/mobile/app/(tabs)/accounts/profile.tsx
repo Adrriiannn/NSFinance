@@ -30,7 +30,7 @@ import {
   supportedTimezones
 } from "../../../src/lib/reference/geoData";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 import {
   useUpdateUserProfileMutation,
   useUserProfileQuery
@@ -1312,7 +1312,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.76)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     minHeight: 34,
     alignItems: "center",
@@ -1343,7 +1343,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(9,9,9,0.72)",
+    backgroundColor: palette.overlay,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: spacing[16]
@@ -1356,7 +1356,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(17,17,17,0.98)",
+    backgroundColor: surfaces.sheet,
     padding: spacing[16],
     gap: spacing[12]
   },
@@ -1385,7 +1385,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.74)",
+    backgroundColor: surfaces.field,
     overflow: "hidden"
   },
   dialWheelContent: {

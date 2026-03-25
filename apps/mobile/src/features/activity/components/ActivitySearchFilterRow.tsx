@@ -67,7 +67,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.95)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     flexDirection: "row",

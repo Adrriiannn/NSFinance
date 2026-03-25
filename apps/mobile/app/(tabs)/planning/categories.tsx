@@ -33,7 +33,7 @@ import {
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
 import { getFloatingTabBarInset } from "../../../src/theme/insets";
-import { navigation, palette, radius, spacing, typography } from "../../../src/theme/tokens";
+import { navigation, palette, radius, spacing, surfaces, typography } from "../../../src/theme/tokens";
 
 export default function PlanningHubCategoriesScreen() {
   const router = useRouter();
@@ -458,7 +458,7 @@ export default function PlanningHubCategoriesScreen() {
                           selected ? styles.searchResultRowSelected : null,
                           {
                             borderColor: selected ? visual.color : palette.border,
-                            backgroundColor: selected ? `${visual.color}18` : "rgba(21,21,21,0.82)"
+                            backgroundColor: selected ? `${visual.color}18` : surfaces.field
                           }
                         ]}
                         onPress={selectionMode ? () => handleSubcategoryPress(result.item.subcategoryId) : undefined}
@@ -628,7 +628,7 @@ export default function PlanningHubCategoriesScreen() {
                                               selected ? styles.subcategoryRowSelected : null,
                                               {
                                                 borderColor: selected ? subcategoryVisuals.color : palette.border,
-                                                backgroundColor: selected ? `${subcategoryVisuals.color}18` : "rgba(21,21,21,0.82)"
+                                                backgroundColor: selected ? `${subcategoryVisuals.color}18` : surfaces.field
                                               }
                                             ]}
                                             onPress={selectionMode ? () => handleSubcategoryPress(subcategory.id) : undefined}
@@ -829,7 +829,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.large,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.58)",
+    backgroundColor: surfaces.muted,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing[20],
@@ -891,7 +891,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.9)",
+    backgroundColor: surfaces.fieldStrong,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -911,7 +911,7 @@ const styles = StyleSheet.create({
     width: "70%",
     height: 1,
     borderRadius: 6,
-    backgroundColor: "rgba(213, 229, 255, 0.08)"
+    backgroundColor: palette.border
   },
   categorySectionList: {
     gap: 10,

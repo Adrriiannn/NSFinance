@@ -2,7 +2,10 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   Alert,
+  Dimensions,
+  Easing,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -35,6 +38,8 @@ import {
   setCompanionChats
 } from "../features/planner/chatHistory";
 import { navigateWithProbe } from "../lib/perf/navigationTiming";
+import { getDockAwareContentBottomInset } from "../layout/contentFrame";
+import { getEffectiveBottomSystemInset } from "../theme/insets";
 import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography } from "../theme/tokens";
 
 type PromptSeed = {
@@ -150,7 +155,7 @@ const CHAT_COLOR_THEMES: Record<CompanionChatColor, ChatColorTheme> = {
   blue: {
     label: "Slate",
     borderColor: "rgba(154,154,154,0.42)",
-    backgroundColor: "rgba(21,21,21,0.8)",
+    backgroundColor: surfaces.field,
     swatchColor: "#9A9A9A"
   },
   yellow: {
@@ -403,7 +408,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
   const [input, setInput] = useState("");
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [editChatVisible, setEditChatVisible] = useState(false);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
@@ -415,6 +420,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
   );
   const [inputBarHeight, setInputBarHeight] = useState(52);
   const [promptLayerHeight, setPromptLayerHeight] = useState(0);
+  const inputBottomAnimated = useRef(new Animated.Value(0)).current;
   const lastIntroRef = useRef(introPair.intro);
   const messageListRef = useRef<FlatList<CompanionMessage>>(null);
   const promptScrollRef = useRef<ScrollView>(null);
@@ -481,11 +487,22 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
   useEffect(() => {
     const handleKeyboardShow = (event: KeyboardEvent) => {
       setIsKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates.height);
+      const keyboardTop = event.endCoordinates?.screenY ?? 0;
+      const keyboardHeight = event.endCoordinates?.height ?? 0;
+      const windowHeight = Dimensions.get("window").height;
+      const nextKeyboardOverlap = keyboardTop > 0 ? Math.max(0, windowHeight - keyboardTop) : 0;
+
+      // RN Android keyboard metrics differ by nav mode/device; use a resilient overlap fallback.
+      setKeyboardOverlap(
+        Math.max(
+          keyboardHeight,
+          nextKeyboardOverlap
+        )
+      );
     };
     const handleKeyboardHide = () => {
       setIsKeyboardVisible(false);
-      setKeyboardHeight(0);
+      setKeyboardOverlap(0);
     };
 
     const showSubscription = Keyboard.addListener(showEvent, handleKeyboardShow);
@@ -682,10 +699,15 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
 
     return rankPrompts(input);
   }, [defaultPromptSet, input, showPrompts]);
-  const closedInputBottomInset = navigation.floatingTabBarHeight + spacing[4];
+  const effectiveBottomInset =
+    Platform.OS === "android" ? getEffectiveBottomSystemInset(insets.bottom) : insets.bottom;
+  const closedInputBottomInset = Math.max(
+    navigation.floatingTabBarHeight + spacing[8],
+    getDockAwareContentBottomInset(insets.bottom) - spacing[4]
+  );
   const keyboardInputBottomInset =
     Platform.OS === "android"
-      ? Math.max(spacing[8], keyboardHeight - Math.max(insets.bottom, 0) + spacing[8])
+      ? Math.max(spacing[8], keyboardOverlap - effectiveBottomInset + spacing[8])
       : Math.max(spacing[20], insets.bottom + spacing[8]);
   const inputBottomInset = isKeyboardVisible
     ? keyboardInputBottomInset
@@ -808,6 +830,15 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
     };
   }, [promptSuggestions, schedulePromptAutoScroll, showPrompts, stopPromptAutoScroll]);
 
+  useEffect(() => {
+    Animated.timing(inputBottomAnimated, {
+      toValue: inputBottomInset,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false
+    }).start();
+  }, [inputBottomAnimated, inputBottomInset]);
+
   return (
     <ScreenContainer
       scrollable={false}
@@ -888,7 +919,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
           )}
         </View>
 
-        <View style={[styles.inputArea, { bottom: inputBottomInset }]} pointerEvents="box-none">
+        <Animated.View style={[styles.inputArea, { bottom: inputBottomAnimated }]} pointerEvents="box-none">
           {showPrompts ? (
             <View
               style={styles.promptLayer}
@@ -945,6 +976,8 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
               onBlur={() => setIsInputFocused(false)}
               placeholder={introPair.placeholder}
               placeholderTextColor={palette.textSecondary}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={styles.input}
               multiline
               maxLength={280}
@@ -956,7 +989,7 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
               <Ionicons name="arrow-up" size={16} color={palette.appBackground} />
             </Pressable>
           </View>
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
 
       <FloatingBottomNav
@@ -1220,6 +1253,8 @@ export default function CashflowCompanionScreen({ sourceOverride, sourceTabOverr
               onChangeText={(next) => setEditingChatTitle(next.slice(0, CHAT_TITLE_MAX_LENGTH))}
               placeholder="Chat title"
               placeholderTextColor={palette.textSecondary}
+              selectionColor={palette.accent}
+              cursorColor={palette.accent}
               style={styles.editInput}
               maxLength={CHAT_TITLE_MAX_LENGTH}
             />
@@ -1303,8 +1338,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing[12]
   },
   userBubble: {
-    borderColor: "rgba(242,140,40,0.46)",
-    backgroundColor: "rgba(23,23,23,0.9)"
+    borderColor: palette.borderStrong,
+    backgroundColor: surfaces.fieldStrong
   },
   assistantBubble: {
     borderColor: "rgba(255,190,122,0.3)",

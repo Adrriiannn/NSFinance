@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.DTOs;
@@ -9,7 +10,8 @@ namespace NSFinance.Api.Modules.Banking.Services;
 
 public sealed class BankConnectionService(
     AppDbContext dbContext,
-    IAuditService auditService)
+    IAuditService auditService,
+    ILogger<BankConnectionService> logger)
 {
     private static readonly string[] UserVisibleActiveStatuses =
     [
@@ -116,27 +118,19 @@ public sealed class BankConnectionService(
         Guid userId,
         CancellationToken cancellationToken)
     {
-        return await dbContext.OpenBankingConnections
-            .AsNoTracking()
-            .Where(x => x.UserId == userId)
-            .OrderByDescending(x => x.UpdatedUtc)
-            .Select(x => new BankConnectionDto(
-                x.Id,
-                x.ProviderName,
-                x.ProviderId,
-                x.ProviderEnvironment,
-                x.ProviderDisplayName,
-                x.ProviderIconUri,
-                x.ProviderLogoUri,
-                x.ProviderBrandBgColor,
-                x.BrandingLastSyncedAtUtc,
-                x.Status,
-                x.CreatedUtc,
-                x.UpdatedUtc,
-                x.LastSuccessfulSyncUtc,
-                x.LastSyncAttemptedUtc,
-                x.LastErrorCode))
-            .ToListAsync(cancellationToken);
+        try
+        {
+            return await ListConnectionsWithBrandingAsync(userId, cancellationToken);
+        }
+        catch (Exception ex) when (IsProviderBrandingSchemaMissing(ex))
+        {
+            logger.LogWarning(
+                ex,
+                "Provider branding columns are missing from OpenBankingConnections. Falling back to legacy projection without branding metadata for userId={UserId}.",
+                userId);
+
+            return await ListConnectionsWithoutBrandingAsync(userId, cancellationToken);
+        }
     }
 
     public async Task<BankConnectionDto?> GetConnectionSummaryAsync(
@@ -144,123 +138,58 @@ public sealed class BankConnectionService(
         Guid connectionId,
         CancellationToken cancellationToken)
     {
-        return await dbContext.OpenBankingConnections
-            .AsNoTracking()
-            .Where(x => x.UserId == userId && x.Id == connectionId)
-            .Select(x => new BankConnectionDto(
-                x.Id,
-                x.ProviderName,
-                x.ProviderId,
-                x.ProviderEnvironment,
-                x.ProviderDisplayName,
-                x.ProviderIconUri,
-                x.ProviderLogoUri,
-                x.ProviderBrandBgColor,
-                x.BrandingLastSyncedAtUtc,
-                x.Status,
-                x.CreatedUtc,
-                x.UpdatedUtc,
-                x.LastSuccessfulSyncUtc,
-                x.LastSyncAttemptedUtc,
-                x.LastErrorCode))
-            .SingleOrDefaultAsync(cancellationToken);
+        try
+        {
+            return await GetConnectionSummaryWithBrandingAsync(userId, connectionId, cancellationToken);
+        }
+        catch (Exception ex) when (IsProviderBrandingSchemaMissing(ex))
+        {
+            logger.LogWarning(
+                ex,
+                "Provider branding columns are missing from OpenBankingConnections. Falling back to legacy connection summary projection for userId={UserId} connectionId={ConnectionId}.",
+                userId,
+                connectionId);
+
+            return await GetConnectionSummaryWithoutBrandingAsync(userId, connectionId, cancellationToken);
+        }
     }
 
     public async Task<ConnectedBanksOverviewDto> ListUserVisibleConnectionsAsync(
         Guid userId,
         CancellationToken cancellationToken)
     {
-        var includedStatuses = UserVisibleActiveStatuses
-            .Concat(UserVisibleAttentionStatuses)
-            .ToArray();
+        try
+        {
+            return await ListUserVisibleConnectionsWithBrandingAsync(userId, cancellationToken);
+        }
+        catch (Exception ex) when (IsProviderBrandingSchemaMissing(ex))
+        {
+            logger.LogWarning(
+                ex,
+                "Provider branding columns are missing from OpenBankingConnections. Falling back to legacy connected-banks projection for userId={UserId}.",
+                userId);
 
-        var projected = await dbContext.OpenBankingConnections
-            .AsNoTracking()
-            .Where(x => x.UserId == userId && includedStatuses.Contains(x.Status))
-            .OrderByDescending(x => x.UpdatedUtc)
-            .Select(x => new UserVisibleConnectionCandidate(
-                new BankConnectionDto(
-                    x.Id,
-                    x.ProviderName,
-                    x.ProviderId,
-                    x.ProviderEnvironment,
-                    x.ProviderDisplayName,
-                    x.ProviderIconUri,
-                    x.ProviderLogoUri,
-                    x.ProviderBrandBgColor,
-                    x.BrandingLastSyncedAtUtc,
-                    x.Status,
-                    x.CreatedUtc,
-                    x.UpdatedUtc,
-                    x.LastSuccessfulSyncUtc,
-                    x.LastSyncAttemptedUtc,
-                    x.LastErrorCode),
-                x.ProviderConnectionReference,
-                x.ProviderDisplayName,
-                x.ProviderName,
-                x.ProviderEnvironment))
-            .ToListAsync(cancellationToken);
-
-        var activeCandidates = projected
-            .Where(x => UserVisibleActiveStatuses.Contains(x.Summary.Status))
-            .OrderByDescending(x => x.Summary.UpdatedUtc)
-            .ToList();
-        var active = DeduplicateUserVisibleConnections(activeCandidates);
-        var activeKeys = activeCandidates
-            .Select(BuildUserVisibleDedupKey)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var attention = DeduplicateUserVisibleConnections(
-            projected.Where(x =>
-                UserVisibleAttentionStatuses.Contains(x.Summary.Status)
-                && !activeKeys.Contains(BuildUserVisibleDedupKey(x))));
-
-        return new ConnectedBanksOverviewDto(active, attention);
+            return await ListUserVisibleConnectionsWithoutBrandingAsync(userId, cancellationToken);
+        }
     }
 
     public async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsAsync(
         Guid userId,
         CancellationToken cancellationToken)
     {
-        var linkedAccounts = await dbContext.LinkedBankAccounts
-            .AsNoTracking()
-            .Include(x => x.Connection)
-            .Where(x => x.Connection != null && x.Connection.UserId == userId)
-            .OrderBy(x => x.DisplayName)
-            .ToListAsync(cancellationToken);
+        try
+        {
+            return await ListLinkedAccountsWithBrandingAsync(userId, cancellationToken);
+        }
+        catch (Exception ex) when (IsProviderBrandingSchemaMissing(ex))
+        {
+            logger.LogWarning(
+                ex,
+                "Provider branding columns are missing from OpenBankingConnections. Falling back to legacy linked-accounts projection for userId={UserId}.",
+                userId);
 
-        var accountIds = linkedAccounts.Select(x => x.Id).ToList();
-        var latestBalances = await dbContext.BankBalanceSnapshots
-            .AsNoTracking()
-            .Where(x => accountIds.Contains(x.LinkedBankAccountId))
-            .GroupBy(x => x.LinkedBankAccountId)
-            .Select(g => g.OrderByDescending(x => x.CapturedUtc).First())
-            .ToDictionaryAsync(x => x.LinkedBankAccountId, cancellationToken);
-
-        return linkedAccounts
-            .Select(account =>
-            {
-                latestBalances.TryGetValue(account.Id, out var latestBalance);
-                return new LinkedBankAccountDto(
-                    account.Id,
-                    account.ConnectionId,
-                    account.ProviderAccountId,
-                    account.Connection?.ProviderId,
-                    account.Connection?.ProviderDisplayName,
-                    account.Connection?.ProviderIconUri,
-                    account.Connection?.ProviderLogoUri,
-                    account.Connection?.ProviderBrandBgColor,
-                    account.DisplayName,
-                    account.AccountType,
-                    account.AccountSubType,
-                    account.Currency,
-                    account.CurrentConnectionHealth,
-                    latestBalance?.Available,
-                    latestBalance?.Current,
-                    latestBalance?.Overdraft,
-                    account.CreatedUtc,
-                    account.UpdatedUtc);
-            })
-            .ToList();
+            return await ListLinkedAccountsWithoutBrandingAsync(userId, cancellationToken);
+        }
     }
 
     public async Task<ServiceResult<IReadOnlyList<BankBalanceSnapshotDto>>> GetLatestBalancesAsync(
@@ -554,6 +483,358 @@ public sealed class BankConnectionService(
         string? ProviderDisplayName,
         string Provider,
         string ProviderEnvironment);
+
+    private sealed record LinkedBankAccountProjection(
+        Guid Id,
+        Guid ConnectionId,
+        string ProviderAccountId,
+        string? ProviderId,
+        string? ProviderDisplayName,
+        string? ProviderIconUri,
+        string? ProviderLogoUri,
+        string? ProviderBrandBgColor,
+        string DisplayName,
+        string? AccountType,
+        string? AccountSubType,
+        string Currency,
+        string CurrentConnectionHealth,
+        DateTime CreatedUtc,
+        DateTime UpdatedUtc);
+
+    private async Task<IReadOnlyList<BankConnectionDto>> ListConnectionsWithBrandingAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId)
+            .OrderByDescending(x => x.UpdatedUtc)
+            .Select(x => new BankConnectionDto(
+                x.Id,
+                x.ProviderName,
+                x.ProviderId,
+                x.ProviderEnvironment,
+                x.ProviderDisplayName,
+                x.ProviderIconUri,
+                x.ProviderLogoUri,
+                x.ProviderBrandBgColor,
+                x.BrandingLastSyncedAtUtc,
+                x.Status,
+                x.CreatedUtc,
+                x.UpdatedUtc,
+                x.LastSuccessfulSyncUtc,
+                x.LastSyncAttemptedUtc,
+                x.LastErrorCode))
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<BankConnectionDto>> ListConnectionsWithoutBrandingAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId)
+            .OrderByDescending(x => x.UpdatedUtc)
+            .Select(x => new BankConnectionDto(
+                x.Id,
+                x.ProviderName,
+                null,
+                x.ProviderEnvironment,
+                x.ProviderDisplayName,
+                null,
+                null,
+                null,
+                null,
+                x.Status,
+                x.CreatedUtc,
+                x.UpdatedUtc,
+                x.LastSuccessfulSyncUtc,
+                x.LastSyncAttemptedUtc,
+                x.LastErrorCode))
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<BankConnectionDto?> GetConnectionSummaryWithBrandingAsync(
+        Guid userId,
+        Guid connectionId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && x.Id == connectionId)
+            .Select(x => new BankConnectionDto(
+                x.Id,
+                x.ProviderName,
+                x.ProviderId,
+                x.ProviderEnvironment,
+                x.ProviderDisplayName,
+                x.ProviderIconUri,
+                x.ProviderLogoUri,
+                x.ProviderBrandBgColor,
+                x.BrandingLastSyncedAtUtc,
+                x.Status,
+                x.CreatedUtc,
+                x.UpdatedUtc,
+                x.LastSuccessfulSyncUtc,
+                x.LastSyncAttemptedUtc,
+                x.LastErrorCode))
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<BankConnectionDto?> GetConnectionSummaryWithoutBrandingAsync(
+        Guid userId,
+        Guid connectionId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && x.Id == connectionId)
+            .Select(x => new BankConnectionDto(
+                x.Id,
+                x.ProviderName,
+                null,
+                x.ProviderEnvironment,
+                x.ProviderDisplayName,
+                null,
+                null,
+                null,
+                null,
+                x.Status,
+                x.CreatedUtc,
+                x.UpdatedUtc,
+                x.LastSuccessfulSyncUtc,
+                x.LastSyncAttemptedUtc,
+                x.LastErrorCode))
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<ConnectedBanksOverviewDto> ListUserVisibleConnectionsWithBrandingAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var includedStatuses = UserVisibleActiveStatuses
+            .Concat(UserVisibleAttentionStatuses)
+            .ToArray();
+
+        var projected = await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && includedStatuses.Contains(x.Status))
+            .OrderByDescending(x => x.UpdatedUtc)
+            .Select(x => new UserVisibleConnectionCandidate(
+                new BankConnectionDto(
+                    x.Id,
+                    x.ProviderName,
+                    x.ProviderId,
+                    x.ProviderEnvironment,
+                    x.ProviderDisplayName,
+                    x.ProviderIconUri,
+                    x.ProviderLogoUri,
+                    x.ProviderBrandBgColor,
+                    x.BrandingLastSyncedAtUtc,
+                    x.Status,
+                    x.CreatedUtc,
+                    x.UpdatedUtc,
+                    x.LastSuccessfulSyncUtc,
+                    x.LastSyncAttemptedUtc,
+                    x.LastErrorCode),
+                x.ProviderConnectionReference,
+                x.ProviderDisplayName,
+                x.ProviderName,
+                x.ProviderEnvironment))
+            .ToListAsync(cancellationToken);
+
+        return BuildConnectedBanksOverview(projected);
+    }
+
+    private async Task<ConnectedBanksOverviewDto> ListUserVisibleConnectionsWithoutBrandingAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var includedStatuses = UserVisibleActiveStatuses
+            .Concat(UserVisibleAttentionStatuses)
+            .ToArray();
+
+        var projected = await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && includedStatuses.Contains(x.Status))
+            .OrderByDescending(x => x.UpdatedUtc)
+            .Select(x => new UserVisibleConnectionCandidate(
+                new BankConnectionDto(
+                    x.Id,
+                    x.ProviderName,
+                    null,
+                    x.ProviderEnvironment,
+                    x.ProviderDisplayName,
+                    null,
+                    null,
+                    null,
+                    null,
+                    x.Status,
+                    x.CreatedUtc,
+                    x.UpdatedUtc,
+                    x.LastSuccessfulSyncUtc,
+                    x.LastSyncAttemptedUtc,
+                    x.LastErrorCode),
+                x.ProviderConnectionReference,
+                x.ProviderDisplayName,
+                x.ProviderName,
+                x.ProviderEnvironment))
+            .ToListAsync(cancellationToken);
+
+        return BuildConnectedBanksOverview(projected);
+    }
+
+    private static ConnectedBanksOverviewDto BuildConnectedBanksOverview(
+        List<UserVisibleConnectionCandidate> projected)
+    {
+        var activeCandidates = projected
+            .Where(x => UserVisibleActiveStatuses.Contains(x.Summary.Status))
+            .OrderByDescending(x => x.Summary.UpdatedUtc)
+            .ToList();
+        var active = DeduplicateUserVisibleConnections(activeCandidates);
+        var activeKeys = activeCandidates
+            .Select(BuildUserVisibleDedupKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var attention = DeduplicateUserVisibleConnections(
+            projected.Where(x =>
+                UserVisibleAttentionStatuses.Contains(x.Summary.Status)
+                && !activeKeys.Contains(BuildUserVisibleDedupKey(x))));
+
+        return new ConnectedBanksOverviewDto(active, attention);
+    }
+
+    private async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsWithBrandingAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var linkedAccounts = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x => x.Connection != null && x.Connection.UserId == userId)
+            .OrderBy(x => x.DisplayName)
+            .Select(x => new LinkedBankAccountProjection(
+                x.Id,
+                x.ConnectionId,
+                x.ProviderAccountId,
+                x.Connection != null ? x.Connection.ProviderId : null,
+                x.Connection != null ? x.Connection.ProviderDisplayName : null,
+                x.Connection != null ? x.Connection.ProviderIconUri : null,
+                x.Connection != null ? x.Connection.ProviderLogoUri : null,
+                x.Connection != null ? x.Connection.ProviderBrandBgColor : null,
+                x.DisplayName,
+                x.AccountType,
+                x.AccountSubType,
+                x.Currency,
+                x.CurrentConnectionHealth,
+                x.CreatedUtc,
+                x.UpdatedUtc))
+            .ToListAsync(cancellationToken);
+
+        return await BuildLinkedAccountsResponseAsync(linkedAccounts, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsWithoutBrandingAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var linkedAccounts = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x => x.Connection != null && x.Connection.UserId == userId)
+            .OrderBy(x => x.DisplayName)
+            .Select(x => new LinkedBankAccountProjection(
+                x.Id,
+                x.ConnectionId,
+                x.ProviderAccountId,
+                null,
+                x.Connection != null ? x.Connection.ProviderDisplayName : null,
+                null,
+                null,
+                null,
+                x.DisplayName,
+                x.AccountType,
+                x.AccountSubType,
+                x.Currency,
+                x.CurrentConnectionHealth,
+                x.CreatedUtc,
+                x.UpdatedUtc))
+            .ToListAsync(cancellationToken);
+
+        return await BuildLinkedAccountsResponseAsync(linkedAccounts, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<LinkedBankAccountDto>> BuildLinkedAccountsResponseAsync(
+        List<LinkedBankAccountProjection> linkedAccounts,
+        CancellationToken cancellationToken)
+    {
+        var accountIds = linkedAccounts.Select(x => x.Id).ToList();
+        var latestBalances = await dbContext.BankBalanceSnapshots
+            .AsNoTracking()
+            .Where(x => accountIds.Contains(x.LinkedBankAccountId))
+            .GroupBy(x => x.LinkedBankAccountId)
+            .Select(g => g.OrderByDescending(x => x.CapturedUtc).First())
+            .ToDictionaryAsync(x => x.LinkedBankAccountId, cancellationToken);
+
+        return linkedAccounts
+            .Select(account =>
+            {
+                latestBalances.TryGetValue(account.Id, out var latestBalance);
+                return new LinkedBankAccountDto(
+                    account.Id,
+                    account.ConnectionId,
+                    account.ProviderAccountId,
+                    account.ProviderId,
+                    account.ProviderDisplayName,
+                    account.ProviderIconUri,
+                    account.ProviderLogoUri,
+                    account.ProviderBrandBgColor,
+                    account.DisplayName,
+                    account.AccountType,
+                    account.AccountSubType,
+                    account.Currency,
+                    account.CurrentConnectionHealth,
+                    latestBalance?.Available,
+                    latestBalance?.Current,
+                    latestBalance?.Overdraft,
+                    account.CreatedUtc,
+                    account.UpdatedUtc);
+            })
+            .ToList();
+    }
+
+    private static bool IsProviderBrandingSchemaMissing(Exception exception)
+    {
+        Exception? current = exception;
+        while (current is not null)
+        {
+            if (current is PostgresException postgresException
+                && postgresException.SqlState == PostgresErrorCodes.UndefinedColumn)
+            {
+                var columnName = postgresException.ColumnName ?? string.Empty;
+                if (columnName.Equals("ProviderId", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("ProviderIconUri", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("ProviderLogoUri", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("ProviderBrandBgColor", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("BrandingLastSyncedAtUtc", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                var message = postgresException.MessageText ?? string.Empty;
+                if (message.Contains("\"ProviderId\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"ProviderIconUri\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"ProviderLogoUri\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"ProviderBrandBgColor\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"BrandingLastSyncedAtUtc\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            current = current.InnerException;
+        }
+
+        return false;
+    }
 
     private static string CreateStateNonce()
     {

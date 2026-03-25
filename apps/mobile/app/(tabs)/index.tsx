@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard";
@@ -61,6 +61,11 @@ const HOME_RECURRING_LOG_EVENTS = new Set([
 ]);
 const HOME_RECURRING_LOG_THROTTLE_MS = 5 * 60 * 1000;
 const homeRecurringLogLastAt = new Map<string, number>();
+const HERO_PAGER_DOT_SIZE = 6;
+const HERO_PAGER_DOT_ACTIVE_WIDTH = 16;
+const HERO_PAGER_DOT_GAP = 8;
+const HERO_PAGER_STEP = HERO_PAGER_DOT_SIZE + HERO_PAGER_DOT_GAP;
+const HERO_PAGER_ACTIVE_EXTRA = HERO_PAGER_DOT_ACTIVE_WIDTH - HERO_PAGER_DOT_SIZE;
 
 export default function DashboardTabScreen() {
   const router = useRouter();
@@ -108,6 +113,8 @@ export default function DashboardTabScreen() {
   const heroPhysicalIndexRef = useRef(0);
   const [heroIndex, setHeroIndex] = useState(0);
   const [heroWidth, setHeroWidth] = useState(0);
+  const heroDotTranslateX = useRef(new Animated.Value(0)).current;
+  const heroPrevIndexRef = useRef(0);
   const transactions = transactionsQuery.data ?? [];
   const recentTransactions = [...transactions]
     .sort((left, right) => new Date(right.bookedAtUtc).getTime() - new Date(left.bookedAtUtc).getTime())
@@ -323,6 +330,25 @@ export default function DashboardTabScreen() {
     });
   }, [getInitialPhysicalIndex, heroItems.length, heroWidth]);
 
+  useEffect(() => {
+    const targetTranslateX = heroIndex * HERO_PAGER_STEP;
+    const previousHeroIndex = heroPrevIndexRef.current;
+    const shouldAnimate = Math.abs(heroIndex - previousHeroIndex) <= 1;
+
+    if (shouldAnimate) {
+      Animated.timing(heroDotTranslateX, {
+        toValue: targetTranslateX,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true
+      }).start();
+    } else {
+      heroDotTranslateX.setValue(targetTranslateX);
+    }
+
+    heroPrevIndexRef.current = heroIndex;
+  }, [heroDotTranslateX, heroIndex]);
+
   return (
     <AdaptiveScreen contentStyle={styles.content} gestureHandlers={gestureHandlers}>
       <Animated.View style={[styles.tabStage, animatedStyle]}>
@@ -451,12 +477,41 @@ export default function DashboardTabScreen() {
                     ))}
                   </ScrollView>
                   <View style={styles.heroPagerDots}>
-                    {heroItems.map((item, index) => (
-                      <View
-                        key={`dot-${item.key}`}
-                        style={[styles.heroPagerDot, index === heroIndex ? styles.heroPagerDotActive : null]}
-                      />
-                    ))}
+                    <View
+                      style={[
+                        styles.heroPagerTrack,
+                        {
+                          width:
+                            heroItems.length * HERO_PAGER_DOT_SIZE +
+                            Math.max(heroItems.length - 1, 0) * HERO_PAGER_DOT_GAP +
+                            HERO_PAGER_ACTIVE_EXTRA
+                        }
+                      ]}
+                    >
+                      {heroItems.map((item, index) => (
+                        <View
+                          key={`dot-${item.key}`}
+                          style={[
+                            styles.heroPagerSlot,
+                            index === heroItems.length - 1 ? styles.heroPagerSlotLast : null,
+                            index > heroIndex ? styles.heroPagerSlotShifted : null
+                          ]}
+                        >
+                          <View style={[styles.heroPagerDot, index === heroIndex ? styles.heroPagerDotHidden : null]} />
+                        </View>
+                      ))}
+                      {heroItems.length > 0 ? (
+                        <Animated.View
+                          pointerEvents="none"
+                          style={[
+                            styles.heroPagerDotActive,
+                            {
+                              transform: [{ translateX: heroDotTranslateX }]
+                            }
+                          ]}
+                        />
+                      ) : null}
+                    </View>
                   </View>
                 </View>
               </Animated.View>
@@ -573,17 +628,42 @@ const styles = StyleSheet.create({
   heroPagerDots: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center"
+  },
+  heroPagerTrack: {
+    position: "relative",
+    flexDirection: "row",
+    alignItems: "center",
+    height: HERO_PAGER_DOT_SIZE
+  },
+  heroPagerSlot: {
+    width: HERO_PAGER_DOT_SIZE,
+    height: HERO_PAGER_DOT_SIZE,
     justifyContent: "center",
-    gap: spacing[8]
+    alignItems: "center",
+    marginRight: HERO_PAGER_DOT_GAP
+  },
+  heroPagerSlotLast: {
+    marginRight: 0
+  },
+  heroPagerSlotShifted: {
+    transform: [{ translateX: HERO_PAGER_ACTIVE_EXTRA }]
   },
   heroPagerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 6,
+    width: HERO_PAGER_DOT_SIZE,
+    height: HERO_PAGER_DOT_SIZE,
+    borderRadius: HERO_PAGER_DOT_SIZE,
     backgroundColor: "rgba(242,140,40,0.35)"
   },
+  heroPagerDotHidden: {
+    opacity: 0
+  },
   heroPagerDotActive: {
-    width: 16,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: HERO_PAGER_DOT_ACTIVE_WIDTH,
+    height: HERO_PAGER_DOT_SIZE,
     borderRadius: 6,
     backgroundColor: palette.accent
   },

@@ -1,7 +1,7 @@
 import { palette } from "../../../theme/tokens";
 import { View } from "react-native";
 import { AppText } from "../text/AppText";
-import { bannerPresets, feedbackPresets, type FeedbackTone } from "./feedback.presets";
+import { feedbackPresets, snackbarTonePresets, type FeedbackTone } from "./feedback.presets";
 
 type SnackbarProps = {
   message: string;
@@ -10,7 +10,7 @@ type SnackbarProps = {
 
 export function Snackbar({ message, tone = "info" }: SnackbarProps) {
   return (
-    <View style={[feedbackPresets.snackbar, bannerPresets[tone]]}>
+    <View style={[feedbackPresets.snackbar, snackbarTonePresets[tone]]}>
       <AppText preset="caption" style={{ color: palette.textPrimary, fontWeight: "500" }}>
         {message}
       </AppText>

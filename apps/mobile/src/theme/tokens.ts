@@ -9,6 +9,7 @@ import { motion } from "./tokens/motion";
 import { zIndex } from "./tokens/zIndex";
 
 const theme = activeTheme;
+const isDarkTheme = theme.isDark;
 
 export const palette = {
   appBackground: theme.colors.canvas,
@@ -78,8 +79,8 @@ export const controls = {
   controlSurfaceStrong: surfaces.fieldStrong,
   primaryFill: theme.colors.action.primary,
   primaryBorder: theme.colors.action.primary,
-  activeFill: "rgba(242, 140, 40, 0.18)",
-  activeBorder: "rgba(242, 140, 40, 0.32)",
+  activeFill: isDarkTheme ? "rgba(242, 140, 40, 0.18)" : "rgba(184, 94, 0, 0.12)",
+  activeBorder: isDarkTheme ? "rgba(242, 140, 40, 0.32)" : "rgba(184, 94, 0, 0.24)",
   pressedScale: 0.985
 } as const;
 

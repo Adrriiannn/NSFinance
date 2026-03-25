@@ -1,15 +1,18 @@
 import { gradients } from "../tokens/gradients";
 import { shadows } from "../tokens/shadows";
+import { getStoredThemeModeSync, resolveThemeName } from "../runtime/themePreference";
 import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
 
-export type SemanticTheme = typeof darkTheme;
+export type SemanticTheme = typeof darkTheme | typeof lightTheme;
 
 export const themes = {
   light: lightTheme,
   dark: darkTheme
 } as const;
 
-export const activeTheme = darkTheme;
+const startupThemeName = resolveThemeName(getStoredThemeModeSync());
+
+export const activeTheme = themes[startupThemeName];
 
 export { gradients, shadows };

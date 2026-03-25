@@ -176,6 +176,8 @@ export function ActivitySearchBar({
                 : "Search transactions, merchants, or dates"
             }
             placeholderTextColor={palette.textSecondary}
+            selectionColor={palette.accent}
+            cursorColor={palette.accent}
             style={[styles.mainInput, tokens.length > 0 ? styles.mainInputWithTokens : null]}
             editable={!isInlineEditingTokenType(activeTokenType)}
             returnKeyType="search"

@@ -45,8 +45,8 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
       minHeight: sizing.button.heights.standard,
       borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.standard,
-      backgroundColor: "#141414",
-      borderColor: "rgba(255, 255, 255, 0.08)"
+      backgroundColor: surfaces.field,
+      borderColor: palette.border
     },
     label: {
       ...baseLabel,
@@ -90,7 +90,7 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
       width: sizing.button.heights.icon,
       height: sizing.button.heights.icon,
       borderRadius: radius.medium,
-      backgroundColor: "#141414",
+      backgroundColor: surfaces.field,
       borderColor: palette.border
     },
     label: {
@@ -106,7 +106,7 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
       minHeight: sizing.button.heights.compact,
       borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.compact,
-      backgroundColor: "#141414",
+      backgroundColor: surfaces.field,
       borderColor: palette.border
     },
     label: {
@@ -123,7 +123,7 @@ export const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
       minHeight: sizing.button.heights.pillAction,
       borderRadius: radius.medium,
       paddingHorizontal: sizing.button.horizontalPadding.standard,
-      backgroundColor: "#141414",
+      backgroundColor: surfaces.field,
       borderColor: palette.border
     },
     label: {

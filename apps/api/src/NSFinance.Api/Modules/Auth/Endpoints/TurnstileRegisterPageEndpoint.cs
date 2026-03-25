@@ -77,8 +77,16 @@ public static class TurnstileRegisterPageEndpoint
         var params = new URLSearchParams(window.location.search);
         var action = (params.get('action') || 'register').trim();
         var theme = (params.get('theme') || 'dark').trim();
+        var resolvedTheme = theme === 'light' ? 'light' : 'dark';
+        var hostBackground = resolvedTheme === 'light' ? '#ffffff' : '#2f3136';
         var rootElement = document.getElementById('turnstile-root');
         var siteKey = (rootElement && rootElement.getAttribute('data-sitekey') || '').trim();
+
+        document.documentElement.style.background = hostBackground;
+        document.body.style.background = hostBackground;
+        if (rootElement) {
+          rootElement.style.background = hostBackground;
+        }
 
         function postMessageToHost(payload) {
           var serialized = JSON.stringify(payload);
@@ -113,7 +121,7 @@ public static class TurnstileRegisterPageEndpoint
             window.turnstile.render('#turnstile-root', {
               sitekey: siteKey,
               action: action || 'register',
-              theme: theme === 'light' ? 'light' : 'dark',
+              theme: resolvedTheme,
               size: 'normal',
               callback: function (token) {
                 postMessageToHost({ type: 'turnstile.success', token: token });

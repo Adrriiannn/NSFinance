@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { WebViewErrorEvent, WebViewHttpErrorEvent } from "react-native-webview/lib/WebViewTypes";
 import { apiConfig } from "../../lib/api/config";
+import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
 import { palette, spacing, typography } from "../../theme/tokens";
 
 type TokenCaptchaProps = {
@@ -40,7 +41,7 @@ function isTokenCaptchaProps(props: CaptchaGateProps): props is TokenCaptchaProp
   return "token" in props && "onTokenChange" in props;
 }
 
-function buildTurnstileRegisterUrl(baseUrl: string): string | null {
+function buildTurnstileRegisterUrl(baseUrl: string, theme: "light" | "dark"): string | null {
   if (!baseUrl) {
     return null;
   }
@@ -49,7 +50,7 @@ function buildTurnstileRegisterUrl(baseUrl: string): string | null {
     const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
     const url = new URL(`${normalizedBaseUrl}${TURNSTILE_REGISTER_PATH}`);
     url.searchParams.set("action", "register");
-    url.searchParams.set("theme", "dark");
+    url.searchParams.set("theme", theme);
     return url.toString();
   } catch {
     return null;
@@ -91,12 +92,19 @@ export function CaptchaGate(props: CaptchaGateProps) {
 }
 
 function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptchaProps) {
+  const { resolvedThemeName } = useThemeRuntime();
   const [isChallengeReady, setIsChallengeReady] = useState(false);
   const [challengeSeed, setChallengeSeed] = useState(0);
   const [challengeState, setChallengeState] = useState<ChallengeState>("loading");
   const [lastError, setLastError] = useState<string | null>(null);
+  const widgetBackground = resolvedThemeName === "light" ? "#FFFFFF" : "#2f3136";
+  const pendingOverlayBackground =
+    resolvedThemeName === "light" ? "rgba(255,255,255,0.48)" : "rgba(11,26,45,0.22)";
 
-  const challengeUrl = useMemo(() => buildTurnstileRegisterUrl(TURNSTILE_PAGE_BASE_URL), []);
+  const challengeUrl = useMemo(
+    () => buildTurnstileRegisterUrl(TURNSTILE_PAGE_BASE_URL, resolvedThemeName),
+    [resolvedThemeName]
+  );
 
   useEffect(() => {
     if (!challengeUrl) {
@@ -113,7 +121,7 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
     setChallengeState("loading");
     setIsChallengeReady(false);
     setLastError(null);
-    logTurnstileDebug("challenge_load", { challengeUrl, seed: challengeSeed });
+    logTurnstileDebug("challenge_load", { challengeUrl, seed: challengeSeed, theme: resolvedThemeName });
   }, [challengeSeed, challengeUrl]);
 
   const retryChallenge = useCallback(() => {
@@ -208,13 +216,13 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
       {showLabel ? <Text style={styles.label}>Security check</Text> : null}
 
       <View style={styles.inlineWidgetShell}>
-        <View style={styles.inlineWidgetClip}>
+        <View style={[styles.inlineWidgetClip, { backgroundColor: widgetBackground }]}>
           {challengeUrl ? (
             <WebView
               key={`turnstile-inline-${challengeSeed}`}
               source={{ uri: challengeUrl }}
-              style={styles.inlineWebView}
-              containerStyle={styles.inlineWebViewContainer}
+              style={[styles.inlineWebView, { backgroundColor: widgetBackground }]}
+              containerStyle={[styles.inlineWebViewContainer, { backgroundColor: widgetBackground }]}
               originWhitelist={["https://*", "http://*", "about:blank", "about:srcdoc"]}
               javaScriptEnabled
               domStorageEnabled
@@ -253,12 +261,12 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
             </View>
           )}
 
-          <View pointerEvents="none" style={styles.seamMaskLeft} />
-          <View pointerEvents="none" style={styles.seamMaskRight} />
-          <View pointerEvents="none" style={styles.seamMaskBottom} />
+          <View pointerEvents="none" style={[styles.seamMaskLeft, { backgroundColor: widgetBackground }]} />
+          <View pointerEvents="none" style={[styles.seamMaskRight, { backgroundColor: widgetBackground }]} />
+          <View pointerEvents="none" style={[styles.seamMaskBottom, { backgroundColor: widgetBackground }]} />
 
           {showLoadingOverlay ? (
-            <View pointerEvents="none" style={styles.webViewPendingOverlay}>
+            <View pointerEvents="none" style={[styles.webViewPendingOverlay, { backgroundColor: pendingOverlayBackground }]}>
               <ActivityIndicator color={palette.primaryGlow} />
             </View>
           ) : null}

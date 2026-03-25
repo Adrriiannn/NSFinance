@@ -40,7 +40,7 @@ import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 import type { TransactionDto } from "../../../src/types/api";
 
 const transactionSwipeHoldDelayMs = 1000;
@@ -148,6 +148,14 @@ export default function ActivityTabScreen() {
 
       return undefined;
     }, [search])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        search.dismissDropdown();
+      };
+    }, [search.dismissDropdown])
   );
 
   useEffect(() => {
@@ -623,14 +631,14 @@ const styles = StyleSheet.create({
   },
   transactionRowArmed: {
     borderColor: "rgba(255,190,122,0.58)",
-    backgroundColor: "rgba(23,23,23,0.96)"
+    backgroundColor: surfaces.fieldStrong
   },
   swipeBackdrop: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: "rgba(242,140,40,0.2)",
-    backgroundColor: "rgba(17,17,17,0.74)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     flexDirection: "row",
     alignItems: "center",

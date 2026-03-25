@@ -22,7 +22,7 @@ import { formatUnknownError } from "../../../src/lib/api/errors";
 import { queryKeys } from "../../../src/lib/api/queryKeys";
 import { useFeedbackSound } from "../../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../../src/providers/AuthProvider";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 import type {
   BankConnectionDto,
   BankConnectionStatus,
@@ -922,7 +922,7 @@ const styles = StyleSheet.create({
   metadataCard: {
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.74)",
+    backgroundColor: surfaces.card,
     borderRadius: 6,
     padding: spacing[12],
     gap: spacing[8]

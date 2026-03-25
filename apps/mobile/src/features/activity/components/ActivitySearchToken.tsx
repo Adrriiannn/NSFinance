@@ -61,6 +61,8 @@ export function ActivitySearchToken({
                 : "value"
           }
           placeholderTextColor={palette.textSecondary}
+          selectionColor={palette.accent}
+          cursorColor={palette.accent}
           style={[styles.tokenInput, { width: draftInputWidth }]}
         />
       ) : (

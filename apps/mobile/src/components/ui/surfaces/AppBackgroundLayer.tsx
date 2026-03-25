@@ -1,25 +1,31 @@
+import { useMemo } from "react";
 import { StyleSheet, View } from "react-native";
+import { useThemeRuntime } from "../../../theme/runtime/ThemeRuntimeProvider";
 
 export function AppBackgroundLayer() {
+  const { theme } = useThemeRuntime();
+  const isDark = theme.isDark;
+  const backgroundStyles = useMemo(
+    () => ({
+      neutralHaze: {
+        backgroundColor: isDark ? "rgba(255,255,255,0.015)" : "rgba(255,255,255,0.2)"
+      },
+      vignette: {
+        borderColor: isDark ? "rgba(0,0,0,0.2)" : "rgba(17,17,17,0.06)"
+      }
+    }),
+    [isDark]
+  );
+
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <View style={styles.orangeWash} />
-      <View style={styles.neutralHaze} />
-      <View style={styles.vignette} />
+      <View style={[styles.neutralHaze, backgroundStyles.neutralHaze]} />
+      <View style={[styles.vignette, backgroundStyles.vignette]} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  orangeWash: {
-    position: "absolute",
-    top: -140,
-    left: -120,
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: "rgba(242,140,40,0.03)"
-  },
   neutralHaze: {
     position: "absolute",
     top: 90,
@@ -35,4 +41,3 @@ const styles = StyleSheet.create({
     borderWidth: 1
   }
 });
-

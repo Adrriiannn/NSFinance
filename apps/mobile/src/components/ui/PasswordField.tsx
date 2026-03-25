@@ -65,6 +65,8 @@ export function PasswordField({
           ref={inputRef}
           {...props}
           secureTextEntry={!visible}
+          selectionColor={props.selectionColor ?? palette.accent}
+          cursorColor={props.cursorColor ?? palette.accent}
           autoCapitalize={props.autoCapitalize ?? "none"}
           autoCorrect={props.autoCorrect ?? false}
           autoComplete={props.autoComplete ?? "off"}

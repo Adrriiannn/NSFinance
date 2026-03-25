@@ -24,7 +24,7 @@ import {
 import type { ExpenseAnalyticsMode } from "../../../src/features/expenseTracker/expensePlanningTypes";
 import { getExpenseTrackerVisual } from "../../../src/features/expenseTracker/expenseTrackerModels";
 import { HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
-import { palette, spacing, typography } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../../src/theme/tokens";
 import type { ExpenseTaxonomyDomainDto, ExpenseTrackerEntryDto } from "../../../src/types/api";
 
 const analyticsModes = [
@@ -501,7 +501,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[10],
     paddingVertical: spacing[8],
     flexDirection: "row",
@@ -586,7 +586,7 @@ const styles = StyleSheet.create({
   monthProgressTrack: {
     height: 10,
     borderRadius: 6,
-    backgroundColor: "rgba(226,236,255,0.12)",
+    backgroundColor: palette.border,
     overflow: "hidden"
   },
   monthProgressFill: {
@@ -672,7 +672,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: "rgba(21,21,21,0.72)",
+    backgroundColor: surfaces.field,
     alignItems: "center",
     justifyContent: "center"
   },

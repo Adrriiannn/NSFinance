@@ -73,6 +73,8 @@ export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function Te
           {...props}
           ref={assignRef}
           multiline={multiline}
+          selectionColor={props.selectionColor ?? palette.accent}
+          cursorColor={props.cursorColor ?? palette.accent}
           onFocus={(event) => {
             setFocused(true);
             onFocus?.(event);
