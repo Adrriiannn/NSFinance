@@ -32,6 +32,7 @@ import {
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency } from "../../../src/lib/format";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
+import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { AccountType } from "../../../src/types/api";
 
@@ -48,6 +49,7 @@ export default function AccountsTabScreen() {
   useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/accounts");
   const params = useLocalSearchParams<{ selectedAccountId?: string; focusNonce?: string }>();
   const accountsQuery = useAccountsQuery();
@@ -301,9 +303,21 @@ export default function AccountsTabScreen() {
         onRequestClose={() => setSelectorVisible(false)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setSelectorVisible(false)}>
-          <Pressable style={styles.modalSheet} onPress={() => undefined}>
+          <Pressable
+            style={[
+              styles.modalSheet,
+              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
+            ]}
+            onPress={() => undefined}
+          >
             <Text style={styles.modalTitle}>Select account</Text>
-            <ScrollView contentContainerStyle={styles.modalList} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              contentContainerStyle={[
+                styles.modalList,
+                { paddingBottom: spacing[4] + bottomInsetPolicy.bottomScrollableInset }
+              ]}
+              showsVerticalScrollIndicator={false}
+            >
               {accounts.map((account) => (
                 <View
                   key={account.id}
@@ -363,7 +377,13 @@ export default function AccountsTabScreen() {
         onRequestClose={() => setEditModalVisible(false)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setEditModalVisible(false)}>
-          <Pressable style={styles.modalSheet} onPress={() => undefined}>
+          <Pressable
+            style={[
+              styles.modalSheet,
+              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
+            ]}
+            onPress={() => undefined}
+          >
             <Text style={styles.modalTitle}>Edit account</Text>
 
             <TextField

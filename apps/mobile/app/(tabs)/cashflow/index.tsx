@@ -26,6 +26,7 @@ import {
 import { buildPlannerSuggestions } from "../../../src/features/planner/plannerInsights";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
+import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 function formatCountdown(daysUntilDue: number) {
@@ -74,6 +75,7 @@ export default function CashflowScreen() {
   useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/cashflow");
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
@@ -444,7 +446,13 @@ export default function CashflowScreen() {
         onRequestClose={closePicker}
       >
         <Pressable style={styles.pickerOverlay} onPress={closePicker}>
-          <Pressable style={styles.pickerSheet} onPress={() => undefined}>
+          <Pressable
+            style={[
+              styles.pickerSheet,
+              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
+            ]}
+            onPress={() => undefined}
+          >
             <Text style={styles.pickerTitle}>Select month</Text>
             <Text style={styles.pickerSubtitle}>
               {pickerTarget === "current" ? "Current period" : "Comparison period"}

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { useRuntimeBottomInsetPolicy } from "../../theme/insets";
 import { formatCurrency } from "../../lib/format";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import type { TransactionDto } from "../../types/api";
@@ -162,6 +163,7 @@ type CheckSpendingsCardProps = {
 };
 
 export function CheckSpendingsCard({ transactions, currency }: CheckSpendingsCardProps) {
+  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const todayPoint = useMemo(() => datePointFromDate(new Date()), []);
   const previousMonthDate = useMemo(
     () => new Date(todayPoint.year, todayPoint.month - 1, todayPoint.day ?? 1),
@@ -434,7 +436,13 @@ export function CheckSpendingsCard({ transactions, currency }: CheckSpendingsCar
         onRequestClose={() => setPickerVisible(false)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setPickerVisible(false)}>
-          <Pressable style={styles.modalSheet} onPress={() => undefined}>
+          <Pressable
+            style={[
+              styles.modalSheet,
+              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
+            ]}
+            onPress={() => undefined}
+          >
             <Text style={styles.modalTitle}>Select a date</Text>
             <Text style={styles.modalLiveLabel}>Current selection</Text>
             <Text style={styles.modalLiveValue}>{formatRangeLabel(pickerDraft)}</Text>

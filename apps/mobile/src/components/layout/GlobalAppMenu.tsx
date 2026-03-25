@@ -12,6 +12,7 @@ import {
   Text,
   View
 } from "react-native";
+import { useRuntimeBottomInsetPolicy } from "../../theme/insets";
 import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
@@ -98,6 +99,7 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   const params = useGlobalSearchParams<{ source?: string }>();
   const { isAuthenticated, session, logout } = useAuthSession();
   const { mode, cycleTheme, isTransitioning } = useThemeRuntime();
+  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const profileQuery = useUserProfileQuery();
   const [isOpen, setIsOpen] = useState(false);
   const slideProgress = useRef(new Animated.Value(0)).current;
@@ -191,6 +193,9 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
           <Animated.View
             style={[
               styles.drawer,
+              {
+                paddingBottom: spacing[16] + bottomInsetPolicy.bottomDrawerInset
+              },
               {
                 transform: [{ translateX: panelTranslateX }]
               }

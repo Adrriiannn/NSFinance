@@ -10,6 +10,7 @@ import { TextField } from "../../../src/components/ui/TextField";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAuthSession } from "../../../src/providers/AuthProvider";
+import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 type TransferMode = "external" | "internal";
@@ -80,6 +81,7 @@ function DropdownField({
 
 export default function TransferMoneyScreen() {
   const router = useRouter();
+  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const params = useLocalSearchParams<{ mode?: string }>();
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const accountsQuery = useAccountsQuery();
@@ -352,9 +354,21 @@ export default function TransferMoneyScreen() {
         onRequestClose={() => setActiveDropdown(null)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setActiveDropdown(null)}>
-          <Pressable style={styles.modalSheet} onPress={() => undefined}>
+          <Pressable
+            style={[
+              styles.modalSheet,
+              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
+            ]}
+            onPress={() => undefined}
+          >
             <Text style={styles.modalTitle}>{dropdownTitle}</Text>
-            <ScrollView contentContainerStyle={styles.modalList} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              contentContainerStyle={[
+                styles.modalList,
+                { paddingBottom: spacing[4] + bottomInsetPolicy.bottomScrollableInset }
+              ]}
+              showsVerticalScrollIndicator={false}
+            >
               {dropdownOptions.map((option) => (
                 <Pressable
                   key={option.value}

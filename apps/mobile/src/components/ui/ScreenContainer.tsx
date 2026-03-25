@@ -1,10 +1,8 @@
 import { useMemo, type ReactNode } from "react";
 import {
   RefreshControl,
-  ScrollView,
   StyleProp,
   StyleSheet,
-  View,
   ViewStyle,
   type GestureResponderHandlers
 } from "react-native";
@@ -12,12 +10,14 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { GlobalAppMenu } from "../layout/GlobalAppMenu";
 import { useOptionalAdaptiveShell } from "../../layout/adaptive/adaptive.hooks";
 import {
+  CONTENT_FRAME_DOCK_GAP,
   CONTENT_FRAME_HORIZONTAL_PADDING,
-  getDockAwareContentBottomInset,
-  getPlainContentBottomInset
 } from "../../layout/contentFrame";
 import { useThemeTokens } from "../../theme/tokens";
+import { useRuntimeBottomInsetPolicy } from "../../theme/insets";
 import { AppBackgroundLayer } from "./surfaces/AppBackgroundLayer";
+import { BottomInsetAwareScrollView } from "./insets/BottomInsetAwareScrollView";
+import { BottomInsetAwareView } from "./insets/BottomInsetAwareView";
 
 type ScreenContainerProps = {
   children: ReactNode;
@@ -42,7 +42,7 @@ export function ScreenContainer({
   includeBottomSafeArea = !withBottomTabOffset,
   gestureHandlers
 }: ScreenContainerProps) {
-  const { layout, palette, spacing, surfaces } = useThemeTokens();
+  const { layout, navigation, palette, spacing, surfaces } = useThemeTokens();
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -64,6 +64,7 @@ export function ScreenContainer({
     [layout, surfaces]
   );
   const insets = useSafeAreaInsets();
+  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const adaptiveShell = useOptionalAdaptiveShell();
   const flattenedContentStyle = StyleSheet.flatten(contentStyle) ?? {};
   const menuTopOffset =
@@ -71,10 +72,13 @@ export function ScreenContainer({
       ? flattenedContentStyle.paddingTop
       : spacing[8];
   const menuAbsoluteTop = insets.top + menuTopOffset;
+  const safeAreaBottomCompensation = includeBottomSafeArea
+    ? -bottomInsetPolicy.bottomContentInset
+    : 0;
   const computedBottomInset =
     (withBottomTabOffset
-      ? getDockAwareContentBottomInset(insets.bottom)
-      : getPlainContentBottomInset(insets.bottom)) + bottomInsetOffset;
+      ? navigation.floatingTabBarHeight + CONTENT_FRAME_DOCK_GAP
+      : 0) + bottomInsetOffset + safeAreaBottomCompensation;
 
   return (
     <SafeAreaView
@@ -86,7 +90,8 @@ export function ScreenContainer({
       {!adaptiveShell ? <GlobalAppMenu topOffset={menuAbsoluteTop} showTrigger={false} /> : null}
 
       {scrollable ? (
-        <ScrollView
+        <BottomInsetAwareScrollView
+          mode="content"
           contentContainerStyle={[
             styles.scrollContent,
             { paddingBottom: styles.scrollContent.paddingBottom + computedBottomInset },
@@ -104,9 +109,10 @@ export function ScreenContainer({
           }
         >
           {children}
-        </ScrollView>
+        </BottomInsetAwareScrollView>
       ) : (
-        <View
+        <BottomInsetAwareView
+          mode="content"
           style={[
             styles.fixedContent,
             { paddingBottom: styles.fixedContent.paddingBottom + computedBottomInset },
@@ -114,7 +120,7 @@ export function ScreenContainer({
           ]}
         >
           {children}
-        </View>
+        </BottomInsetAwareView>
       )}
     </SafeAreaView>
   );
