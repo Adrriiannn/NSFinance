@@ -4,7 +4,7 @@ param(
     [switch]$StartEmulator = $true,
     [switch]$LaunchExpoGo = $true,
     [int]$ApiPort = 5080,
-    [string]$Root = "C:\Users\%USERNAME%\Desktop\Projects\NSFinance",
+    [string]$Root,
     [string]$PreferredAvdName = "Resizable (Experimental)",
     [string]$EmulatorExe = "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe",
     [string]$AdbExe = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",
@@ -14,6 +14,43 @@ param(
 $ErrorActionPreference = "Stop"
 
 try {
+    function Resolve-RepoRoot([string]$explicitRoot) {
+        if ($explicitRoot) {
+            $resolved = [Environment]::ExpandEnvironmentVariables($explicitRoot)
+            if (-not (Test-Path $resolved)) {
+                throw "Provided Root path was not found: $resolved"
+            }
+            return (Resolve-Path $resolved).Path
+        }
+
+        $candidates = @()
+        if ($PSScriptRoot) {
+            $candidates += $PSScriptRoot
+            $parent = Split-Path -Parent $PSScriptRoot
+            if ($parent) { $candidates += $parent }
+        }
+        $candidates += (Get-Location).Path
+
+        foreach ($candidate in $candidates | Select-Object -Unique) {
+            $current = $candidate
+            while ($current) {
+                $hasMobile = Test-Path (Join-Path $current "apps\mobile")
+                $hasApi = Test-Path (Join-Path $current "apps\api")
+                if ($hasMobile -and $hasApi) {
+                    return (Resolve-Path $current).Path
+                }
+
+                $parent = Split-Path -Parent $current
+                if (-not $parent -or $parent -eq $current) { break }
+                $current = $parent
+            }
+        }
+
+        throw "Could not auto-detect the NSFinance repo root. Place this script in the repo root (or a subfolder) or pass -Root explicitly."
+    }
+
+    $Root = Resolve-RepoRoot -explicitRoot $Root
+
     # -----------------------------
     # Paths
     # -----------------------------
@@ -164,7 +201,6 @@ $command
 
         Start-Sleep -Seconds 1
 
-        # Start server without waiting on the spawned process forever
         Start-Process -FilePath $AdbExe -ArgumentList 'start-server' -WindowStyle Hidden | Out-Null
 
         $start = Get-Date
@@ -218,7 +254,6 @@ $command
 
         do {
             Start-Sleep -Seconds 2
-
             $sysBoot = (& $AdbExe -s $deviceId shell getprop sys.boot_completed 2>$null | Out-String).Trim()
             $devBoot = (& $AdbExe -s $deviceId shell getprop dev.bootcomplete 2>$null | Out-String).Trim()
             $bootAnim = (& $AdbExe -s $deviceId shell getprop init.svc.bootanim 2>$null | Out-String).Trim()
@@ -237,55 +272,54 @@ $command
     }
 
     function Wait-ForExpoHttp([int]$port = 8081, [int]$timeoutSeconds = 120) {
-    Write-Host ""
-    Write-Host "=== Waiting for Expo server ===" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "=== Waiting for Expo server ===" -ForegroundColor Cyan
 
-    $start = Get-Date
-    $url = "http://127.0.0.1:$port"
+        $start = Get-Date
+        $url = "http://127.0.0.1:$port"
 
-    do {
-        Start-Sleep -Seconds 2
+        do {
+            Start-Sleep -Seconds 2
 
-        try {
-            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 3
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
-                Write-Host "Expo server is responding on $url" -ForegroundColor Green
-                return $true
+            try {
+                $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 3
+                if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
+                    Write-Host "Expo server is responding on $url" -ForegroundColor Green
+                    return $true
+                }
+            } catch {
+                Write-Host "Waiting for Expo server..." -ForegroundColor DarkGray
             }
-        } catch {
-            Write-Host "Waiting for Expo server..." -ForegroundColor DarkGray
         }
-    }
-    while (((Get-Date) - $start).TotalSeconds -lt $timeoutSeconds)
+        while (((Get-Date) - $start).TotalSeconds -lt $timeoutSeconds)
 
-    throw "Expo server did not become reachable on $url in time."
-}
+        throw "Expo server did not become reachable on $url in time."
+    }
 
     function Launch-ExpoGoOnAndroid([string]$deviceId, [int]$port = 8081) {
-    if (-not $deviceId) {
-        throw "Launch-ExpoGoOnAndroid called without a deviceId."
+        if (-not $deviceId) {
+            throw "Launch-ExpoGoOnAndroid called without a deviceId."
+        }
+
+        Write-Host ""
+        Write-Host "=== Launching App on emulator ===" -ForegroundColor Cyan
+
+        $expoPackage = "host.exp.exponent"
+
+        & $AdbExe -s $deviceId reverse tcp:$port tcp:$port | Out-Null
+
+        $expoUrl = "exp://127.0.0.1:$port/--/"
+
+        & $AdbExe -s $deviceId shell am start -W -a android.intent.action.VIEW -d $expoUrl $expoPackage | Out-Null
+
+        Write-Host "Expo Go launch intent sent to $deviceId with $expoUrl" -ForegroundColor Green
     }
-
-    Write-Host ""
-    Write-Host "=== Launching App on emulator ===" -ForegroundColor Cyan
-
-    $expoPackage = "host.exp.exponent"
-
-    # Reverse localhost traffic from emulator to host
-    & $AdbExe -s $deviceId reverse tcp:$port tcp:$port | Out-Null
-
-    # Expo Go dev URL
-    $expoUrl = "exp://127.0.0.1:$port/--/"
-
-    & $AdbExe -s $deviceId shell am start -W -a android.intent.action.VIEW -d $expoUrl $expoPackage | Out-Null
-
-    Write-Host "Expo Go launch intent sent to $deviceId with $expoUrl" -ForegroundColor Green
-}
 
     # -----------------------------
     # Pre-start checks
     # -----------------------------
     Write-Step "Pre-start checks"
+    Write-Host "Repo root: $Root" -ForegroundColor DarkGray
 
     foreach ($path in @($Root, $apiPath, $mobilePath, $dbPath)) {
         if (-not (Test-Path $path)) {
@@ -333,24 +367,24 @@ $command
     # -----------------------------
     Write-Step "Starting mobile"
 
-$pnpmCmd = (Get-Command "pnpm.cmd" -ErrorAction SilentlyContinue).Source
-if (-not $pnpmCmd) {
-    throw "pnpm.cmd was not found on PATH."
-}
+    $pnpmCmd = (Get-Command "pnpm.cmd" -ErrorAction SilentlyContinue).Source
+    if (-not $pnpmCmd) {
+        throw "pnpm.cmd was not found on PATH."
+    }
 
-$cmdTitle = 'title NSFinance Mobile'
-$cmdCd = "cd /d `"$mobilePath`""
+    $cmdTitle = 'title NSFinance Mobile'
+    $cmdCd = "cd /d `"$mobilePath`""
 
-$cmdExpo = if ($ClearExpoCache) {
-    "`"$pnpmCmd`" exec expo start --go --localhost --clear"
-} else {
-    "`"$pnpmCmd`" exec expo start --go --localhost"
-}
+    $cmdExpo = if ($ClearExpoCache) {
+        "`"$pnpmCmd`" exec expo start --go --localhost --clear"
+    } else {
+        "`"$pnpmCmd`" exec expo start --go --localhost"
+    }
 
-$mobileCmdLine = "$cmdTitle && $cmdCd && $cmdExpo"
+    $mobileCmdLine = "$cmdTitle && $cmdCd && $cmdExpo"
 
-$mobileProcess = Start-Process cmd.exe -PassThru -WorkingDirectory $mobilePath -ArgumentList @('/k', $mobileCmdLine)
-Save-Pid -name "mobile" -processIdValue $mobileProcess.Id
+    $mobileProcess = Start-Process cmd.exe -PassThru -WorkingDirectory $mobilePath -ArgumentList @('/k', $mobileCmdLine)
+    Save-Pid -name "mobile" -processIdValue $mobileProcess.Id
 
     # -----------------------------
     # Emulator
@@ -361,7 +395,6 @@ Save-Pid -name "mobile" -processIdValue $mobileProcess.Id
         Write-Step "Starting Android emulator"
         $resolvedAvdName = Resolve-AvdName -preferredName $PreferredAvdName
         Write-Host "Using AVD: $resolvedAvdName" -ForegroundColor Green
-        # Hide the emulator's companion console window without affecting the emulator UI itself.
         Start-Process $EmulatorExe -ArgumentList @('-avd', $resolvedAvdName, '-no-snapshot-load') -WindowStyle Hidden | Out-Null
 
         if (-not (Ensure-AdbReady -timeoutSeconds 60)) {
@@ -386,12 +419,12 @@ Save-Pid -name "mobile" -processIdValue $mobileProcess.Id
     # Launch in Expo Go
     # -----------------------------
     if ($LaunchExpoGo) {
-    if (-not $deviceId) {
-        Write-Warning "No emulator device ID is available. Skipping Expo Go launch."
-    } else {
-        Wait-ForExpoHttp -port 8081 -timeoutSeconds 120
-        Launch-ExpoGoOnAndroid -deviceId $deviceId -port 8081
-    }
+        if (-not $deviceId) {
+            Write-Warning "No emulator device ID is available. Skipping Expo Go launch."
+        } else {
+            Wait-ForExpoHttp -port 8081 -timeoutSeconds 120
+            Launch-ExpoGoOnAndroid -deviceId $deviceId -port 8081
+        }
     }
 
     Write-Host "`nDone." -ForegroundColor Green

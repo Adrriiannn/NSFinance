@@ -1,8 +1,35 @@
 $ErrorActionPreference = "SilentlyContinue"
 
+function Resolve-RepoRoot {
+    $candidates = @()
+    if ($PSScriptRoot) {
+        $candidates += $PSScriptRoot
+        $parent = Split-Path -Parent $PSScriptRoot
+        if ($parent) { $candidates += $parent }
+    }
+    $candidates += (Get-Location).Path
+
+    foreach ($candidate in $candidates | Select-Object -Unique) {
+        $current = $candidate
+        while ($current) {
+            $hasMobile = Test-Path (Join-Path $current "apps\mobile")
+            $hasApi = Test-Path (Join-Path $current "apps\api")
+            if ($hasMobile -and $hasApi) {
+                return (Resolve-Path $current).Path
+            }
+
+            $parent = Split-Path -Parent $current
+            if (-not $parent -or $parent -eq $current) { break }
+            $current = $parent
+        }
+    }
+
+    throw "Could not auto-detect the NSFinance repo root. Place this script in the repo root (or a subfolder)."
+}
+
 Write-Host "`nStopping NSFinance development stack..." -ForegroundColor Cyan
 
-$root = "C:\Users\%USERNAME%\Desktop\Projects\NSFinance"
+$root = Resolve-RepoRoot
 $dbPath = Join-Path $root "infra\docker"
 $statePath = Join-Path $root ".dev-orchestrator"
 $adbExe = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
@@ -28,6 +55,7 @@ function Stop-ProcessesByName([string[]]$names) {
     }
 }
 
+Write-Host "Repo root: $root" -ForegroundColor DarkGray
 Write-Host "`nClosing orchestrator-managed console windows..." -ForegroundColor Yellow
 Stop-ProcessByPidFile "api.pid"
 Stop-ProcessByPidFile "mobile.pid"
