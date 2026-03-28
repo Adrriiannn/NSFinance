@@ -488,7 +488,10 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
                 <Pressable
                   onPress={() => {
                     setIsOpen(false);
-                    void logout();
+                    void (async () => {
+                      await logout();
+                      router.replace("/login" as never);
+                    })();
                   }}
                   style={({ pressed }) => [styles.logoutButton, pressed ? styles.menuItemPressed : null]}
                 >

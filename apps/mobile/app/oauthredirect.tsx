@@ -2,6 +2,7 @@ import { router, useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { useGoogleOAuthDebugState, pushGoogleOAuthDebugStep, updateGoogleOAuthDebugState } from "../src/features/auth/googleOAuthDebug";
+import { resetGoogleOAuthFlowState } from "../src/features/auth/googleOAuthFlowState";
 import { palette, surfaces, typography, createRuntimeStyleSheet } from "../src/theme/tokens";
 
 const SUCCESS_REDIRECT_DELAY_MS = 600;
@@ -124,12 +125,13 @@ export default function OAuthRedirectScreen() {
         {canReturnToLogin ? (
           <Pressable
             style={({ pressed }) => [styles.backButton, pressed ? styles.backButtonPressed : null]}
-            onPress={() =>
+            onPress={() => {
+              resetGoogleOAuthFlowState("manual_retry");
               router.replace({
                 pathname: "/login",
                 params: { googleError: debugState.backendMessage || "Google sign-in did not complete." }
-              } as never)
-            }
+              } as never);
+            }}
           >
             <Text style={styles.backButtonText}>Return to login</Text>
           </Pressable>

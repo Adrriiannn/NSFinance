@@ -1,22 +1,32 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { GlassCard } from "../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
+import { resetGoogleOAuthFlowState } from "../../src/features/auth/googleOAuthFlowState";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 export default function AuthEntryScreen() {
-  const { sessionMessage, clearSessionMessage } = useAuthSession();
+  const { sessionMessage, clearSessionMessage, isAuthTransitioning } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const googleSignIn = useGoogleSignIn();
   const [googleError, setGoogleError] = useState<string | null>(null);
 
+  useEffect(() => {
+    resetGoogleOAuthFlowState("auth_screen_mount");
+  }, []);
+
   const handleGoogleSignIn = async () => {
+    if (isAuthTransitioning) {
+      setGoogleError("Finishing sign-out. Please try again in a moment.");
+      return;
+    }
+
     clearSessionMessage();
     setGoogleError(null);
 
@@ -51,6 +61,7 @@ export default function AuthEntryScreen() {
             clearSessionMessage();
             router.push("/login" as never);
           }}
+          disabled={isAuthTransitioning}
         />
 
         <SecondaryButton
@@ -59,6 +70,7 @@ export default function AuthEntryScreen() {
             clearSessionMessage();
             router.push("/register" as never);
           }}
+          disabled={isAuthTransitioning}
         />
 
         <SecondaryButton
@@ -67,12 +79,13 @@ export default function AuthEntryScreen() {
             clearSessionMessage();
             router.push("/forgot-password" as never);
           }}
+          disabled={isAuthTransitioning}
         />
 
         <SecondaryButton
           label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
           onPress={() => void handleGoogleSignIn()}
-          disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
+          disabled={!googleSignIn.isConfigured || googleSignIn.isPending || isAuthTransitioning}
         />
         {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
 

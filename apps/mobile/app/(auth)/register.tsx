@@ -22,11 +22,13 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
 } from "../../src/features/auth/passwordPolicy";
+import { resetGoogleOAuthFlowState } from "../../src/features/auth/googleOAuthFlowState";
 import { useRegisterMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
+import { useAuthSession } from "../../src/providers/AuthProvider";
 import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"fullName" | "email" | "password" | "confirmPassword", string>>;
@@ -216,6 +218,7 @@ export default function RegisterScreen() {
 
   const registerMutation = useRegisterMutation();
   const googleSignIn = useGoogleSignIn();
+  const { isAuthTransitioning } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState(prefilledEmail);
@@ -229,6 +232,10 @@ export default function RegisterScreen() {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [socialAuthMessage, setSocialAuthMessage] = useState<string | null>(null);
   const authApiDebugDetail = getAuthApiDebugDetail();
+
+  useEffect(() => {
+    resetGoogleOAuthFlowState("auth_screen_mount");
+  }, []);
 
   useEffect(() => {
     if (!prefilledEmail) {
@@ -386,6 +393,10 @@ export default function RegisterScreen() {
   };
 
   const handleRegister = async () => {
+    if (isAuthTransitioning) {
+      return;
+    }
+
     if (!validate()) {
       return;
     }
@@ -412,6 +423,11 @@ export default function RegisterScreen() {
   };
 
   const handleGoogleSignIn = async () => {
+    if (isAuthTransitioning) {
+      setSocialAuthMessage("Finishing sign-out. Please try again in a moment.");
+      return;
+    }
+
     setSocialAuthMessage(null);
     const result = await googleSignIn.signInWithGoogle();
     if (!result.succeeded) {
@@ -628,7 +644,7 @@ export default function RegisterScreen() {
             label="Sign Up"
             onPress={() => void handleRegister()}
             isLoading={registerMutation.isPending}
-            disabled={!canSubmit}
+            disabled={!canSubmit || isAuthTransitioning}
             style={styles.authButton}
           />
 
@@ -651,7 +667,7 @@ export default function RegisterScreen() {
               variant="secondary"
               icon={<Ionicons name="logo-google" size={16} color={palette.textPrimary} />}
               onPress={() => void handleGoogleSignIn()}
-              disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
+              disabled={!googleSignIn.isConfigured || googleSignIn.isPending || isAuthTransitioning}
               style={styles.authButton}
             />
 
@@ -858,4 +874,3 @@ const styles = createRuntimeStyleSheet(() => ({
     opacity: 0.75
   }
 }));
-

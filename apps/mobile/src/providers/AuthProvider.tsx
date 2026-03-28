@@ -6,6 +6,7 @@ import {
   logout as logoutApi,
   refreshToken as refreshTokenApi
 } from "../features/auth/authApi";
+import { resetGoogleOAuthFlowState } from "../features/auth/googleOAuthFlowState";
 import {
   setApiTokenResolver,
   setApiUnauthorizedHandler
@@ -27,6 +28,7 @@ type StoredSession = {
 
 type AuthContextValue = {
   isBootstrapping: boolean;
+  isAuthTransitioning: boolean;
   isAuthenticated: boolean;
   session: StoredSession | null;
   sessionMessage: string | null;
@@ -45,6 +47,7 @@ type AuthProviderProps = {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isAuthTransitioning, setIsAuthTransitioning] = useState(false);
   const [session, setSession] = useState<StoredSession | null>(null);
   const [sessionMessage, setSessionMessage] = useState<string | null>(null);
   const accessTokenRef = useRef<string | null>(null);
@@ -52,6 +55,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundedAtRef = useRef<number | null>(null);
+  const logoutPromiseRef = useRef<Promise<void> | null>(null);
+
+  const logAuthDebug = useCallback((event: string, details?: Record<string, unknown>) => {
+    if (!__DEV__) {
+      return;
+    }
+
+    if (!details) {
+      console.info(`[Auth] ${event}`);
+      return;
+    }
+
+    console.info(`[Auth] ${event}`, details);
+  }, []);
 
   const stopInactivityTimer = useCallback(() => {
     if (inactivityTimerRef.current) {
@@ -79,34 +96,61 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const logout = useCallback(
     async (reason?: string) => {
-      stopInactivityTimer();
-      refreshPromiseRef.current = null;
-
-      const hadSession = Boolean(accessTokenRef.current);
-      const tokenBeforeClear = accessTokenRef.current;
-      accessTokenRef.current = null;
-      sessionRef.current = null;
-      setSession(null);
-      setApiTokenResolver(() => accessTokenRef.current);
-      await clearSessionStorage();
-      queryClient.clear();
-
-      if (reason) {
-        setSessionMessage(reason);
+      if (logoutPromiseRef.current) {
+        await logoutPromiseRef.current;
+        return;
       }
 
-      if (hadSession && tokenBeforeClear) {
-        setApiTokenResolver(() => tokenBeforeClear);
-        try {
-          await logoutApi();
-        } catch {
-          // Logout endpoint is best-effort in case token already expired.
-        } finally {
-          setApiTokenResolver(() => accessTokenRef.current);
+      const runLogout = async () => {
+        setIsAuthTransitioning(true);
+        logAuthDebug("logout_started", {
+          hasReason: Boolean(reason),
+          reason: reason ?? ""
+        });
+        resetGoogleOAuthFlowState("logout");
+
+        stopInactivityTimer();
+        refreshPromiseRef.current = null;
+
+        const hadSession = Boolean(accessTokenRef.current);
+        const tokenBeforeClear = accessTokenRef.current;
+        accessTokenRef.current = null;
+        sessionRef.current = null;
+        setSession(null);
+        setApiTokenResolver(() => accessTokenRef.current);
+        await clearSessionStorage();
+        await queryClient.cancelQueries();
+        queryClient.clear();
+        logAuthDebug("logout_storage_and_cache_cleared");
+
+        if (reason) {
+          setSessionMessage(reason);
         }
-      }
+
+        if (hadSession && tokenBeforeClear) {
+          setApiTokenResolver(() => tokenBeforeClear);
+          try {
+            await logoutApi();
+            logAuthDebug("logout_api_succeeded");
+          } catch {
+            // Logout endpoint is best-effort in case token already expired.
+            logAuthDebug("logout_api_failed");
+          } finally {
+            setApiTokenResolver(() => accessTokenRef.current);
+          }
+        }
+
+        logAuthDebug("logout_completed");
+      };
+
+      logoutPromiseRef.current = runLogout().finally(() => {
+        setIsAuthTransitioning(false);
+        logoutPromiseRef.current = null;
+      });
+
+      await logoutPromiseRef.current;
     },
-    [clearSessionStorage, stopInactivityTimer]
+    [clearSessionStorage, logAuthDebug, stopInactivityTimer]
   );
 
   const startInactivityTimer = useCallback(() => {
@@ -323,6 +367,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const value = useMemo<AuthContextValue>(
     () => ({
       isBootstrapping,
+      isAuthTransitioning,
       isAuthenticated: Boolean(session),
       session,
       sessionMessage,
@@ -336,6 +381,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       applyAuthTokenResponse,
       refreshSessionUser,
       isBootstrapping,
+      isAuthTransitioning,
       logout,
       notifyUserInteraction,
       session,

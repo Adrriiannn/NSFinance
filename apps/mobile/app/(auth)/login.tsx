@@ -14,9 +14,11 @@ import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { TextField } from "../../src/components/ui/TextField";
 import { persistRememberedEmail, readRememberedEmail } from "../../src/features/auth/rememberedEmail";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
+import { resetGoogleOAuthFlowState } from "../../src/features/auth/googleOAuthFlowState";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
+import { useAuthSession } from "../../src/providers/AuthProvider";
 import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"email" | "password", string>>;
@@ -260,6 +262,7 @@ export default function LoginScreen() {
   const searchParams = useLocalSearchParams<{ googleError?: string | string[] }>();
   const loginMutation = useLoginMutation();
   const googleSignIn = useGoogleSignIn();
+  const { isAuthTransitioning } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -277,6 +280,10 @@ export default function LoginScreen() {
   const emailShakeX = useRef(new Animated.Value(0)).current;
   const passwordShakeX = useRef(new Animated.Value(0)).current;
   const loginBannerOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    resetGoogleOAuthFlowState("auth_screen_mount");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -491,6 +498,10 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    if (isAuthTransitioning) {
+      return;
+    }
+
     if (!validate()) {
       return;
     }
@@ -583,6 +594,11 @@ export default function LoginScreen() {
   };
 
   const handleGoogleSignIn = async () => {
+    if (isAuthTransitioning) {
+      setGoogleError("Finishing sign-out. Please try again in a moment.");
+      return;
+    }
+
     setGoogleError(null);
     const result = await googleSignIn.signInWithGoogle();
     if (!result.succeeded) {
@@ -718,7 +734,7 @@ export default function LoginScreen() {
                   label="Log in"
                   onPress={() => void handleLogin()}
                   isLoading={loginMutation.isPending}
-                  disabled={!canSubmit}
+                  disabled={!canSubmit || isAuthTransitioning}
                   style={[styles.authButton, styles.loginButton]}
                 />
 
@@ -734,7 +750,7 @@ export default function LoginScreen() {
                     variant="secondary"
                     icon={<Ionicons name="logo-google" size={16} color={palette.textPrimary} />}
                     onPress={() => void handleGoogleSignIn()}
-                    disabled={!googleSignIn.isConfigured || googleSignIn.isPending}
+                    disabled={!googleSignIn.isConfigured || googleSignIn.isPending || isAuthTransitioning}
                     style={styles.authButton}
                   />
 

@@ -8,6 +8,10 @@ import {
   resetGoogleOAuthDebugState,
   updateGoogleOAuthDebugState
 } from "./googleOAuthDebug";
+import {
+  resetGoogleOAuthFlowState,
+  useGoogleOAuthRequestEpoch
+} from "./googleOAuthFlowState";
 import { useGoogleLoginMutation } from "./useAuthMutations";
 
 type GoogleSignInResult = {
@@ -129,11 +133,13 @@ function logGoogleAuthDebug(event: string, details?: Record<string, unknown>) {
 export function useGoogleSignIn() {
   const googleLoginMutation = useGoogleLoginMutation();
   const [isPromptInFlight, setIsPromptInFlight] = useState(false);
+  const oauthRequestEpoch = useGoogleOAuthRequestEpoch();
 
   const googleWebClientId = readGoogleWebClientId();
   const googleAndroidClientId = readActiveGoogleAndroidClientId();
   const safeGoogleWebClientId = googleWebClientId ?? GOOGLE_CLIENT_ID_FALLBACK;
   const safeGoogleAndroidClientId = googleAndroidClientId ?? GOOGLE_CLIENT_ID_FALLBACK;
+  const oauthState = useMemo(() => `nsfinance-google-${oauthRequestEpoch}`, [oauthRequestEpoch]);
   const activeClientId = useMemo(
     () =>
       Platform.select({
@@ -148,6 +154,7 @@ export function useGoogleSignIn() {
     webClientId: safeGoogleWebClientId,
     androidClientId: safeGoogleAndroidClientId,
     clientId: safeGoogleWebClientId,
+    state: oauthState,
     selectAccount: true,
     scopes: ["openid", "profile", "email"]
   });
@@ -161,9 +168,10 @@ export function useGoogleSignIn() {
 
     logGoogleAuthDebug("request_ready", {
       redirectUri: request.redirectUri,
-      hasClientId: Boolean(activeClientId)
+      hasClientId: Boolean(activeClientId),
+      oauthState
     });
-  }, [activeClientId, request]);
+  }, [activeClientId, oauthState, request]);
 
   useEffect(() => {
     if (!response) {
@@ -175,6 +183,11 @@ export function useGoogleSignIn() {
       hasIdToken: Boolean(extractIdToken(response))
     });
   }, [response]);
+
+  useEffect(() => {
+    setIsPromptInFlight(false);
+    googleLoginMutation.reset();
+  }, [googleLoginMutation, oauthRequestEpoch]);
 
   const completeGoogleSignIn = useCallback(
     async (authResult: unknown): Promise<GoogleSignInResult> => {
@@ -232,6 +245,7 @@ export function useGoogleSignIn() {
         } catch (error) {
           const message = formatUnknownError(error);
           pushGoogleOAuthDebugStep("code_exchange_failed", message);
+          resetGoogleOAuthFlowState("code_exchange_failed");
           return {
             succeeded: false,
             message
