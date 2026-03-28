@@ -37,4 +37,14 @@ public static class TrueLayerProviders
     [
         "uk-cs-mock"
     ];
+
+    public static readonly IReadOnlyList<string> LiveIrelandDefault =
+    [
+        "ie-ob-all"
+    ];
+}
+
+public static class TrueLayerCountryIds
+{
+    public const string Ireland = "IE";
 }

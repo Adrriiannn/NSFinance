@@ -80,6 +80,10 @@ Actively consumed by runtime:
 - Google auth client IDs (web + android audiences)
 - ASP.NET DataProtection key-ring path (`DataProtection:KeysPath` or `NSFINANCE_DATA_PROTECTION_KEYS_PATH`)
 
+TrueLayer note:
+
+- provider/country targeting is decided by backend auth-link generation logic, not by TrueLayer Console auth-link builder UI state.
+
 Not yet bound by runtime services (template-ready only):
 
 - `Turnstile:SecretKey`

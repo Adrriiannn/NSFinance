@@ -52,6 +52,21 @@ Production (Azure settings):
 - live auth/API base URLs
 - callback: `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 
+## Provider market targeting
+
+Auth-link generation is backend-driven and deterministic. The backend is the source of truth, not the TrueLayer Console auth-link builder UI.
+
+Current targeting rules:
+
+- sandbox:
+  - `providers=uk-cs-mock`
+  - no `country_id`
+- live:
+  - `providers=ie-ob-all`
+  - `country_id=IE`
+
+This ensures live bank chooser flows open with Ireland providers instead of UK defaults.
+
 ## Safety checks
 
 - callback state validation

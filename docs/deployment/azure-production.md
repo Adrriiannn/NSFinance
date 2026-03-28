@@ -83,6 +83,9 @@
   - preferred: `nsfinance://accounts/connect-bank?...`
   - legacy compatibility still accepted: `nsfinance://modals/add-account?...`
   - Defined in `apps/api/src/NSFinance.Api/Modules/Banking/Endpoints/TrueLayerCallbackEndpoint.cs`.
+- TrueLayer market targeting is backend-generated (not Console builder UI state):
+  - sandbox auth-link includes `providers=uk-cs-mock`
+  - live auth-link includes `providers=ie-ob-all` and `country_id=IE`
 
 ## Operational notes for production stability
 

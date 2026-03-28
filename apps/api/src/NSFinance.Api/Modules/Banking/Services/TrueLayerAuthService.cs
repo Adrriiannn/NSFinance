@@ -48,23 +48,29 @@ public sealed class TrueLayerAuthService(
                 cancellationToken);
         }
 
+        var scopes = BuildScopes();
+        var providers = BuildProviders(configuration.Environment);
+        var countryId = BuildCountryId(configuration.Environment);
         logger.LogInformation(
-            "TrueLayer link started connectionId={ConnectionId} userId={UserId} environment={Environment} hasAppReturnUri={HasAppReturnUri} normalizedAppReturnUri={AppReturnUri}",
+            "TrueLayer link started connectionId={ConnectionId} userId={UserId} environment={Environment} hasAppReturnUri={HasAppReturnUri} normalizedAppReturnUri={AppReturnUri} hasProviders={HasProviders} providers={Providers} hasCountryId={HasCountryId} countryId={CountryId}",
             connection.Id,
             userId,
             configuration.Environment,
             !string.IsNullOrWhiteSpace(normalizedAppReturnUri),
-            normalizedAppReturnUri ?? "<none>");
+            normalizedAppReturnUri ?? "<none>",
+            providers.Count > 0,
+            providers.Count > 0 ? string.Join(' ', providers) : "<none>",
+            !string.IsNullOrWhiteSpace(countryId),
+            countryId ?? "<none>");
 
-        var scopes = BuildScopes();
-        var providers = BuildProviders(configuration.Environment);
         var authLink = BuildAuthorizationLink(
             configuration.AuthBaseUrl,
             configuration.ClientId,
             configuration.RedirectUri,
             connection.AuthStateNonce!,
             scopes,
-            providers);
+            providers,
+            countryId);
 
         return ServiceResult<StartTrueLayerLinkResponse>.Ok(
             new StartTrueLayerLinkResponse(
@@ -396,9 +402,24 @@ public sealed class TrueLayerAuthService(
 
     public static IReadOnlyList<string> BuildProviders(string environment)
     {
-        return string.Equals(environment, "sandbox", StringComparison.OrdinalIgnoreCase)
-            ? TrueLayerProviders.SandboxDefault
-            : [];
+        if (string.Equals(environment, "sandbox", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrueLayerProviders.SandboxDefault;
+        }
+
+        if (string.Equals(environment, "live", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrueLayerProviders.LiveIrelandDefault;
+        }
+
+        return [];
+    }
+
+    public static string? BuildCountryId(string environment)
+    {
+        return string.Equals(environment, "live", StringComparison.OrdinalIgnoreCase)
+            ? TrueLayerCountryIds.Ireland
+            : null;
     }
 
     public static string BuildAuthorizationLink(
@@ -407,7 +428,8 @@ public sealed class TrueLayerAuthService(
         string redirectUri,
         string state,
         IReadOnlyList<string> scopes,
-        IReadOnlyList<string> providers)
+        IReadOnlyList<string> providers,
+        string? countryId = null)
     {
         var uriBuilder = new UriBuilder(authBaseUrl)
         {
@@ -427,6 +449,11 @@ public sealed class TrueLayerAuthService(
         if (providers.Count > 0)
         {
             queryValues["providers"] = string.Join(' ', providers);
+        }
+
+        if (!string.IsNullOrWhiteSpace(countryId))
+        {
+            queryValues["country_id"] = countryId;
         }
 
         return QueryHelpers.AddQueryString(uriBuilder.Uri.ToString(), queryValues);

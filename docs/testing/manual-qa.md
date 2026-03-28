@@ -52,6 +52,14 @@ Negative checks:
 - invalid credentials config error behavior
 - sandbox/live environment mismatch rejection behavior
 
+Live-market verification (before device run):
+
+1. Call `POST /api/banking/truelayer/link` with:
+   - `{ "appReturnUri": "nsfinance://accounts/connect-bank" }`
+2. Confirm `authorizationUrl` contains:
+   - `providers=ie-ob-all`
+   - `country_id=IE`
+
 Disconnect:
 
 1. `POST /api/banking/connections/{connectionId}/disconnect`

@@ -44,6 +44,26 @@ public class TrueLayerAuthServiceTests
         Assert.Contains("providers=", uri.Query, StringComparison.Ordinal);
         Assert.DoesNotContain(" ", uri.Query, StringComparison.Ordinal);
         Assert.Equal("uk-cs-mock", query["providers"]);
+        Assert.False(query.ContainsKey("country_id"));
+    }
+
+    [Fact]
+    public void BuildAuthorizationLink_LiveTargetsIrelandProvidersAndCountry()
+    {
+        var url = TrueLayerAuthService.BuildAuthorizationLink(
+            "https://auth.truelayer.com",
+            "client-123",
+            "https://api.finance.nsireland.ie/api/banking/truelayer/callback",
+            "state-live",
+            TrueLayerAuthService.BuildScopes(),
+            TrueLayerAuthService.BuildProviders("live"),
+            TrueLayerAuthService.BuildCountryId("live"));
+
+        var uri = new Uri(url);
+        var query = ParseQuery(uri.Query);
+
+        Assert.Equal("ie-ob-all", query["providers"]);
+        Assert.Equal("IE", query["country_id"]);
     }
 
     [Fact]
@@ -62,6 +82,20 @@ public class TrueLayerAuthServiceTests
     {
         var normalized = TrueLayerReturnUriContract.Normalize(input);
         Assert.NotNull(normalized);
+    }
+
+    [Fact]
+    public void BuildProviders_LiveUsesIrelandProviderGroup()
+    {
+        var providers = TrueLayerAuthService.BuildProviders("live");
+        Assert.Equal(["ie-ob-all"], providers);
+    }
+
+    [Fact]
+    public void BuildCountryId_LiveUsesIreland()
+    {
+        var countryId = TrueLayerAuthService.BuildCountryId("live");
+        Assert.Equal("IE", countryId);
     }
 
     private static Dictionary<string, string> ParseQuery(string query)
