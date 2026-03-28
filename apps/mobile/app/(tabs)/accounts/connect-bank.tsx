@@ -279,6 +279,16 @@ export default function AddAccountModalScreen() {
     return latestConnection;
   }, [activeConnectionQuery.data, forceNewConnectionFlow, latestConnection, pendingConnectionId]);
 
+  const reconnectConnectionId = useMemo(() => {
+    if (forceNewConnectionFlow || !activeConnection) {
+      return null;
+    }
+
+    return activeConnection.status === "reauth_required" || activeConnection.status === "expired"
+      ? activeConnection.id
+      : null;
+  }, [activeConnection, forceNewConnectionFlow]);
+
   const linkedAccountNames = useMemo(() => {
     if (forceNewConnectionFlow && !pendingConnectionId) {
       return [];
@@ -440,7 +450,10 @@ export default function AddAccountModalScreen() {
   const handleConnectBank = async () => {
     try {
       setBrowserPhase("opening_bank");
-      const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankConnectReturnUri() });
+      const response = await startLinkMutation.mutateAsync({
+        appReturnUri: buildBankConnectReturnUri(),
+        connectionId: reconnectConnectionId
+      });
       await beginConsentSession(response);
     } catch (error) {
       setBrowserPhase("idle");
@@ -458,7 +471,10 @@ export default function AddAccountModalScreen() {
       return;
     }
 
-    const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankConnectReturnUri() });
+    const response = await startLinkMutation.mutateAsync({
+      appReturnUri: buildBankConnectReturnUri(),
+      connectionId: reconnectConnectionId
+    });
     await beginConsentSession(response);
   };
 
@@ -741,7 +757,7 @@ export default function AddAccountModalScreen() {
               : uiState === "failed"
                 ? "The bank connection exists, but data sync failed. You can retry sync without reconnecting."
                 : uiState === "reauth_required"
-                  ? "Provider access expired or failed. Reconnect your bank to continue syncing."
+                  ? "Provider access expired or failed. Your imported history is still saved. Reconnect your bank to resume syncing."
                   : undefined;
 
   const canSyncNow = activeConnection ? syncableStatuses.has(activeConnection.status) : false;

@@ -51,6 +51,12 @@ public sealed record TrueLayerTransactionRecord(
     string DedupeKey,
     string RawPayloadJson);
 
+public sealed record TrueLayerTransactionQueryWindow(
+    DateTime? FromUtc,
+    DateTime? ToUtc,
+    string Mode,
+    string? PolicyName);
+
 public sealed record BankSyncResult(
     Guid ConnectionId,
     int AccountsSynced,

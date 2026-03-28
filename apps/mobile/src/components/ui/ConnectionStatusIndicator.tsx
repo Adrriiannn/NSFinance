@@ -59,7 +59,7 @@ const statusConfig: Record<
   reauth_required: {
     label: "Reconnect required",
     color: palette.negative,
-    helper: "Provider access expired or was interrupted. Reconnect your bank."
+    helper: "Provider access expired or was interrupted. Your imported history is kept. Reconnect to resume syncing."
   }
 };
 

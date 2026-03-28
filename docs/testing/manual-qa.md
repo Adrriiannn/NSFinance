@@ -38,6 +38,12 @@ Happy path:
 6. Validate callback return route handling:
    - preferred route: `nsfinance://accounts/connect-bank?...`
    - legacy compatibility route: `nsfinance://modals/add-account?...`
+7. Validate initial backfill behavior:
+   - first sync should request an explicit transactions `from`/`to` window
+   - verify wider-than-default history is attempted (provider-dependent limits still apply)
+8. Validate incremental behavior:
+   - trigger another sync
+   - verify follow-up transaction fetches use incremental windows (not full initial backfill again)
 
 Data checks (authenticated API):
 
@@ -45,6 +51,14 @@ Data checks (authenticated API):
 - `GET /api/banking/accounts`
 - `GET /api/banking/accounts/{accountId}/balances`
 - `GET /api/banking/accounts/{accountId}/transactions?page=1&pageSize=50`
+
+Consent expiry / reconfirmation continuity:
+
+1. Move a connection to `reauth_required` or `expired` (simulate token expiry/revoke).
+2. Confirm previously imported transactions remain visible in NSFinance.
+3. Reconfirm from app flow and ensure `POST /api/banking/truelayer/link` is called with the existing `connectionId`.
+4. Confirm status returns to connected/synced path without wiping historical imported rows.
+5. Confirm no duplicate explosion after reconfirmation (dedupe still holds).
 
 Negative checks:
 

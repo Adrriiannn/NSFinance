@@ -1,3 +1,5 @@
 namespace NSFinance.Api.Modules.Banking.DTOs;
 
-public sealed record StartTrueLayerLinkRequest(string? AppReturnUri);
+public sealed record StartTrueLayerLinkRequest(
+    string? AppReturnUri,
+    Guid? ConnectionId = null);

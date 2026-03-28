@@ -17,6 +17,11 @@ public sealed class BankSyncService(
     IAuditService auditService,
     ILogger<BankSyncService> logger)
 {
+    private const int IncrementalLookbackDays = 35;
+    private const int IncrementalFallbackDays = 120;
+    private const int InitialBackfillDefaultDays = 365 * 6;
+    private static readonly TimeSpan RevolutMaxHistoryWindow = TimeSpan.FromMinutes(5);
+
     public async Task<ServiceResult<BankSyncResult>> RunInitialSyncAsync(
         OpenBankingConnection connection,
         TrueLayerResolvedConfiguration configuration,
@@ -232,6 +237,15 @@ public sealed class BankSyncService(
         string trigger,
         CancellationToken cancellationToken)
     {
+        var now = DateTime.UtcNow;
+        var isInitialBackfill = await IsInitialBackfillPendingAsync(connection, now, cancellationToken);
+        var transactionSyncMode = isInitialBackfill ? "initial_backfill" : "incremental_sync";
+
+        if (isInitialBackfill && !connection.InitialBackfillStartedUtc.HasValue)
+        {
+            connection.InitialBackfillStartedUtc = now;
+        }
+
         var currentStatus = await dbContext.OpenBankingConnections
             .AsNoTracking()
             .Where(x => x.Id == connection.Id)
@@ -273,9 +287,11 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Bank sync started for connectionId={ConnectionId} trigger={Trigger}",
+            "Bank sync started for connectionId={ConnectionId} trigger={Trigger} transactionMode={TransactionMode} initialBackfillCompleted={InitialBackfillCompleted}",
             connection.Id,
-            trigger);
+            trigger,
+            transactionSyncMode,
+            connection.InitialBackfillCompletedUtc.HasValue);
 
         var accountsResult = await dataService.GetAccountsAsync(configuration, accessToken, cancellationToken);
         if (!accountsResult.Succeeded)
@@ -283,11 +299,13 @@ public sealed class BankSyncService(
             return await HandleSyncFailureAsync(connection, accountsResult.Error!, trigger, cancellationToken);
         }
 
-        var now = DateTime.UtcNow;
         var accountsSynced = 0;
         var balancesSynced = 0;
         var transactionsImported = 0;
         var providerBrandingRefreshAttempted = false;
+        DateTime? requestedBackfillWindowStartUtc = null;
+        DateTime? syncObservedEarliestBookedAtUtc = null;
+        DateTime? syncObservedLatestBookedAtUtc = null;
 
         foreach (var providerAccount in accountsResult.Value!)
         {
@@ -360,16 +378,50 @@ public sealed class BankSyncService(
                 balancesSynced++;
             }
 
+            var transactionWindow = BuildTransactionWindow(
+                connection,
+                providerAccount,
+                now,
+                isInitialBackfill);
+
+            logger.LogInformation(
+                "Fetching transactions accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} fromUtc={FromUtc} toUtc={ToUtc} policy={PolicyName}",
+                providerAccount.AccountId,
+                providerAccount.ProviderId ?? "<unknown>",
+                providerAccount.ProviderDisplayName ?? "<unknown>",
+                transactionWindow.Mode,
+                transactionWindow.FromUtc,
+                transactionWindow.ToUtc,
+                transactionWindow.PolicyName ?? "<none>");
+
             var transactionsResult = await dataService.GetTransactionsAsync(
                 configuration,
                 accessToken,
                 providerAccount.AccountId,
+                transactionWindow.FromUtc,
+                transactionWindow.ToUtc,
                 cancellationToken);
 
             if (!transactionsResult.Succeeded)
             {
                 return await HandleSyncFailureAsync(connection, transactionsResult.Error!, trigger, cancellationToken);
             }
+
+            if (isInitialBackfill
+                && string.Equals(transactionWindow.PolicyName, "revolut_initial_6y", StringComparison.Ordinal)
+                && now - connection.CreatedUtc > RevolutMaxHistoryWindow)
+            {
+                logger.LogWarning(
+                    "Revolut initial backfill window may be reduced because sync began after the first 5 minutes connectionId={ConnectionId} elapsedSeconds={ElapsedSeconds}",
+                    connection.Id,
+                    (now - connection.CreatedUtc).TotalSeconds);
+            }
+
+            requestedBackfillWindowStartUtc = MinUtc(requestedBackfillWindowStartUtc, transactionWindow.FromUtc);
+
+            var observedForAccount = ExtractObservedTransactionBounds(transactionsResult.Value!);
+            syncObservedEarliestBookedAtUtc = MinUtc(syncObservedEarliestBookedAtUtc, observedForAccount.EarliestBookedAtUtc);
+            syncObservedLatestBookedAtUtc = MaxUtc(syncObservedLatestBookedAtUtc, observedForAccount.LatestBookedAtUtc);
 
             var importedForAccount = await UpsertTransactionsAsync(
                 linkedAccount,
@@ -412,6 +464,15 @@ public sealed class BankSyncService(
                 StatusCodes.Status409Conflict);
         }
 
+        connection.EarliestImportedTransactionUtc = MinUtc(connection.EarliestImportedTransactionUtc, syncObservedEarliestBookedAtUtc);
+        connection.LatestImportedTransactionUtc = MaxUtc(connection.LatestImportedTransactionUtc, syncObservedLatestBookedAtUtc);
+
+        if (isInitialBackfill)
+        {
+            connection.InitialBackfillWindowStartUtc = MinUtc(connection.InitialBackfillWindowStartUtc, requestedBackfillWindowStartUtc);
+            connection.InitialBackfillCompletedUtc ??= now;
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await bankConnectionService.MarkConnectionStateAsync(
@@ -432,16 +493,25 @@ public sealed class BankSyncService(
             {
                 accountsSynced,
                 balancesSynced,
-                transactionsImported
+                transactionsImported,
+                transactionMode = transactionSyncMode,
+                requestedBackfillWindowStartUtc,
+                observedEarliestTransactionUtc = syncObservedEarliestBookedAtUtc,
+                observedLatestTransactionUtc = syncObservedLatestBookedAtUtc,
+                initialBackfillCompletedUtc = connection.InitialBackfillCompletedUtc
             },
             cancellationToken);
 
         logger.LogInformation(
-            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} transactionsImported={TransactionsImported}",
+            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} transactionsImported={TransactionsImported} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
             connection.Id,
             accountsSynced,
             balancesSynced,
-            transactionsImported);
+            transactionsImported,
+            transactionSyncMode,
+            connection.InitialBackfillCompletedUtc,
+            connection.EarliestImportedTransactionUtc,
+            connection.LatestImportedTransactionUtc);
 
         return ServiceResult<BankSyncResult>.Ok(
             new BankSyncResult(
@@ -755,6 +825,171 @@ public sealed class BankSyncService(
         }
 
         return connection.BrandingLastSyncedAtUtc.Value < now.AddDays(-30);
+    }
+
+    private async Task<bool> IsInitialBackfillPendingAsync(
+        OpenBankingConnection connection,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (connection.InitialBackfillCompletedUtc.HasValue)
+        {
+            return false;
+        }
+
+        var linkedAccountIds = dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x => x.ConnectionId == connection.Id)
+            .Select(x => x.Id);
+
+        var hasTransactions = await dbContext.RawBankTransactions
+            .AsNoTracking()
+            .AnyAsync(x => linkedAccountIds.Contains(x.LinkedBankAccountId), cancellationToken);
+
+        if (!hasTransactions)
+        {
+            return true;
+        }
+
+        var earliestImportedUtc = await dbContext.RawBankTransactions
+            .AsNoTracking()
+            .Where(x => linkedAccountIds.Contains(x.LinkedBankAccountId))
+            .Select(x => (DateTime?)x.BookedAtUtc)
+            .MinAsync(cancellationToken);
+
+        var latestImportedUtc = await dbContext.RawBankTransactions
+            .AsNoTracking()
+            .Where(x => linkedAccountIds.Contains(x.LinkedBankAccountId))
+            .Select(x => (DateTime?)x.BookedAtUtc)
+            .MaxAsync(cancellationToken);
+
+        connection.InitialBackfillStartedUtc ??= connection.CreatedUtc;
+        connection.InitialBackfillCompletedUtc ??= connection.LastSuccessfulSyncUtc ?? now;
+        connection.InitialBackfillWindowStartUtc ??= earliestImportedUtc;
+        connection.EarliestImportedTransactionUtc = MinUtc(connection.EarliestImportedTransactionUtc, earliestImportedUtc);
+        connection.LatestImportedTransactionUtc = MaxUtc(connection.LatestImportedTransactionUtc, latestImportedUtc);
+        return false;
+    }
+
+    private static TrueLayerTransactionQueryWindow BuildTransactionWindow(
+        OpenBankingConnection connection,
+        TrueLayerAccountRecord account,
+        DateTime now,
+        bool isInitialBackfill)
+    {
+        if (isInitialBackfill)
+        {
+            var (historyDays, policyName) = ResolveInitialHistoryPolicy(account);
+            var windowStartUtc = now.AddDays(-historyDays);
+            return new TrueLayerTransactionQueryWindow(
+                windowStartUtc,
+                now,
+                Mode: "initial_backfill",
+                PolicyName: policyName);
+        }
+
+        var checkpointUtc = connection.LatestImportedTransactionUtc ?? connection.LastSuccessfulSyncUtc;
+        var fromUtc = checkpointUtc.HasValue
+            ? checkpointUtc.Value.AddDays(-IncrementalLookbackDays)
+            : now.AddDays(-IncrementalFallbackDays);
+
+        if (fromUtc > now)
+        {
+            fromUtc = now.AddDays(-1);
+        }
+
+        return new TrueLayerTransactionQueryWindow(
+            fromUtc,
+            now,
+            Mode: "incremental_sync",
+            PolicyName: checkpointUtc.HasValue ? "latest_imported_checkpoint" : "incremental_fallback");
+    }
+
+    private static (int HistoryDays, string PolicyName) ResolveInitialHistoryPolicy(TrueLayerAccountRecord account)
+    {
+        var providerId = (account.ProviderId ?? string.Empty).Trim().ToLowerInvariant();
+        var providerDisplayName = (account.ProviderDisplayName ?? string.Empty).Trim().ToLowerInvariant();
+        var providerComposite = $"{providerId} {providerDisplayName}";
+
+        if (providerComposite.Contains("revolut", StringComparison.Ordinal))
+        {
+            return (365 * 6, "revolut_initial_6y");
+        }
+
+        if (providerComposite.Contains("ulster", StringComparison.Ordinal))
+        {
+            return (365 * 6, "ulster_initial_6y");
+        }
+
+        if (providerComposite.Contains("bank of ireland", StringComparison.Ordinal))
+        {
+            return (366, "boi_initial_1y");
+        }
+
+        if (providerComposite.Contains("permanent tsb", StringComparison.Ordinal)
+            || providerComposite.Contains("ptsb", StringComparison.Ordinal))
+        {
+            return (95, "ptsb_initial_90d");
+        }
+
+        if (providerComposite.Contains("allied irish bank", StringComparison.Ordinal)
+            || providerComposite.Contains(" aib", StringComparison.Ordinal)
+            || providerId.StartsWith("aib", StringComparison.Ordinal))
+        {
+            return (366, "aib_initial_1y");
+        }
+
+        return (InitialBackfillDefaultDays, "default_initial_6y");
+    }
+
+    private static (DateTime? EarliestBookedAtUtc, DateTime? LatestBookedAtUtc) ExtractObservedTransactionBounds(
+        IReadOnlyList<TrueLayerTransactionRecord> transactions)
+    {
+        if (transactions.Count == 0)
+        {
+            return (null, null);
+        }
+
+        DateTime? min = null;
+        DateTime? max = null;
+
+        foreach (var transaction in transactions)
+        {
+            min = MinUtc(min, transaction.BookedAtUtc);
+            max = MaxUtc(max, transaction.BookedAtUtc);
+        }
+
+        return (min, max);
+    }
+
+    private static DateTime? MinUtc(DateTime? left, DateTime? right)
+    {
+        if (!left.HasValue)
+        {
+            return right;
+        }
+
+        if (!right.HasValue)
+        {
+            return left;
+        }
+
+        return left.Value <= right.Value ? left : right;
+    }
+
+    private static DateTime? MaxUtc(DateTime? left, DateTime? right)
+    {
+        if (!left.HasValue)
+        {
+            return right;
+        }
+
+        if (!right.HasValue)
+        {
+            return left;
+        }
+
+        return left.Value >= right.Value ? left : right;
     }
 }
 

@@ -23,7 +23,7 @@ public class OpenBankingIntegrationTests
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.success@test.local");
-        var start = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
@@ -56,7 +56,7 @@ public class OpenBankingIntegrationTests
             httpHandler: InvalidCodeHandler());
 
         var user = await harness.CreateUserAsync("bank.invalid-code@test.local");
-        var start = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
@@ -83,7 +83,7 @@ public class OpenBankingIntegrationTests
         var user = await harness.CreateUserAsync("bank.return-uri@test.local");
         const string appReturnUri = "exp://192.168.0.11:8081/--/modals/add-account";
 
-        var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
@@ -106,7 +106,7 @@ public class OpenBankingIntegrationTests
         var user = await harness.CreateUserAsync("bank.return-uri-current@test.local");
         const string appReturnUri = "exp://192.168.0.11:8081/--/(tabs)/accounts/connect-bank?intent=new";
 
-        var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
@@ -133,7 +133,7 @@ public class OpenBankingIntegrationTests
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.invalid-config@test.local");
-        var result = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
+        var result = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
 
         Assert.False(result.Succeeded);
         Assert.Equal("truelayer_not_configured", result.Error?.Code);
@@ -147,7 +147,7 @@ public class OpenBankingIntegrationTests
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.env-mismatch@test.local");
-        var start = await harness.AuthService.StartLinkAsync(user.Id, null, CancellationToken.None);
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
         var liveOptions = ValidSandboxOptions();
@@ -171,6 +171,109 @@ public class OpenBankingIntegrationTests
             .SingleAsync(x => x.Id == start.Value.ConnectionId);
         Assert.Equal(BankConnectionStatuses.Failed, connection.Status);
         Assert.Equal("truelayer_environment_mismatch", connection.LastErrorCode);
+    }
+
+    [Fact]
+    public async Task ReconfirmFlow_ReusesExistingConnectionAndPreservesHistoricalRows()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.reconfirm@test.local");
+        var now = DateTime.UtcNow;
+        var connectionId = Guid.NewGuid();
+        var financialAccountId = Guid.NewGuid();
+        var linkedAccountId = Guid.NewGuid();
+
+        harness.DbContext.OpenBankingConnections.Add(new OpenBankingConnection
+        {
+            Id = connectionId,
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Mock Bank Plc",
+            ProviderConnectionReference = "mock-bank",
+            Status = BankConnectionStatuses.ReauthRequired,
+            CreatedUtc = now.AddDays(-30),
+            UpdatedUtc = now.AddDays(-1),
+            LastSuccessfulSyncUtc = now.AddDays(-1)
+        });
+
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = financialAccountId,
+            UserId = user.Id,
+            Name = "Sandbox Main Account",
+            Type = "Current",
+            Currency = "GBP",
+            CreatedUtc = now.AddDays(-30)
+        });
+
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = linkedAccountId,
+            ConnectionId = connectionId,
+            ProviderAccountId = "acc-001",
+            DisplayName = "Sandbox Main Account",
+            Currency = "GBP",
+            CurrentConnectionHealth = "healthy",
+            RawPayloadJson = "{}",
+            FinancialAccountId = financialAccountId,
+            CreatedUtc = now.AddDays(-30),
+            UpdatedUtc = now.AddDays(-1)
+        });
+
+        harness.DbContext.RawBankTransactions.Add(new RawBankTransaction
+        {
+            Id = Guid.NewGuid(),
+            LinkedBankAccountId = linkedAccountId,
+            ProviderTransactionId = "tx-legacy-001",
+            DedupeKey = "legacy-dedupe",
+            Amount = -4.50m,
+            Currency = "GBP",
+            BookedAtUtc = now.AddDays(-20),
+            Description = "Legacy coffee",
+            TransactionType = "DEBIT",
+            TransactionStatus = "booked",
+            RawPayloadJson = "{}",
+            ImportedUtc = now.AddDays(-20)
+        });
+
+        harness.DbContext.Transactions.Add(new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = financialAccountId,
+            Amount = -4.50m,
+            Currency = "GBP",
+            Description = "Legacy coffee",
+            BookedAtUtc = now.AddDays(-20),
+            CreatedUtc = now.AddDays(-20)
+        });
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, connectionId, CancellationToken.None);
+        Assert.True(start.Succeeded);
+        Assert.Equal(connectionId, start.Value!.ConnectionId);
+
+        var state = GetQueryValue(start.Value.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-reconfirm", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        Assert.Equal(1, await harness.DbContext.OpenBankingConnections.CountAsync());
+        Assert.Equal(1, await harness.DbContext.LinkedBankAccounts.CountAsync());
+        Assert.Equal(3, await harness.DbContext.RawBankTransactions.CountAsync());
+        Assert.Equal(3, await harness.DbContext.Transactions.CountAsync());
+
+        var refreshedConnection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == connectionId);
+        Assert.Equal(BankConnectionStatuses.Synced, refreshedConnection.Status);
+        Assert.NotNull(refreshedConnection.InitialBackfillCompletedUtc);
+        Assert.NotNull(refreshedConnection.EarliestImportedTransactionUtc);
+        Assert.NotNull(refreshedConnection.LatestImportedTransactionUtc);
     }
 
 
@@ -288,7 +391,7 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
-    public async Task DisconnectAsync_RemovesImportedDataAndHidesConnectionFromUserVisibleList()
+    public async Task DisconnectAsync_MarksPendingAndRevokesTokenBeforeBackgroundCleanup()
     {
         await using var harness = new OpenBankingTestHarness(
             options: ValidSandboxOptions(),
@@ -391,23 +494,32 @@ public class OpenBankingIntegrationTests
 
         Assert.True(result.Succeeded);
 
+        var pendingConnection = await harness.DbContext.OpenBankingConnections
+            .Include(x => x.Token)
+            .SingleAsync(x => x.Id == connectionId);
+        Assert.Equal(BankConnectionStatuses.DisconnectPending, pendingConnection.Status);
+        Assert.NotNull(pendingConnection.Token);
+        Assert.True(pendingConnection.Token!.IsRevoked);
+        Assert.Null(pendingConnection.Token.EncryptedRefreshToken);
+
         var connection = await harness.DbContext.OpenBankingConnections
             .Include(x => x.Token)
             .SingleAsync(x => x.Id == connectionId);
-        Assert.Equal(BankConnectionStatuses.Revoked, connection.Status);
+        Assert.Equal(BankConnectionStatuses.DisconnectPending, connection.Status);
         Assert.NotNull(connection.Token);
         Assert.True(connection.Token!.IsRevoked);
         Assert.Null(connection.Token.EncryptedRefreshToken);
 
-        Assert.Empty(await harness.DbContext.LinkedBankAccounts.ToListAsync());
-        Assert.Empty(await harness.DbContext.BankBalanceSnapshots.ToListAsync());
-        Assert.Empty(await harness.DbContext.RawBankTransactions.ToListAsync());
-        Assert.Empty(await harness.DbContext.FinancialAccounts.ToListAsync());
-        Assert.Empty(await harness.DbContext.Transactions.ToListAsync());
+        Assert.Single(await harness.DbContext.LinkedBankAccounts.ToListAsync());
+        Assert.Single(await harness.DbContext.BankBalanceSnapshots.ToListAsync());
+        Assert.Single(await harness.DbContext.RawBankTransactions.ToListAsync());
+        Assert.Single(await harness.DbContext.FinancialAccounts.ToListAsync());
+        Assert.Single(await harness.DbContext.Transactions.ToListAsync());
 
         var overview = await service.ListUserVisibleConnectionsAsync(user.Id, CancellationToken.None);
         Assert.Empty(overview.ActiveConnections);
-        Assert.Empty(overview.AttentionConnections);
+        Assert.Single(overview.AttentionConnections);
+        Assert.Equal(BankConnectionStatuses.DisconnectPending, overview.AttentionConnections[0].Status);
     }
 
     private static TrueLayerOptions ValidSandboxOptions() => new()
@@ -607,7 +719,11 @@ public class OpenBankingIntegrationTests
 
         public BankConnectionService CreateConnectionService()
         {
-            return new BankConnectionService(DbContext, _auditService, NullLogger<BankConnectionService>.Instance);
+            return new BankConnectionService(
+                DbContext,
+                _auditService,
+                new NoOpBankDisconnectQueue(),
+                NullLogger<BankConnectionService>.Instance);
         }
 
         public async Task<User> CreateUserAsync(string email)
@@ -672,6 +788,17 @@ public class OpenBankingIntegrationTests
         }
     }
 
+    private sealed class NoOpBankDisconnectQueue : IBankDisconnectQueue
+    {
+        public async ValueTask QueueDisconnectCleanupAsync(
+            Guid userId,
+            Guid connectionId,
+            CancellationToken cancellationToken = default)
+        {
+            await ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class TestSecretProtector : ISecretProtector
     {
         public string Protect(string plaintext)
@@ -685,4 +812,5 @@ public class OpenBankingIntegrationTests
         }
     }
 }
+
 

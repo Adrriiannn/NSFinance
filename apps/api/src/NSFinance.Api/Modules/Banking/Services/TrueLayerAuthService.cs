@@ -4,6 +4,7 @@ using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Validators;
+using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.Banking.Services;
 
@@ -19,6 +20,7 @@ public sealed class TrueLayerAuthService(
     public async Task<ServiceResult<StartTrueLayerLinkResponse>> StartLinkAsync(
         Guid userId,
         string? appReturnUri,
+        Guid? reconnectConnectionId,
         CancellationToken cancellationToken)
     {
         var configResult = configurationService.Resolve();
@@ -32,11 +34,33 @@ public sealed class TrueLayerAuthService(
 
         var configuration = configResult.Value!;
         var normalizedAppReturnUri = TrueLayerReturnUriContract.Normalize(appReturnUri);
-        var connection = await bankConnectionService.CreateConnectionStartedAsync(
-            userId,
-            BankingProviders.TrueLayer,
-            configuration.Environment,
-            cancellationToken);
+        OpenBankingConnection connection;
+        if (reconnectConnectionId.HasValue)
+        {
+            var reconnectResult = await bankConnectionService.PrepareConnectionReconfirmAsync(
+                userId,
+                reconnectConnectionId.Value,
+                configuration.Environment,
+                cancellationToken);
+
+            if (!reconnectResult.Succeeded)
+            {
+                return ServiceResult<StartTrueLayerLinkResponse>.Fail(
+                    reconnectResult.Error!.Message,
+                    reconnectResult.Error.Code,
+                    reconnectResult.Error.StatusCode);
+            }
+
+            connection = reconnectResult.Value!;
+        }
+        else
+        {
+            connection = await bankConnectionService.CreateConnectionStartedAsync(
+                userId,
+                BankingProviders.TrueLayer,
+                configuration.Environment,
+                cancellationToken);
+        }
 
         if (!string.IsNullOrWhiteSpace(normalizedAppReturnUri) && !string.IsNullOrWhiteSpace(connection.AuthStateNonce))
         {
@@ -52,10 +76,11 @@ public sealed class TrueLayerAuthService(
         var providers = BuildProviders(configuration.Environment);
         var countryId = BuildCountryId(configuration.Environment);
         logger.LogInformation(
-            "TrueLayer link started connectionId={ConnectionId} userId={UserId} environment={Environment} hasAppReturnUri={HasAppReturnUri} normalizedAppReturnUri={AppReturnUri} hasProviders={HasProviders} providers={Providers} hasCountryId={HasCountryId} countryId={CountryId}",
+            "TrueLayer link started connectionId={ConnectionId} userId={UserId} environment={Environment} reconnectRequested={ReconnectRequested} hasAppReturnUri={HasAppReturnUri} normalizedAppReturnUri={AppReturnUri} hasProviders={HasProviders} providers={Providers} hasCountryId={HasCountryId} countryId={CountryId}",
             connection.Id,
             userId,
             configuration.Environment,
+            reconnectConnectionId.HasValue,
             !string.IsNullOrWhiteSpace(normalizedAppReturnUri),
             normalizedAppReturnUri ?? "<none>",
             providers.Count > 0,

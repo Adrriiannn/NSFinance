@@ -23,6 +23,11 @@ public class OpenBankingConnectionConfiguration : IEntityTypeConfiguration<OpenB
         builder.Property(x => x.LastErrorCode).HasMaxLength(80);
         builder.Property(x => x.LastErrorReason).HasMaxLength(512);
         builder.Property(x => x.AuthStateNonce).HasMaxLength(256);
+        builder.Property(x => x.InitialBackfillStartedUtc);
+        builder.Property(x => x.InitialBackfillCompletedUtc);
+        builder.Property(x => x.InitialBackfillWindowStartUtc);
+        builder.Property(x => x.EarliestImportedTransactionUtc);
+        builder.Property(x => x.LatestImportedTransactionUtc);
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedUtc).HasDefaultValueSql("timezone('utc', now())");
 

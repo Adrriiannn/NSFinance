@@ -558,6 +558,7 @@ export type ConnectedBanksOverviewDto = {
 
 export type StartTrueLayerLinkRequest = {
   appReturnUri?: string | null;
+  connectionId?: string | null;
 };
 
 export type LinkedBankAccountDto = {

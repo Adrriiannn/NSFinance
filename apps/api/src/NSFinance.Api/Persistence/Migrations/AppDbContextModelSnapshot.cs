@@ -1178,6 +1178,18 @@ namespace NSFinance.Api.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("timezone('utc', now())");
 
+                    b.Property<DateTime?>("EarliestImportedTransactionUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("InitialBackfillCompletedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("InitialBackfillStartedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("InitialBackfillWindowStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("LastErrorCode")
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
@@ -1190,6 +1202,9 @@ namespace NSFinance.Api.Persistence.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("LastSyncAttemptedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LatestImportedTransactionUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ProviderBrandBgColor")

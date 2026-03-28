@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Globalization;
+using Microsoft.AspNetCore.WebUtilities;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Banking.Services.Models;
 
@@ -202,9 +203,28 @@ public sealed class TrueLayerDataService(
         TrueLayerResolvedConfiguration configuration,
         string accessToken,
         string accountId,
+        DateTime? fromUtc,
+        DateTime? toUtc,
         CancellationToken cancellationToken)
     {
         var endpoint = $"{configuration.ApiBaseUrl}/data/v1/accounts/{accountId}/transactions";
+        var query = new Dictionary<string, string?>();
+
+        if (fromUtc.HasValue)
+        {
+            query["from"] = fromUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (toUtc.HasValue)
+        {
+            query["to"] = toUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (query.Count > 0)
+        {
+            endpoint = QueryHelpers.AddQueryString(endpoint, query);
+        }
+
         var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
         if (!response.Succeeded)
         {

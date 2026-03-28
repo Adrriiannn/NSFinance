@@ -18,7 +18,11 @@ public static class StartTrueLayerLinkEndpoint
             return ServiceResult.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized).Error!.ToApiError();
         }
 
-        var result = await authService.StartLinkAsync(userId, request?.AppReturnUri, cancellationToken);
+        var result = await authService.StartLinkAsync(
+            userId,
+            request?.AppReturnUri,
+            request?.ConnectionId,
+            cancellationToken);
         if (!result.Succeeded)
         {
             return result.Error!.ToApiError();

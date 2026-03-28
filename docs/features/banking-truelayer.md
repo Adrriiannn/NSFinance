@@ -26,6 +26,33 @@ Excluded in current phase:
 6. API stores encrypted refresh token.
 7. API performs initial sync and persists accounts/balances/transactions.
 
+## Transaction history model
+
+NSFinance now treats imported banking data as a long-term ledger:
+
+- Initial sync uses an explicit backfill window (`from`/`to`) instead of relying on provider defaults.
+- Backfill windows are provider-aware where we have known constraints/opportunities:
+  - Revolut: target up to 6 years on initial sync
+  - Ulster: target up to 6 years on initial sync
+  - Bank of Ireland: target up to 1 year on initial sync
+  - PTSB: target about 90 days on initial sync
+  - AIB: target up to 1 year on initial sync
+  - fallback for others: target up to 6 years on initial sync
+- Ongoing syncs switch to incremental mode using the latest imported checkpoint with a guarded lookback window to catch late-posted items.
+- Connection metadata tracks:
+  - initial backfill started/completed
+  - requested initial backfill window start
+  - earliest/latest imported transaction timestamps
+
+Provider limits still apply. NSFinance requests the widest practical range, but provider/API caps may return less.
+
+## Consent expiry and reconfirmation continuity
+
+- Consent expiry (`reauth_required` / `expired`) is treated as an access problem, not a history deletion event.
+- Existing imported rows remain in NSFinance when consent expires.
+- Reconfirmation can target an existing connection by passing `connectionId` in `POST /api/banking/truelayer/link`.
+- Reconfirming on the same connection preserves account/transaction continuity and avoids creating a brand-new local ledger for the same bank link.
+
 ## Disconnect lifecycle
 
 Disconnect now follows an async-first lifecycle for reliability at higher data volume:
@@ -99,3 +126,4 @@ This ensures live bank chooser flows open with Ireland providers instead of UK d
 - advanced enrichment/categorization pipeline is deferred
 - initial sync queue is still in-memory (`Channel`) and not durable across host crashes/redeploys; automatic queue failures now mark the connection status truthfully and require manual sync/reconnect follow-up
 - disconnect cleanup queue is also in-memory (`Channel`) and not fully durable; startup requeue recovers `disconnect_pending` connections, and manual retry is idempotent if a pending cleanup did not finish
+- provider-side max history remains provider-dependent; requesting a wider window cannot exceed what the institution exposes through TrueLayer

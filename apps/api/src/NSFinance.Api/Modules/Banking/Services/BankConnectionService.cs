@@ -71,6 +71,73 @@ public sealed class BankConnectionService(
         return connection;
     }
 
+    public async Task<ServiceResult<OpenBankingConnection>> PrepareConnectionReconfirmAsync(
+        Guid userId,
+        Guid connectionId,
+        string providerEnvironment,
+        CancellationToken cancellationToken)
+    {
+        var connection = await dbContext.OpenBankingConnections
+            .Include(x => x.Token)
+            .SingleOrDefaultAsync(
+                x => x.Id == connectionId && x.UserId == userId,
+                cancellationToken);
+
+        if (connection is null)
+        {
+            return ServiceResult<OpenBankingConnection>.Fail(
+                "Connection not found.",
+                "bank_connection_not_found",
+                StatusCodes.Status404NotFound);
+        }
+
+        if (!string.Equals(connection.ProviderName, BankingProviders.TrueLayer, StringComparison.OrdinalIgnoreCase))
+        {
+            return ServiceResult<OpenBankingConnection>.Fail(
+                "Only TrueLayer connections can be reconfirmed.",
+                "bank_connection_provider_not_supported",
+                StatusCodes.Status400BadRequest);
+        }
+
+        if (connection.Status is BankConnectionStatuses.DisconnectPending
+            or BankConnectionStatuses.DisconnectFailed
+            or BankConnectionStatuses.Revoked)
+        {
+            return ServiceResult<OpenBankingConnection>.Fail(
+                "This connection is disconnected and cannot be reconfirmed.",
+                "bank_connection_disconnected",
+                StatusCodes.Status409Conflict);
+        }
+
+        var now = DateTime.UtcNow;
+        connection.ProviderEnvironment = providerEnvironment;
+        connection.Status = BankConnectionStatuses.ConnectionStarted;
+        connection.LastErrorCode = null;
+        connection.LastErrorReason = null;
+        connection.AuthStateNonce = CreateStateNonce();
+        connection.AuthStateExpiresUtc = now.AddMinutes(15);
+        connection.UpdatedUtc = now;
+        RevokeConnectionToken(connection, now);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        await WriteAuditSafeAsync(
+            category: "banking",
+            eventName: "bank_connection_reconfirm_started",
+            targetEntityType: "open_banking_connection",
+            targetEntityId: connection.Id.ToString(),
+            actorId: userId,
+            actorType: "user",
+            metadata: new
+            {
+                status = connection.Status,
+                providerEnvironment
+            },
+            cancellationToken);
+
+        return ServiceResult<OpenBankingConnection>.Ok(connection);
+    }
+
     public async Task<OpenBankingConnection?> FindConnectionByStateAsync(
         string state,
         CancellationToken cancellationToken)
