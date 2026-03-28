@@ -16,6 +16,8 @@ public static class BankConnectionStatuses
     public const string Synced = "synced";
     public const string ReauthRequired = "reauth_required";
     public const string Expired = "expired";
+    public const string DisconnectPending = "disconnect_pending";
+    public const string DisconnectFailed = "disconnect_failed";
     public const string Revoked = "revoked";
     public const string Failed = "failed";
 }

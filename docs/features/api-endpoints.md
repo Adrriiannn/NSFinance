@@ -58,7 +58,7 @@ This is the canonical endpoint inventory for NSFinance API.
 - `GET /api/banking/accounts/{accountId}/balances` (auth)
 - `GET /api/banking/accounts/{accountId}/transactions?page=1&pageSize=50` (auth)
 - `POST /api/banking/connections/{connectionId}/sync` (auth)
-- `POST /api/banking/connections/{connectionId}/disconnect` (auth)
+- `POST /api/banking/connections/{connectionId}/disconnect` (auth, async cleanup lifecycle)
 
 ## Expense plan community
 

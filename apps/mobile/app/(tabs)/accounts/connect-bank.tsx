@@ -38,6 +38,8 @@ const completionStatuses = new Set<BankConnectionStatus>([
   "connected_pending_sync",
   "connected",
   "synced",
+  "disconnect_pending",
+  "disconnect_failed",
   "failed",
   "reauth_required",
   "expired",
@@ -64,6 +66,7 @@ const connectedFlowStatuses = new Set<BankConnectionStatus>([
 ]);
 
 const failureStatuses = new Set<BankConnectionStatus>([
+  "disconnect_failed",
   "failed",
   "reauth_required",
   "expired",

@@ -262,6 +262,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<TrueLayerSyncBackgroundWorker>();
         services.AddSingleton<ITrueLayerSyncQueue>(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
         services.AddHostedService(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
+        services.AddSingleton<BankDisconnectBackgroundWorker>();
+        services.AddSingleton<IBankDisconnectQueue>(sp => sp.GetRequiredService<BankDisconnectBackgroundWorker>());
+        services.AddHostedService(sp => sp.GetRequiredService<BankDisconnectBackgroundWorker>());
         services.AddScoped<DevelopmentDataSeeder>();
         services.AddHostedService<DatabaseInitializationHostedService>();
 

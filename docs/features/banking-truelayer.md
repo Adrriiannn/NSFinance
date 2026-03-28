@@ -26,6 +26,23 @@ Excluded in current phase:
 6. API stores encrypted refresh token.
 7. API performs initial sync and persists accounts/balances/transactions.
 
+## Disconnect lifecycle
+
+Disconnect now follows an async-first lifecycle for reliability at higher data volume:
+
+1. Mobile calls `POST /api/banking/connections/{connectionId}/disconnect`.
+2. API persists `disconnect_pending` quickly and revokes local token material.
+3. API enqueues background cleanup and returns immediately.
+4. Background worker performs set-based cleanup (linked accounts + projected financial data).
+5. Final status is written as:
+   - `revoked` when cleanup succeeds
+   - `disconnect_failed` when cleanup fails
+
+Sync guards:
+
+- sync is skipped for `disconnect_pending`, `disconnect_failed`, and `revoked` connections
+- sync state updates do not overwrite active disconnect lifecycle states
+
 ## Callback return contract (mobile)
 
 Preferred app return URI path:
@@ -81,3 +98,4 @@ This ensures live bank chooser flows open with Ireland providers instead of UK d
 - provider-side token revocation is limited in current implementation
 - advanced enrichment/categorization pipeline is deferred
 - initial sync queue is still in-memory (`Channel`) and not durable across host crashes/redeploys; automatic queue failures now mark the connection status truthfully and require manual sync/reconnect follow-up
+- disconnect cleanup queue is also in-memory (`Channel`) and not fully durable; startup requeue recovers `disconnect_pending` connections, and manual retry is idempotent if a pending cleanup did not finish

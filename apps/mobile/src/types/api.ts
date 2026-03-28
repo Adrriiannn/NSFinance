@@ -528,6 +528,8 @@ export type BankConnectionStatus =
   | "synced"
   | "reauth_required"
   | "expired"
+  | "disconnect_pending"
+  | "disconnect_failed"
   | "revoked"
   | "failed";
 

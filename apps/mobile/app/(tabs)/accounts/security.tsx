@@ -99,6 +99,10 @@ function formatBankConnectionStatus(status: BankConnectionStatus) {
       return "Reconnect required";
     case "expired":
       return "Consent expired";
+    case "disconnect_pending":
+      return "Disconnecting";
+    case "disconnect_failed":
+      return "Disconnect failed";
     default:
       return status;
   }
@@ -384,7 +388,9 @@ export default function SecuritySettingsScreen() {
     setDisconnectingConnectionId(connectionId);
     try {
       await disconnectMutation.mutateAsync(connectionId);
-      showFlashMessage("Bank disconnected and imported data removed.", { tone: "success" });
+      showFlashMessage("Disconnect requested. Cleanup is now running in the background.", {
+        tone: "success"
+      });
     } catch (error) {
       showFlashMessage(formatUnknownError(error), { tone: "error", durationMs: 2800 });
     } finally {
@@ -524,8 +530,16 @@ export default function SecuritySettingsScreen() {
                 <Text style={styles.metaLine}>Last synced at: {formatDateTime(connection.lastSuccessfulSyncUtc)}</Text>
                 <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
                 <SecondaryButton
-                  label={disconnectingConnectionId === connection.id ? "Disconnecting..." : "Disconnect bank"}
+                  label={
+                    disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
+                      ? "Disconnecting..."
+                      : "Disconnect bank"
+                  }
                   onPress={() => {
+                    if (connection.status === "disconnect_pending") {
+                      return;
+                    }
+
                     Alert.alert(
                       "Disconnect bank",
                       "This disconnects the bank and removes imported accounts, transactions, balances, and summaries from the app.",
@@ -541,7 +555,7 @@ export default function SecuritySettingsScreen() {
                       ]
                     );
                   }}
-                  disabled={disconnectMutation.isPending}
+                  disabled={disconnectMutation.isPending || connection.status === "disconnect_pending"}
                 />
               </View>
             ))
@@ -562,15 +576,25 @@ export default function SecuritySettingsScreen() {
                   <Text style={styles.metaLine}>Connected: {formatDateTime(connection.createdUtc)}</Text>
                   <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
                   <SecondaryButton
-                    label={disconnectingConnectionId === connection.id ? "Disconnecting..." : "Remove bank"}
+                    label={
+                      disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
+                        ? "Disconnecting..."
+                        : connection.status === "disconnect_failed"
+                          ? "Retry remove bank"
+                          : "Remove bank"
+                    }
                     onPress={() => {
+                      if (connection.status === "disconnect_pending") {
+                        return;
+                      }
+
                       Alert.alert(
-                        "Remove bank",
+                        connection.status === "disconnect_failed" ? "Retry remove bank" : "Remove bank",
                         "This removes the stale bank link and all imported data that came from it.",
                         [
                           { text: "Cancel", style: "cancel" },
                           {
-                            text: "Remove",
+                            text: connection.status === "disconnect_failed" ? "Retry remove" : "Remove",
                             style: "destructive",
                             onPress: () => {
                               void handleDisconnectBank(connection.id);
@@ -579,7 +603,7 @@ export default function SecuritySettingsScreen() {
                         ]
                       );
                     }}
-                    disabled={disconnectMutation.isPending}
+                    disabled={disconnectMutation.isPending || connection.status === "disconnect_pending"}
                   />
                 </View>
               ))}

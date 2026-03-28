@@ -63,4 +63,7 @@ Live-market verification (before device run):
 Disconnect:
 
 1. `POST /api/banking/connections/{connectionId}/disconnect`
-2. Verify revoked status and token cleanup behavior
+2. Verify status transitions to `disconnect_pending` quickly.
+3. Verify final transition to `revoked` after background cleanup.
+4. Verify token cleanup and imported banking-data cleanup behavior.
+5. Retry disconnect while pending and confirm idempotent behavior (no corruption/duplicate failures).

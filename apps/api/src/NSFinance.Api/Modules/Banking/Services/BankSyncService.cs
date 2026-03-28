@@ -63,6 +63,31 @@ public sealed class BankSyncService(
         }
 
         var connection = connectionResult.Value!;
+        if (connection.Status == BankConnectionStatuses.DisconnectPending)
+        {
+            logger.LogInformation(
+                "Skipped sync because disconnect is pending for connectionId={ConnectionId}",
+                connection.Id);
+
+            return ServiceResult<BankSyncResult>.Fail(
+                "Disconnect is in progress for this bank connection.",
+                "bank_connection_disconnect_pending",
+                StatusCodes.Status409Conflict);
+        }
+
+        if (connection.Status is BankConnectionStatuses.Revoked or BankConnectionStatuses.DisconnectFailed)
+        {
+            logger.LogInformation(
+                "Skipped sync because connection is disconnected state={Status} connectionId={ConnectionId}",
+                connection.Status,
+                connection.Id);
+
+            return ServiceResult<BankSyncResult>.Fail(
+                "This bank connection has been disconnected.",
+                "bank_connection_disconnected",
+                StatusCodes.Status409Conflict);
+        }
+
         var configResult = configurationService.Resolve();
         if (!configResult.Succeeded)
         {
@@ -207,6 +232,39 @@ public sealed class BankSyncService(
         string trigger,
         CancellationToken cancellationToken)
     {
+        var currentStatus = await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.Id == connection.Id)
+            .Select(x => x.Status)
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (currentStatus == BankConnectionStatuses.DisconnectPending)
+        {
+            logger.LogInformation(
+                "Aborted sync because disconnect became pending for connectionId={ConnectionId} trigger={Trigger}",
+                connection.Id,
+                trigger);
+
+            return ServiceResult<BankSyncResult>.Fail(
+                "Disconnect is in progress for this bank connection.",
+                "bank_connection_disconnect_pending",
+                StatusCodes.Status409Conflict);
+        }
+
+        if (currentStatus is BankConnectionStatuses.Revoked or BankConnectionStatuses.DisconnectFailed)
+        {
+            logger.LogInformation(
+                "Aborted sync because connection is disconnected state={Status} connectionId={ConnectionId} trigger={Trigger}",
+                currentStatus,
+                connection.Id,
+                trigger);
+
+            return ServiceResult<BankSyncResult>.Fail(
+                "This bank connection has been disconnected.",
+                "bank_connection_disconnected",
+                StatusCodes.Status409Conflict);
+        }
+
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
             BankConnectionStatuses.SyncPending,
@@ -319,6 +377,39 @@ public sealed class BankSyncService(
                 now,
                 cancellationToken);
             transactionsImported += importedForAccount;
+        }
+
+        var statusBeforePersistingImportedData = await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.Id == connection.Id)
+            .Select(x => x.Status)
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (statusBeforePersistingImportedData == BankConnectionStatuses.DisconnectPending)
+        {
+            logger.LogInformation(
+                "Aborted sync before persisting imported data because disconnect is pending connectionId={ConnectionId}",
+                connection.Id);
+            dbContext.ChangeTracker.Clear();
+
+            return ServiceResult<BankSyncResult>.Fail(
+                "Disconnect is in progress for this bank connection.",
+                "bank_connection_disconnect_pending",
+                StatusCodes.Status409Conflict);
+        }
+
+        if (statusBeforePersistingImportedData is BankConnectionStatuses.Revoked or BankConnectionStatuses.DisconnectFailed)
+        {
+            logger.LogInformation(
+                "Aborted sync before persisting imported data because connection is disconnected state={Status} connectionId={ConnectionId}",
+                statusBeforePersistingImportedData,
+                connection.Id);
+            dbContext.ChangeTracker.Clear();
+
+            return ServiceResult<BankSyncResult>.Fail(
+                "This bank connection has been disconnected.",
+                "bank_connection_disconnected",
+                StatusCodes.Status409Conflict);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);

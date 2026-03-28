@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NSFinance.Api.Common.Contracts;
@@ -11,6 +12,7 @@ namespace NSFinance.Api.Modules.Banking.Services;
 public sealed class BankConnectionService(
     AppDbContext dbContext,
     IAuditService auditService,
+    IBankDisconnectQueue disconnectQueue,
     ILogger<BankConnectionService> logger)
 {
     private static readonly string[] UserVisibleActiveStatuses =
@@ -24,7 +26,9 @@ public sealed class BankConnectionService(
     private static readonly string[] UserVisibleAttentionStatuses =
     [
         BankConnectionStatuses.ReauthRequired,
-        BankConnectionStatuses.Expired
+        BankConnectionStatuses.Expired,
+        BankConnectionStatuses.DisconnectPending,
+        BankConnectionStatuses.DisconnectFailed
     ];
     public async Task<OpenBankingConnection> CreateConnectionStartedAsync(
         Guid userId,
@@ -335,6 +339,25 @@ public sealed class BankConnectionService(
         string? errorReason,
         CancellationToken cancellationToken)
     {
+        if (IsSyncOrConsentState(status))
+        {
+            var persistedStatus = await dbContext.OpenBankingConnections
+                .AsNoTracking()
+                .Where(x => x.Id == connection.Id)
+                .Select(x => x.Status)
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (IsDisconnectLifecycleState(persistedStatus))
+            {
+                logger.LogInformation(
+                    "Skipped connection status update to {TargetStatus} because disconnect lifecycle state {PersistedStatus} is active for connectionId={ConnectionId}",
+                    status,
+                    persistedStatus,
+                    connection.Id);
+                return;
+            }
+        }
+
         var now = DateTime.UtcNow;
         connection.Status = status;
         connection.LastErrorCode = errorCode;
@@ -359,6 +382,7 @@ public sealed class BankConnectionService(
         Guid connectionId,
         CancellationToken cancellationToken)
     {
+        var startedAt = Stopwatch.StartNew();
         var connection = await dbContext.OpenBankingConnections
             .Include(x => x.Token)
             .SingleOrDefaultAsync(x => x.Id == connectionId && x.UserId == userId, cancellationToken);
@@ -371,75 +395,258 @@ public sealed class BankConnectionService(
                 StatusCodes.Status404NotFound);
         }
 
-        connection.Status = BankConnectionStatuses.Revoked;
-        connection.UpdatedUtc = DateTime.UtcNow;
-
-        if (connection.Token is not null)
+        if (connection.Status == BankConnectionStatuses.Revoked)
         {
-            connection.Token.EncryptedRefreshToken = null;
-            connection.Token.AccessTokenExpiresUtc = null;
-            connection.Token.IsRevoked = true;
-            connection.Token.RevokedUtc = DateTime.UtcNow;
+            var hasRemainingConnectionData = await dbContext.LinkedBankAccounts
+                .AsNoTracking()
+                .AnyAsync(x => x.ConnectionId == connection.Id, cancellationToken);
+
+            if (!hasRemainingConnectionData)
+            {
+                logger.LogInformation(
+                    "Disconnect requested for already-revoked connectionId={ConnectionId}; no cleanup work remained.",
+                    connection.Id);
+                return ServiceResult.Ok();
+            }
         }
 
-        var linkedAccounts = await dbContext.LinkedBankAccounts
-            .Where(x => x.ConnectionId == connection.Id)
-            .ToListAsync(cancellationToken);
-
-        var linkedAccountIds = linkedAccounts.Select(x => x.Id).ToList();
-        var projectedFinancialAccountIds = linkedAccounts
-            .Where(x => x.FinancialAccountId.HasValue)
-            .Select(x => x.FinancialAccountId!.Value)
-            .Distinct()
-            .ToList();
-
-        if (linkedAccountIds.Count > 0)
+        var previousStatus = connection.Status;
+        if (connection.Status != BankConnectionStatuses.DisconnectPending)
         {
-            var balanceSnapshots = await dbContext.BankBalanceSnapshots
-                .Where(x => linkedAccountIds.Contains(x.LinkedBankAccountId))
-                .ToListAsync(cancellationToken);
-
-            var rawTransactions = await dbContext.RawBankTransactions
-                .Where(x => linkedAccountIds.Contains(x.LinkedBankAccountId))
-                .ToListAsync(cancellationToken);
-
-            dbContext.BankBalanceSnapshots.RemoveRange(balanceSnapshots);
-            dbContext.RawBankTransactions.RemoveRange(rawTransactions);
-            dbContext.LinkedBankAccounts.RemoveRange(linkedAccounts);
+            var now = DateTime.UtcNow;
+            connection.Status = BankConnectionStatuses.DisconnectPending;
+            connection.LastErrorCode = null;
+            connection.LastErrorReason = null;
+            connection.UpdatedUtc = now;
+            RevokeConnectionToken(connection, now);
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        if (projectedFinancialAccountIds.Count > 0)
-        {
-            var projectionTransactions = await dbContext.Transactions
-                .Where(x => projectedFinancialAccountIds.Contains(x.FinancialAccountId))
-                .ToListAsync(cancellationToken);
-            var projectionAccounts = await dbContext.FinancialAccounts
-                .Where(x => projectedFinancialAccountIds.Contains(x.Id))
-                .ToListAsync(cancellationToken);
+        logger.LogInformation(
+            "Disconnect request accepted and persisted as pending for connectionId={ConnectionId} userId={UserId} previousStatus={PreviousStatus} elapsedMs={ElapsedMs}",
+            connection.Id,
+            userId,
+            previousStatus,
+            startedAt.ElapsedMilliseconds);
 
-            dbContext.Transactions.RemoveRange(projectionTransactions);
-            dbContext.FinancialAccounts.RemoveRange(projectionAccounts);
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await auditService.WriteEventAsync(
+        await WriteAuditSafeAsync(
             category: "banking",
-            eventName: "disconnect_completed",
+            eventName: "disconnect_requested",
             targetEntityType: "open_banking_connection",
             targetEntityId: connection.Id.ToString(),
             actorId: userId,
             actorType: "user",
             metadata: new
             {
-                connection.Status,
-                provider = connection.ProviderName,
-                linkedAccountsRemoved = linkedAccountIds.Count,
-                projectedAccountsRemoved = projectedFinancialAccountIds.Count
+                previousStatus,
+                status = connection.Status
+            },
+            cancellationToken);
+
+        try
+        {
+            await disconnectQueue.QueueDisconnectCleanupAsync(userId, connection.Id, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Failed to enqueue disconnect cleanup for connectionId={ConnectionId}",
+                connection.Id);
+
+            connection.Status = BankConnectionStatuses.DisconnectFailed;
+            connection.LastErrorCode = "disconnect_cleanup_queue_failed";
+            connection.LastErrorReason = "Could not queue disconnect cleanup. Try disconnecting again.";
+            connection.UpdatedUtc = DateTime.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            await WriteAuditSafeAsync(
+                category: "banking",
+                eventName: "disconnect_queue_failed",
+                targetEntityType: "open_banking_connection",
+                targetEntityId: connection.Id.ToString(),
+                actorId: userId,
+                actorType: "user",
+                metadata: new
+                {
+                    status = connection.Status,
+                    code = connection.LastErrorCode
+                },
+                cancellationToken);
+
+            return ServiceResult.Fail(
+                "Could not queue disconnect cleanup. Try again.",
+                "disconnect_cleanup_queue_failed",
+                StatusCodes.Status500InternalServerError);
+        }
+
+        await WriteAuditSafeAsync(
+            category: "banking",
+            eventName: "disconnect_cleanup_queued",
+            targetEntityType: "open_banking_connection",
+            targetEntityId: connection.Id.ToString(),
+            actorId: userId,
+            actorType: "user",
+            metadata: new
+            {
+                status = connection.Status
             },
             cancellationToken);
 
         return ServiceResult.Ok();
+    }
+
+    public async Task RunDisconnectCleanupAsync(
+        Guid userId,
+        Guid connectionId,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = Stopwatch.StartNew();
+        OpenBankingConnection? connection = null;
+        try
+        {
+            connection = await dbContext.OpenBankingConnections
+                .Include(x => x.Token)
+                .SingleOrDefaultAsync(
+                    x => x.Id == connectionId && x.UserId == userId,
+                    cancellationToken);
+
+            if (connection is null)
+            {
+                logger.LogWarning(
+                    "Disconnect cleanup skipped because connection was not found connectionId={ConnectionId} userId={UserId}",
+                    connectionId,
+                    userId);
+                return;
+            }
+
+            if (connection.Status == BankConnectionStatuses.Revoked)
+            {
+                logger.LogInformation(
+                    "Disconnect cleanup skipped because connection was already revoked connectionId={ConnectionId}",
+                    connectionId);
+                return;
+            }
+
+            if (connection.Status != BankConnectionStatuses.DisconnectPending)
+            {
+                logger.LogInformation(
+                    "Disconnect cleanup skipped because connection status was {Status} instead of disconnect_pending connectionId={ConnectionId}",
+                    connection.Status,
+                    connectionId);
+                return;
+            }
+
+            var linkedAccountIdsQuery = dbContext.LinkedBankAccounts
+                .Where(x => x.ConnectionId == connectionId)
+                .Select(x => x.Id);
+
+            var projectedFinancialAccountIdsQuery = dbContext.LinkedBankAccounts
+                .Where(x => x.ConnectionId == connectionId && x.FinancialAccountId.HasValue)
+                .Select(x => x.FinancialAccountId!.Value)
+                .Distinct();
+
+            var linkedAccountsTargeted = await dbContext.LinkedBankAccounts
+                .Where(x => x.ConnectionId == connectionId)
+                .CountAsync(cancellationToken);
+            var projectedAccountsTargeted = await dbContext.FinancialAccounts
+                .Where(x => x.UserId == userId && projectedFinancialAccountIdsQuery.Contains(x.Id))
+                .CountAsync(cancellationToken);
+            var rawTransactionsTargeted = await dbContext.RawBankTransactions
+                .Where(x => linkedAccountIdsQuery.Contains(x.LinkedBankAccountId))
+                .CountAsync(cancellationToken);
+            var balanceSnapshotsTargeted = await dbContext.BankBalanceSnapshots
+                .Where(x => linkedAccountIdsQuery.Contains(x.LinkedBankAccountId))
+                .CountAsync(cancellationToken);
+            var projectionTransactionsTargeted = await dbContext.Transactions
+                .Where(x => projectedFinancialAccountIdsQuery.Contains(x.FinancialAccountId))
+                .CountAsync(cancellationToken);
+
+            logger.LogInformation(
+                "Disconnect cleanup started for connectionId={ConnectionId} linkedAccountsTargeted={LinkedAccountsTargeted} projectedAccountsTargeted={ProjectedAccountsTargeted} rawTransactionsTargeted={RawTransactionsTargeted} balancesTargeted={BalanceSnapshotsTargeted} projectionTransactionsTargeted={ProjectionTransactionsTargeted}",
+                connectionId,
+                linkedAccountsTargeted,
+                projectedAccountsTargeted,
+                rawTransactionsTargeted,
+                balanceSnapshotsTargeted,
+                projectionTransactionsTargeted);
+
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            var projectedAccountsDeleted = await dbContext.FinancialAccounts
+                .Where(x => x.UserId == userId && projectedFinancialAccountIdsQuery.Contains(x.Id))
+                .ExecuteDeleteAsync(cancellationToken);
+            var linkedAccountsDeleted = await dbContext.LinkedBankAccounts
+                .Where(x => x.ConnectionId == connectionId)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            var now = DateTime.UtcNow;
+            connection.Status = BankConnectionStatuses.Revoked;
+            connection.LastErrorCode = null;
+            connection.LastErrorReason = null;
+            connection.UpdatedUtc = now;
+            RevokeConnectionToken(connection, now);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            logger.LogInformation(
+                "Disconnect cleanup completed for connectionId={ConnectionId} linkedAccountsDeleted={LinkedAccountsDeleted} projectedAccountsDeleted={ProjectedAccountsDeleted} targetedRawTransactions={RawTransactionsTargeted} targetedBalanceSnapshots={BalanceSnapshotsTargeted} targetedProjectionTransactions={ProjectionTransactionsTargeted} elapsedMs={ElapsedMs}",
+                connectionId,
+                linkedAccountsDeleted,
+                projectedAccountsDeleted,
+                rawTransactionsTargeted,
+                balanceSnapshotsTargeted,
+                projectionTransactionsTargeted,
+                startedAt.ElapsedMilliseconds);
+
+            await WriteAuditSafeAsync(
+                category: "banking",
+                eventName: "disconnect_completed",
+                targetEntityType: "open_banking_connection",
+                targetEntityId: connection.Id.ToString(),
+                actorId: userId,
+                actorType: "system",
+                metadata: new
+                {
+                    status = connection.Status,
+                    linkedAccountsDeleted,
+                    projectedAccountsDeleted,
+                    rawTransactionsTargeted,
+                    balanceSnapshotsTargeted,
+                    projectionTransactionsTargeted
+                },
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Disconnect cleanup failed for connectionId={ConnectionId}",
+                connectionId);
+
+            await MarkDisconnectFailedAsync(
+                userId,
+                connectionId,
+                "disconnect_cleanup_failed",
+                "Disconnect cleanup failed. Try disconnecting again.",
+                cancellationToken);
+
+            await WriteAuditSafeAsync(
+                category: "banking",
+                eventName: "disconnect_failed",
+                targetEntityType: "open_banking_connection",
+                targetEntityId: connectionId.ToString(),
+                actorId: userId,
+                actorType: "system",
+                metadata: new
+                {
+                    code = "disconnect_cleanup_failed"
+                },
+                cancellationToken);
+        }
     }
 
     private static IReadOnlyList<BankConnectionDto> DeduplicateUserVisibleConnections(
@@ -799,6 +1006,108 @@ public sealed class BankConnectionService(
                     account.UpdatedUtc);
             })
             .ToList();
+    }
+
+    private async Task MarkDisconnectFailedAsync(
+        Guid userId,
+        Guid connectionId,
+        string errorCode,
+        string errorReason,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var connection = await dbContext.OpenBankingConnections
+                .Include(x => x.Token)
+                .SingleOrDefaultAsync(
+                    x => x.Id == connectionId && x.UserId == userId,
+                    cancellationToken);
+
+            if (connection is null)
+            {
+                return;
+            }
+
+            connection.Status = BankConnectionStatuses.DisconnectFailed;
+            connection.LastErrorCode = errorCode;
+            connection.LastErrorReason = errorReason;
+            connection.UpdatedUtc = DateTime.UtcNow;
+            RevokeConnectionToken(connection, DateTime.UtcNow);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Failed to persist disconnect_failed status for connectionId={ConnectionId}",
+                connectionId);
+        }
+    }
+
+    private async Task WriteAuditSafeAsync(
+        string category,
+        string eventName,
+        string targetEntityType,
+        string targetEntityId,
+        Guid actorId,
+        string actorType,
+        object? metadata,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await auditService.WriteEventAsync(
+                category: category,
+                eventName: eventName,
+                targetEntityType: targetEntityType,
+                targetEntityId: targetEntityId,
+                actorId: actorId,
+                actorType: actorType,
+                metadata: metadata,
+                cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Audit write failed for event={EventName} targetEntityType={TargetEntityType} targetEntityId={TargetEntityId}",
+                eventName,
+                targetEntityType,
+                targetEntityId);
+        }
+    }
+
+    private static void RevokeConnectionToken(OpenBankingConnection connection, DateTime now)
+    {
+        if (connection.Token is null)
+        {
+            return;
+        }
+
+        connection.Token.EncryptedRefreshToken = null;
+        connection.Token.AccessTokenExpiresUtc = null;
+        connection.Token.IsRevoked = true;
+        connection.Token.RevokedUtc = now;
+    }
+
+    private static bool IsDisconnectLifecycleState(string? status)
+    {
+        return status is BankConnectionStatuses.DisconnectPending
+            or BankConnectionStatuses.DisconnectFailed
+            or BankConnectionStatuses.Revoked;
+    }
+
+    private static bool IsSyncOrConsentState(string status)
+    {
+        return status is BankConnectionStatuses.ConnectionStarted
+            or BankConnectionStatuses.ConsentInProgress
+            or BankConnectionStatuses.ConnectedPendingSync
+            or BankConnectionStatuses.Connected
+            or BankConnectionStatuses.SyncPending
+            or BankConnectionStatuses.Synced
+            or BankConnectionStatuses.ReauthRequired
+            or BankConnectionStatuses.Expired
+            or BankConnectionStatuses.Failed;
     }
 
     private static bool IsProviderBrandingSchemaMissing(Exception exception)
