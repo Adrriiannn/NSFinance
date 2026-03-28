@@ -19,33 +19,6 @@ type TextWithDefaults = typeof Text & {
 const textInputWithDefaults = TextInput as TextInputWithDefaults;
 const textWithDefaults = Text as TextWithDefaults;
 
-function trySetDefaultProps<T extends { defaultProps?: object }>(
-  target: T,
-  nextDefaults: Record<string, unknown>,
-  label: string
-) {
-  const canAssignDefaults =
-    Object.isExtensible(target) || Object.prototype.hasOwnProperty.call(target, "defaultProps");
-
-  if (!canAssignDefaults) {
-    if (__DEV__) {
-      console.warn(`[Theme] Skipping ${label}.defaultProps assignment because target is not extensible.`);
-    }
-    return;
-  }
-
-  try {
-    target.defaultProps = {
-      ...(target.defaultProps ?? {}),
-      ...nextDefaults
-    };
-  } catch (error) {
-    if (__DEV__) {
-      console.warn(`[Theme] Failed to assign ${label}.defaultProps.`, error);
-    }
-  }
-}
-
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     "Inter-Regular": require("./assets/fonts/Inter-Regular.ttf"),
@@ -71,17 +44,19 @@ function RootNavigator() {
   const caretColor = theme.colors.accent.primary;
 
   useEffect(() => {
-    trySetDefaultProps(textWithDefaults, {
+    textWithDefaults.defaultProps = {
+      ...(textWithDefaults.defaultProps ?? {}),
       allowFontScaling: false,
       maxFontSizeMultiplier: 1
-    }, "Text");
+    };
 
-    trySetDefaultProps(textInputWithDefaults, {
+    textInputWithDefaults.defaultProps = {
+      ...(textInputWithDefaults.defaultProps ?? {}),
       allowFontScaling: false,
       maxFontSizeMultiplier: 1,
       selectionColor: caretColor,
       cursorColor: caretColor
-    }, "TextInput");
+    };
   }, [caretColor]);
 
   const appNavigationTheme = useMemo(
