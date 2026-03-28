@@ -13,8 +13,10 @@ import { palette, spacing, typography, createRuntimeStyleSheet } from "../../src
 
 const INSET_OUTLINE_RADIUS = 6;
 const INSET_OUTLINE_WIDTH = 1;
-const INSET_LABEL_LEFT = 18;
-const INSET_LABEL_NOTCH_PADDING = 6;
+const INSET_LABEL_LEFT = 20;
+const INSET_NOTCH_OFFSET_X = -10;
+const INSET_LABEL_NOTCH_PADDING = -3;
+const INSET_LABEL_NOTCH_SAFETY_BUFFER = 0;
 const INSET_LABEL_TOP = -8;
 const INSET_LABEL_CHAR_WIDTH_ESTIMATE = 7.6;
 const INSET_BORDER_IDLE = palette.borderStrong;
@@ -50,6 +52,11 @@ function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
     [label]
   );
   const [labelWidth, setLabelWidth] = useState(estimatedLabelWidth);
+  const resolvedLabelWidth = Math.max(
+    labelWidth + INSET_LABEL_NOTCH_SAFETY_BUFFER,
+    estimatedLabelWidth + INSET_LABEL_NOTCH_SAFETY_BUFFER,
+    24
+  );
 
   const outlinePath = useMemo(() => {
     if (shellWidth <= 0 || shellHeight <= 0) {
@@ -69,10 +76,10 @@ function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
 
     const minGapStart = x0 + radius + 2;
     const maxGapEnd = x1 - radius - 2;
-    const preferredGapStart = INSET_LABEL_LEFT - INSET_LABEL_NOTCH_PADDING;
-    const resolvedLabelWidth = Math.max(labelWidth, estimatedLabelWidth, 24);
+    const notchLabelLeft = INSET_LABEL_LEFT + INSET_NOTCH_OFFSET_X;
+    const preferredGapStart = notchLabelLeft - INSET_LABEL_NOTCH_PADDING;
     const preferredGapEnd =
-      INSET_LABEL_LEFT + resolvedLabelWidth + INSET_LABEL_NOTCH_PADDING;
+      notchLabelLeft + resolvedLabelWidth + INSET_LABEL_NOTCH_PADDING;
 
     const notchStart = clamp(preferredGapStart, minGapStart, maxGapEnd - 10);
     const notchEnd = clamp(preferredGapEnd, notchStart + 10, maxGapEnd);
@@ -89,7 +96,7 @@ function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
       `A ${radius} ${radius} 0 0 1 ${x0 + radius} ${y0}`,
       `H ${notchStart}`
     ].join(" ");
-  }, [estimatedLabelWidth, labelWidth, shellHeight, shellWidth]);
+  }, [resolvedLabelWidth, shellHeight, shellWidth]);
 
   return (
     <View
@@ -106,13 +113,15 @@ function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
           <Path d={outlinePath} stroke={color} strokeWidth={INSET_OUTLINE_WIDTH} fill="none" />
         </Svg>
       ) : null}
-      <View pointerEvents="none" style={styles.insetFieldLabelChip}>
+      <View
+        pointerEvents="none"
+        style={[styles.insetFieldLabelChip, { minWidth: resolvedLabelWidth }]}
+      >
         <Text
           onLayout={(event) => {
             const nextWidth = Math.ceil(event.nativeEvent.layout.width);
             setLabelWidth((current) => Math.max(current, nextWidth));
           }}
-          numberOfLines={1}
           style={[styles.insetFieldLabelText, { color: toOpaqueColor(color) }]}
         >
           {label}
@@ -238,11 +247,14 @@ const styles = createRuntimeStyleSheet(() => ({
     position: "absolute",
     top: INSET_LABEL_TOP,
     left: INSET_LABEL_LEFT,
-    zIndex: 4
+    zIndex: 4,
+    alignItems: "flex-start"
   },
   insetFieldLabelText: {
     ...typography.fieldLabel,
-    includeFontPadding: false
+    includeFontPadding: false,
+    flexShrink: 0,
+    paddingRight: 2
   },
   insetFieldContainer: {
     minHeight: 44,

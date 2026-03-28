@@ -77,7 +77,7 @@ const HEADER = {
   titleMaxWidthDefault: "56%",
   titleMaxWidthCentered: "62%",
   subtitleMaxWidth: "72%",
-  greetingTitleMaxWidth: "72%",
+  greetingTitleMaxWidth: "100%",
   greetingSubtitleMaxWidth: "100%",
   greetingGap: 2,
   inlineButtonHeight: 36,
@@ -380,7 +380,8 @@ const styles = createRuntimeStyleSheet(() => ({
     justifyContent: "center"
   },
   titleWrap: {
-    flexShrink: 1
+    flexShrink: 1,
+    minWidth: 0
   },
   titleCentered: {
     alignItems: "center",

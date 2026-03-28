@@ -41,6 +41,8 @@ export function resolveTransactionCategory(
 ) {
   return (
     annotations[transaction.id]?.category?.trim() ??
+    transaction.taxonomySubcategoryName?.trim() ??
+    transaction.taxonomyCategoryName?.trim() ??
     transaction.categoryName?.trim() ??
     "Uncategorized"
   );

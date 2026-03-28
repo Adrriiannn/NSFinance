@@ -8,7 +8,6 @@ import {
   buildTransactionDetailDate,
   buildTransactionMetaLine
 } from "../../../features/transactions/activityGrouping";
-import { usePlannerStore } from "../../../providers/PlannerProvider";
 import { AmountText } from "../../ui/AmountText";
 import { useRowPresets } from "./row.presets";
 
@@ -37,7 +36,6 @@ export function TransactionRow({
 }: TransactionRowProps) {
   const { palette } = useThemeTokens();
   const rowPresets = useRowPresets();
-  const plannerStore = usePlannerStore();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(10)).current;
 
@@ -58,8 +56,7 @@ export function TransactionRow({
     ]).start();
   }, [index, opacity, translateY]);
 
-  const plannerCategory = plannerStore.annotations[transaction.id]?.category;
-  const metadata = metadataOverride ?? buildTransactionMetaLine(transaction, plannerCategory);
+  const metadata = metadataOverride ?? buildTransactionMetaLine(transaction);
   const timestamp = buildTransactionDetailDate(transaction);
 
   return (

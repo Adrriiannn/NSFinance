@@ -21,4 +21,5 @@ public static class EnvironmentVariableNames
     public const string TrueLayerEnvironment = "TRUELAYER_ENVIRONMENT";
     public const string TrueLayerAuthBaseUrl = "TRUELAYER_AUTH_BASE_URL";
     public const string TrueLayerApiBaseUrl = "TRUELAYER_API_BASE_URL";
+    public const string DataProtectionKeysPath = "NSFINANCE_DATA_PROTECTION_KEYS_PATH";
 }

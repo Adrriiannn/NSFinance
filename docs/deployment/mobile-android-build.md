@@ -147,7 +147,8 @@ To disable later:
 
 Current production bank return flow uses the custom scheme:
 
-- `nsfinance://modals/add-account?...`
+- preferred: `nsfinance://accounts/connect-bank?...`
+- legacy fallback still supported: `nsfinance://modals/add-account?...`
 
 This remains the active and supported flow.
 

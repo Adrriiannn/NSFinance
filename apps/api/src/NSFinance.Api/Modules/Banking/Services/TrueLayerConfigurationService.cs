@@ -60,11 +60,20 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
                 StatusCodes.Status500InternalServerError);
         }
 
+        var redirectValidation = ValidateRedirectUri(_options.RedirectUri, environment);
+        if (!redirectValidation.Succeeded)
+        {
+            return ServiceResult<TrueLayerResolvedConfiguration>.Fail(
+                redirectValidation.Error!.Message,
+                redirectValidation.Error.Code,
+                redirectValidation.Error.StatusCode);
+        }
+
         return ServiceResult<TrueLayerResolvedConfiguration>.Ok(
             new TrueLayerResolvedConfiguration(
                 _options.ClientId.Trim(),
                 _options.ClientSecret.Trim(),
-                _options.RedirectUri.Trim(),
+                redirectValidation.Value!,
                 environment,
                 authUri.ToString().TrimEnd('/'),
                 apiUri.ToString().TrimEnd('/')));
@@ -103,4 +112,52 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
         environment == "live"
             ? "https://api.truelayer.com"
             : "https://api.truelayer-sandbox.com";
+
+    private static ServiceResult<string> ValidateRedirectUri(string redirectUri, string environment)
+    {
+        var candidate = redirectUri.Trim();
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var redirect))
+        {
+            return ServiceResult<string>.Fail(
+                "TrueLayer redirect URI must be an absolute URI.",
+                "truelayer_redirect_uri_invalid",
+                StatusCodes.Status500InternalServerError);
+        }
+
+        if (!string.Equals(redirect.AbsolutePath, "/api/banking/truelayer/callback", StringComparison.Ordinal))
+        {
+            return ServiceResult<string>.Fail(
+                "TrueLayer redirect URI must target /api/banking/truelayer/callback.",
+                "truelayer_redirect_uri_path_invalid",
+                StatusCodes.Status500InternalServerError);
+        }
+
+        if (environment == "live")
+        {
+            if (!string.Equals(redirect.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            {
+                return ServiceResult<string>.Fail(
+                    "Live TrueLayer redirect URI must use HTTPS.",
+                    "truelayer_redirect_uri_https_required",
+                    StatusCodes.Status500InternalServerError);
+            }
+
+            if (IsLocalHost(redirect.Host))
+            {
+                return ServiceResult<string>.Fail(
+                    "Live TrueLayer redirect URI cannot point to localhost.",
+                    "truelayer_redirect_uri_localhost_invalid",
+                    StatusCodes.Status500InternalServerError);
+            }
+        }
+
+        return ServiceResult<string>.Ok(redirect.ToString().TrimEnd('/'));
+    }
+
+    private static bool IsLocalHost(string host)
+    {
+        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+               || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
+               || host.Equals("::1", StringComparison.OrdinalIgnoreCase);
+    }
 }

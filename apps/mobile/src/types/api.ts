@@ -38,8 +38,17 @@ export type TransactionDto = {
   currency: string;
   categoryId: string | null;
   categoryName: string | null;
+  taxonomyDomainId: number | null;
+  taxonomyDomainName: string | null;
+  taxonomyCategoryId: number | null;
+  taxonomyCategoryName: string | null;
+  taxonomySubcategoryId: number | null;
+  taxonomySubcategoryName: string | null;
+  reason: string | null;
+  notes: string | null;
   bookedAtUtc: string;
   createdUtc: string;
+  metadataUpdatedUtc: string | null;
   direction: TransactionDirection;
 };
 
@@ -51,6 +60,13 @@ export type CreateTransactionRequest = {
   currency?: string | null;
   categoryId?: string | null;
   bookedAtUtc?: string | null;
+};
+
+export type UpdateTransactionMetadataRequest = {
+  reason?: string | null;
+  notes?: string | null;
+  taxonomyCategoryId: number;
+  taxonomySubcategoryId?: number | null;
 };
 
 export type ExpenseTrackerEntryStatus = "planned" | "completed";

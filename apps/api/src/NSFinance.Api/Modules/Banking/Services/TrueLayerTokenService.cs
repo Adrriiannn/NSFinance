@@ -42,13 +42,12 @@ public sealed class TrueLayerTokenService(
         }
 
         logger.LogInformation(
-            "TrueLayer token exchange request endpoint={Endpoint} environment={Environment} redirectUri={RedirectUri} clientId={ClientId} grantType={GrantType} authCodePrefix={AuthCodePrefix}",
+            "TrueLayer token exchange request endpoint={Endpoint} environment={Environment} redirectUri={RedirectUri} clientId={ClientId} grantType={GrantType}",
             endpoint,
             configuration.Environment,
             configuration.RedirectUri,
             configuration.ClientId,
-            grantType,
-            MaskCodePrefix(authorizationCode));
+            grantType);
 
         var response = await httpClient.PostFormAsync(endpoint, payload, cancellationToken);
         return MapTokenExchangeResponse(response, grantType);
@@ -246,18 +245,6 @@ public sealed class TrueLayerTokenService(
             "unsupported_grant_type" => "truelayer_grant_type_invalid",
             _ => "truelayer_token_exchange_failed"
         };
-    }
-
-    private static string MaskCodePrefix(string authorizationCode)
-    {
-        if (string.IsNullOrWhiteSpace(authorizationCode))
-        {
-            return "<missing>";
-        }
-
-        var prefixLength = Math.Min(6, authorizationCode.Length);
-        var prefix = authorizationCode[..prefixLength];
-        return $"{prefix}...({authorizationCode.Length})";
     }
 
     private static string SanitizeProviderPayload(string? payload)

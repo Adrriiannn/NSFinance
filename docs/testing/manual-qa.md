@@ -35,6 +35,9 @@ Happy path:
 3. Return and refresh status.
 4. Verify connection reaches `Connected`/`synced`.
 5. Trigger sync and verify imported account activity.
+6. Validate callback return route handling:
+   - preferred route: `nsfinance://accounts/connect-bank?...`
+   - legacy compatibility route: `nsfinance://modals/add-account?...`
 
 Data checks (authenticated API):
 

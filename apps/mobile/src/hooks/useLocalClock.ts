@@ -3,44 +3,79 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type GreetingBucket = "earlyMorning" | "morning" | "afternoon" | "evening" | "lateNight";
 
+const EARLY_MORNING_GREETINGS = [
+  "Good morning",
+  "Morning",
+  "Welcome back",
+  "Ready for today?",
+  "Starting early?",
+  "Up already?",
+  "Fresh start",
+  "New day ahead"
+];
+
 const greetingPools: Record<GreetingBucket, string[]> = {
-  earlyMorning: [
-    "Early morning",
-    "Morning start",
-    "Rise early",
-    "Dawn check",
-    "Start strong"
-  ],
-  morning: [
-    "Good morning",
-    "Morning",
-    "Rise",
-    "Fresh morning",
-    "Morning focus"
-  ],
+  earlyMorning: EARLY_MORNING_GREETINGS,
+  // Preserve existing morning bucket segmentation while using the finalized pool.
+  morning: EARLY_MORNING_GREETINGS,
+
   afternoon: [
     "Good afternoon",
     "Afternoon",
-    "Midday check",
-    "Afternoon focus",
-    "Steady afternoon"
+    "Welcome back",
+    "How’s today going?",
+    "Keeping pace?",
+    "All on track?",
+    "Still focused?"
   ],
+
   evening: [
     "Good evening",
     "Evening",
-    "Evening check",
-    "Calm evening",
-    "Nightfall",
-    "Evening focus"
+    "Welcome back",
+    "Winding down",
+    "How was today?",
+    "All wrapped up?",
+    "Taking it easy?",
+    "Quiet evening"
   ],
+
   lateNight: [
-    "Late night",
-    "Night owl",
-    "Midnight check",
+    "Still online?",
+    "Late hours",
+    "Long day?",
     "Quiet night",
-    "Night focus"
+    "Still at it?",
+    "Night mode",
+    "Up late?"
   ]
 };
+
+export function formatGreetingForDisplay(greeting: string, name?: string | null): string {
+  const normalizedGreeting = greeting.trim();
+  const normalizedName = name?.trim() ?? "";
+
+  if (!normalizedGreeting) {
+    return normalizedName;
+  }
+
+  if (!normalizedName) {
+    return normalizedGreeting;
+  }
+
+  const isQuestion = /\?+$/.test(normalizedGreeting);
+  const greetingBase = isQuestion
+    ? normalizedGreeting.replace(/\?+$/, "").trim()
+    : normalizedGreeting;
+
+  if (!greetingBase) {
+    return normalizedName;
+  }
+
+  return isQuestion
+    ? `${greetingBase}, ${normalizedName}?`
+    : `${greetingBase}, ${normalizedName}`;
+}
 
 function getGreetingBucket(now: Date): GreetingBucket {
   const hour = now.getHours();

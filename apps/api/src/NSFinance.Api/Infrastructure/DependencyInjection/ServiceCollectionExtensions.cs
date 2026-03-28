@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading.RateLimiting;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -68,7 +69,7 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddHttpContextAccessor();
-        services.AddDataProtection();
+        ConfigureDataProtection(services, configuration, hostEnvironment);
         ConfigureCors(services, configuration);
         ConfigureRateLimiting(services);
 
@@ -94,6 +95,7 @@ public static class ServiceCollectionExtensions
             OverrideIfSet(value => options.AuthBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerAuthBaseUrl]);
             OverrideIfSet(value => options.ApiBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerApiBaseUrl]);
         });
+        ValidateTrueLayerConfigurationForNonDevelopment(configuration, hostEnvironment);
 
         services.Configure<GoogleAuthOptions>(options =>
         {
@@ -465,6 +467,80 @@ public static class ServiceCollectionExtensions
         string key)
     {
         return configuration[key];
+    }
+
+    private static void ConfigureDataProtection(
+        IServiceCollection services,
+        IConfiguration configuration,
+        IHostEnvironment hostEnvironment)
+    {
+        var keysPath = ResolveDataProtectionKeyRingPath(configuration, hostEnvironment);
+        var dataProtectionBuilder = services
+            .AddDataProtection()
+            .SetApplicationName("NSFinance.Api");
+
+        if (string.IsNullOrWhiteSpace(keysPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(keysPath);
+        dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
+    }
+
+    private static string? ResolveDataProtectionKeyRingPath(
+        IConfiguration configuration,
+        IHostEnvironment hostEnvironment)
+    {
+        var configuredPath =
+            ResolveEnvironmentValue(configuration, EnvironmentVariableNames.DataProtectionKeysPath)
+            ?? configuration["DataProtection:KeysPath"];
+
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            return configuredPath.Trim();
+        }
+
+        if (hostEnvironment.IsDevelopment())
+        {
+            return null;
+        }
+
+        var home = Environment.GetEnvironmentVariable("HOME");
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            return Path.Combine(home, "ASP.NET", "DataProtection-Keys");
+        }
+
+        return OperatingSystem.IsWindows()
+            ? @"D:\home\ASP.NET\DataProtection-Keys"
+            : "/home/ASP.NET/DataProtection-Keys";
+    }
+
+    private static void ValidateTrueLayerConfigurationForNonDevelopment(
+        IConfiguration configuration,
+        IHostEnvironment hostEnvironment)
+    {
+        if (hostEnvironment.IsDevelopment())
+        {
+            return;
+        }
+
+        var options = new TrueLayerOptions();
+        configuration.GetSection(TrueLayerOptions.SectionName).Bind(options);
+        OverrideIfSet(value => options.ClientId = value, configuration[EnvironmentVariableNames.TrueLayerClientId]);
+        OverrideIfSet(value => options.ClientSecret = value, configuration[EnvironmentVariableNames.TrueLayerClientSecret]);
+        OverrideIfSet(value => options.RedirectUri = value, configuration[EnvironmentVariableNames.TrueLayerRedirectUri]);
+        OverrideIfSet(value => options.Environment = value, configuration[EnvironmentVariableNames.TrueLayerEnvironment]);
+        OverrideIfSet(value => options.AuthBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerAuthBaseUrl]);
+        OverrideIfSet(value => options.ApiBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerApiBaseUrl]);
+
+        var validation = new TrueLayerConfigurationService(Options.Create(options)).Resolve();
+        if (!validation.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"TrueLayer configuration is invalid outside Development: {validation.Error!.Code} - {validation.Error.Message}");
+        }
     }
 }
 

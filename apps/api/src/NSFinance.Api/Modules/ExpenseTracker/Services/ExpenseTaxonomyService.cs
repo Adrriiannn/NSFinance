@@ -41,6 +41,26 @@ public sealed class ExpenseTaxonomyService
         return subcategory;
     }
 
+    public TaxonomyCategoryDefinition? GetUserSelectableCategory(int categoryId)
+    {
+        if (!catalog.CategoriesById.TryGetValue(categoryId, out var category) || category is null)
+        {
+            return null;
+        }
+
+        if (!category.IsActive || !category.IsUserSelectable)
+        {
+            return null;
+        }
+
+        if (!catalog.DomainsById.TryGetValue(category.DomainId, out var domain) || domain.IsSystemDomain || !domain.IsUserSelectable || !domain.IsActive)
+        {
+            return null;
+        }
+
+        return category;
+    }
+
     public string? GetDomainName(int? domainId)
     {
         return domainId.HasValue && catalog.DomainsById.TryGetValue(domainId.Value, out var domain)

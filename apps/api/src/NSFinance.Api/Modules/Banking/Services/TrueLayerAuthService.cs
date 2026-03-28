@@ -31,7 +31,7 @@ public sealed class TrueLayerAuthService(
         }
 
         var configuration = configResult.Value!;
-        var normalizedAppReturnUri = NormalizeAppReturnUri(appReturnUri);
+        var normalizedAppReturnUri = TrueLayerReturnUriContract.Normalize(appReturnUri);
         var connection = await bankConnectionService.CreateConnectionStartedAsync(
             userId,
             BankingProviders.TrueLayer,
@@ -47,6 +47,14 @@ public sealed class TrueLayerAuthService(
                 connection.AuthStateExpiresUtc,
                 cancellationToken);
         }
+
+        logger.LogInformation(
+            "TrueLayer link started connectionId={ConnectionId} userId={UserId} environment={Environment} hasAppReturnUri={HasAppReturnUri} normalizedAppReturnUri={AppReturnUri}",
+            connection.Id,
+            userId,
+            configuration.Environment,
+            !string.IsNullOrWhiteSpace(normalizedAppReturnUri),
+            normalizedAppReturnUri ?? "<none>");
 
         var scopes = BuildScopes();
         var providers = BuildProviders(configuration.Environment);
@@ -294,6 +302,16 @@ public sealed class TrueLayerAuthService(
             logger.LogInformation(
                 "TrueLayer callback queued initial sync for connectionId={ConnectionId}",
                 connection.Id);
+
+            await auditService.WriteEventAsync(
+                category: "banking",
+                eventName: "initial_sync_queued",
+                targetEntityType: "open_banking_connection",
+                targetEntityId: connection.Id.ToString(),
+                actorId: connection.UserId,
+                actorType: "user",
+                metadata: new { connectionId = connection.Id },
+                cancellationToken);
         }
         catch (Exception exception)
         {
@@ -301,6 +319,35 @@ public sealed class TrueLayerAuthService(
                 exception,
                 "TrueLayer callback could not queue initial sync for connectionId={ConnectionId}",
                 connection.Id);
+
+            await bankConnectionService.MarkConnectionStateAsync(
+                connection,
+                BankConnectionStatuses.Failed,
+                "initial_sync_queue_unavailable",
+                "Bank linked, but automatic sync could not be queued. Open the app and run sync manually.",
+                cancellationToken);
+
+            await auditService.WriteEventAsync(
+                category: "banking",
+                eventName: "initial_sync_queue_failed",
+                targetEntityType: "open_banking_connection",
+                targetEntityId: connection.Id.ToString(),
+                actorId: connection.UserId,
+                actorType: "user",
+                metadata: new
+                {
+                    connectionId = connection.Id,
+                    status = BankConnectionStatuses.Failed
+                },
+                cancellationToken);
+
+            return new TrueLayerCallbackOutcome(
+                true,
+                "initial_sync_queue_unavailable",
+                "Bank linked successfully. Return to the app and tap Sync now to complete the first import.",
+                StatusCodes.Status200OK,
+                connection.Id,
+                appReturnUri);
         }
 
         return new TrueLayerCallbackOutcome(
@@ -334,45 +381,12 @@ public sealed class TrueLayerAuthService(
         {
             var encoded = callbackState[(separatorIndex + 1)..];
             var decoded = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(encoded));
-            return NormalizeAppReturnUri(decoded);
+            return TrueLayerReturnUriContract.Normalize(decoded);
         }
         catch
         {
             return null;
         }
-    }
-
-    private static string? NormalizeAppReturnUri(string? appReturnUri)
-    {
-        if (string.IsNullOrWhiteSpace(appReturnUri))
-        {
-            return null;
-        }
-
-        if (!Uri.TryCreate(appReturnUri.Trim(), UriKind.Absolute, out var uri))
-        {
-            return null;
-        }
-
-        var scheme = uri.Scheme.Trim().ToLowerInvariant();
-        var raw = uri.ToString();
-        var isSupportedScheme = scheme is "nsfinance" or "nsfinance-dev" or "exp+nsfinance-mobile" or "exp" or "exps";
-        if (!isSupportedScheme)
-        {
-            return null;
-        }
-
-        if (!raw.Contains("modals/add-account", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        var builder = new UriBuilder(uri)
-        {
-            Fragment = string.Empty
-        };
-
-        return builder.Uri.ToString();
     }
 
     public static IReadOnlyList<string> BuildScopes()

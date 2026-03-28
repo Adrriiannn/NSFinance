@@ -131,7 +131,12 @@ export function buildTransactionMetaLine(
   transaction: TransactionDto,
   categoryOverride?: string | null
 ): string {
-  const category = categoryOverride ?? transaction.categoryName ?? "Uncategorized";
+  const category =
+    categoryOverride ??
+    transaction.taxonomySubcategoryName ??
+    transaction.taxonomyCategoryName ??
+    transaction.categoryName ??
+    "Uncategorized";
   return category;
 }
 

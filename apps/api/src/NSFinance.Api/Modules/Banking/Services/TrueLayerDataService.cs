@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Globalization;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Banking.Services.Models;
 
@@ -299,9 +300,30 @@ public sealed class TrueLayerDataService(
 
     private static DateTime? ParseDateTime(string? value)
     {
-        return DateTime.TryParse(value, out var parsed)
-            ? DateTime.SpecifyKind(parsed, DateTimeKind.Utc)
-            : null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (DateTimeOffset.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsedOffset))
+        {
+            return parsedOffset.UtcDateTime;
+        }
+
+        if (DateTime.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsedDateTime))
+        {
+            return parsedDateTime.ToUniversalTime();
+        }
+
+        return null;
     }
 
     private static string ComputeDedupeKey(string stableTransactionId)

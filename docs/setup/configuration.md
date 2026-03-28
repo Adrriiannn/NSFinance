@@ -56,6 +56,7 @@ Primary keys:
 - `TrueLayer__Environment`
 - `TrueLayer__AuthBaseUrl`
 - `TrueLayer__ApiBaseUrl`
+- `DataProtection__KeysPath` (optional explicit key-ring path)
 - `GoogleAuth__WebClientId` (recommended)
 - `GoogleAuth__AndroidClientIdDebug` (optional outside local/dev)
 - `GoogleAuth__AndroidClientIdProd` (recommended)
@@ -77,6 +78,7 @@ Actively consumed by runtime:
 - JWT options and signing key
 - TrueLayer options
 - Google auth client IDs (web + android audiences)
+- ASP.NET DataProtection key-ring path (`DataProtection:KeysPath` or `NSFINANCE_DATA_PROTECTION_KEYS_PATH`)
 
 Not yet bound by runtime services (template-ready only):
 

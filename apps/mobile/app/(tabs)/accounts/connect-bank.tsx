@@ -1,5 +1,4 @@
 import { useQueryClient } from "@tanstack/react-query";
-import * as ExpoLinking from "expo-linking";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, Linking as NativeLinking, Text, View } from "react-native";
@@ -18,6 +17,7 @@ import {
   useStartTrueLayerLinkMutation,
   useSyncBankConnectionMutation
 } from "../../../src/features/banking/useBanking";
+import { buildBankConnectReturnUri } from "../../../src/features/banking/bankingLinking";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { queryKeys } from "../../../src/lib/api/queryKeys";
 import { useFeedbackSound } from "../../../src/lib/sound/useFeedbackSound";
@@ -106,10 +106,6 @@ function shouldThrottleBankingLog(event: string, metadata?: Record<string, unkno
   }
 
   return false;
-}
-
-function buildBankReturnUri() {
-  return ExpoLinking.createURL("/(tabs)/accounts/connect-bank?intent=new");
 }
 
 function formatDateAdded(createdUtc?: string | null) {
@@ -429,7 +425,7 @@ export default function AddAccountModalScreen() {
       logBankingEvent("connect_start", {
         connectionId: response.connectionId,
         expiresAtUtc: response.expiresAtUtc,
-        appReturnUri: buildBankReturnUri()
+        appReturnUri: buildBankConnectReturnUri()
       });
       await launchConsentInBrowser(response.authorizationUrl, response.connectionId);
       setBrowserPhase("awaiting_consent");
@@ -441,7 +437,7 @@ export default function AddAccountModalScreen() {
   const handleConnectBank = async () => {
     try {
       setBrowserPhase("opening_bank");
-      const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankReturnUri() });
+      const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankConnectReturnUri() });
       await beginConsentSession(response);
     } catch (error) {
       setBrowserPhase("idle");
@@ -459,7 +455,7 @@ export default function AddAccountModalScreen() {
       return;
     }
 
-    const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankReturnUri() });
+    const response = await startLinkMutation.mutateAsync({ appReturnUri: buildBankConnectReturnUri() });
     await beginConsentSession(response);
   };
 
@@ -484,7 +480,7 @@ export default function AddAccountModalScreen() {
   };
 
   useEffect(() => {
-    logBankingEvent("screen_mount", { route: "modals/add-account" });
+    logBankingEvent("screen_mount", { route: "accounts/connect-bank" });
   }, [logBankingEvent]);
 
   useEffect(() => {
@@ -583,13 +579,25 @@ export default function AddAccountModalScreen() {
       typeof params.connectionId === "string" && params.connectionId.trim().length > 0
         ? params.connectionId.trim()
         : pendingConnectionId;
+    const bankingResult = params.bankingResult.toLowerCase();
 
-    setAwaitingConsentReturn(true);
     if (returnedConnectionId) {
       setPendingConnectionId(returnedConnectionId);
     }
-    markReturnAttempt("deep_link_return", returnedConnectionId);
-    void refreshBankingState("deep_link_return", { force: true });
+
+    if (bankingResult === "success") {
+      setAwaitingConsentReturn(true);
+      markReturnAttempt("deep_link_return_success", returnedConnectionId);
+      void refreshBankingState("deep_link_return_success", { force: true });
+      return;
+    }
+
+    setAwaitingConsentReturn(false);
+    setBrowserPhase("idle");
+    setPendingConsentLink(null);
+    setConsentTimedOut(false);
+    markReturnAttempt("deep_link_return_error", returnedConnectionId);
+    void refreshBankingState("deep_link_return_error", { force: true });
   }, [markReturnAttempt, params.bankingResult, params.connectionId, pendingConnectionId, refreshBankingState]);
 
   useEffect(() => {

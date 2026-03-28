@@ -19,7 +19,7 @@ import {
 } from "../../src/features/planner/plannerInsights";
 import { useTransactionsQuery } from "../../src/features/transactions/useTransactions";
 import { useEntranceAnimation } from "../../src/hooks/useEntranceAnimation";
-import { useLocalClock } from "../../src/hooks/useLocalClock";
+import { formatGreetingForDisplay, useLocalClock } from "../../src/hooks/useLocalClock";
 import { useMainTabSwipeNavigation } from "../../src/components/layout/useHorizontalSiblingSwipe";
 import { AdaptiveScreen } from "../../src/layout/adaptive/AdaptiveScreen";
 import { HeaderShell } from "../../src/layout/appHeader";
@@ -80,7 +80,11 @@ export default function DashboardTabScreen() {
   const transactionsQuery = useTransactionsQuery();
   const { greeting, dateLabel, timeLabel } = useLocalClock();
   const fullName = session?.user.fullName?.trim() || session?.user.displayName?.trim() || "";
-  const firstName = fullName.split(/\s+/).find(Boolean) || "there";
+  const firstName = fullName.split(/\s+/).find(Boolean) ?? null;
+  const greetingTitle = useMemo(
+    () => formatGreetingForDisplay(greeting, firstName),
+    [firstName, greeting]
+  );
 
   const heroAnimation = useEntranceAnimation(30);
   const sectionAnimation = useEntranceAnimation(150);
@@ -357,7 +361,7 @@ export default function DashboardTabScreen() {
         <HeaderShell
           preset="primaryGreeting"
           includeTopInset
-          title={`${greeting}, ${firstName}`}
+          title={greetingTitle}
           subtitle={`${dateLabel} | ${timeLabel}`}
         />
 

@@ -20,26 +20,27 @@ public static class TrueLayerCallbackEndpoint
         var outcome = await authService.HandleCallbackAsync(
             new TrueLayerCallbackQuery(code, state, error, error_description),
             cancellationToken);
+        var appResult = outcome.Succeeded ? "success" : "error";
+        var appReturnUrl = BuildAppReturnUrl(outcome.AppReturnUri, appResult, outcome.Code, outcome.ConnectionId);
 
         logger.LogInformation(
-            "Returning TrueLayer callback HTML outcome={OutcomeCode} succeeded={Succeeded} connectionId={ConnectionId}",
+            "Returning TrueLayer callback HTML outcome={OutcomeCode} succeeded={Succeeded} connectionId={ConnectionId} chosenReturnUri={ChosenReturnUri}",
             outcome.Code,
             outcome.Succeeded,
-            outcome.ConnectionId);
+            outcome.ConnectionId,
+            appReturnUrl);
 
-        var safeHtml = BuildSafeHtml(outcome);
+        var safeHtml = BuildSafeHtml(outcome, appReturnUrl);
         return Results.Content(safeHtml, "text/html", statusCode: outcome.HttpStatusCode);
     }
 
-    private static string BuildSafeHtml(TrueLayerCallbackOutcome outcome)
+    private static string BuildSafeHtml(TrueLayerCallbackOutcome outcome, string appReturnUrl)
     {
         const int autoReturnDelayMs = 3000;
 
         var title = outcome.Succeeded ? "Bank Connected" : "Bank Connection Failed";
         var message = WebUtility.HtmlEncode(outcome.Message);
         var statusCode = WebUtility.HtmlEncode(outcome.Code);
-        var appResult = outcome.Succeeded ? "success" : "error";
-        var appReturnUrl = BuildAppReturnUrl(outcome.AppReturnUri, appResult, outcome.Code, outcome.ConnectionId);
         var appReturnUrlForHref = WebUtility.HtmlEncode(appReturnUrl);
         var appReturnUrlForScript = appReturnUrl.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
         var headingColor = outcome.Succeeded ? "#1DBA72" : "#E25A5A";
@@ -240,9 +241,8 @@ public static class TrueLayerCallbackEndpoint
 
     private static string BuildAppReturnUrl(string? appReturnUri, string result, string code, Guid? connectionId)
     {
-        var baseReturnUri = string.IsNullOrWhiteSpace(appReturnUri)
-            ? "nsfinance://modals/add-account"
-            : appReturnUri;
+        var baseReturnUri = TrueLayerReturnUriContract.Normalize(appReturnUri)
+            ?? TrueLayerReturnUriContract.BuildDefaultAppReturnUri();
 
         var parameters = new Dictionary<string, string?>
         {

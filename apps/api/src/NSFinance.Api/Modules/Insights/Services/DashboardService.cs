@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Modules.Accounts.DTOs;
+using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Insights.DTOs;
 using NSFinance.Api.Modules.Transactions.DTOs;
 using NSFinance.Api.Modules.Users.Services;
@@ -7,7 +8,10 @@ using NSFinance.Api.Persistence;
 
 namespace NSFinance.Api.Modules.Insights.Services;
 
-public sealed class DashboardService(AppDbContext dbContext, ICurrentUserProvider currentUserProvider)
+public sealed class DashboardService(
+    AppDbContext dbContext,
+    ICurrentUserProvider currentUserProvider,
+    ExpenseTaxonomyService expenseTaxonomyService)
 {
     public async Task<DashboardSummaryDto> GetSummaryAsync(CancellationToken cancellationToken)
     {
@@ -47,19 +51,58 @@ public sealed class DashboardService(AppDbContext dbContext, ICurrentUserProvide
             .OrderByDescending(x => x.BookedAtUtc)
             .ThenByDescending(x => x.CreatedUtc)
             .Take(5)
-            .Select(x => new TransactionDto(
+            .Select(x => new
+            {
                 x.Id,
                 x.FinancialAccountId,
-                x.FinancialAccount != null ? x.FinancialAccount.Name : string.Empty,
+                AccountName = x.FinancialAccount != null ? x.FinancialAccount.Name : string.Empty,
                 x.Description,
                 x.Amount,
                 x.Currency,
                 x.CategoryId,
-                x.Category != null ? x.Category.Name : null,
+                LegacyCategoryName = x.Category != null ? x.Category.Name : null,
+                x.TaxonomyDomainId,
+                x.TaxonomyCategoryId,
+                x.TaxonomySubcategoryId,
+                x.Reason,
+                x.Notes,
                 x.BookedAtUtc,
                 x.CreatedUtc,
-                x.Amount < 0 ? "Expense" : "Income"))
+                x.MetadataUpdatedUtc
+            })
             .ToListAsync(cancellationToken);
+
+        var recentTransactionDtos = recentTransactions
+            .Select(x =>
+            {
+                var taxonomyDomainName = expenseTaxonomyService.GetDomainName(x.TaxonomyDomainId);
+                var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(x.TaxonomyCategoryId);
+                var taxonomySubcategoryName = expenseTaxonomyService.GetSubcategoryName(x.TaxonomySubcategoryId);
+                var categoryName = taxonomyCategoryName ?? x.LegacyCategoryName;
+
+                return new TransactionDto(
+                    x.Id,
+                    x.FinancialAccountId,
+                    x.AccountName,
+                    x.Description,
+                    x.Amount,
+                    x.Currency,
+                    x.CategoryId,
+                    categoryName,
+                    x.TaxonomyDomainId,
+                    taxonomyDomainName,
+                    x.TaxonomyCategoryId,
+                    taxonomyCategoryName,
+                    x.TaxonomySubcategoryId,
+                    taxonomySubcategoryName,
+                    x.Reason,
+                    x.Notes,
+                    x.BookedAtUtc,
+                    x.CreatedUtc,
+                    x.MetadataUpdatedUtc,
+                    x.Amount < 0 ? "Expense" : "Income");
+            })
+            .ToList();
 
         return new DashboardSummaryDto(
             TotalBalance: accounts.Sum(x => x.CurrentBalance),
@@ -67,6 +110,6 @@ public sealed class DashboardService(AppDbContext dbContext, ICurrentUserProvide
             TransactionCount: transactionCount,
             RecentOutflow: recentOutflow,
             AccountPreview: accounts.Take(3).ToList(),
-            RecentTransactions: recentTransactions);
+            RecentTransactions: recentTransactionDtos);
     }
 }

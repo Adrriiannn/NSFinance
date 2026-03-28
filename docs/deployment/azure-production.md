@@ -17,6 +17,7 @@
 - `TrueLayer__Environment=live`
 - `TrueLayer__AuthBaseUrl=https://auth.truelayer.com`
 - `TrueLayer__ApiBaseUrl=https://api.truelayer.com`
+- `NSFINANCE_DATA_PROTECTION_KEYS_PATH=/home/ASP.NET/DataProtection-Keys` (recommended explicit path; app also auto-detects App Service persistent home path outside Development)
 - `Cors__AllowedOrigins=<comma-separated allowed web origins, if needed>`
 - Optional reserved (not currently consumed by API runtime): `Turnstile__SecretKey`
 
@@ -29,6 +30,7 @@
 - `NSFINANCE_GOOGLE_CLIENT_ID` (legacy alias for `GoogleAuth__ClientId`)
 - `TRUELAYER_CLIENT_ID`, `TRUELAYER_CLIENT_SECRET`, `TRUELAYER_REDIRECT_URI`, `TRUELAYER_ENVIRONMENT`, `TRUELAYER_AUTH_BASE_URL`, `TRUELAYER_API_BASE_URL` (aliases for `TrueLayer__*`)
 - `NSFINANCE_ALLOWED_CORS_ORIGINS` (alias for `Cors__AllowedOrigins`)
+- `NSFINANCE_DATA_PROTECTION_KEYS_PATH` (alias for `DataProtection__KeysPath`)
 
 ## Backend Config Structure
 - Base config: `apps/api/src/NSFinance.Api/appsettings.json` (production-safe defaults, no secrets).
@@ -78,13 +80,22 @@
   - `TrueLayer__RedirectUri` (preferred) or the alias variable names listed above.
   - Development local default is only in `appsettings.Development.json`.
 - Mobile return deep link after TrueLayer callback:
-  - `nsfinance://modals/add-account?...`
+  - preferred: `nsfinance://accounts/connect-bank?...`
+  - legacy compatibility still accepted: `nsfinance://modals/add-account?...`
   - Defined in `apps/api/src/NSFinance.Api/Modules/Banking/Endpoints/TrueLayerCallbackEndpoint.cs`.
+
+## Operational notes for production stability
+
+- TrueLayer options are validated at startup outside Development. Invalid redirect URI or environment/base URL mismatches now fail fast.
+- Redirect URI must remain an absolute URI to `/api/banking/truelayer/callback`. In live mode it must use HTTPS and not localhost.
+- DataProtection keys must persist across restarts/deployments; do not run production without a persistent key-ring path.
+- Initial TrueLayer sync queue is currently in-memory. If the app restarts before queue drain, users can use manual sync from the app.
 
 ## Manual Azure Portal Steps (Not Done in Code)
 - Add/update App Service environment variables listed above.
 - Store secrets in Key Vault.
 - Configure Managed Identity and Key Vault access policy/RBAC.
+- Apply database migrations through the CI/CD migration bundle workflow before enabling live bank traffic (`Database:ApplyMigrationsOnStartup` stays disabled outside Development).
 - Configure custom domains/TLS if needed.
 - Register production callback/redirect URIs in:
   - Google OAuth console (mobile client IDs and redirect handling).

@@ -59,7 +59,8 @@ export function HeaderTitleBlock({
 
 const styles = StyleSheet.create({
   wrap: {
-    flexShrink: 1
+    flexShrink: 1,
+    minWidth: 0
   },
   centeredWrap: {
     alignItems: "center",
@@ -69,4 +70,3 @@ const styles = StyleSheet.create({
     alignItems: "flex-start"
   }
 });
-

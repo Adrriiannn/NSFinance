@@ -97,6 +97,32 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task CallbackFlow_PreservesCurrentAppReturnUri_ForEnvironmentAwareReturn()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.return-uri-current@test.local");
+        const string appReturnUri = "exp://192.168.0.11:8081/--/(tabs)/accounts/connect-bank?intent=new";
+
+        var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-1", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+        Assert.NotNull(outcome.AppReturnUri);
+        Assert.StartsWith(
+            "exp://192.168.0.11:8081/--/(tabs)/accounts/connect-bank",
+            outcome.AppReturnUri,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task StartLink_InvalidConfiguration_ReturnsActionableError()
     {
         var options = ValidSandboxOptions();
@@ -128,6 +154,7 @@ public class OpenBankingIntegrationTests
         liveOptions.Environment = "live";
         liveOptions.AuthBaseUrl = "https://auth.truelayer.com";
         liveOptions.ApiBaseUrl = "https://api.truelayer.com";
+        liveOptions.RedirectUri = "https://api.finance.nsireland.ie/api/banking/truelayer/callback";
 
         var liveAuthService = harness.BuildAuthService(
             liveOptions);
@@ -580,7 +607,7 @@ public class OpenBankingIntegrationTests
 
         public BankConnectionService CreateConnectionService()
         {
-            return new BankConnectionService(DbContext, _auditService);
+            return new BankConnectionService(DbContext, _auditService, NullLogger<BankConnectionService>.Instance);
         }
 
         public async Task<User> CreateUserAsync(string email)

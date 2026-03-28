@@ -19,6 +19,9 @@ public static class TransactionsModule
         group.MapPost("/", CreateTransactionEndpoint.HandleAsync)
             .WithName("CreateTransaction");
 
+        group.MapPatch("/{id:guid}", UpdateTransactionMetadataEndpoint.HandleAsync)
+            .WithName("UpdateTransactionMetadata");
+
         return app;
     }
 }

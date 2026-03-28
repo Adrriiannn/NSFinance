@@ -28,7 +28,7 @@ export const HEADER_CONSTANTS = {
   scrollTransitionDuration: 160,
   zIndex: zIndex.tabBar + 5,
   blurOrTintOpacity: 0.22,
-  greetingTitleMaxWidth: "72%",
+  greetingTitleMaxWidth: "100%",
   greetingSubtitleMaxWidth: "100%",
   greetingTitleSubtitleGap: 2
 } as const;

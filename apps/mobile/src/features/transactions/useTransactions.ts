@@ -1,12 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
-import type { AccountDto, CreateTransactionRequest, DashboardSummaryDto, TransactionDto } from "../../types/api";
+import type {
+  AccountDto,
+  CreateTransactionRequest,
+  DashboardSummaryDto,
+  TransactionDto,
+  UpdateTransactionMetadataRequest
+} from "../../types/api";
 import {
   createTransaction,
   getTransactionById,
   getTransactions,
-  getTransactionsForAccount
+  getTransactionsForAccount,
+  updateTransactionMetadata
 } from "./transactionsApi";
 
 export function useTransactionsQuery(accountId?: string) {
@@ -28,7 +35,7 @@ export function useAccountTransactionsQuery(accountId: string) {
 
 export function useTransactionDetailQuery(transactionId: string) {
   return useQuery({
-    queryKey: ["transactions", "detail", transactionId],
+    queryKey: queryKeys.transactions.detail(transactionId),
     queryFn: () => getTransactionById(transactionId),
     enabled: Boolean(transactionId)
   });
@@ -41,6 +48,18 @@ function prependTransaction(list: TransactionDto[] | undefined, transaction: Tra
   }
 
   return [transaction, ...existing];
+}
+
+function replaceTransaction(list: TransactionDto[] | undefined, transaction: TransactionDto) {
+  const existing = list ?? [];
+  const index = existing.findIndex((item) => item.id === transaction.id);
+  if (index < 0) {
+    return existing;
+  }
+
+  const next = [...existing];
+  next[index] = transaction;
+  return next;
 }
 
 export function useCreateTransactionMutation() {
@@ -109,6 +128,52 @@ export function useCreateTransactionMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.detail(transaction.accountId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all })
+      ]);
+    }
+  });
+}
+
+export function useUpdateTransactionMetadataMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      transactionId,
+      payload
+    }: {
+      transactionId: string;
+      payload: UpdateTransactionMetadataRequest;
+    }) => updateTransactionMetadata(transactionId, payload),
+    onSuccess: async (transaction) => {
+      queryClient.setQueryData(queryKeys.transactions.detail(transaction.id), transaction);
+      queryClient.setQueryData<TransactionDto[]>(
+        queryKeys.transactions.list(),
+        (current) => replaceTransaction(current, transaction)
+      );
+      queryClient.setQueryData<TransactionDto[]>(
+        queryKeys.transactions.list(transaction.accountId),
+        (current) => replaceTransaction(current, transaction)
+      );
+      queryClient.setQueryData<TransactionDto[]>(
+        queryKeys.accounts.transactions(transaction.accountId),
+        (current) => replaceTransaction(current, transaction)
+      );
+      queryClient.setQueryData<DashboardSummaryDto | undefined>(
+        queryKeys.dashboard.summary,
+        (current) =>
+          current
+            ? {
+                ...current,
+                recentTransactions: replaceTransaction(current.recentTransactions, transaction)
+              }
+            : current
+      );
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.transactions(transaction.accountId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.detail(transaction.id) })
       ]);
     }
   });

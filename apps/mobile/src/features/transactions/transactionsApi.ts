@@ -1,5 +1,9 @@
 import { apiRequest } from "../../lib/api/client";
-import type { CreateTransactionRequest, TransactionDto } from "../../types/api";
+import type {
+  CreateTransactionRequest,
+  TransactionDto,
+  UpdateTransactionMetadataRequest
+} from "../../types/api";
 
 export function getTransactions(accountId?: string): Promise<TransactionDto[]> {
   const suffix = accountId ? `?accountId=${encodeURIComponent(accountId)}` : "";
@@ -19,6 +23,16 @@ export function createTransaction(
 ): Promise<TransactionDto> {
   return apiRequest<TransactionDto>("/api/transactions", {
     method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateTransactionMetadata(
+  transactionId: string,
+  payload: UpdateTransactionMetadataRequest
+): Promise<TransactionDto> {
+  return apiRequest<TransactionDto>(`/api/transactions/${transactionId}`, {
+    method: "PATCH",
     body: JSON.stringify(payload)
   });
 }

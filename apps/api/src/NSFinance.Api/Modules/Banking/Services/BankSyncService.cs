@@ -53,15 +53,6 @@ public sealed class BankSyncService(
         Guid connectionId,
         CancellationToken cancellationToken)
     {
-        var configResult = configurationService.Resolve();
-        if (!configResult.Succeeded)
-        {
-            return ServiceResult<BankSyncResult>.Fail(
-                configResult.Error!.Message,
-                configResult.Error.Code,
-                configResult.Error.StatusCode);
-        }
-
         var connectionResult = await bankConnectionService.GetConnectionForSyncAsync(userId, connectionId, cancellationToken);
         if (!connectionResult.Succeeded)
         {
@@ -72,6 +63,27 @@ public sealed class BankSyncService(
         }
 
         var connection = connectionResult.Value!;
+        var configResult = configurationService.Resolve();
+        if (!configResult.Succeeded)
+        {
+            await bankConnectionService.MarkConnectionStateAsync(
+                connection,
+                BankConnectionStatuses.Failed,
+                configResult.Error!.Code,
+                configResult.Error.Message,
+                cancellationToken);
+
+            logger.LogWarning(
+                "Bank sync configuration invalid for connectionId={ConnectionId} code={Code}",
+                connection.Id,
+                configResult.Error.Code);
+
+            return ServiceResult<BankSyncResult>.Fail(
+                configResult.Error.Message,
+                configResult.Error.Code,
+                configResult.Error.StatusCode);
+        }
+
         if (!string.Equals(connection.ProviderName, BankingProviders.TrueLayer, StringComparison.OrdinalIgnoreCase))
         {
             return ServiceResult<BankSyncResult>.Fail(

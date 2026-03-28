@@ -53,6 +53,17 @@ public class TrueLayerAuthServiceTests
         Assert.Equal(["accounts", "balance", "transactions", "offline_access"], scopes);
     }
 
+    [Theory]
+    [InlineData("nsfinance://accounts/connect-bank?intent=new")]
+    [InlineData("nsfinance://modals/add-account?intent=new")]
+    [InlineData("exp://192.168.0.11:8081/--/accounts/connect-bank?intent=new")]
+    [InlineData("exp://192.168.0.11:8081/--/modals/add-account?intent=new")]
+    public void ReturnUriContract_Normalize_AcceptsCurrentAndLegacyRoutes(string input)
+    {
+        var normalized = TrueLayerReturnUriContract.Normalize(input);
+        Assert.NotNull(normalized);
+    }
+
     private static Dictionary<string, string> ParseQuery(string query)
     {
         return query.TrimStart('?')

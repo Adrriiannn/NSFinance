@@ -82,7 +82,7 @@ const HEADER = {
   titleMaxWidthDefault: "56%",
   titleMaxWidthCentered: "62%",
   subtitleMaxWidth: "72%",
-  greetingTitleMaxWidth: "72%",
+  greetingTitleMaxWidth: "100%",
   greetingSubtitleMaxWidth: "100%",
   greetingGap: 2,
   inlineButtonHeight: 36,
@@ -319,8 +319,7 @@ export function HeaderShell({
             >
               <Text
                 numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.84}
+                ellipsizeMode="tail"
                 style={[
                   isGreeting ? styles.greetingTitle : styles.title,
                   centeredTitle ? styles.titleCenteredText : null
@@ -331,8 +330,7 @@ export function HeaderShell({
               {subtitle ? (
                 <Text
                   numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.92}
+                  ellipsizeMode="tail"
                   style={[
                     styles.subtitle,
                     {
@@ -400,7 +398,8 @@ const styles = createRuntimeStyleSheet(() => ({
     justifyContent: "center"
   },
   titleWrap: {
-    flexShrink: 1
+    flexShrink: 1,
+    minWidth: 0
   },
   titleCentered: {
     alignItems: "center",
