@@ -130,6 +130,23 @@ function logGoogleAuthDebug(event: string, details?: Record<string, unknown>) {
   console.info(`[GoogleAuth] ${event}`, details);
 }
 
+function summarizeClientId(clientId: string | null | undefined): string {
+  if (!clientId) {
+    return "missing";
+  }
+
+  const trimmed = clientId.trim();
+  if (!trimmed) {
+    return "missing";
+  }
+
+  if (trimmed.length <= 14) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-6)}`;
+}
+
 export function useGoogleSignIn() {
   const googleLoginMutation = useGoogleLoginMutation();
   const [isPromptInFlight, setIsPromptInFlight] = useState(false);
@@ -153,7 +170,8 @@ export function useGoogleSignIn() {
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: safeGoogleWebClientId,
     androidClientId: safeGoogleAndroidClientId,
-    clientId: safeGoogleWebClientId,
+    // We perform a single explicit exchange path below to avoid double-exchanging the same code.
+    shouldAutoExchangeCode: false,
     state: oauthState,
     selectAccount: true,
     scopes: ["openid", "profile", "email"]
@@ -169,7 +187,8 @@ export function useGoogleSignIn() {
     logGoogleAuthDebug("request_ready", {
       redirectUri: request.redirectUri,
       hasClientId: Boolean(activeClientId),
-      oauthState
+      oauthState,
+      requestClientId: summarizeClientId(request.clientId)
     });
   }, [activeClientId, oauthState, request]);
 
@@ -199,6 +218,7 @@ export function useGoogleSignIn() {
       if (!idToken) {
         const code = extractAuthorizationCode(authResult);
         const codeVerifier = request?.codeVerifier ?? null;
+        const requestClientId = request?.clientId?.trim() ?? null;
 
         if (!code) {
           pushGoogleOAuthDebugStep("id_token_missing", "No id_token and no authorization code in callback.");
@@ -208,7 +228,7 @@ export function useGoogleSignIn() {
           };
         }
 
-        if (!activeClientId || !request?.redirectUri || !codeVerifier) {
+        if (!requestClientId || !request?.redirectUri || !codeVerifier) {
           pushGoogleOAuthDebugStep("code_exchange_blocked", "Missing clientId, redirectUri, or codeVerifier.");
           return {
             succeeded: false,
@@ -221,7 +241,7 @@ export function useGoogleSignIn() {
         try {
           const tokenResponse = await exchangeCodeAsync(
             {
-              clientId: activeClientId,
+              clientId: requestClientId,
               code,
               redirectUri: request.redirectUri,
               extraParams: {
@@ -316,11 +336,12 @@ export function useGoogleSignIn() {
         };
       }
     },
-    [activeClientId, googleLoginMutation, request?.codeVerifier, request?.redirectUri]
+    [googleLoginMutation, request?.clientId, request?.codeVerifier, request?.redirectUri]
   );
 
   const signInWithGoogle = useCallback(async (): Promise<GoogleSignInResult> => {
     resetGoogleOAuthDebugState();
+    googleLoginMutation.reset();
     pushGoogleOAuthDebugStep("sign_in_started", "Google sign-in button pressed.");
 
     const isExpoLikeRedirect = request?.redirectUri?.startsWith("exp://") ?? false;
@@ -363,9 +384,14 @@ export function useGoogleSignIn() {
     setIsPromptInFlight(true);
     try {
       logGoogleAuthDebug("prompt_open", {
-        redirectUri: request.redirectUri
+        redirectUri: request.redirectUri,
+        clientId: summarizeClientId(request.clientId),
+        oauthState
       });
-      pushGoogleOAuthDebugStep("prompt_opened", request.redirectUri);
+      pushGoogleOAuthDebugStep(
+        "prompt_opened",
+        `${request.redirectUri} client=${summarizeClientId(request.clientId)} state=${oauthState}`
+      );
       const authResult = await promptAsync();
       logGoogleAuthDebug("prompt_result", {
         type: authResult.type
@@ -374,6 +400,7 @@ export function useGoogleSignIn() {
 
       if (authResult.type === "cancel" || authResult.type === "dismiss") {
         pushGoogleOAuthDebugStep("prompt_cancelled", authResult.type);
+        resetGoogleOAuthFlowState("manual_retry");
         return {
           succeeded: false,
           cancelled: true,
@@ -383,15 +410,22 @@ export function useGoogleSignIn() {
 
       if (authResult.type !== "success") {
         pushGoogleOAuthDebugStep("prompt_non_success", authResult.type);
+        resetGoogleOAuthFlowState("manual_retry");
         return {
           succeeded: false,
           message: "Google sign-in could not be completed."
         };
       }
 
-      return await completeGoogleSignIn(authResult);
+      const completionResult = await completeGoogleSignIn(authResult);
+      if (!completionResult.succeeded) {
+        resetGoogleOAuthFlowState("manual_retry");
+      }
+
+      return completionResult;
     } catch (error) {
       pushGoogleOAuthDebugStep("prompt_exception", formatUnknownError(error));
+      resetGoogleOAuthFlowState("manual_retry");
       return {
         succeeded: false,
         message: formatUnknownError(error)
@@ -399,7 +433,7 @@ export function useGoogleSignIn() {
     } finally {
       setIsPromptInFlight(false);
     }
-  }, [completeGoogleSignIn, isConfigured, isPromptInFlight, promptAsync, request]);
+  }, [completeGoogleSignIn, googleLoginMutation, isConfigured, isPromptInFlight, oauthState, promptAsync, request]);
 
   return {
     signInWithGoogle,
