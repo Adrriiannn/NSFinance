@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { exchangeCodeAsync } from "expo-auth-session";
 import * as Google from "expo-auth-session/providers/google";
@@ -151,6 +151,7 @@ export function useGoogleSignIn() {
   const googleLoginMutation = useGoogleLoginMutation();
   const [isPromptInFlight, setIsPromptInFlight] = useState(false);
   const oauthRequestEpoch = useGoogleOAuthRequestEpoch();
+  const lastFlowResetEpochRef = useRef<number | null>(null);
 
   const googleWebClientId = readGoogleWebClientId();
   const googleAndroidClientId = readActiveGoogleAndroidClientId();
@@ -204,6 +205,11 @@ export function useGoogleSignIn() {
   }, [response]);
 
   useEffect(() => {
+    if (lastFlowResetEpochRef.current === oauthRequestEpoch) {
+      return;
+    }
+
+    lastFlowResetEpochRef.current = oauthRequestEpoch;
     setIsPromptInFlight(false);
     googleLoginMutation.reset();
   }, [googleLoginMutation, oauthRequestEpoch]);
