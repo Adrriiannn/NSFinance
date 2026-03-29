@@ -14,6 +14,9 @@ public class Transaction
     public int? TaxonomySubcategoryId { get; set; }
     public string? Reason { get; set; }
     public string? Notes { get; set; }
+    public TransactionTransferKind? TransferKind { get; set; }
+    public Guid? LinkedTransferTransactionId { get; set; }
+    public DateTime? LinkedTransferMatchedUtc { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? MetadataUpdatedUtc { get; set; }
 

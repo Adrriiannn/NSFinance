@@ -6,11 +6,15 @@ namespace NSFinance.Api.Modules.ExpenseTracker.Services;
 public sealed class ExpenseTaxonomyService
 {
     public const int TransferDomainId = 920;
+    public const int TransferDefaultCategoryId = 92010;
+    public const int TransferDefaultSubcategoryId = 920101;
     private readonly NSFinanceTaxonomyCatalog catalog = NSFinanceTaxonomyCatalog.Instance;
 
     public ExpenseTaxonomyResponseDto GetTaxonomy(bool includeSystem = false)
     {
         var domains = catalog.GetDomains(includeSystem)
+            .OrderBy(domain => domain.SortOrder)
+            .ThenBy(domain => domain.Id)
             .Select(MapDomain)
             .ToList();
 
@@ -74,11 +78,6 @@ public sealed class ExpenseTaxonomyService
             return null;
         }
 
-        if (domain.Id == TransferDomainId)
-        {
-            return category;
-        }
-
         return !domain.IsSystemDomain && domain.IsUserSelectable && category.IsUserSelectable
             ? category
             : null;
@@ -94,11 +93,6 @@ public sealed class ExpenseTaxonomyService
         if (!catalog.DomainsById.TryGetValue(subcategory.DomainId, out var domain) || !domain.IsActive)
         {
             return null;
-        }
-
-        if (domain.Id == TransferDomainId)
-        {
-            return subcategory;
         }
 
         return !domain.IsSystemDomain && domain.IsUserSelectable && subcategory.IsUserSelectable
@@ -143,7 +137,11 @@ public sealed class ExpenseTaxonomyService
             domain.IsLikelyRecurring,
             domain.IsLikelyRefundable,
             domain.Notes,
-            domain.Categories.Select(MapCategory).ToList());
+            domain.Categories
+                .OrderBy(category => category.SortOrder)
+                .ThenBy(category => category.Id)
+                .Select(MapCategory)
+                .ToList());
     }
 
     private static ExpenseTaxonomyCategoryDto MapCategory(TaxonomyCategoryDefinition category)
@@ -162,7 +160,11 @@ public sealed class ExpenseTaxonomyService
             category.IsLikelyRecurring,
             category.IsLikelyRefundable,
             category.Notes,
-            category.Subcategories.Select(MapSubcategory).ToList());
+            category.Subcategories
+                .OrderBy(subcategory => subcategory.SortOrder)
+                .ThenBy(subcategory => subcategory.Id)
+                .Select(MapSubcategory)
+                .ToList());
     }
 
     private static ExpenseTaxonomySubcategoryDto MapSubcategory(TaxonomySubcategoryDefinition subcategory)

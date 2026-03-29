@@ -12,6 +12,9 @@ function isTransferSubcategoryId(subcategoryId: number | null) {
 
 export function isTransferTransaction(transaction: TransactionDto) {
   return (
+    transaction.transferKind === "manual_transfer"
+    || transaction.transferKind === "linked_internal_transfer"
+    ||
     transaction.taxonomyDomainId === TRANSFER_DOMAIN_ID
     || isTransferCategoryId(transaction.taxonomyCategoryId)
     || isTransferSubcategoryId(transaction.taxonomySubcategoryId)
@@ -25,4 +28,3 @@ export function isReportableExpenseTransaction(transaction: TransactionDto) {
 export function isReportableIncomeTransaction(transaction: TransactionDto) {
   return transaction.amount > 0 && !isTransferTransaction(transaction);
 }
-

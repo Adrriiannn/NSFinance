@@ -119,6 +119,8 @@ public sealed class TransactionService(
                 null,
                 null,
                 null,
+                null,
+                null,
                 transaction.BookedAtUtc,
                 transaction.CreatedUtc,
                 null,
@@ -169,11 +171,17 @@ public sealed class TransactionService(
             return (null, "transaction_subcategory_mismatch", "Selected subcategory does not belong to the selected category.");
         }
 
+        await UnlinkCounterpartAsync(transaction, cancellationToken);
+
+        var isTransferCategory = category.DomainId == ExpenseTaxonomyService.TransferDomainId;
         transaction.Reason = NormalizeOptionalText(request.Reason);
         transaction.Notes = NormalizeOptionalText(request.Notes);
         transaction.TaxonomyDomainId = subcategory?.DomainId ?? category.DomainId;
         transaction.TaxonomyCategoryId = category.Id;
         transaction.TaxonomySubcategoryId = subcategory?.Id;
+        transaction.TransferKind = isTransferCategory ? TransactionTransferKind.Manual : null;
+        transaction.LinkedTransferTransactionId = null;
+        transaction.LinkedTransferMatchedUtc = null;
         transaction.MetadataUpdatedUtc = DateTime.UtcNow;
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -192,6 +200,55 @@ public sealed class TransactionService(
     private static string? NormalizeOptionalText(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private async Task UnlinkCounterpartAsync(Transaction transaction, CancellationToken cancellationToken)
+    {
+        if (!transaction.LinkedTransferTransactionId.HasValue)
+        {
+            return;
+        }
+
+        var counterpart = await dbContext.Transactions
+            .Include(x => x.FinancialAccount)
+            .SingleOrDefaultAsync(
+                x => x.Id == transaction.LinkedTransferTransactionId.Value
+                    && x.FinancialAccount != null
+                    && x.FinancialAccount.UserId == currentUserProvider.UserId,
+                cancellationToken);
+
+        if (counterpart is null)
+        {
+            return;
+        }
+
+        counterpart.LinkedTransferTransactionId = null;
+        counterpart.LinkedTransferMatchedUtc = null;
+
+        if (counterpart.TransferKind == TransactionTransferKind.LinkedInternal)
+        {
+            counterpart.TransferKind = null;
+
+            if (!counterpart.MetadataUpdatedUtc.HasValue
+                && counterpart.TaxonomyDomainId == ExpenseTaxonomyService.TransferDomainId
+                && counterpart.TaxonomyCategoryId == ExpenseTaxonomyService.TransferDefaultCategoryId
+                && counterpart.TaxonomySubcategoryId == ExpenseTaxonomyService.TransferDefaultSubcategoryId)
+            {
+                counterpart.TaxonomyDomainId = null;
+                counterpart.TaxonomyCategoryId = null;
+                counterpart.TaxonomySubcategoryId = null;
+            }
+        }
+    }
+
+    private static string? MapTransferKind(TransactionTransferKind? transferKind)
+    {
+        return transferKind switch
+        {
+            TransactionTransferKind.Manual => "manual_transfer",
+            TransactionTransferKind.LinkedInternal => "linked_internal_transfer",
+            _ => null
+        };
     }
 
     private TransactionDto MapToDto(TransactionReadModel transaction)
@@ -216,6 +273,8 @@ public sealed class TransactionService(
             taxonomyCategoryName,
             transaction.TaxonomySubcategoryId,
             taxonomySubcategoryName,
+            MapTransferKind(transaction.TransferKind),
+            transaction.LinkedTransferTransactionId,
             transaction.Reason,
             transaction.Notes,
             transaction.BookedAtUtc,
@@ -238,6 +297,8 @@ public sealed class TransactionService(
             x.TaxonomyDomainId,
             x.TaxonomyCategoryId,
             x.TaxonomySubcategoryId,
+            x.TransferKind,
+            x.LinkedTransferTransactionId,
             x.Reason,
             x.Notes,
             x.BookedAtUtc,
@@ -257,6 +318,8 @@ public sealed class TransactionService(
         int? TaxonomyDomainId,
         int? TaxonomyCategoryId,
         int? TaxonomySubcategoryId,
+        TransactionTransferKind? TransferKind,
+        Guid? LinkedTransferTransactionId,
         string? Reason,
         string? Notes,
         DateTime BookedAtUtc,

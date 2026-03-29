@@ -91,6 +91,17 @@ NSFinance now treats imported banking data as a long-term ledger:
 
 Provider limits still apply. NSFinance requests the widest practical range, but provider/API caps may return less.
 
+## Internal transfer semantics (linked accounts)
+
+NSFinance distinguishes true economic activity from money moved between a user’s own linked accounts:
+
+- `Transfer` remains a visible taxonomy domain/category that users can assign manually.
+- Sync applies linked-account internal transfer matching using same-user, opposite-sign, same amount/currency, timing tolerance, and transfer-hint signals.
+- Matched pairs persist explicit linkage (`LinkedTransferTransactionId`) and transfer semantics (`TransferKind = linked_internal_transfer`) on both sides.
+- Manual transfer categorization sets `TransferKind = manual_transfer` without requiring a matched counterpart.
+- Global income/expense reporting treats both manual and linked internal transfers as neutral.
+- Per-account ledgers still show the actual debit/credit movement for account-level truth.
+
 ## Consent expiry and reconfirmation continuity
 
 - Consent expiry (`reauth_required` / `expired`) is treated as an access problem, not a history deletion event.

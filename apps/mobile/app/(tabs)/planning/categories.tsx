@@ -33,35 +33,9 @@ import {
   type TransactionDetailCategorySelection
 } from "../../../src/features/expenseTracker/categoryPickerBridge";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
-import { TRANSFER_DOMAIN_ID } from "../../../src/features/transactions/transferClassification";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
 import { getFloatingTabBarInset } from "../../../src/theme/insets";
 import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../../../src/theme/tokens";
-import type { ExpenseTaxonomyDomainDto } from "../../../src/types/api";
-
-function normalizeDomainForCategoriesPage(domain: ExpenseTaxonomyDomainDto): ExpenseTaxonomyDomainDto {
-  if (domain.id !== TRANSFER_DOMAIN_ID) {
-    return domain;
-  }
-
-  return {
-    ...domain,
-    isUserSelectable: true,
-    isSystemDomain: false,
-    categories: domain.categories
-      .filter((category) => category.isActive)
-      .map((category) => ({
-        ...category,
-        isUserSelectable: true,
-        subcategories: category.subcategories
-          .filter((subcategory) => subcategory.isActive)
-          .map((subcategory) => ({
-            ...subcategory,
-            isUserSelectable: true
-          }))
-      }))
-  };
-}
 
 export default function PlanningHubCategoriesScreen() {
   useThemeTokens();
@@ -113,9 +87,9 @@ export default function PlanningHubCategoriesScreen() {
         .filter(
           (domain) =>
             domain.isActive
-            && ((!domain.isSystemDomain && domain.isUserSelectable) || domain.id === TRANSFER_DOMAIN_ID)
-        )
-        .map(normalizeDomainForCategoriesPage),
+            && !domain.isSystemDomain
+            && domain.isUserSelectable
+        ),
     [taxonomyQuery.data?.domains]
   );
   const flattenedSelections = useMemo(() => flattenVisibleExpenseTaxonomy(visibleDomains), [visibleDomains]);

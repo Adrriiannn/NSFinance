@@ -16,12 +16,17 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
         builder.Property(x => x.Description).HasMaxLength(512).IsRequired();
         builder.Property(x => x.Reason).HasMaxLength(140);
         builder.Property(x => x.Notes).HasMaxLength(1200);
+        builder.Property(x => x.TransferKind).HasConversion<int?>();
+        builder.Property(x => x.LinkedTransferTransactionId);
+        builder.Property(x => x.LinkedTransferMatchedUtc);
         builder.Property(x => x.BookedAtUtc).IsRequired();
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.MetadataUpdatedUtc);
 
         builder.HasIndex(x => x.TaxonomyCategoryId);
         builder.HasIndex(x => x.TaxonomySubcategoryId);
+        builder.HasIndex(x => x.TransferKind);
+        builder.HasIndex(x => x.LinkedTransferTransactionId);
 
         builder.HasOne(x => x.FinancialAccount)
             .WithMany(x => x.Transactions)

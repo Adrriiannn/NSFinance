@@ -32,7 +32,7 @@ export default function PlannerTransactionDetailScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const transactionId = params.id ?? "";
   const transactionQuery = useTransactionDetailQuery(transactionId);
-  const taxonomyQuery = useExpenseTrackerTaxonomyQuery({ includeSystem: true });
+  const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const updateMetadataMutation = useUpdateTransactionMetadataMutation();
 
   const [reason, setReason] = useState("");
@@ -46,7 +46,8 @@ export default function PlannerTransactionDetailScreen() {
       (taxonomyQuery.data?.domains ?? []).filter(
         (domain) =>
           domain.isActive &&
-          ((!domain.isSystemDomain && domain.isUserSelectable) || domain.id === TRANSFER_DOMAIN_ID)
+          !domain.isSystemDomain &&
+          domain.isUserSelectable
       ),
     [taxonomyQuery.data?.domains]
   );
@@ -57,6 +58,7 @@ export default function PlannerTransactionDetailScreen() {
       {
         id: number;
         name: string;
+        domainId: number;
         domainName: string;
         subcategories: { id: number; name: string }[];
       }
@@ -67,18 +69,19 @@ export default function PlannerTransactionDetailScreen() {
         .filter(
           (category) =>
             category.isActive &&
-            ((domain.id === TRANSFER_DOMAIN_ID) || category.isUserSelectable)
+            category.isUserSelectable
         )
         .forEach((category) => {
           map.set(category.id, {
             id: category.id,
             name: category.name,
+            domainId: domain.id,
             domainName: domain.name,
             subcategories: category.subcategories
               .filter(
                 (subcategory) =>
                   subcategory.isActive &&
-                  ((domain.id === TRANSFER_DOMAIN_ID) || subcategory.isUserSelectable)
+                  subcategory.isUserSelectable
               )
               .map((subcategory) => ({
                 id: subcategory.id,
@@ -198,6 +201,10 @@ export default function PlannerTransactionDetailScreen() {
   const subcategoryLabel = selectedSubcategory?.name
     ?? transactionQuery.data?.taxonomySubcategoryName
     ?? "Not set";
+  const showsTransferTotalsHint = (
+    selectedCategory?.domainId === TRANSFER_DOMAIN_ID
+    || transactionQuery.data?.taxonomyDomainId === TRANSFER_DOMAIN_ID
+  );
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
@@ -301,6 +308,11 @@ export default function PlannerTransactionDetailScreen() {
               </Pressable>
             </View>
             {errors.category ? <Text style={styles.fieldError}>{errors.category}</Text> : null}
+            {showsTransferTotalsHint ? (
+              <Text style={styles.transferHint}>
+                Transfers are excluded from overall income and expense totals.
+              </Text>
+            ) : null}
           </GlassCard>
 
           {updateMetadataMutation.isError ? (
@@ -410,6 +422,10 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   fieldError: {
     color: palette.negative,
+    ...typography.caption
+  },
+  transferHint: {
+    color: palette.textSecondary,
     ...typography.caption
   },
   actions: {

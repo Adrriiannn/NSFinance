@@ -5,6 +5,7 @@ using NSFinance.Api.Modules.Insights.DTOs;
 using NSFinance.Api.Modules.Transactions.DTOs;
 using NSFinance.Api.Modules.Users.Services;
 using NSFinance.Api.Persistence;
+using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.Insights.Services;
 
@@ -47,7 +48,9 @@ public sealed class DashboardService(
             .Where(x =>
                 x.BookedAtUtc >= thirtyDaysAgo
                 && x.Amount < 0
-                && x.TaxonomyDomainId != ExpenseTaxonomyService.TransferDomainId)
+                && x.TaxonomyDomainId != ExpenseTaxonomyService.TransferDomainId
+                && x.TransferKind != TransactionTransferKind.Manual
+                && x.TransferKind != TransactionTransferKind.LinkedInternal)
             .SumAsync(x => Math.Abs(x.Amount), cancellationToken);
 
         var recentTransactions = await transactionQuery
@@ -67,6 +70,8 @@ public sealed class DashboardService(
                 x.TaxonomyDomainId,
                 x.TaxonomyCategoryId,
                 x.TaxonomySubcategoryId,
+                x.TransferKind,
+                x.LinkedTransferTransactionId,
                 x.Reason,
                 x.Notes,
                 x.BookedAtUtc,
@@ -98,6 +103,12 @@ public sealed class DashboardService(
                     taxonomyCategoryName,
                     x.TaxonomySubcategoryId,
                     taxonomySubcategoryName,
+                    x.TransferKind == TransactionTransferKind.Manual
+                        ? "manual_transfer"
+                        : x.TransferKind == TransactionTransferKind.LinkedInternal
+                            ? "linked_internal_transfer"
+                            : null,
+                    x.LinkedTransferTransactionId,
                     x.Reason,
                     x.Notes,
                     x.BookedAtUtc,

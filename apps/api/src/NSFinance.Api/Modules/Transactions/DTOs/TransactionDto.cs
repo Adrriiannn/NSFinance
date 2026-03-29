@@ -15,6 +15,8 @@ public sealed record TransactionDto(
     string? TaxonomyCategoryName,
     int? TaxonomySubcategoryId,
     string? TaxonomySubcategoryName,
+    string? TransferKind,
+    Guid? LinkedTransferTransactionId,
     string? Reason,
     string? Notes,
     DateTime BookedAtUtc,

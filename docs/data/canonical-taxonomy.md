@@ -1,6 +1,6 @@
 # NSFinance Canonical Taxonomy
 
-Version: `2026-03-14-v1`
+Version: `2026-03-29-v1`
 
 ## Purpose
 - Manual expense tracking in the expense mini-app
@@ -18,7 +18,9 @@ Version: `2026-03-14-v1`
 
 ## Visibility Rules
 - Manual expense entry only surfaces user-visible domains
-- System/background domains `900`, `910`, and `920` stay hidden from manual selection
+- System/background domains `900` and `910` stay hidden from manual selection
+- Domain `920` (Transfers) is user-visible and manually selectable
+- User-facing domain order is sort-driven: `180 Savings & Investments` -> `920 Transfers` -> `190 Personal Care`
 - The expense picker stores the final selected canonical sub-category id
 
 ## Refunds, Reimbursements & Adjustments
@@ -1111,8 +1113,9 @@ Version: `2026-03-14-v1`
   - `910503` Rental Income
   - `910504` Miscellaneous Income
 
-### 920 Transfers (system hidden)
-- System-only domain for internal transfers and money movement that should stay hidden from manual expense selection.
+### 920 Transfers (user-visible)
+- User-visible domain for internal transfers and money movement.
+- Transfer-tagged activity should remain neutral in income/expense reporting metrics.
 
 - `92010` Internal Transfers
   - `920101` Bank Account Transfer

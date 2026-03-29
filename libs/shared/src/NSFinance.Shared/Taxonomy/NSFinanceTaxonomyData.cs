@@ -9126,10 +9126,10 @@ internal static class NSFinanceTaxonomyData
         new(
             920,
             "Transfers",
-            "System-only domain for internal transfers and money movement that should stay hidden from manual expense selection.",
-            false,
+            "User-visible domain for internal money movement and transfer activity.",
             true,
-            250,
+            false,
+            95,
             true,
             [
                 new(
@@ -9137,7 +9137,7 @@ internal static class NSFinanceTaxonomyData
                     920,
                     "Internal Transfers",
                     "Internal Transfers.",
-                    false,
+                    true,
                     10,
                     true,
                     [
@@ -9147,7 +9147,7 @@ internal static class NSFinanceTaxonomyData
                             92010,
                             "Bank Account Transfer",
                             "Bank Account Transfer.",
-                            false,
+                            true,
                             1,
                             true),
                         new(
@@ -9156,7 +9156,7 @@ internal static class NSFinanceTaxonomyData
                             92010,
                             "Savings Transfer",
                             "Savings Transfer.",
-                            false,
+                            true,
                             2,
                             true),
                         new(
@@ -9165,7 +9165,7 @@ internal static class NSFinanceTaxonomyData
                             92010,
                             "Investment Transfer",
                             "Investment Transfer.",
-                            false,
+                            true,
                             3,
                             true),
                         new(
@@ -9174,7 +9174,7 @@ internal static class NSFinanceTaxonomyData
                             92010,
                             "Wallet Transfer",
                             "Wallet Transfer.",
-                            false,
+                            true,
                             4,
                             true),
                     ]),
@@ -9183,7 +9183,7 @@ internal static class NSFinanceTaxonomyData
                     920,
                     "Liability & Card Transfers",
                     "Liability & Card Transfers.",
-                    false,
+                    true,
                     20,
                     true,
                     [
@@ -9193,7 +9193,7 @@ internal static class NSFinanceTaxonomyData
                             92020,
                             "Credit Card Payment Transfer",
                             "Credit Card Payment Transfer.",
-                            false,
+                            true,
                             1,
                             true),
                         new(
@@ -9202,7 +9202,7 @@ internal static class NSFinanceTaxonomyData
                             92020,
                             "Loan Account Transfer",
                             "Loan Account Transfer.",
-                            false,
+                            true,
                             2,
                             true),
                         new(
@@ -9211,7 +9211,7 @@ internal static class NSFinanceTaxonomyData
                             92020,
                             "Debt Consolidation Transfer",
                             "Debt Consolidation Transfer.",
-                            false,
+                            true,
                             3,
                             true),
                     ]),
@@ -9220,7 +9220,7 @@ internal static class NSFinanceTaxonomyData
                     920,
                     "Cash Movement",
                     "Cash Movement.",
-                    false,
+                    true,
                     30,
                     true,
                     [
@@ -9230,7 +9230,7 @@ internal static class NSFinanceTaxonomyData
                             92030,
                             "Cash Withdrawal",
                             "Cash Withdrawal.",
-                            false,
+                            true,
                             1,
                             true),
                         new(
@@ -9239,7 +9239,7 @@ internal static class NSFinanceTaxonomyData
                             92030,
                             "Cash Deposit",
                             "Cash Deposit.",
-                            false,
+                            true,
                             2,
                             true),
                         new(
@@ -9248,7 +9248,7 @@ internal static class NSFinanceTaxonomyData
                             92030,
                             "ATM Withdrawal Transfer",
                             "ATM Withdrawal Transfer.",
-                            false,
+                            true,
                             3,
                             true),
                     ]),
@@ -9257,7 +9257,7 @@ internal static class NSFinanceTaxonomyData
                     920,
                     "Other Transfers",
                     "Other Transfers.",
-                    false,
+                    true,
                     40,
                     true,
                     [
@@ -9267,7 +9267,7 @@ internal static class NSFinanceTaxonomyData
                             92040,
                             "Brokerage Funding Transfer",
                             "Brokerage Funding Transfer.",
-                            false,
+                            true,
                             1,
                             true),
                         new(
@@ -9276,7 +9276,7 @@ internal static class NSFinanceTaxonomyData
                             92040,
                             "Currency Transfer",
                             "Currency Transfer.",
-                            false,
+                            true,
                             2,
                             true),
                         new(
@@ -9285,7 +9285,7 @@ internal static class NSFinanceTaxonomyData
                             92040,
                             "Other Internal Money Movement",
                             "Other Internal Money Movement.",
-                            false,
+                            true,
                             3,
                             true),
                     ]),
