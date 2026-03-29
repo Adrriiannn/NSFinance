@@ -29,6 +29,7 @@ import {
   useDeleteAccountMutation,
   useUpdateAccountMutation
 } from "../../../src/features/accounts/useAccounts";
+import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency } from "../../../src/lib/format";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
@@ -55,6 +56,7 @@ export default function AccountsTabScreen() {
   const accountsQuery = useAccountsQuery();
   const updateAccountMutation = useUpdateAccountMutation();
   const deleteAccountMutation = useDeleteAccountMutation();
+  const connectBankCta = useConnectBankCtaLabels();
   const handledSelectedAccountRef = useRef<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectorVisible, setSelectorVisible] = useState(false);
@@ -171,7 +173,7 @@ export default function AccountsTabScreen() {
             <>
               <HeaderActionButton
                 icon={<Ionicons name="link-outline" size={18} color={palette.textPrimary} />}
-                accessibilityLabel="Connect bank"
+                accessibilityLabel={connectBankCta.primaryLabel}
                 onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
                 style={styles.headerIconAction}
               />
@@ -203,7 +205,7 @@ export default function AccountsTabScreen() {
         <TabEmptyStateCard
           title="No connected accounts"
           subtitle="Connect your bank to start tracking balances and spending."
-          ctaLabel="Connect bank"
+          ctaLabel={connectBankCta.primaryLabel}
           onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
           verticalSpacingMode="tab-aligned"
           hideOrb
@@ -242,7 +244,7 @@ export default function AccountsTabScreen() {
               onPress={() => router.push("/(tabs)/accounts/transfer?mode=external")}
             />
             <ActionItem
-              label="Connect bank"
+              label={connectBankCta.compactLabel}
               icon="link-outline"
               onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
             />
@@ -360,7 +362,7 @@ export default function AccountsTabScreen() {
                 }}
               >
                 <View style={styles.createAccountTextWrap}>
-                  <Text style={styles.createAccountTitle}>Connect bank</Text>
+                  <Text style={styles.createAccountTitle}>{connectBankCta.compactLabel}</Text>
                   <Text style={styles.createAccountBody}>Connect a financial institution</Text>
                 </View>
                 <Ionicons name="link-outline" size={20} color={palette.accent} />

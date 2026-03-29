@@ -8,7 +8,7 @@ export function AppBackgroundLayer() {
   const backgroundStyles = useMemo(
     () => ({
       neutralHaze: {
-        backgroundColor: isDark ? "rgba(255,255,255,0.015)" : "rgba(255,255,255,0.2)"
+        backgroundColor: isDark ? "transparent" : "rgba(255,255,255,0.2)"
       },
       vignette: {
         borderColor: isDark ? "rgba(0,0,0,0.2)" : "rgba(17,17,17,0.06)"

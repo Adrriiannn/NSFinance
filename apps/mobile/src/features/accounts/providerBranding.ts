@@ -38,7 +38,7 @@ export type ProviderBadgeInput = {
 };
 
 export type ResolvedProviderBadge = {
-  remoteIconUrl: string | null;
+  remoteIconUrls: string[];
   displayName: string | null;
   monogram: string | null;
 };
@@ -51,11 +51,14 @@ export function resolveProviderBadge(input: ProviderBadgeInput): ResolvedProvide
     (providerIdKey ? PROVIDER_ID_FALLBACKS[providerIdKey] : undefined)
     ?? (providerNameKey ? PROVIDER_NAME_FALLBACKS[providerNameKey] : undefined);
 
-  const remoteIconUrl = normalizeUrl(input.providerIconUrl) ?? normalizeUrl(input.providerLogoUrl);
+  const remoteIconUrls = [
+    normalizeUrl(input.providerIconUrl),
+    normalizeUrl(input.providerLogoUrl)
+  ].filter((url): url is string => Boolean(url));
   const monogram = fallback?.monogram ?? deriveMonogram(providerName);
 
   return {
-    remoteIconUrl,
+    remoteIconUrls,
     displayName: providerName,
     monogram
   };

@@ -18,6 +18,7 @@ import {
   useStartTrueLayerLinkMutation,
   useSyncBankConnectionMutation
 } from "../../../src/features/banking/useBanking";
+import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { buildBankConnectReturnUri } from "../../../src/features/banking/bankingLinking";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { queryKeys } from "../../../src/lib/api/queryKeys";
@@ -259,6 +260,7 @@ export default function AddAccountModalScreen() {
   const queryClient = useQueryClient();
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
+  const connectBankCta = useConnectBankCtaLabels();
 
   const forceNewConnectionFlow = params.intent === "new";
 
@@ -1017,7 +1019,7 @@ export default function AddAccountModalScreen() {
         <View style={styles.primaryActions}>
           <View style={styles.primaryActionRow}>
             <PrimaryButton
-              label="Connect to your bank"
+              label={connectBankCta.primaryLabel}
               onPress={() => {
                 void handleConnectBank();
               }}

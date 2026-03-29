@@ -5,6 +5,7 @@ namespace NSFinance.Api.Modules.ExpenseTracker.Services;
 
 public sealed class ExpenseTaxonomyService
 {
+    public const int TransferDomainId = 920;
     private readonly NSFinanceTaxonomyCatalog catalog = NSFinanceTaxonomyCatalog.Instance;
 
     public ExpenseTaxonomyResponseDto GetTaxonomy(bool includeSystem = false)
@@ -59,6 +60,50 @@ public sealed class ExpenseTaxonomyService
         }
 
         return category;
+    }
+
+    public TaxonomyCategoryDefinition? GetTransactionAssignableCategory(int categoryId)
+    {
+        if (!catalog.CategoriesById.TryGetValue(categoryId, out var category) || category is null || !category.IsActive)
+        {
+            return null;
+        }
+
+        if (!catalog.DomainsById.TryGetValue(category.DomainId, out var domain) || !domain.IsActive)
+        {
+            return null;
+        }
+
+        if (domain.Id == TransferDomainId)
+        {
+            return category;
+        }
+
+        return !domain.IsSystemDomain && domain.IsUserSelectable && category.IsUserSelectable
+            ? category
+            : null;
+    }
+
+    public TaxonomySubcategoryDefinition? GetTransactionAssignableSubcategory(int subcategoryId)
+    {
+        if (!catalog.TryGetSubcategory(subcategoryId, out var subcategory) || subcategory is null || !subcategory.IsActive)
+        {
+            return null;
+        }
+
+        if (!catalog.DomainsById.TryGetValue(subcategory.DomainId, out var domain) || !domain.IsActive)
+        {
+            return null;
+        }
+
+        if (domain.Id == TransferDomainId)
+        {
+            return subcategory;
+        }
+
+        return !domain.IsSystemDomain && domain.IsUserSelectable && subcategory.IsUserSelectable
+            ? subcategory
+            : null;
     }
 
     public string? GetDomainName(int? domainId)

@@ -148,8 +148,8 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
           staleTime: 30_000
         }),
         queryClient.prefetchQuery({
-          queryKey: queryKeys.expenseTracker.taxonomy,
-          queryFn: getExpenseTrackerTaxonomy,
+          queryKey: [...queryKeys.expenseTracker.taxonomy, "visible-only"],
+          queryFn: () => getExpenseTrackerTaxonomy(),
           staleTime: 12 * 60 * 60_000
         })
       ]);

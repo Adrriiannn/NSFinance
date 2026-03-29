@@ -6,8 +6,10 @@ import type {
   UpdateExpenseTrackerEntryRequest
 } from "../../types/api";
 
-export function getExpenseTrackerTaxonomy() {
-  return apiRequest<ExpenseTaxonomyResponseDto>("/api/expense-tracker/taxonomy");
+export function getExpenseTrackerTaxonomy(options?: { includeSystem?: boolean }) {
+  const includeSystem = options?.includeSystem === true;
+  const suffix = includeSystem ? "?includeSystem=true" : "";
+  return apiRequest<ExpenseTaxonomyResponseDto>(`/api/expense-tracker/taxonomy${suffix}`);
 }
 
 export function getExpenseTrackerEntries() {

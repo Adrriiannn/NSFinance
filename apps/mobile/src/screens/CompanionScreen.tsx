@@ -22,7 +22,7 @@ import {
 import { navigateWithProbe } from "../lib/perf/navigationTiming";
 import { getDockAwareContentBottomInset } from "../layout/contentFrame";
 import { getEffectiveBottomSystemInset } from "../theme/insets";
-import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet } from "../theme/tokens";
+import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../theme/tokens";
 
 type PromptSeed = {
   text: string;
@@ -133,11 +133,11 @@ type ChatColorTheme = {
   swatchColor: string;
 };
 
-const CHAT_COLOR_THEMES: Record<CompanionChatColor, ChatColorTheme> = {
+const createChatColorThemes = (defaultSurface: string): Record<CompanionChatColor, ChatColorTheme> => ({
   blue: {
     label: "Slate",
     borderColor: "rgba(154,154,154,0.42)",
-    backgroundColor: surfaces.field,
+    backgroundColor: defaultSurface,
     swatchColor: "#9A9A9A"
   },
   yellow: {
@@ -188,7 +188,7 @@ const CHAT_COLOR_THEMES: Record<CompanionChatColor, ChatColorTheme> = {
     backgroundColor: "rgba(74,48,30,0.78)",
     swatchColor: "#B98A5E"
   }
-};
+});
 
 const CHAT_COLOR_ORDER: CompanionChatColor[] = [
   "blue",
@@ -204,9 +204,10 @@ const CHAT_COLOR_ORDER: CompanionChatColor[] = [
 
 const CHAT_TITLE_MAX_LENGTH = 56;
 
-const getChatColorTheme = (color: CompanionChatColor | undefined): ChatColorTheme => {
-  return CHAT_COLOR_THEMES[color ?? "orange"];
-};
+const getChatColorTheme = (
+  color: CompanionChatColor | undefined,
+  themes: Record<CompanionChatColor, ChatColorTheme>
+): ChatColorTheme => themes[color ?? "orange"];
 
 const sortChatsByPinAndRecency = (items: CompanionChat[]): CompanionChat[] => {
   return [...items].sort((left, right) => {
@@ -355,6 +356,7 @@ type CompanionScreenProps = {
 };
 
 export default function CashflowCompanionScreen({ sourceOverride }: CompanionScreenProps = {}) {
+  const tokens = useThemeTokens();
   const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourcePlanningHubTab?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -381,6 +383,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
   );
   const [inputBarHeight, setInputBarHeight] = useState(52);
   const [promptLayerHeight, setPromptLayerHeight] = useState(0);
+  const chatColorThemes = useMemo(() => createChatColorThemes(tokens.surfaces.field), [tokens.surfaces.field]);
   const inputBottomAnimated = useRef(new Animated.Value(0)).current;
   const lastIntroRef = useRef(introPair.intro);
   const messageListRef = useRef<FlatList<CompanionMessage>>(null);
@@ -1050,7 +1053,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
 
             <ScrollView contentContainerStyle={styles.historyList} showsVerticalScrollIndicator={false}>
               {pinnedChats.map((chat) => {
-                const theme = getChatColorTheme(chat.color);
+                const theme = getChatColorTheme(chat.color, chatColorThemes);
                 return (
                   <View
                     key={chat.id}
@@ -1127,7 +1130,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
               ) : null}
 
               {regularChats.map((chat) => {
-                const theme = getChatColorTheme(chat.color);
+                const theme = getChatColorTheme(chat.color, chatColorThemes);
                 return (
                   <View
                     key={chat.id}
@@ -1222,7 +1225,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
             <Text style={styles.editLabel}>Color</Text>
             <View style={styles.colorSwatchWrap}>
               {CHAT_COLOR_ORDER.map((colorKey) => {
-                const theme = getChatColorTheme(colorKey);
+                const theme = getChatColorTheme(colorKey, chatColorThemes);
                 const selected = editingChatColor === colorKey;
                 return (
                   <Pressable

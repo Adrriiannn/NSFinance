@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import { exchangeCodeAsync } from "expo-auth-session";
 import * as Google from "expo-auth-session/providers/google";
 import { formatUnknownError } from "../../lib/api/errors";
+import { buildDeviceContext } from "../../lib/device/deviceIdentity";
 import {
   pushGoogleOAuthDebugStep,
   resetGoogleOAuthDebugState,
@@ -311,9 +312,7 @@ export function useGoogleSignIn() {
 
         await googleLoginMutation.mutateAsync({
           idToken,
-          deviceContext: {
-            platform: Platform.OS
-          }
+          deviceContext: buildDeviceContext()
         });
 
         updateGoogleOAuthDebugState({

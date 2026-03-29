@@ -324,7 +324,9 @@ export default function AccountDetailsScreen() {
               </Text>
               <View style={styles.accountMetaWrap}>
                 <Text style={styles.sectionTitle}>Account info</Text>
-                <Text style={styles.accountMeta}>Account ID: {account.id}</Text>
+                <Text style={styles.accountMeta} numberOfLines={1} ellipsizeMode="middle">
+                  NS ID: {account.id}
+                </Text>
                 <Text style={styles.accountMeta}>Type: {account.type}</Text>
                 <Text style={styles.accountMeta}>Currency: {account.currency}</Text>
                 {accountNumberLines.map((line) => (
@@ -333,6 +335,9 @@ export default function AccountDetailsScreen() {
                   </Text>
                 ))}
                 <Text style={[styles.sectionTitle, styles.connectionSectionTitle]}>Connection info</Text>
+                {accountConnection?.connectedFullName ? (
+                  <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
+                ) : null}
                 <Text style={styles.accountMeta}>
                   Connected bank: {accountConnection?.providerDisplayName ?? "Not linked yet"}
                 </Text>
@@ -342,9 +347,6 @@ export default function AccountDetailsScreen() {
                 <Text style={styles.accountMeta}>
                   Last synced at: {formatDateTime(accountConnection?.lastSuccessfulSyncUtc ?? accountConnection?.lastSyncAttemptedUtc)}
                 </Text>
-                {accountConnection?.connectedFullName ? (
-                  <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
-                ) : null}
               </View>
             </GlassCard>
 
@@ -434,11 +436,11 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   accountName: {
     color: palette.textPrimary,
-    ...typography.title2
+    ...typography.bodyStrong
   },
   accountBalance: {
     color: palette.textPrimary,
-    ...typography.amountLarge,
+    ...typography.amount,
     fontVariant: ["tabular-nums"]
   },
   accountMetaWrap: {

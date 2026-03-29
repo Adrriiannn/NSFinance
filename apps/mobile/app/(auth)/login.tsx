@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Animated, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { CaptchaGate } from "../../src/components/forms/CaptchaGate";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
@@ -19,6 +19,7 @@ import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
+import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
 import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"email" | "password", string>>;
@@ -38,7 +39,6 @@ const INSET_LABEL_NOTCH_PADDING = 5;
 const INSET_LABEL_NOTCH_SAFETY_BUFFER = 0;
 const INSET_LABEL_TOP = -8;
 const INSET_LABEL_CHAR_WIDTH_ESTIMATE = 7.6;
-const INSET_BORDER_IDLE = palette.borderStrong;
 
 type LoginErrorBannerState =
   | { kind: "temporary_error"; id: number; title: string; message: string; highlightTarget: ErrorFieldTarget }
@@ -441,13 +441,13 @@ export default function LoginScreen() {
     loginErrorBanner?.kind === "temporary_error" &&
     (loginErrorBanner.highlightTarget === "password" || loginErrorBanner.highlightTarget === "both");
   const emailBorderColor =
-    errors.email || showEmailFieldError ? palette.negative : focusedField === "email" ? palette.primaryGlow : INSET_BORDER_IDLE;
+    errors.email || showEmailFieldError ? palette.negative : focusedField === "email" ? palette.primaryGlow : palette.borderStrong;
   const passwordBorderColor =
     errors.password || showPasswordFieldError
       ? palette.negative
       : focusedField === "password"
         ? palette.primaryGlow
-        : INSET_BORDER_IDLE;
+        : palette.borderStrong;
 
   const lockoutRemainingSeconds =
     loginErrorBanner?.kind === "lockout_countdown"
@@ -522,9 +522,7 @@ export default function LoginScreen() {
         email: normalizedEmail,
         password,
         captchaToken: shouldShowCaptcha ? captchaToken : null,
-        deviceContext: {
-          platform: Platform.OS
-        }
+        deviceContext: buildDeviceContext()
       });
 
       void clearPersistedLockoutUntil();

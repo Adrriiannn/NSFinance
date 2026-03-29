@@ -18,6 +18,7 @@ import {
   getDockAwareContentBottomInset
 } from "../../../src/layout/contentFrame";
 import { useDashboardSummaryQuery } from "../../../src/features/dashboard/useDashboardSummaryQuery";
+import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import {
   buildPlannerGraphModel,
   type PlannerComparisonPeriod,
@@ -135,6 +136,7 @@ export default function CashflowScreen() {
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
   const recurringPaymentsQuery = useRecurringPaymentsQuery();
+  const connectBankCta = useConnectBankCtaLabels();
   const [clockNow, setClockNow] = useState(() => new Date());
   const [currentPeriod, setCurrentPeriod] = useState<PlannerComparisonPeriod>(() => ({
     year: new Date().getFullYear(),
@@ -382,7 +384,7 @@ export default function CashflowScreen() {
           <TabEmptyStateCard
             title="No cashflow data yet"
             subtitle="Connect your bank to start building cashflow insights from your spending data."
-            ctaLabel="Connect bank"
+            ctaLabel={connectBankCta.primaryLabel}
             onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
             verticalSpacingMode="tab-aligned"
             hideOrb

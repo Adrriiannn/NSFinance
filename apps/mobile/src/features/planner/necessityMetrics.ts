@@ -1,5 +1,6 @@
 import type { TransactionDto } from "../../types/api";
 import type { NecessityItem, TransactionPlannerAnnotation } from "../../providers/PlannerProvider";
+import { isReportableExpenseTransaction } from "../transactions/transferClassification";
 
 export type EssentialTransactionItem = {
   transactionId: string;
@@ -17,8 +18,7 @@ export function getEssentialTransactions(
   return transactions
     .filter(
       (transaction) =>
-        transaction.direction === "Expense" &&
-        transaction.amount < 0 &&
+        isReportableExpenseTransaction(transaction) &&
         annotations[transaction.id]?.type === "Essential"
     )
     .map((transaction) => {

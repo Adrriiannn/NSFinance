@@ -1,5 +1,9 @@
 import type { DashboardSummaryDto, TransactionDto } from "../../types/api";
 import type { TransactionPlannerAnnotation } from "../../providers/PlannerProvider";
+import {
+  isReportableExpenseTransaction,
+  isTransferTransaction
+} from "../transactions/transferClassification";
 
 export type MonthComparison = {
   thisMonthSpend: number;
@@ -48,7 +52,7 @@ export function getMonthComparison(transactions: TransactionDto[]): MonthCompari
     transactions
       .filter((tx) => {
         const date = new Date(tx.bookedAtUtc);
-        return date >= startOfThisMonth && date < startOfNextMonth && tx.amount < 0;
+        return date >= startOfThisMonth && date < startOfNextMonth && isReportableExpenseTransaction(tx);
       })
       .reduce((sum, tx) => sum + tx.amount, 0)
   );
@@ -57,7 +61,7 @@ export function getMonthComparison(transactions: TransactionDto[]): MonthCompari
     transactions
       .filter((tx) => {
         const date = new Date(tx.bookedAtUtc);
-        return date >= startOfLastMonth && date < startOfThisMonth && tx.amount < 0;
+        return date >= startOfLastMonth && date < startOfThisMonth && isReportableExpenseTransaction(tx);
       })
       .reduce((sum, tx) => sum + tx.amount, 0)
   );
@@ -96,7 +100,7 @@ export function buildPlannerSuggestions(input: {
   }
 
   const subscriptionsSpend = input.transactions
-    .filter((tx) => tx.amount < 0)
+    .filter((tx) => isReportableExpenseTransaction(tx))
     .filter((tx) => {
       const category = (
         input.annotations[tx.id]?.category ??
@@ -107,7 +111,7 @@ export function buildPlannerSuggestions(input: {
     })
     .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
   const totalOutflow = input.transactions
-    .filter((tx) => tx.amount < 0)
+    .filter((tx) => isReportableExpenseTransaction(tx))
     .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
 
   if (subscriptionsSpend > 0 && totalOutflow > 0) {
@@ -119,7 +123,7 @@ export function buildPlannerSuggestions(input: {
   }
 
   const currentMonthDining = input.transactions
-    .filter((tx) => tx.amount < 0)
+    .filter((tx) => isReportableExpenseTransaction(tx))
     .filter((tx) => {
       const date = new Date(tx.bookedAtUtc);
       const now = new Date();
@@ -184,7 +188,10 @@ export function buildHomeInsights(input: {
 
   const discretionaryTags = ["coffee", "dining", "restaurant", "takeaway", "bar", "subscription"];
   const discretionaryCount = input.transactions.filter((tx) => {
-    if (tx.amount >= 0) {
+    if (!isReportableExpenseTransaction(tx)) {
+      return false;
+    }
+    if (isTransferTransaction(tx)) {
       return false;
     }
 

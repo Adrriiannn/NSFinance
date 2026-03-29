@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, Platform, type AppStateStatus } from "react-native";
+import { AppState, type AppStateStatus } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import {
   getCurrentUser,
@@ -11,6 +11,7 @@ import {
   setApiTokenResolver,
   setApiUnauthorizedHandler
 } from "../lib/api/client";
+import { buildDeviceContext } from "../lib/device/deviceIdentity";
 import type { AuthTokenResponse, UserProfileDto } from "../types/api";
 import { queryClient } from "./QueryProvider";
 
@@ -237,9 +238,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       try {
         const refreshed = await refreshTokenApi({
           refreshToken: current.refreshToken,
-          deviceContext: {
-            platform: Platform.OS
-          }
+          deviceContext: buildDeviceContext()
         });
         await applyAuthTokenResponse(refreshed);
         return refreshed.accessToken;

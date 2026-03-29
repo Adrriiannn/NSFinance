@@ -1,4 +1,8 @@
 import type { TransactionDto } from "../../types/api";
+import {
+  isReportableExpenseTransaction,
+  isReportableIncomeTransaction
+} from "../transactions/transferClassification";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -108,7 +112,7 @@ function toNiceCheckpoint(value: number) {
 function buildCumulativeSpendSeries(transactions: TransactionDto[], monthStart: Date, days: number) {
   const totals = Array.from({ length: days }, () => 0);
   transactions.forEach((transaction) => {
-    if (transaction.amount >= 0) {
+    if (!isReportableExpenseTransaction(transaction)) {
       return;
     }
 
@@ -134,7 +138,7 @@ function buildCumulativeSpendSeries(transactions: TransactionDto[], monthStart: 
 
 function buildIncomeSummary(transactions: TransactionDto[], previousPeriod: TransactionDto[]) {
   const recurringKeywords = ["salary", "payroll", "wage", "pension", "benefit"];
-  const previousIncomes = previousPeriod.filter((transaction) => transaction.amount > 0);
+  const previousIncomes = previousPeriod.filter((transaction) => isReportableIncomeTransaction(transaction));
 
   let recurringTotal = 0;
   let nonRecurringTotal = 0;
@@ -183,7 +187,7 @@ export function buildRecurringPaymentForecast(
 
   const grouped = new Map<string, TransactionDto[]>();
   transactions
-    .filter((transaction) => transaction.amount < 0)
+    .filter((transaction) => isReportableExpenseTransaction(transaction))
     .forEach((transaction) => {
       const key = normalizeMerchantKey(transaction.description);
       if (!key) {
@@ -315,10 +319,10 @@ export function buildPlannerGraphModel(
   const displayCurrency =
     Array.from(currencyFrequency.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "GBP";
 
-  const currentSpend = Number(currentComparable.filter((transaction) => transaction.amount < 0).reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0).toFixed(2));
-  const previousSpend = Number(previousComparable.filter((transaction) => transaction.amount < 0).reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0).toFixed(2));
-  const currentIncome = Number(currentComparable.filter((transaction) => transaction.amount > 0).reduce((sum, transaction) => sum + transaction.amount, 0).toFixed(2));
-  const previousIncome = Number(previousComparable.filter((transaction) => transaction.amount > 0).reduce((sum, transaction) => sum + transaction.amount, 0).toFixed(2));
+  const currentSpend = Number(currentComparable.filter((transaction) => isReportableExpenseTransaction(transaction)).reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0).toFixed(2));
+  const previousSpend = Number(previousComparable.filter((transaction) => isReportableExpenseTransaction(transaction)).reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0).toFixed(2));
+  const currentIncome = Number(currentComparable.filter((transaction) => isReportableIncomeTransaction(transaction)).reduce((sum, transaction) => sum + transaction.amount, 0).toFixed(2));
+  const previousIncome = Number(previousComparable.filter((transaction) => isReportableIncomeTransaction(transaction)).reduce((sum, transaction) => sum + transaction.amount, 0).toFixed(2));
   const currentNet = Number((currentIncome - currentSpend).toFixed(2));
   const previousNet = Number((previousIncome - previousSpend).toFixed(2));
 

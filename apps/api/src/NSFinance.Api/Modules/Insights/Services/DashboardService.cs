@@ -44,7 +44,10 @@ public sealed class DashboardService(
         var transactionCount = await transactionQuery.CountAsync(cancellationToken);
 
         var recentOutflow = await transactionQuery
-            .Where(x => x.BookedAtUtc >= thirtyDaysAgo && x.Amount < 0)
+            .Where(x =>
+                x.BookedAtUtc >= thirtyDaysAgo
+                && x.Amount < 0
+                && x.TaxonomyDomainId != ExpenseTaxonomyService.TransferDomainId)
             .SumAsync(x => Math.Abs(x.Amount), cancellationToken);
 
         var recentTransactions = await transactionQuery

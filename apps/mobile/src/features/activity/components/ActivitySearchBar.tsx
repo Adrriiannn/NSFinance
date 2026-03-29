@@ -92,6 +92,11 @@ export function ActivitySearchBar({
   const shouldAnchorFromStart = shouldAnchorSingleToken || shouldAnchorAmountPair;
 
   useEffect(() => {
+    if (tokens.length === 0) {
+      tokenRailRef.current?.scrollTo({ x: 0, y: 0, animated: false });
+      return;
+    }
+
     if (shouldAnchorFromStart) {
       tokenRailRef.current?.scrollTo({ x: 0, y: 0, animated: true });
       return;

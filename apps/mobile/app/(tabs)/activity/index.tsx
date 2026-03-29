@@ -37,6 +37,7 @@ import { consumePendingActivitySearchCategorySelection } from "../../../src/feat
 import { flattenVisibleExpenseTaxonomy } from "../../../src/features/expenseTracker/expenseTrackerModels";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
+import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
@@ -58,6 +59,7 @@ export default function ActivityTabScreen() {
   const plannerStore = usePlannerStore();
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const accountsQuery = useAccountsQuery();
+  const connectBankCta = useConnectBankCtaLabels();
   const profileQuery = useUserProfileQuery();
   const [highlightedTransactionId, setHighlightedTransactionId] = useState<string | null>(
     null
@@ -157,7 +159,7 @@ export default function ActivityTabScreen() {
       return () => {
         search.dismissDropdown();
       };
-    }, [search.dismissDropdown])
+    }, [search])
   );
 
   useEffect(() => {
@@ -297,7 +299,7 @@ export default function ActivityTabScreen() {
             <TabEmptyStateCard
               title="No activity yet"
               subtitle="Connect your bank to start tracking spending activity."
-              ctaLabel="Connect bank"
+              ctaLabel={connectBankCta.primaryLabel}
               onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
               verticalSpacingMode="tab-aligned"
               hideOrb

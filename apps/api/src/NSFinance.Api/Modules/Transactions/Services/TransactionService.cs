@@ -149,14 +149,14 @@ public sealed class TransactionService(
             return (null, "transaction_category_required", "Category is required.");
         }
 
-        var category = expenseTaxonomyService.GetUserSelectableCategory(request.TaxonomyCategoryId.Value);
+        var category = expenseTaxonomyService.GetTransactionAssignableCategory(request.TaxonomyCategoryId.Value);
         if (category is null)
         {
             return (null, "transaction_category_invalid", "Selected category is invalid.");
         }
 
         var subcategory = request.TaxonomySubcategoryId.HasValue
-            ? expenseTaxonomyService.GetUserSelectableSubcategory(request.TaxonomySubcategoryId.Value)
+            ? expenseTaxonomyService.GetTransactionAssignableSubcategory(request.TaxonomySubcategoryId.Value)
             : null;
 
         if (request.TaxonomySubcategoryId.HasValue && subcategory is null)

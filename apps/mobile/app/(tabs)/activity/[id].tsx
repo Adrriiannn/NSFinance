@@ -15,6 +15,7 @@ import {
   useTransactionDetailQuery,
   useUpdateTransactionMetadataMutation
 } from "../../../src/features/transactions/useTransactions";
+import { TRANSFER_DOMAIN_ID } from "../../../src/features/transactions/transferClassification";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { formatDate, formatTime } from "../../../src/lib/format";
 import { HeaderShell } from "../../../src/layout/appHeader";
@@ -30,7 +31,7 @@ export default function PlannerTransactionDetailScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const transactionId = params.id ?? "";
   const transactionQuery = useTransactionDetailQuery(transactionId);
-  const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
+  const taxonomyQuery = useExpenseTrackerTaxonomyQuery({ includeSystem: true });
   const updateMetadataMutation = useUpdateTransactionMetadataMutation();
 
   const [reason, setReason] = useState("");
@@ -42,7 +43,9 @@ export default function PlannerTransactionDetailScreen() {
   const visibleDomains = useMemo(
     () =>
       (taxonomyQuery.data?.domains ?? []).filter(
-        (domain) => domain.isUserSelectable && !domain.isSystemDomain && domain.isActive
+        (domain) =>
+          domain.isActive &&
+          ((!domain.isSystemDomain && domain.isUserSelectable) || domain.id === TRANSFER_DOMAIN_ID)
       ),
     [taxonomyQuery.data?.domains]
   );
@@ -60,14 +63,22 @@ export default function PlannerTransactionDetailScreen() {
 
     visibleDomains.forEach((domain) => {
       domain.categories
-        .filter((category) => category.isUserSelectable && category.isActive)
+        .filter(
+          (category) =>
+            category.isActive &&
+            ((domain.id === TRANSFER_DOMAIN_ID) || category.isUserSelectable)
+        )
         .forEach((category) => {
           map.set(category.id, {
             id: category.id,
             name: category.name,
             domainName: domain.name,
             subcategories: category.subcategories
-              .filter((subcategory) => subcategory.isUserSelectable && subcategory.isActive)
+              .filter(
+                (subcategory) =>
+                  subcategory.isActive &&
+                  ((domain.id === TRANSFER_DOMAIN_ID) || subcategory.isUserSelectable)
+              )
               .map((subcategory) => ({
                 id: subcategory.id,
                 name: subcategory.name

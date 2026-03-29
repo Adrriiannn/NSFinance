@@ -13,6 +13,7 @@ import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
 import { useAccountsQuery } from "../../src/features/accounts/useAccounts";
+import { useConnectBankCtaLabels } from "../../src/features/banking/connectBankCta";
 import { useDashboardSummaryQuery } from "../../src/features/dashboard/useDashboardSummaryQuery";
 import {
   buildHomeInsights
@@ -77,6 +78,7 @@ export default function DashboardTabScreen() {
   const plannerStore = usePlannerStore();
   const summaryQuery = useDashboardSummaryQuery();
   const accountsQuery = useAccountsQuery();
+  const connectBankCta = useConnectBankCtaLabels();
   const transactionsQuery = useTransactionsQuery();
   const { greeting, dateLabel, timeLabel } = useLocalClock();
   const fullName = session?.user.fullName?.trim() || session?.user.displayName?.trim() || "";
@@ -397,7 +399,7 @@ export default function DashboardTabScreen() {
             <TabEmptyStateCard
               title="No connected accounts"
               subtitle="Connect your bank to start tracking balances and spending."
-              ctaLabel="Connect bank"
+              ctaLabel={connectBankCta.primaryLabel}
               onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
               verticalSpacingMode="tab-aligned"
               hideOrb
@@ -539,7 +541,7 @@ export default function DashboardTabScreen() {
                 </View>
                 <View style={styles.quickActionSecondary}>
                   <SecondaryButton
-                    label="Connect bank"
+                    label={connectBankCta.compactLabel}
                     onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
                   />
                 </View>

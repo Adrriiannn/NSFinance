@@ -11,6 +11,7 @@ import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TextField } from "../../../src/components/ui/TextField";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
+import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { consumePendingActivityAddTransactionSubcategorySelection } from "../../../src/features/expenseTracker/categoryPickerBridge";
 import {
   flattenVisibleExpenseTaxonomy
@@ -38,6 +39,7 @@ export default function AddTransactionScreen() {
   const { playSuccess } = useFeedbackSound();
   const plannerStore = usePlannerStore();
   const accountsQuery = useAccountsQuery();
+  const connectBankCta = useConnectBankCtaLabels();
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const createMutation = useCreateTransactionMutation();
 
@@ -192,7 +194,7 @@ export default function AddTransactionScreen() {
         <EmptyState
           title="No connected accounts"
           message="Connect your bank first before adding transactions."
-          actionLabel="Connect bank"
+          actionLabel={connectBankCta.primaryLabel}
           onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
           hideOrb
           centerText

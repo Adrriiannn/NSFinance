@@ -5,6 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   Alert,
   Image,
   Modal,
@@ -29,6 +30,8 @@ import {
   supportedCurrencies,
   supportedTimezones
 } from "../../../src/lib/reference/geoData";
+import { requestOptionalDeviceLocation } from "../../../src/lib/device/deviceLocation";
+import { getDeviceLocaleProfile, type DeviceLocaleProfile } from "../../../src/lib/device/deviceLocaleProfile";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import {
@@ -229,6 +232,72 @@ function parseDobToParts(value?: string | null) {
     day: `${date.getUTCDate()}`,
     month: `${date.getUTCMonth() + 1}`,
     year: `${date.getUTCFullYear()}`
+  };
+}
+
+function resolveSupportedCountryCode(value?: string | null) {
+  const normalized = value?.trim().toUpperCase();
+  if (!normalized) {
+    return "IE";
+  }
+
+  return findCountryByCode(normalized) ? normalized : "IE";
+}
+
+function resolveCountryName(profileCountry: string | null | undefined, localeProfile: DeviceLocaleProfile) {
+  const trimmed = profileCountry?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+
+  if (localeProfile.countryName) {
+    return localeProfile.countryName;
+  }
+
+  if (localeProfile.countryCode) {
+    return findCountryByCode(localeProfile.countryCode)?.name ?? "Ireland";
+  }
+
+  return "Ireland";
+}
+
+function resolveTimezone(profileTimezone: string | null | undefined, localeProfile: DeviceLocaleProfile) {
+  const trimmed = profileTimezone?.trim();
+  if (trimmed && supportedTimezones.some((timezone) => timezone.id === trimmed)) {
+    return trimmed;
+  }
+
+  if (localeProfile.timezone && supportedTimezones.some((timezone) => timezone.id === localeProfile.timezone)) {
+    return localeProfile.timezone;
+  }
+
+  return "Europe/Dublin";
+}
+
+function resolveCurrency(profileCurrency: string | null | undefined, localeProfile: DeviceLocaleProfile) {
+  const normalizedProfile = profileCurrency?.trim().toUpperCase();
+  if (normalizedProfile && supportedCurrencies.some((currency) => currency.code === normalizedProfile)) {
+    return normalizedProfile;
+  }
+
+  const normalizedLocale = localeProfile.currencyCode?.trim().toUpperCase();
+  if (normalizedLocale && supportedCurrencies.some((currency) => currency.code === normalizedLocale)) {
+    return normalizedLocale;
+  }
+
+  return "EUR";
+}
+
+function getDobPlaceholder(referenceDate = new Date()) {
+  const day = `${referenceDate.getDate()}`;
+  const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "short" }).format(referenceDate);
+  const year = `${referenceDate.getFullYear()}`;
+
+  return {
+    day,
+    monthLabel,
+    year,
+    fullLabel: `${day} ${monthLabel} ${year}`
   };
 }
 
@@ -436,20 +505,27 @@ export default function ProfileSettingsScreen() {
   const navigation = useNavigation();
   const profileQuery = useUserProfileQuery();
   const updateMutation = useUpdateUserProfileMutation();
+  const [deviceLocaleProfile, setDeviceLocaleProfile] = useState<DeviceLocaleProfile>(() =>
+    getDeviceLocaleProfile()
+  );
+  const defaultPhoneCountryCode = useMemo(
+    () => resolveSupportedCountryCode(deviceLocaleProfile.countryCode),
+    [deviceLocaleProfile.countryCode]
+  );
 
   const [primaryEmail, setPrimaryEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [profileImageUri, setProfileImageUri] = useState("");
   const [profileBio, setProfileBio] = useState("");
-  const [phoneCountryCode, setPhoneCountryCode] = useState("IE");
+  const [phoneCountryCode, setPhoneCountryCode] = useState(defaultPhoneCountryCode);
   const [phoneLocalNumber, setPhoneLocalNumber] = useState("");
   const [dateDay, setDateDay] = useState("");
   const [dateMonth, setDateMonth] = useState("");
   const [dateYear, setDateYear] = useState("");
-  const [country, setCountry] = useState("Ireland");
-  const [timezone, setTimezone] = useState("Europe/Dublin");
-  const [preferredCurrency, setPreferredCurrency] = useState("EUR");
+  const [country, setCountry] = useState(() => resolveCountryName(null, deviceLocaleProfile));
+  const [timezone, setTimezone] = useState(() => resolveTimezone(null, deviceLocaleProfile));
+  const [preferredCurrency, setPreferredCurrency] = useState(() => resolveCurrency(null, deviceLocaleProfile));
   const [financialFocus, setFinancialFocus] = useState<string[]>([]);
   const [employmentStatus, setEmploymentStatus] = useState<string | null>(null);
   const [incomeStability, setIncomeStability] = useState<string | null>(null);
@@ -460,9 +536,33 @@ export default function ProfileSettingsScreen() {
   const [pendingLeaveAction, setPendingLeaveAction] = useState<null | (() => void)>(null);
   const [dobDialVisible, setDobDialVisible] = useState(false);
   const [timezoneClock, setTimezoneClock] = useState(() => new Date());
+  const dobPlaceholder = useMemo(() => getDobPlaceholder(), []);
+  const deviceLocaleProfileRef = useRef(deviceLocaleProfile);
   const dayDialRef = useRef<ScrollView | null>(null);
   const monthDialRef = useRef<ScrollView | null>(null);
   const yearDialRef = useRef<ScrollView | null>(null);
+
+  useEffect(() => {
+    deviceLocaleProfileRef.current = deviceLocaleProfile;
+  }, [deviceLocaleProfile]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setDeviceLocaleProfile(getDeviceLocaleProfile());
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!phoneCountryCode) {
+      setPhoneCountryCode(defaultPhoneCountryCode);
+    }
+  }, [defaultPhoneCountryCode, phoneCountryCode]);
 
   useEffect(() => {
     if (!profileQuery.data) {
@@ -470,7 +570,11 @@ export default function ProfileSettingsScreen() {
     }
 
     const profile = profileQuery.data;
-    const parsedPhone = parsePhone("IE", profile.phoneNumber);
+    const localeDefaults = deviceLocaleProfileRef.current;
+    const resolvedCountry = resolveCountryName(profile.countryRegion, localeDefaults);
+    const resolvedTimezone = resolveTimezone(profile.timezone, localeDefaults);
+    const resolvedCurrency = resolveCurrency(profile.preferredCurrency, localeDefaults);
+    const parsedPhone = parsePhone(defaultPhoneCountryCode, profile.phoneNumber);
     const parsedDob = parseDobToParts(profile.dateOfBirth);
 
     setPrimaryEmail(profile.primaryEmail ?? "");
@@ -483,9 +587,9 @@ export default function ProfileSettingsScreen() {
     setDateDay(parsedDob.day);
     setDateMonth(parsedDob.month);
     setDateYear(parsedDob.year);
-    setCountry(profile.countryRegion ?? "Ireland");
-    setTimezone(profile.timezone || "Europe/Dublin");
-    setPreferredCurrency(profile.preferredCurrency || "EUR");
+    setCountry(resolvedCountry);
+    setTimezone(resolvedTimezone);
+    setPreferredCurrency(resolvedCurrency);
     setFinancialFocus(profile.financialFocus ?? []);
     setEmploymentStatus(profile.employmentStatus ?? null);
     setIncomeStability(profile.incomeStability ?? null);
@@ -502,16 +606,16 @@ export default function ProfileSettingsScreen() {
       dateDay: parsedDob.day,
       dateMonth: parsedDob.month,
       dateYear: parsedDob.year,
-      country: profile.countryRegion ?? "Ireland",
-      timezone: profile.timezone || "Europe/Dublin",
-      preferredCurrency: profile.preferredCurrency || "EUR",
+      country: resolvedCountry,
+      timezone: resolvedTimezone,
+      preferredCurrency: resolvedCurrency,
       financialFocus: [...(profile.financialFocus ?? [])].sort(),
       employmentStatus: profile.employmentStatus ?? null,
       incomeStability: profile.incomeStability ?? null,
       primaryConcern: profile.primaryFinancialConcern ?? null
     });
     setInitialSnapshot(snapshotFromProfile);
-  }, [profileQuery.data]);
+  }, [defaultPhoneCountryCode, profileQuery.data]);
 
   const formSnapshot = useMemo(
     () =>
@@ -762,7 +866,7 @@ export default function ProfileSettingsScreen() {
         profileImageUrl: profileImageUri.trim() || null,
         profileSubtitle: profileBio.trim() || null,
         timezone,
-        locale: profileQuery.data?.locale || "en-IE",
+        locale: profileQuery.data?.locale || deviceLocaleProfile.localeTag || "en-IE",
         preferredCurrency,
         onboardingStatus: profileQuery.data?.onboardingStatus ?? "completed",
         biometricUnlockEnabled: profileQuery.data?.biometricUnlockEnabled ?? false,
@@ -825,6 +929,33 @@ export default function ProfileSettingsScreen() {
       setProfileImageUri(localUri);
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "Could not update profile picture.");
+    }
+  };
+
+  const applyLocationDefaults = async () => {
+    setLocalError(null);
+
+    try {
+      const result = await requestOptionalDeviceLocation();
+      if (result.status !== "granted") {
+        showFlashMessage(
+          "Location access was not granted. Using your device locale defaults instead.",
+          { tone: "info" }
+        );
+        return;
+      }
+
+      if (result.countryName) {
+        setCountry(result.countryName);
+      }
+
+      if (result.currencyCode) {
+        setPreferredCurrency(result.currencyCode);
+      }
+
+      showFlashMessage("Location defaults applied.");
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "Could not read device location.");
     }
   };
 
@@ -949,23 +1080,24 @@ export default function ProfileSettingsScreen() {
                 onPress={openDobDial}
               >
                 <Text style={styles.dateFieldLabel}>Day</Text>
-                <Text style={styles.dateFieldValue}>{dateDay || "Day"}</Text>
+                <Text style={styles.dateFieldValue}>{dateDay || dobPlaceholder.day}</Text>
               </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.dateFieldButton, pressed ? styles.dateFieldButtonPressed : null]}
                 onPress={openDobDial}
               >
                 <Text style={styles.dateFieldLabel}>Month</Text>
-                <Text style={styles.dateFieldValue}>{selectedMonthLabel}</Text>
+                <Text style={styles.dateFieldValue}>{dateMonth ? selectedMonthLabel : dobPlaceholder.monthLabel}</Text>
               </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.dateFieldButton, pressed ? styles.dateFieldButtonPressed : null]}
                 onPress={openDobDial}
               >
                 <Text style={styles.dateFieldLabel}>Year</Text>
-                <Text style={styles.dateFieldValue}>{dateYear || "Year"}</Text>
+                <Text style={styles.dateFieldValue}>{dateYear || dobPlaceholder.year}</Text>
               </Pressable>
             </View>
+            <Text style={styles.dobPlaceholderText}>Example: {dobPlaceholder.fullLabel}</Text>
             {dobAgeWarning ? <Text style={styles.dobWarningText}>{dobAgeWarning}</Text> : null}
 
             <ModalSelectField
@@ -981,6 +1113,7 @@ export default function ProfileSettingsScreen() {
               options={timezoneOptions}
               onChange={setTimezone}
               placeholder="Select timezone"
+              sheetMaxHeightRatio={0.4}
             />
             <ModalSelectField
               label="Preferred currency"
@@ -989,6 +1122,17 @@ export default function ProfileSettingsScreen() {
               onChange={setPreferredCurrency}
               placeholder="Select currency"
             />
+            <Pressable
+              onPress={() => {
+                void applyLocationDefaults();
+              }}
+              style={({ pressed }) => [
+                styles.locationButton,
+                pressed ? styles.locationButtonPressed : null
+              ]}
+            >
+              <Text style={styles.locationButtonText}>Use current location (optional)</Text>
+            </Pressable>
           </GlassCard>
 
           <GlassCard style={styles.sectionCard}>
@@ -1286,7 +1430,7 @@ const styles = createRuntimeStyleSheet(() => ({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: palette.elevatedBackground,
+    backgroundColor: surfaces.field,
     paddingHorizontal: spacing[12],
     paddingVertical: spacing[8],
     justifyContent: "space-between"
@@ -1302,6 +1446,10 @@ const styles = createRuntimeStyleSheet(() => ({
     color: palette.textPrimary,
     ...typography.body2,
     fontWeight: "600"
+  },
+  dobPlaceholderText: {
+    color: palette.textSecondary,
+    ...typography.caption
   },
   focusWrap: {
     flexDirection: "row",
@@ -1332,6 +1480,23 @@ const styles = createRuntimeStyleSheet(() => ({
   focusChipTextSelected: {
     color: palette.textPrimary,
     fontWeight: "600"
+  },
+  locationButton: {
+    minHeight: 38,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: surfaces.field,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing[12]
+  },
+  locationButtonPressed: {
+    opacity: 0.9
+  },
+  locationButtonText: {
+    color: palette.textSecondary,
+    ...typography.caption
   },
   errorText: {
     color: palette.negative,

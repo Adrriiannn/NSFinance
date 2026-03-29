@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Modal, Pressable, ScrollView, View } from "react-native";
+import { Modal, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { useRuntimeBottomInsetPolicy } from "../../../theme/insets";
 import { AppText } from "../text/AppText";
 import { useSurfacePresets } from "./surface.presets";
@@ -11,6 +11,7 @@ type ModalSheetProps = {
   subtitle?: string;
   children: ReactNode;
   footer?: ReactNode;
+  maxHeightRatio?: number;
 };
 
 export function ModalSheet({
@@ -19,10 +20,14 @@ export function ModalSheet({
   title,
   subtitle,
   children,
-  footer
+  footer,
+  maxHeightRatio = 0.78
 }: ModalSheetProps) {
   const surfacePresets = useSurfacePresets();
   const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
+  const { height } = useWindowDimensions();
+  const clampedRatio = Math.min(0.95, Math.max(0.25, maxHeightRatio));
+  const resolvedMaxHeight = Math.round(height * clampedRatio);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -30,6 +35,7 @@ export function ModalSheet({
         <Pressable
           style={[
             surfacePresets.modalSheet,
+            { maxHeight: resolvedMaxHeight },
             { paddingBottom: 20 + bottomInsetPolicy.bottomActionInsetTight }
           ]}
           onPress={() => undefined}

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { CaptchaGate } from "../../src/components/forms/CaptchaGate";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
@@ -27,6 +27,8 @@ import { useRegisterMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
+import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
+import { getDeviceLocaleProfile } from "../../src/lib/device/deviceLocaleProfile";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
@@ -79,7 +81,6 @@ const INSET_LABEL_NOTCH_PADDING = 5;
 const INSET_LABEL_NOTCH_SAFETY_BUFFER = 0;
 const INSET_LABEL_TOP = -8;
 const INSET_LABEL_CHAR_WIDTH_ESTIMATE = 7.6;
-const INSET_BORDER_IDLE = palette.borderStrong;
 
 function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
   const [shellWidth, setShellWidth] = useState(0);
@@ -401,8 +402,10 @@ export default function RegisterScreen() {
       return;
     }
 
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale || "en-US";
+    const localeProfile = getDeviceLocaleProfile();
+    const timezone = localeProfile.timezone ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+    const locale = localeProfile.localeTag ?? (Intl.DateTimeFormat().resolvedOptions().locale || "en-US");
+    const preferredCurrency = localeProfile.currencyCode ?? "EUR";
     const displayName = normalizeFullName(fullName);
 
     await registerMutation.mutateAsync({
@@ -411,11 +414,9 @@ export default function RegisterScreen() {
       displayName,
       timezone,
       locale,
-      preferredCurrency: "EUR",
+      preferredCurrency,
       captchaToken,
-      deviceContext: {
-        platform: Platform.OS
-      }
+      deviceContext: buildDeviceContext()
     });
 
     playSuccess();
@@ -446,17 +447,17 @@ export default function RegisterScreen() {
   };
 
   const fullNameBorderColor =
-    errors.fullName ? palette.negative : focusedField === "fullName" ? palette.primaryGlow : INSET_BORDER_IDLE;
+    errors.fullName ? palette.negative : focusedField === "fullName" ? palette.primaryGlow : palette.borderStrong;
   const emailBorderColor =
-    errors.email ? palette.negative : focusedField === "email" ? palette.primaryGlow : INSET_BORDER_IDLE;
+    errors.email ? palette.negative : focusedField === "email" ? palette.primaryGlow : palette.borderStrong;
   const passwordBorderColor =
-    errors.password ? palette.negative : focusedField === "password" ? palette.primaryGlow : INSET_BORDER_IDLE;
+    errors.password ? palette.negative : focusedField === "password" ? palette.primaryGlow : palette.borderStrong;
   const confirmPasswordBorderColor =
     errors.confirmPassword
       ? palette.negative
       : focusedField === "confirmPassword"
         ? palette.primaryGlow
-        : INSET_BORDER_IDLE;
+        : palette.borderStrong;
 
   return (
     <AuthScreen focusedInputExtraClearance={focusedField === "confirmPassword" && passwordsMatch ? spacing[24] : 0}>

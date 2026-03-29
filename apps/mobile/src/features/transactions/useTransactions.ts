@@ -15,6 +15,7 @@ import {
   getTransactionsForAccount,
   updateTransactionMetadata
 } from "./transactionsApi";
+import { isReportableExpenseTransaction } from "./transferClassification";
 
 export function useTransactionsQuery(accountId?: string) {
   return useQuery({
@@ -114,7 +115,7 @@ export function useCreateTransactionMutation() {
                 totalBalance: Number((current.totalBalance + transaction.amount).toFixed(2)),
                 transactionCount: current.transactionCount + 1,
                 recentOutflow:
-                  transaction.amount < 0
+                  isReportableExpenseTransaction(transaction)
                     ? Number((current.recentOutflow + Math.abs(transaction.amount)).toFixed(2))
                     : current.recentOutflow,
                 recentTransactions: prependTransaction(current.recentTransactions, transaction).slice(0, 5)

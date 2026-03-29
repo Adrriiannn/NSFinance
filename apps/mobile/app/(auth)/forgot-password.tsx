@@ -19,7 +19,6 @@ const INSET_LABEL_NOTCH_PADDING = -3;
 const INSET_LABEL_NOTCH_SAFETY_BUFFER = 0;
 const INSET_LABEL_TOP = -8;
 const INSET_LABEL_CHAR_WIDTH_ESTIMATE = 7.6;
-const INSET_BORDER_IDLE = palette.borderStrong;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -137,7 +136,7 @@ export default function ForgotPasswordScreen() {
   const [focusedIdentity, setFocusedIdentity] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [debugToken, setDebugToken] = useState<string | null>(null);
-  const identityBorderColor = focusedIdentity ? palette.primaryGlow : INSET_BORDER_IDLE;
+  const identityBorderColor = focusedIdentity ? palette.primaryGlow : palette.borderStrong;
 
   const handleRequest = async () => {
     const response = await forgotMutation.mutateAsync({

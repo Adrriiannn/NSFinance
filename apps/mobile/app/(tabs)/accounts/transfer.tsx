@@ -8,6 +8,7 @@ import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { TextField } from "../../../src/components/ui/TextField";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
+import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAuthSession } from "../../../src/providers/AuthProvider";
 import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
@@ -85,6 +86,7 @@ export default function TransferMoneyScreen() {
   const params = useLocalSearchParams<{ mode?: string }>();
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const accountsQuery = useAccountsQuery();
+  const connectBankCta = useConnectBankCtaLabels();
   const [mode, setMode] = useState<TransferMode>(params.mode === "internal" ? "internal" : "external");
   const [activeDropdown, setActiveDropdown] = useState<DropdownKey | null>(null);
 
@@ -202,7 +204,7 @@ export default function TransferMoneyScreen() {
         <EmptyState
           title="No connected accounts"
           message="Connect your bank first to set a source account."
-          actionLabel="Connect bank"
+          actionLabel={connectBankCta.primaryLabel}
           onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
           hideOrb
           centerText

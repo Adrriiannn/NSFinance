@@ -17,6 +17,7 @@ type ModalSelectFieldProps = {
   placeholder?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  sheetMaxHeightRatio?: number;
 };
 
 export function ModalSelectField({
@@ -25,7 +26,8 @@ export function ModalSelectField({
   options,
   placeholder = "Select",
   onChange,
-  disabled = false
+  disabled = false,
+  sheetMaxHeightRatio
 }: ModalSelectFieldProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -44,7 +46,12 @@ export function ModalSelectField({
         onPress={() => setIsOpen(true)}
       />
 
-      <ModalSheet visible={isOpen} onClose={() => setIsOpen(false)} title={label}>
+      <ModalSheet
+        visible={isOpen}
+        onClose={() => setIsOpen(false)}
+        title={label}
+        maxHeightRatio={sheetMaxHeightRatio}
+      >
         {options.map((option) => (
           <Pressable
             key={option.value}

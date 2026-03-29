@@ -42,10 +42,12 @@ function upsertEntry(
   );
 }
 
-export function useExpenseTrackerTaxonomyQuery() {
+export function useExpenseTrackerTaxonomyQuery(options?: { includeSystem?: boolean }) {
+  const includeSystem = options?.includeSystem === true;
+
   return useQuery({
-    queryKey: queryKeys.expenseTracker.taxonomy,
-    queryFn: getExpenseTrackerTaxonomy,
+    queryKey: [...queryKeys.expenseTracker.taxonomy, includeSystem ? "include-system" : "visible-only"],
+    queryFn: () => getExpenseTrackerTaxonomy({ includeSystem }),
     staleTime: 12 * 60 * 60_000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,

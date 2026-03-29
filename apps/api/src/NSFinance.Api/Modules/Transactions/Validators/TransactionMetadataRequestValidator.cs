@@ -15,9 +15,9 @@ public static class TransactionMetadataRequestValidator
         {
             errors["taxonomyCategoryId"] = ["Category is required."];
         }
-        else if (expenseTaxonomyService.GetUserSelectableCategory(request.TaxonomyCategoryId.Value) is null)
+        else if (expenseTaxonomyService.GetTransactionAssignableCategory(request.TaxonomyCategoryId.Value) is null)
         {
-            errors["taxonomyCategoryId"] = ["Select a valid user-visible category."];
+            errors["taxonomyCategoryId"] = ["Select a valid category."];
         }
 
         if (request.TaxonomySubcategoryId.HasValue)
@@ -28,10 +28,10 @@ public static class TransactionMetadataRequestValidator
             }
             else
             {
-                var subcategory = expenseTaxonomyService.GetUserSelectableSubcategory(request.TaxonomySubcategoryId.Value);
+                var subcategory = expenseTaxonomyService.GetTransactionAssignableSubcategory(request.TaxonomySubcategoryId.Value);
                 if (subcategory is null)
                 {
-                    errors["taxonomySubcategoryId"] = ["Select a valid user-visible subcategory."];
+                    errors["taxonomySubcategoryId"] = ["Select a valid subcategory."];
                 }
                 else if (request.TaxonomyCategoryId.HasValue && subcategory.CategoryId != request.TaxonomyCategoryId.Value)
                 {

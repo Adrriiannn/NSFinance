@@ -15,7 +15,7 @@ type AccountProviderBadgeProps = {
 };
 
 export function AccountProviderBadge({ account, compact = false }: AccountProviderBadgeProps) {
-  const [remoteImageFailed, setRemoteImageFailed] = useState(false);
+  const [remoteImageIndex, setRemoteImageIndex] = useState(0);
   const resolved = useMemo(
     () =>
       resolveProviderBadge({
@@ -23,16 +23,16 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
         providerDisplayName: account.providerDisplayName,
         providerIconUrl: account.providerIconUrl,
         providerLogoUrl: account.providerLogoUrl
-      }),
+    }),
     [account.providerDisplayName, account.providerIconUrl, account.providerId, account.providerLogoUrl]
   );
+  const activeRemoteIconUrl = resolved.remoteIconUrls[remoteImageIndex] ?? null;
 
   useEffect(() => {
-    setRemoteImageFailed(false);
-  }, [resolved.remoteIconUrl]);
+    setRemoteImageIndex(0);
+  }, [resolved.remoteIconUrls]);
 
-  const remoteIconUrl = remoteImageFailed ? null : resolved.remoteIconUrl;
-  const isSvgLogo = Boolean(remoteIconUrl && /\.svg(?:$|[?#])/i.test(remoteIconUrl));
+  const isSvgLogo = Boolean(activeRemoteIconUrl && /\.svg(?:$|[?#])/i.test(activeRemoteIconUrl));
   const accessibilityLabel = resolved.displayName
     ? `${resolved.displayName} logo`
     : "Connected bank logo";
@@ -43,20 +43,20 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
       accessibilityLabel={accessibilityLabel}
       style={[styles.badge, compact ? styles.badgeCompact : null]}
     >
-      {remoteIconUrl ? (
+      {activeRemoteIconUrl ? (
         isSvgLogo ? (
           <SvgUri
-            uri={remoteIconUrl}
+            uri={activeRemoteIconUrl}
             width={compact ? 24 : 30}
             height={compact ? 18 : 22}
-            onError={() => setRemoteImageFailed(true)}
+            onError={() => setRemoteImageIndex((current) => current + 1)}
           />
         ) : (
           <Image
-            source={{ uri: remoteIconUrl }}
+            source={{ uri: activeRemoteIconUrl }}
             style={[styles.logo, compact ? styles.logoCompact : null]}
             resizeMode="contain"
-            onError={() => setRemoteImageFailed(true)}
+            onError={() => setRemoteImageIndex((current) => current + 1)}
           />
         )
       ) : resolved.monogram ? (

@@ -4,6 +4,10 @@ import {
   Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { useRuntimeBottomInsetPolicy } from "../../theme/insets";
 import { formatCurrency } from "../../lib/format";
+import {
+  isReportableExpenseTransaction,
+  isReportableIncomeTransaction
+} from "../../features/transactions/transferClassification";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import type { TransactionDto } from "../../types/api";
 
@@ -135,11 +139,11 @@ function computeMovement(transactions: TransactionDto[], range: DateRangeSelecti
 
   const spend = Math.abs(
     inRange
-      .filter((transaction) => transaction.amount < 0)
+      .filter((transaction) => isReportableExpenseTransaction(transaction))
       .reduce((sum, transaction) => sum + transaction.amount, 0)
   );
   const income = inRange
-    .filter((transaction) => transaction.amount > 0)
+    .filter((transaction) => isReportableIncomeTransaction(transaction))
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
   return {
