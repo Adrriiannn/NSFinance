@@ -234,16 +234,19 @@ const styles = createRuntimeStyleSheet(() => ({
     alignItems: "center",
     gap: spacing[6],
     paddingLeft: spacing[8],
-    paddingRight: spacing[8]
+    paddingRight: spacing[8],
+    minWidth: "100%"
   },
   mainInput: {
-    minWidth: 120,
+    minWidth: 280,
+    flexGrow: 1,
     color: palette.textPrimary,
     ...typography.caption,
     paddingVertical: 0
   },
   mainInputWithTokens: {
-    minWidth: 86
+    minWidth: 96,
+    flexGrow: 0
   },
   clearButton: {
     width: 24,

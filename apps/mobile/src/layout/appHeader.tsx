@@ -90,9 +90,9 @@ const HEADER = {
   iconButtonSize: 36,
   iconButtonVisualRadius: 6,
   dropdownHeight: HEADER_CONTROL_HEIGHT,
-  dropdownRadius: 12,
+  dropdownRadius: 6,
   searchHeight: HEADER_CONTROL_HEIGHT,
-  searchRadius: 12,
+  searchRadius: 6,
   stickyDividerHeight: 1,
   stickyElevatedOpacity: 0.94,
   zIndex: zIndex.tabBar + 5

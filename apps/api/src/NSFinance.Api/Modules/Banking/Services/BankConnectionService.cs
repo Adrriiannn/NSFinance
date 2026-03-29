@@ -171,6 +171,7 @@ public sealed class BankConnectionService(
     {
         var connection = await dbContext.OpenBankingConnections
             .Include(x => x.Token)
+            .Include(x => x.IdentityInfo)
             .Include(x => x.LinkedAccounts)
             .SingleOrDefaultAsync(x => x.Id == connectionId && x.UserId == userId, cancellationToken);
 
@@ -813,6 +814,7 @@ public sealed class BankConnectionService(
         string? ProviderIconUri,
         string? ProviderLogoUri,
         string? ProviderBrandBgColor,
+        string? ConnectedFullName,
         string DisplayName,
         string? AccountType,
         string? AccountSubType,
@@ -1102,6 +1104,7 @@ public sealed class BankConnectionService(
                 x.Connection != null ? x.Connection.ProviderIconUri : null,
                 x.Connection != null ? x.Connection.ProviderLogoUri : null,
                 x.Connection != null ? x.Connection.ProviderBrandBgColor : null,
+                x.Connection != null && x.Connection.IdentityInfo != null ? x.Connection.IdentityInfo.FullName : null,
                 x.DisplayName,
                 x.AccountType,
                 x.AccountSubType,
@@ -1133,6 +1136,7 @@ public sealed class BankConnectionService(
                 null,
                 null,
                 null,
+                x.Connection != null && x.Connection.IdentityInfo != null ? x.Connection.IdentityInfo.FullName : null,
                 x.DisplayName,
                 x.AccountType,
                 x.AccountSubType,
@@ -1162,6 +1166,12 @@ public sealed class BankConnectionService(
             .Select(account =>
             {
                 latestBalances.TryGetValue(account.Id, out var latestBalance);
+                var resolvedDisplayName = ResolveLinkedAccountDisplayName(
+                    account.DisplayName,
+                    account.AccountType,
+                    account.Currency,
+                    account.ConnectedFullName);
+
                 return new LinkedBankAccountDto(
                     account.Id,
                     account.ConnectionId,
@@ -1172,7 +1182,7 @@ public sealed class BankConnectionService(
                     account.ProviderIconUri,
                     account.ProviderLogoUri,
                     account.ProviderBrandBgColor,
-                    account.DisplayName,
+                    resolvedDisplayName,
                     account.AccountType,
                     account.AccountSubType,
                     account.Currency,
@@ -1526,6 +1536,80 @@ public sealed class BankConnectionService(
             or BankConnectionStatuses.ReauthRequired
             or BankConnectionStatuses.Expired
             or BankConnectionStatuses.Failed;
+    }
+
+    private static string ResolveLinkedAccountDisplayName(
+        string? providerDisplayName,
+        string? accountType,
+        string currency,
+        string? connectedFullName)
+    {
+        var normalizedDisplayName = NormalizeLabel(providerDisplayName);
+        if (!string.IsNullOrWhiteSpace(normalizedDisplayName)
+            && !LooksLikeConnectedIdentity(normalizedDisplayName, connectedFullName))
+        {
+            return normalizedDisplayName;
+        }
+
+        var resolvedCurrency = string.IsNullOrWhiteSpace(currency) ? "EUR" : currency.Trim().ToUpperInvariant();
+        var friendlyType = ResolveFriendlyAccountType(accountType);
+        return $"{resolvedCurrency} {friendlyType}";
+    }
+
+    private static string? NormalizeLabel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static bool LooksLikeConnectedIdentity(string accountLabel, string? connectedFullName)
+    {
+        var normalizedConnectedName = NormalizeLabel(connectedFullName);
+        if (normalizedConnectedName is null)
+        {
+            return false;
+        }
+
+        var accountTokens = accountLabel
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length > 0)
+            .OrderBy(token => token)
+            .ToArray();
+
+        var connectedTokens = normalizedConnectedName
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length > 0)
+            .OrderBy(token => token)
+            .ToArray();
+
+        if (accountTokens.Length < 2 || accountTokens.Length != connectedTokens.Length)
+        {
+            return false;
+        }
+
+        return accountTokens.SequenceEqual(connectedTokens);
+    }
+
+    private static string ResolveFriendlyAccountType(string? accountType)
+    {
+        var normalized = accountType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "transaction" => "current account",
+            "current" => "current account",
+            "checking" => "current account",
+            "savings" => "savings account",
+            "credit" => "credit account",
+            "loan" => "loan account",
+            _ => "account"
+        };
     }
 
     private static bool IsProviderBrandingSchemaMissing(Exception exception)

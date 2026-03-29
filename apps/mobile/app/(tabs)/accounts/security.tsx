@@ -532,17 +532,6 @@ export default function SecuritySettingsScreen() {
                 {connection.connectedFullName ? (
                   <Text style={styles.metaLine}>Connected as: {connection.connectedFullName}</Text>
                 ) : null}
-                <Text style={styles.metaLine}>
-                  Capabilities:{" "}
-                  {[
-                    connection.supportsCards ? "cards" : null,
-                    connection.supportsDirectDebits ? "direct debits" : null,
-                    connection.supportsStandingOrders ? "standing orders" : null,
-                    connection.supportsInfo ? "identity info" : null
-                  ]
-                    .filter(Boolean)
-                    .join(", ") || "limited by provider"}
-                </Text>
                 <SecondaryButton
                   label={
                     disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"

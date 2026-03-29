@@ -15,7 +15,6 @@ import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
 import {
-  useAccountRecurringPaymentsQuery,
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
   useLinkedBankCardsQuery
@@ -23,7 +22,7 @@ import {
 import { useCreateExportRequestMutation } from "../../../src/features/support/useSupport";
 import { downloadExportRequestFile } from "../../../src/features/support/supportApi";
 import { useAccountTransactionsQuery } from "../../../src/features/transactions/useTransactions";
-import { formatCurrency, formatDate } from "../../../src/lib/format";
+import { formatCurrency } from "../../../src/lib/format";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { LinkedBankAccountDto } from "../../../src/types/api";
@@ -63,7 +62,7 @@ function extractAccountNumberLines(metadataJson?: string | null) {
 
     const iban = read("iban");
     if (iban) {
-      lines.push({ label: "IBAN", value: iban });
+      lines.push({ label: "IBAN", value: formatIban(iban) });
     }
 
     const number = read("number");
@@ -85,6 +84,83 @@ function extractAccountNumberLines(metadataJson?: string | null) {
   } catch {
     return [];
   }
+}
+
+function normalizeText(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized.length > 0 ? normalized : null;
+}
+
+function looksLikeConnectedIdentity(candidate: string, connectedFullName?: string | null) {
+  const normalizedConnected = normalizeText(connectedFullName);
+  if (!normalizedConnected) {
+    return false;
+  }
+
+  const tokenize = (value: string) =>
+    value
+      .toLowerCase()
+      .split(" ")
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0)
+      .sort();
+
+  const candidateTokens = tokenize(candidate);
+  const connectedTokens = tokenize(normalizedConnected);
+  if (candidateTokens.length < 2 || candidateTokens.length !== connectedTokens.length) {
+    return false;
+  }
+
+  return candidateTokens.every((token, index) => token === connectedTokens[index]);
+}
+
+function buildAccountFallback(accountType?: string | null, currency?: string | null) {
+  const normalizedType = accountType?.trim().toLowerCase();
+  const friendlyType =
+    normalizedType === "transaction" || normalizedType === "current" || normalizedType === "checking"
+      ? "current account"
+      : normalizedType === "savings"
+        ? "savings account"
+        : normalizedType === "credit"
+          ? "credit account"
+          : normalizedType === "loan"
+            ? "loan account"
+            : "account";
+
+  const resolvedCurrency = normalizeText(currency)?.toUpperCase() ?? "EUR";
+  return `${resolvedCurrency} ${friendlyType}`;
+}
+
+function resolveAccountDisplayTitle(
+  linkedAccount: LinkedBankAccountDto | null,
+  accountName?: string | null,
+  connectedFullName?: string | null
+) {
+  const linkedDisplayName = normalizeText(linkedAccount?.displayName);
+  if (linkedDisplayName && !looksLikeConnectedIdentity(linkedDisplayName, connectedFullName)) {
+    return linkedDisplayName;
+  }
+
+  const accountDisplayName = normalizeText(accountName);
+  if (accountDisplayName && !looksLikeConnectedIdentity(accountDisplayName, connectedFullName)) {
+    return accountDisplayName;
+  }
+
+  return buildAccountFallback(linkedAccount?.accountType, linkedAccount?.currency);
+}
+
+function formatIban(value: string) {
+  const compact = value.replace(/\s+/g, "").toUpperCase();
+  if (compact.length <= 4) {
+    return compact;
+  }
+
+  const groups = compact.match(/.{1,4}/g);
+  return groups ? groups.join(" ") : compact;
 }
 
 function findLinkedAccountForFinancialAccount(
@@ -147,25 +223,12 @@ export default function AccountDetailsScreen() {
     linkedAccountsQuery.error ??
     linkedCardsQuery.error;
   const account = accountQuery.data;
-  const linkedAccount = useMemo(
-    () => findLinkedAccountForFinancialAccount(linkedAccountsQuery.data, account?.id),
-    [account?.id, linkedAccountsQuery.data]
-  );
-  const recurringPaymentsQuery = useAccountRecurringPaymentsQuery(linkedAccount?.id ?? null);
-  const accountConnection = useMemo(() => {
-    if (!linkedAccount) {
-      return latestConnection;
-    }
-
-    const byId = (connectionsQuery.data ?? []).find((item) => item.id === linkedAccount.connectionId);
-    return byId ?? latestConnection;
-  }, [connectionsQuery.data, latestConnection, linkedAccount]);
-  const relatedCards = useMemo(() => {
-    if (!linkedAccount) {
-      return [];
-    }
-
-    return (linkedCardsQuery.data ?? []).filter((card) => {
+  const linkedAccount = findLinkedAccountForFinancialAccount(linkedAccountsQuery.data, account?.id);
+  const accountConnection = linkedAccount
+    ? (connectionsQuery.data ?? []).find((item) => item.id === linkedAccount.connectionId) ?? latestConnection
+    : latestConnection;
+  const relatedCards = linkedAccount
+    ? (linkedCardsQuery.data ?? []).filter((card) => {
       if (card.connectionId !== linkedAccount.connectionId) {
         return false;
       }
@@ -175,11 +238,13 @@ export default function AccountDetailsScreen() {
       }
 
       return card.providerAccountId === linkedAccount.providerAccountId;
-    });
-  }, [linkedAccount, linkedCardsQuery.data]);
-  const accountNumberLines = useMemo(
-    () => extractAccountNumberLines(linkedAccount?.accountNumberMetadataJson),
-    [linkedAccount?.accountNumberMetadataJson]
+    })
+    : [];
+  const accountNumberLines = extractAccountNumberLines(linkedAccount?.accountNumberMetadataJson);
+  const accountTitle = resolveAccountDisplayTitle(
+    linkedAccount,
+    account?.name,
+    accountConnection?.connectedFullName
   );
   const transactions = transactionsQuery.data ?? [];
   const listBottomInset = Math.max(
@@ -253,15 +318,21 @@ export default function AccountDetailsScreen() {
         ) : account ? (
           <>
             <GlassCard style={styles.accountCard}>
-            <Text style={styles.accountName}>{account.name}</Text>
-            <Text style={styles.accountBalance}>
-              {formatCurrency(account.currentBalance, account.currency)}
-            </Text>
+              <Text style={styles.accountName}>{accountTitle}</Text>
+              <Text style={styles.accountBalance}>
+                {formatCurrency(account.currentBalance, account.currency)}
+              </Text>
               <View style={styles.accountMetaWrap}>
+                <Text style={styles.sectionTitle}>Account info</Text>
                 <Text style={styles.accountMeta}>Account ID: {account.id}</Text>
                 <Text style={styles.accountMeta}>Type: {account.type}</Text>
                 <Text style={styles.accountMeta}>Currency: {account.currency}</Text>
-                <Text style={styles.accountMeta}>Created: {formatDate(account.createdUtc)}</Text>
+                {accountNumberLines.map((line) => (
+                  <Text key={line.label} style={styles.accountMeta}>
+                    {line.label}: {line.value}
+                  </Text>
+                ))}
+                <Text style={[styles.sectionTitle, styles.connectionSectionTitle]}>Connection info</Text>
                 <Text style={styles.accountMeta}>
                   Connected bank: {accountConnection?.providerDisplayName ?? "Not linked yet"}
                 </Text>
@@ -274,11 +345,6 @@ export default function AccountDetailsScreen() {
                 {accountConnection?.connectedFullName ? (
                   <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
                 ) : null}
-                {accountNumberLines.map((line) => (
-                  <Text key={line.label} style={styles.accountMeta}>
-                    {line.label}: {line.value}
-                  </Text>
-                ))}
               </View>
             </GlassCard>
 
@@ -293,49 +359,6 @@ export default function AccountDetailsScreen() {
                 onPress={() => router.push("/(tabs)/accounts/support")}
               />
             </View>
-
-            <GlassCard style={styles.recurringCard}>
-              <Text style={styles.sectionTitle}>Recurring commitments</Text>
-              {recurringPaymentsQuery.isError ? (
-                <Text style={styles.accountMeta}>{String(recurringPaymentsQuery.error?.message ?? "Could not load recurring payments.")}</Text>
-              ) : recurringPaymentsQuery.data &&
-                recurringPaymentsQuery.data.directDebits.length === 0 &&
-                recurringPaymentsQuery.data.standingOrders.length === 0 ? (
-                <Text style={styles.accountMeta}>
-                  No direct debits or standing orders were returned for this account.
-                </Text>
-              ) : (
-                <>
-                  {recurringPaymentsQuery.data?.directDebits.slice(0, 4).map((debit) => (
-                    <View key={debit.id} style={styles.recurringRow}>
-                      <Text style={styles.recurringTitle}>
-                        {debit.merchantName || debit.reference || "Direct debit"}
-                      </Text>
-                      <Text style={styles.accountMeta}>
-                        {debit.nextPaymentAmount !== null && debit.nextPaymentCurrency
-                          ? formatCurrency(debit.nextPaymentAmount, debit.nextPaymentCurrency)
-                          : "Amount pending"}{" "}
-                        · {formatDateTime(debit.nextPaymentDateUtc)}
-                      </Text>
-                    </View>
-                  ))}
-                  {recurringPaymentsQuery.data?.standingOrders.slice(0, 4).map((order) => (
-                    <View key={order.id} style={styles.recurringRow}>
-                      <Text style={styles.recurringTitle}>
-                        {order.payeeName || order.reference || "Standing order"}
-                      </Text>
-                      <Text style={styles.accountMeta}>
-                        {order.nextPaymentAmount !== null && order.nextPaymentCurrency
-                          ? formatCurrency(order.nextPaymentAmount, order.nextPaymentCurrency)
-                          : "Amount pending"}{" "}
-                        · {formatDateTime(order.nextPaymentDateUtc)}
-                      </Text>
-                    </View>
-                  ))}
-                </>
-              )}
-            </GlassCard>
-
             {relatedCards.length > 0 ? (
               <GlassCard style={styles.recurringCard}>
                 <Text style={styles.sectionTitle}>Linked cards</Text>
@@ -343,9 +366,9 @@ export default function AccountDetailsScreen() {
                   <View key={card.id} style={styles.recurringRow}>
                     <Text style={styles.recurringTitle}>{card.displayName}</Text>
                     <Text style={styles.accountMeta}>
-                      {[card.cardNetwork, card.cardType, card.cardNumberLastFour ? `•••• ${card.cardNumberLastFour}` : null]
+                      {[card.cardNetwork, card.cardType, card.cardNumberLastFour ? `**** ${card.cardNumberLastFour}` : null]
                         .filter(Boolean)
-                        .join(" · ")}
+                        .join(" | ")}
                     </Text>
                     <Text style={styles.accountMeta}>
                       Balance:{" "}
@@ -411,11 +434,11 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   accountName: {
     color: palette.textPrimary,
-    ...typography.title1
+    ...typography.title2
   },
   accountBalance: {
     color: palette.textPrimary,
-    ...typography.displayL,
+    ...typography.amountLarge,
     fontVariant: ["tabular-nums"]
   },
   accountMetaWrap: {
@@ -428,6 +451,9 @@ const styles = createRuntimeStyleSheet(() => ({
   sectionTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong
+  },
+  connectionSectionTitle: {
+    marginTop: spacing[8]
   },
   recurringCard: {
     gap: spacing[8]

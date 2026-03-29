@@ -20,8 +20,8 @@ public sealed class AccountService(
         {
             var accounts = await QueryAccountsWithBranding()
                 .ToListAsync(cancellationToken);
-
-            return await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
+            var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
+            return await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedColumn)
         {
@@ -31,8 +31,8 @@ public sealed class AccountService(
 
             var accounts = await QueryAccountsWithoutBranding()
                 .ToListAsync(cancellationToken);
-
-            return await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
+            var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
+            return await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
         }
     }
 
@@ -49,7 +49,8 @@ public sealed class AccountService(
             }
 
             var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync([account], cancellationToken);
-            return enriched.FirstOrDefault();
+            var normalized = await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
+            return normalized.FirstOrDefault();
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedColumn)
         {
@@ -66,10 +67,184 @@ public sealed class AccountService(
             }
 
             var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync([account], cancellationToken);
-            return enriched.FirstOrDefault();
+            var normalized = await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
+            return normalized.FirstOrDefault();
         }
     }
 
+    private async Task<IReadOnlyList<AccountDto>> NormalizeAccountDisplayNamesAsync(
+        IReadOnlyList<AccountDto> accounts,
+        CancellationToken cancellationToken)
+    {
+        if (accounts.Count == 0)
+        {
+            return accounts;
+        }
+
+        var accountIds = accounts.Select(account => account.Id).ToArray();
+        var linkedRows = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(linked =>
+                linked.FinancialAccountId.HasValue
+                && accountIds.Contains(linked.FinancialAccountId.Value))
+            .OrderByDescending(linked => linked.UpdatedUtc)
+            .Select(linked => new
+            {
+                FinancialAccountId = linked.FinancialAccountId!.Value,
+                linked.DisplayName,
+                linked.AccountType,
+                linked.Currency,
+                ConnectedFullName = linked.Connection != null && linked.Connection.IdentityInfo != null
+                    ? linked.Connection.IdentityInfo.FullName
+                    : null
+            })
+            .ToListAsync(cancellationToken);
+
+        if (linkedRows.Count == 0)
+        {
+            return accounts;
+        }
+
+        var linkedByAccount = new Dictionary<Guid, LinkedAccountNameProjection>();
+        foreach (var row in linkedRows)
+        {
+            if (linkedByAccount.ContainsKey(row.FinancialAccountId))
+            {
+                continue;
+            }
+
+            var resolvedName = ResolveLinkedAccountDisplayName(
+                row.DisplayName,
+                row.AccountType,
+                row.Currency,
+                row.ConnectedFullName);
+
+            linkedByAccount[row.FinancialAccountId] = new LinkedAccountNameProjection(
+                resolvedName,
+                row.ConnectedFullName);
+        }
+
+        return accounts
+            .Select(account =>
+            {
+                if (!linkedByAccount.TryGetValue(account.Id, out var linkedProjection))
+                {
+                    return account;
+                }
+
+                if (!ShouldReplaceAccountName(
+                    account.Name,
+                    linkedProjection.ResolvedName,
+                    linkedProjection.ConnectedFullName))
+                {
+                    return account;
+                }
+
+                return account with { Name = linkedProjection.ResolvedName };
+            })
+            .ToList();
+    }
+
+    private static bool ShouldReplaceAccountName(
+        string currentName,
+        string proposedName,
+        string? connectedFullName)
+    {
+        if (string.IsNullOrWhiteSpace(proposedName))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentName))
+        {
+            return true;
+        }
+
+        if (string.Equals(currentName.Trim(), proposedName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return LooksLikeConnectedIdentity(currentName.Trim(), connectedFullName);
+    }
+
+    private static string ResolveLinkedAccountDisplayName(
+        string? displayName,
+        string? accountType,
+        string currency,
+        string? connectedFullName)
+    {
+        var normalizedDisplayName = NormalizeLabel(displayName);
+        if (!string.IsNullOrWhiteSpace(normalizedDisplayName)
+            && !LooksLikeConnectedIdentity(normalizedDisplayName, connectedFullName))
+        {
+            return normalizedDisplayName;
+        }
+
+        var resolvedCurrency = string.IsNullOrWhiteSpace(currency) ? "EUR" : currency.Trim().ToUpperInvariant();
+        var friendlyType = ResolveFriendlyAccountType(accountType);
+        return $"{resolvedCurrency} {friendlyType}";
+    }
+
+    private static string? NormalizeLabel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static bool LooksLikeConnectedIdentity(string accountLabel, string? connectedFullName)
+    {
+        var normalizedConnectedName = NormalizeLabel(connectedFullName);
+        if (normalizedConnectedName is null)
+        {
+            return false;
+        }
+
+        var accountTokens = accountLabel
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length > 0)
+            .OrderBy(token => token)
+            .ToArray();
+
+        var connectedTokens = normalizedConnectedName
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length > 0)
+            .OrderBy(token => token)
+            .ToArray();
+
+        if (accountTokens.Length < 2 || accountTokens.Length != connectedTokens.Length)
+        {
+            return false;
+        }
+
+        return accountTokens.SequenceEqual(connectedTokens);
+    }
+
+    private static string ResolveFriendlyAccountType(string? accountType)
+    {
+        var normalized = accountType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "transaction" => "current account",
+            "current" => "current account",
+            "checking" => "current account",
+            "savings" => "savings account",
+            "credit" => "credit account",
+            "loan" => "loan account",
+            _ => "account"
+        };
+    }
+
+    private sealed record LinkedAccountNameProjection(
+        string ResolvedName,
+        string? ConnectedFullName);
     private async Task<IReadOnlyList<AccountDto>> TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(
         IReadOnlyList<AccountDto> accounts,
         CancellationToken cancellationToken)

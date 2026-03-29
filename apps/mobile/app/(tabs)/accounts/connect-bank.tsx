@@ -27,6 +27,7 @@ import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from 
 import type {
   BankConnectionDto,
   BankConnectionStatus,
+  LinkedBankAccountDto,
   StartTrueLayerLinkResponse
 } from "../../../src/types/api";
 
@@ -138,20 +139,62 @@ function formatDateAdded(createdUtc?: string | null) {
   return `${byType("weekday")}, ${byType("day")} ${byType("month")} ${byType("year")}, ${byType("hour")}:${byType("minute")}`;
 }
 
-function formatCapabilityLabel(
-  supported: boolean | null | undefined,
-  availableLabel: string,
-  unavailableLabel: string
-) {
-  if (supported === true) {
-    return availableLabel;
+function normalizeText(value?: string | null) {
+  if (!value) {
+    return null;
   }
 
-  if (supported === false) {
-    return unavailableLabel;
+  const normalized = value.trim().replace(/\s+/g, " ");
+  return normalized.length > 0 ? normalized : null;
+}
+
+function formatAccountFallback(accountType?: string | null, currency?: string | null) {
+  const normalizedType = accountType?.trim().toLowerCase();
+  const friendlyType =
+    normalizedType === "transaction" || normalizedType === "current" || normalizedType === "checking"
+      ? "current account"
+      : normalizedType === "savings"
+        ? "savings account"
+        : normalizedType === "credit"
+          ? "credit account"
+          : normalizedType === "loan"
+            ? "loan account"
+            : "account";
+
+  const resolvedCurrency = normalizeText(currency)?.toUpperCase() ?? "EUR";
+  return `${resolvedCurrency} ${friendlyType}`;
+}
+
+function looksLikeConnectedIdentity(candidate: string, connectedFullName?: string | null) {
+  const normalizedConnected = normalizeText(connectedFullName);
+  if (!normalizedConnected) {
+    return false;
   }
 
-  return "Unknown";
+  const tokenize = (value: string) =>
+    value
+      .toLowerCase()
+      .split(" ")
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0)
+      .sort();
+
+  const candidateTokens = tokenize(candidate);
+  const connectedTokens = tokenize(normalizedConnected);
+  if (candidateTokens.length < 2 || candidateTokens.length !== connectedTokens.length) {
+    return false;
+  }
+
+  return candidateTokens.every((token, index) => token === connectedTokens[index]);
+}
+
+function formatLinkedAccountName(account: LinkedBankAccountDto, connectedFullName?: string | null) {
+  const normalized = normalizeText(account.displayName);
+  if (normalized && !looksLikeConnectedIdentity(normalized, connectedFullName)) {
+    return normalized;
+  }
+
+  return formatAccountFallback(account.accountType, account.currency);
 }
 
 function isLinkStillValid(link: PendingConsentLink | null, nowMs: number) {
@@ -323,11 +366,11 @@ export default function AddAccountModalScreen() {
     return Array.from(
       new Set(
         sorted
-          .map((account) => account.displayName.trim())
+          .map((account) => formatLinkedAccountName(account, activeConnection?.connectedFullName))
           .filter((name) => name.length > 0)
       )
     );
-  }, [forceNewConnectionFlow, linkedBankAccountsQuery.data, pendingConnectionId]);
+  }, [activeConnection?.connectedFullName, forceNewConnectionFlow, linkedBankAccountsQuery.data, pendingConnectionId]);
 
   const linkedCardNames = useMemo(() => {
     if (forceNewConnectionFlow && !pendingConnectionId) {
@@ -813,30 +856,12 @@ export default function AddAccountModalScreen() {
     lastManualSyncUtc ?? activeConnection?.lastSuccessfulSyncUtc ?? null
   );
   const lastSyncLabel = lastSyncUtc ? formatDateAdded(lastSyncUtc) : "Not synced yet";
-  const grantedScopes = (activeConnection?.grantedScopesCsv ?? "")
-    .split(/[,\s]+/)
-    .map((scope) => scope.trim())
-    .filter((scope) => scope.length > 0);
-  const supportsInfoLabel = formatCapabilityLabel(
-    activeConnection?.supportsInfo,
-    "Identity info available",
-    "Identity info unavailable"
-  );
-  const supportsCardsLabel = formatCapabilityLabel(
-    activeConnection?.supportsCards,
-    "Cards available",
-    "Cards unavailable from this provider"
-  );
-  const supportsDirectDebitsLabel = formatCapabilityLabel(
-    activeConnection?.supportsDirectDebits,
-    "Direct debits available",
-    "Direct debits unavailable from this provider"
-  );
-  const supportsStandingOrdersLabel = formatCapabilityLabel(
-    activeConnection?.supportsStandingOrders,
-    "Standing orders available",
-    "Standing orders unavailable from this provider"
-  );
+  const meaningfulCapabilities = [
+    activeConnection?.supportsInfo ? "Identity info available" : null,
+    activeConnection?.supportsCards ? "Cards available" : null,
+    activeConnection?.supportsDirectDebits ? "Direct debits available" : null,
+    activeConnection?.supportsStandingOrders ? "Standing orders available" : null
+  ].filter((entry): entry is string => Boolean(entry));
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
@@ -934,32 +959,28 @@ export default function AddAccountModalScreen() {
               {activeConnection.connectedFullName}
             </Text>
           ) : null}
-          <Text style={styles.metadataRow}>
-            <Text style={styles.metadataLabel}>Capabilities: </Text>
-            {supportsInfoLabel}; {supportsCardsLabel}; {supportsDirectDebitsLabel}; {supportsStandingOrdersLabel}
-          </Text>
-          {grantedScopes.length > 0 ? (
+          {meaningfulCapabilities.length > 0 ? (
             <Text style={styles.metadataRow}>
-              <Text style={styles.metadataLabel}>Granted scopes: </Text>
-              {grantedScopes.join(", ")}
+              <Text style={styles.metadataLabel}>Capabilities: </Text>
+              {meaningfulCapabilities.join(", ")}
             </Text>
           ) : null}
           <Text style={styles.metadataRow}>
             <Text style={styles.metadataLabel}>Date added: </Text>
             {dateAdded}
           </Text>
-          <Text style={styles.metadataRow}>
-            <Text style={styles.metadataLabel}>Card name(s): </Text>
-          </Text>
           {linkedCardNames.length > 0 ? (
-            linkedCardNames.map((cardName) => (
-              <Text key={cardName} style={styles.metadataListItem}>
-                - {cardName}
+            <>
+              <Text style={styles.metadataRow}>
+                <Text style={styles.metadataLabel}>Card name(s): </Text>
               </Text>
-            ))
-          ) : (
-            <Text style={styles.metadataRow}>No cards linked or provider does not expose card data.</Text>
-          )}
+              {linkedCardNames.map((cardName) => (
+                <Text key={cardName} style={styles.metadataListItem}>
+                  - {cardName}
+                </Text>
+              ))}
+            </>
+          ) : null}
         </View>
 
         {showRefreshAction ? (

@@ -818,7 +818,8 @@ public sealed class BankSyncService(
             dbContext.LinkedBankAccounts.Add(linkedAccount);
         }
 
-        linkedAccount.DisplayName = providerAccount.DisplayName;
+        var resolvedDisplayName = ResolveProviderAccountDisplayName(connection, providerAccount);
+        linkedAccount.DisplayName = resolvedDisplayName;
         linkedAccount.AccountType = providerAccount.AccountType;
         linkedAccount.AccountSubType = providerAccount.AccountSubType;
         linkedAccount.Currency = providerAccount.Currency;
@@ -833,7 +834,7 @@ public sealed class BankSyncService(
             {
                 Id = Guid.NewGuid(),
                 UserId = connection.UserId,
-                Name = providerAccount.DisplayName,
+                Name = resolvedDisplayName,
                 Type = MapAccountType(providerAccount.AccountType),
                 Currency = providerAccount.Currency,
                 CreatedUtc = now
@@ -844,7 +845,7 @@ public sealed class BankSyncService(
         }
         else
         {
-            linkedAccount.FinancialAccount.Name = providerAccount.DisplayName;
+            linkedAccount.FinancialAccount.Name = resolvedDisplayName;
             linkedAccount.FinancialAccount.Type = MapAccountType(providerAccount.AccountType);
             linkedAccount.FinancialAccount.Currency = providerAccount.Currency;
         }
@@ -1014,6 +1015,77 @@ public sealed class BankSyncService(
             .Select(x => x.DedupeKey)
             .ToHashSetAsync(cancellationToken);
 
+        var projectedFinancialAccountId = await ResolveProjectedFinancialAccountIdForCardAsync(linkedCard, cancellationToken);
+        var existingAccountProviderIds = await dbContext.RawBankTransactions
+            .Where(x => x.LinkedBankAccount != null
+                && x.LinkedBankAccount.ConnectionId == linkedCard.ConnectionId
+                && x.ProviderTransactionId != null)
+            .Select(x => x.ProviderTransactionId!)
+            .ToHashSetAsync(cancellationToken);
+        var existingAccountDedupeKeys = await dbContext.RawBankTransactions
+            .Where(x => x.LinkedBankAccount != null
+                && x.LinkedBankAccount.ConnectionId == linkedCard.ConnectionId)
+            .Select(x => x.DedupeKey)
+            .ToHashSetAsync(cancellationToken);
+
+        HashSet<string>? projectionFingerprints = null;
+        if (projectedFinancialAccountId.HasValue)
+        {
+            projectionFingerprints = await dbContext.Transactions
+                .Where(x => x.FinancialAccountId == projectedFinancialAccountId.Value)
+                .Select(x => CreateProjectionFingerprint(x.Amount, x.Currency, x.BookedAtUtc, x.Description))
+                .ToHashSetAsync(cancellationToken);
+
+            var existingCardRows = await dbContext.RawBankCardTransactions
+                .Where(x => x.LinkedBankCardId == linkedCard.Id)
+                .Select(x => new
+                {
+                    x.ProviderTransactionId,
+                    x.DedupeKey,
+                    x.Amount,
+                    x.Currency,
+                    x.BookedAtUtc,
+                    x.Description
+                })
+                .ToListAsync(cancellationToken);
+
+            foreach (var row in existingCardRows)
+            {
+                if (!string.IsNullOrWhiteSpace(row.ProviderTransactionId)
+                    && existingAccountProviderIds.Contains(row.ProviderTransactionId))
+                {
+                    continue;
+                }
+
+                if (existingAccountDedupeKeys.Contains(row.DedupeKey))
+                {
+                    continue;
+                }
+
+                var projectionFingerprint = CreateProjectionFingerprint(
+                    row.Amount,
+                    row.Currency,
+                    row.BookedAtUtc,
+                    row.Description);
+
+                if (!projectionFingerprints.Add(projectionFingerprint))
+                {
+                    continue;
+                }
+
+                dbContext.Transactions.Add(new Transaction
+                {
+                    Id = Guid.NewGuid(),
+                    FinancialAccountId = projectedFinancialAccountId.Value,
+                    Amount = row.Amount,
+                    Currency = row.Currency,
+                    Description = row.Description,
+                    BookedAtUtc = row.BookedAtUtc,
+                    CreatedUtc = now
+                });
+            }
+        }
+
         var importedCount = 0;
         foreach (var providerTransaction in providerTransactions)
         {
@@ -1049,11 +1121,88 @@ public sealed class BankSyncService(
                 existingProviderIds.Add(providerTransaction.ProviderTransactionId);
             }
 
+            if (projectedFinancialAccountId.HasValue && projectionFingerprints is not null)
+            {
+                var existsInAccountFeed =
+                    (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId)
+                     && existingAccountProviderIds.Contains(providerTransaction.ProviderTransactionId))
+                    || existingAccountDedupeKeys.Contains(providerTransaction.DedupeKey);
+
+                if (!existsInAccountFeed)
+                {
+                    var projectionFingerprint = CreateProjectionFingerprint(
+                        providerTransaction.Amount,
+                        providerTransaction.Currency,
+                        providerTransaction.BookedAtUtc,
+                        providerTransaction.Description);
+
+                    if (projectionFingerprints.Add(projectionFingerprint))
+                    {
+                        dbContext.Transactions.Add(new Transaction
+                        {
+                            Id = Guid.NewGuid(),
+                            FinancialAccountId = projectedFinancialAccountId.Value,
+                            Amount = providerTransaction.Amount,
+                            Currency = providerTransaction.Currency,
+                            Description = providerTransaction.Description,
+                            BookedAtUtc = providerTransaction.BookedAtUtc,
+                            CreatedUtc = now
+                        });
+                    }
+                }
+            }
+
             existingDedupeKeys.Add(providerTransaction.DedupeKey);
             importedCount++;
         }
 
         return importedCount;
+    }
+
+    private async Task<Guid?> ResolveProjectedFinancialAccountIdForCardAsync(
+        LinkedBankCard linkedCard,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(linkedCard.ProviderAccountId))
+        {
+            var matchedByProviderAccount = await dbContext.LinkedBankAccounts
+                .Where(x =>
+                    x.ConnectionId == linkedCard.ConnectionId
+                    && x.ProviderAccountId == linkedCard.ProviderAccountId
+                    && x.FinancialAccountId.HasValue)
+                .Select(x => x.FinancialAccountId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (matchedByProviderAccount.HasValue)
+            {
+                return matchedByProviderAccount.Value;
+            }
+        }
+
+        var candidateFinancialAccountIds = await dbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == linkedCard.ConnectionId && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .Distinct()
+            .Take(2)
+            .ToListAsync(cancellationToken);
+
+        return candidateFinancialAccountIds.Count == 1 ? candidateFinancialAccountIds[0] : null;
+    }
+
+    private static string CreateProjectionFingerprint(
+        decimal amount,
+        string currency,
+        DateTime bookedAtUtc,
+        string description)
+    {
+        var normalizedCurrency = string.IsNullOrWhiteSpace(currency)
+            ? "EUR"
+            : currency.Trim().ToUpperInvariant();
+        var normalizedDescription = string.IsNullOrWhiteSpace(description)
+            ? "Imported transaction"
+            : description.Trim();
+
+        return $"{amount:0.00}|{normalizedCurrency}|{bookedAtUtc:O}|{normalizedDescription}";
     }
 
     private async Task<int> UpsertDirectDebitsAsync(
@@ -1281,6 +1430,85 @@ public sealed class BankSyncService(
             "CASH" => "Cash",
             _ => "Other"
         };
+    }
+
+    private static string ResolveProviderAccountDisplayName(
+        OpenBankingConnection connection,
+        TrueLayerAccountRecord providerAccount)
+    {
+        var candidate = NormalizeLabel(providerAccount.DisplayName);
+        if (!string.IsNullOrWhiteSpace(candidate)
+            && !LooksLikeConnectedIdentity(candidate, connection.IdentityInfo?.FullName))
+        {
+            return candidate;
+        }
+
+        return BuildAccountFallbackLabel(providerAccount.Currency, providerAccount.AccountType);
+    }
+
+    private static string BuildAccountFallbackLabel(string currency, string? accountType)
+    {
+        var resolvedCurrency = string.IsNullOrWhiteSpace(currency)
+            ? "EUR"
+            : currency.Trim().ToUpperInvariant();
+        var friendlyType = ResolveFriendlyAccountType(accountType);
+        return $"{resolvedCurrency} {friendlyType}";
+    }
+
+    private static string ResolveFriendlyAccountType(string? accountType)
+    {
+        var normalized = accountType?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "transaction" => "current account",
+            "current" => "current account",
+            "checking" => "current account",
+            "savings" => "savings account",
+            "credit" => "credit account",
+            "loan" => "loan account",
+            _ => "account"
+        };
+    }
+
+    private static string? NormalizeLabel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static bool LooksLikeConnectedIdentity(string accountLabel, string? connectedFullName)
+    {
+        var normalizedConnectedName = NormalizeLabel(connectedFullName);
+        if (normalizedConnectedName is null)
+        {
+            return false;
+        }
+
+        var accountTokens = accountLabel
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length > 0)
+            .OrderBy(token => token)
+            .ToArray();
+
+        var connectedTokens = normalizedConnectedName
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim().ToLowerInvariant())
+            .Where(token => token.Length > 0)
+            .OrderBy(token => token)
+            .ToArray();
+
+        if (accountTokens.Length < 2 || accountTokens.Length != connectedTokens.Length)
+        {
+            return false;
+        }
+
+        return accountTokens.SequenceEqual(connectedTokens);
     }
 
     private static void ApplyProviderBrandingFromAccount(

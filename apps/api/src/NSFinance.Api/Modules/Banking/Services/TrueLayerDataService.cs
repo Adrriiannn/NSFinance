@@ -431,12 +431,13 @@ public sealed class TrueLayerDataService(
                     continue;
                 }
 
-                var description = GetString(item, "description") ?? "Imported transaction";
+                var rawDescription = GetString(item, "description") ?? "Imported transaction";
+                var description = ResolveTransactionDisplayDescription(item, rawDescription, "Imported transaction");
                 var providerTransactionId = GetString(item, "transaction_id");
                 var stableTransactionId =
                     GetString(item, "normalised_provider_transaction_id")
                     ?? providerTransactionId
-                    ?? $"{timestamp:O}|{amount.Value:0.00}|{description}";
+                    ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}";
 
                 records.Add(new TrueLayerTransactionRecord(
                     providerTransactionId,
@@ -519,12 +520,13 @@ public sealed class TrueLayerDataService(
                     continue;
                 }
 
-                var description = GetString(item, "description") ?? "Imported card transaction";
+                var rawDescription = GetString(item, "description") ?? "Imported card transaction";
+                var description = ResolveTransactionDisplayDescription(item, rawDescription, "Imported card transaction");
                 var providerTransactionId = GetString(item, "transaction_id");
                 var stableTransactionId =
                     GetString(item, "normalised_provider_transaction_id")
                     ?? providerTransactionId
-                    ?? $"{timestamp:O}|{amount.Value:0.00}|{description}";
+                    ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}";
 
                 records.Add(new TrueLayerCardTransactionRecord(
                     ProviderTransactionId: providerTransactionId,
@@ -746,6 +748,79 @@ public sealed class TrueLayerDataService(
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(stableTransactionId));
         return Convert.ToHexString(bytes);
+    }
+
+    private static string ResolveTransactionDisplayDescription(
+        JsonElement item,
+        string? rawDescription,
+        string fallback)
+    {
+        var preferredCandidates = new[]
+        {
+            GetString(item, "merchant_name"),
+            GetString(item, "normalised_provider_merchant_name"),
+            GetString(item, "provider_merchant_name"),
+            GetString(item, "display_name"),
+            GetNestedString(item, "merchant", "name"),
+            GetNestedString(item, "counterparty", "name"),
+            GetNestedString(item, "meta", "merchant_name"),
+            GetNestedString(item, "meta", "display_name"),
+            rawDescription
+        };
+
+        foreach (var candidate in preferredCandidates)
+        {
+            var normalized = NormalizeDisplayLabel(candidate);
+            if (normalized is null)
+            {
+                continue;
+            }
+
+            return normalized;
+        }
+
+        return fallback;
+    }
+
+    private static string? GetNestedString(JsonElement item, string parentPropertyName, string childPropertyName)
+    {
+        if (!item.TryGetProperty(parentPropertyName, out var parent)
+            || parent.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return GetString(parent, childPropertyName);
+    }
+
+    private static string? NormalizeDisplayLabel(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return null;
+        }
+
+        var normalized = string.Join(" ", candidate.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
+
+        var hashIndex = normalized.IndexOf('#');
+        if (hashIndex > 0 && hashIndex < normalized.Length - 1)
+        {
+            var suffix = normalized[(hashIndex + 1)..];
+            if (suffix.Length >= 4 && suffix.Any(char.IsDigit))
+            {
+                var trimmed = normalized[..hashIndex].Trim();
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                {
+                    normalized = trimmed;
+                }
+            }
+        }
+
+        return normalized;
     }
 
     private static string? GetProviderBrandingString(JsonElement element, string propertyName)

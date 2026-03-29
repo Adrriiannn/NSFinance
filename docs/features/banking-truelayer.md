@@ -42,6 +42,7 @@ NSFinance now maps the expanded TrueLayer model into explicit product buckets:
   - linked account identity, display name, type/subtype, currency, account-number metadata
 - Balance and activity:
   - account balances + transactions
+  - card transactions are projected into the same activity ledger when they can be linked to a single financial account
 - Card layer:
   - linked cards stored separately from bank accounts
   - card balances/transactions tracked separately
@@ -56,6 +57,7 @@ Important mapping rule:
 
 - account and card labels come from account/card display metadata (`display_name` + safe fallbacks)
 - `/info.full_name` is never used as the account title
+- transaction titles use a merchant-first display strategy (merchant/display fields first, raw `description` fallback)
 
 ## Capability-aware sync behavior
 
@@ -170,3 +172,4 @@ This ensures live bank chooser flows open with Ireland providers instead of UK d
 - initial sync queue is still in-memory (`Channel`) and not durable across host crashes/redeploys; automatic queue failures now mark the connection status truthfully and require manual sync/reconnect follow-up
 - disconnect cleanup queue is also in-memory (`Channel`) and not fully durable; startup requeue recovers `disconnect_pending` connections, and manual retry is idempotent if a pending cleanup did not finish
 - provider-side max history remains provider-dependent; requesting a wider window cannot exceed what the institution exposes through TrueLayer
+- card transactions can only be projected into the shared activity ledger when they can be linked to a clear projected account (`provider_account_id` match or single-account connection fallback)

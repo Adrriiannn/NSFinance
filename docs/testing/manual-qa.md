@@ -70,6 +70,8 @@ Expanded scope checks:
    - connection summary includes capability flags (cards/direct debits/standing orders/info)
    - "Connected as" is populated when `/info.full_name` is returned
    - account labels remain account/card display labels (identity name must not replace them)
+   - account details page shows grouped "Account info" and "Connection info" and does not show recurring commitments there
+   - recurring commitments are visible through cashflow/planning recurring surfaces instead
 
 Consent expiry / reconfirmation continuity:
 
