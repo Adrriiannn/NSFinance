@@ -33,6 +33,7 @@
       "url": "https://u.expo.dev/21986a2d-cbfa-4757-bf6d-04eb6aa4f197"
     },
     "ios": {
+     "bundleIdentifier": "ie.nsireland.finance",
       "runtimeVersion": {
         "policy": "appVersion"
       }
