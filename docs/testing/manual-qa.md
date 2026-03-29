@@ -102,3 +102,12 @@ Disconnect:
 3. Verify final transition to `revoked` after background cleanup.
 4. Verify token cleanup and imported banking-data cleanup behavior.
 5. Retry disconnect while pending and confirm idempotent behavior (no corruption/duplicate failures).
+
+Linked transfer coherence:
+
+1. Open a transaction that is part of a verified linked internal transfer pair.
+2. Change category/subcategory within the Transfers taxonomy and save.
+3. Open the linked counterpart transaction and verify it reflects transfer taxonomy coherently.
+4. In Transaction Details, verify the `Linked transaction` section appears only for linked rows.
+5. Tap the linked transaction preview row and verify navigation opens the counterpart details page.
+6. Open a normal non-linked merchant transaction and verify no `Linked transaction` section is rendered.

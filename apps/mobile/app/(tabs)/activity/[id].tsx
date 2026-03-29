@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
+import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { AmountText } from "../../../src/components/ui/AmountText";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
@@ -16,10 +17,16 @@ import {
   useTransactionDetailQuery,
   useUpdateTransactionMetadataMutation
 } from "../../../src/features/transactions/useTransactions";
-import { TRANSFER_DOMAIN_ID } from "../../../src/features/transactions/transferClassification";
+import {
+  getTransferPolicyEvaluation,
+  getTransferPolicyWarning,
+  TRANSFER_DOMAIN_ID
+} from "../../../src/features/transactions/transferClassification";
+import { buildTransactionMetaLine } from "../../../src/features/transactions/activityGrouping";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { formatDate, formatTime } from "../../../src/lib/format";
 import { HeaderShell } from "../../../src/layout/appHeader";
+import type { TransactionDto } from "../../../src/types/api";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"category" | "reason" | "notes", string>>;
@@ -32,6 +39,8 @@ export default function PlannerTransactionDetailScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const transactionId = params.id ?? "";
   const transactionQuery = useTransactionDetailQuery(transactionId);
+  const linkedTransactionId = transactionQuery.data?.linkedTransferTransactionId ?? null;
+  const linkedTransactionQuery = useTransactionDetailQuery(linkedTransactionId ?? "");
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const updateMetadataMutation = useUpdateTransactionMetadataMutation();
 
@@ -201,10 +210,49 @@ export default function PlannerTransactionDetailScreen() {
   const subcategoryLabel = selectedSubcategory?.name
     ?? transactionQuery.data?.taxonomySubcategoryName
     ?? "Not set";
-  const showsTransferTotalsHint = (
-    selectedCategory?.domainId === TRANSFER_DOMAIN_ID
-    || transactionQuery.data?.taxonomyDomainId === TRANSFER_DOMAIN_ID
-  );
+  const draftDomainId =
+    selectedCategory?.domainId
+    ?? transactionQuery.data?.taxonomyDomainId
+    ?? null;
+  const draftCategoryId =
+    selectedCategory?.id
+    ?? transactionQuery.data?.taxonomyCategoryId
+    ?? null;
+  const draftSubcategoryId =
+    selectedSubcategory?.id
+    ?? transactionQuery.data?.taxonomySubcategoryId
+    ?? null;
+  const hasVerifiedLinkedTransfer =
+    transactionQuery.data?.transferKind === "linked_internal_transfer"
+    && Boolean(transactionQuery.data?.linkedTransferTransactionId);
+  const draftTransferKind =
+    draftDomainId === TRANSFER_DOMAIN_ID
+      ? (
+          hasVerifiedLinkedTransfer
+            ? "linked_internal_transfer"
+            : "manual_transfer"
+        )
+      : null;
+  const draftLinkedTransferTransactionId =
+    draftTransferKind === "linked_internal_transfer"
+      ? transactionQuery.data?.linkedTransferTransactionId ?? null
+      : null;
+  const transferPolicyEvaluation = getTransferPolicyEvaluation({
+    amount: transactionQuery.data?.amount ?? 0,
+    taxonomyDomainId: draftDomainId,
+    taxonomyCategoryId: draftCategoryId,
+    taxonomySubcategoryId: draftSubcategoryId,
+    transferKind: draftTransferKind,
+    linkedTransferTransactionId: draftLinkedTransferTransactionId,
+    transferPolicyKind: transactionQuery.data?.transferPolicyKind ?? null,
+    reportingBucket: transactionQuery.data?.reportingBucket ?? null,
+    isGloballyNeutralized: transactionQuery.data?.isGloballyNeutralized ?? null
+  });
+  const transferTotalsHint = getTransferPolicyWarning(transferPolicyEvaluation);
+  const showLinkedTransactionSection = Boolean(linkedTransactionId);
+  const linkedTransactionMetadata = linkedTransactionQuery.data
+    ? buildLinkedTransactionMetadata(linkedTransactionQuery.data)
+    : null;
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
@@ -248,6 +296,32 @@ export default function PlannerTransactionDetailScreen() {
             <DetailLine label="Category" value={categoryLabel} />
             <DetailLine label="Subcategory" value={subcategoryLabel} />
           </GlassCard>
+
+          {showLinkedTransactionSection ? (
+            <GlassCard style={styles.linkedTransactionCard}>
+              <Text style={styles.linkedTransactionTitle}>Linked transaction</Text>
+              {linkedTransactionQuery.isLoading && !linkedTransactionQuery.data ? (
+                <SkeletonBlock style={styles.linkedTransactionSkeleton} />
+              ) : linkedTransactionQuery.data ? (
+                <TransactionRow
+                  transaction={linkedTransactionQuery.data}
+                  metadataOverride={linkedTransactionMetadata ?? undefined}
+                  showTimestamp
+                  onPress={() => {
+                    if (!linkedTransactionId || linkedTransactionId === transactionId) {
+                      return;
+                    }
+
+                    router.push(`/(tabs)/activity/${linkedTransactionId}` as never);
+                  }}
+                />
+              ) : linkedTransactionQuery.isError ? (
+                <Text style={styles.linkedTransactionError}>
+                  Could not load the linked transaction right now.
+                </Text>
+              ) : null}
+            </GlassCard>
+          ) : null}
 
           <GlassCard style={styles.editCard}>
             <TextField
@@ -308,11 +382,7 @@ export default function PlannerTransactionDetailScreen() {
               </Pressable>
             </View>
             {errors.category ? <Text style={styles.fieldError}>{errors.category}</Text> : null}
-            {showsTransferTotalsHint ? (
-              <Text style={styles.transferHint}>
-                Transfers are excluded from overall income and expense totals.
-              </Text>
-            ) : null}
+            {transferTotalsHint ? <Text style={styles.transferHint}>{transferTotalsHint}</Text> : null}
           </GlassCard>
 
           {updateMetadataMutation.isError ? (
@@ -344,6 +414,11 @@ function DetailLine({ label, value }: { label: string; value: string }) {
   );
 }
 
+function buildLinkedTransactionMetadata(transaction: TransactionDto): string {
+  const categoryLabel = buildTransactionMetaLine(transaction);
+  return `${transaction.accountName} | ${categoryLabel}`;
+}
+
 const styles = createRuntimeStyleSheet(() => ({
   content: {},
   heroCard: {
@@ -364,6 +439,21 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   detailCard: {
     gap: spacing[8]
+  },
+  linkedTransactionCard: {
+    gap: spacing[10]
+  },
+  linkedTransactionTitle: {
+    color: palette.textPrimary,
+    ...typography.body2
+  },
+  linkedTransactionSkeleton: {
+    height: 76,
+    borderRadius: 6
+  },
+  linkedTransactionError: {
+    color: palette.textSecondary,
+    ...typography.caption
   },
   editCard: {
     gap: spacing[12]

@@ -46,6 +46,9 @@ export type TransactionDto = {
   taxonomySubcategoryName: string | null;
   transferKind?: "manual_transfer" | "linked_internal_transfer" | null;
   linkedTransferTransactionId?: string | null;
+  transferPolicyKind?: string | null;
+  reportingBucket?: string | null;
+  isGloballyNeutralized?: boolean | null;
   reason: string | null;
   notes: string | null;
   bookedAtUtc: string;

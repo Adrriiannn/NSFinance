@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.DTOs;
+using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Modules.Users.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
@@ -120,6 +121,9 @@ public sealed class TransactionService(
                 null,
                 null,
                 null,
+                transaction.Amount < 0 ? "spending" : "income",
+                false,
+                null,
                 null,
                 transaction.BookedAtUtc,
                 transaction.CreatedUtc,
@@ -171,17 +175,40 @@ public sealed class TransactionService(
             return (null, "transaction_subcategory_mismatch", "Selected subcategory does not belong to the selected category.");
         }
 
-        await UnlinkCounterpartAsync(transaction, cancellationToken);
-
         var isTransferCategory = category.DomainId == ExpenseTaxonomyService.TransferDomainId;
+        var selectedDomainId = subcategory?.DomainId ?? category.DomainId;
+        var selectedCategoryId = category.Id;
+        var selectedSubcategoryId = subcategory?.Id;
+        var preserveVerifiedLinkedTransfer =
+            transaction.TransferKind == TransactionTransferKind.LinkedInternal
+            && transaction.LinkedTransferTransactionId.HasValue
+            && isTransferCategory;
+
+        if (!preserveVerifiedLinkedTransfer)
+        {
+            await UnlinkCounterpartAsync(transaction, cancellationToken);
+        }
+
         transaction.Reason = NormalizeOptionalText(request.Reason);
         transaction.Notes = NormalizeOptionalText(request.Notes);
-        transaction.TaxonomyDomainId = subcategory?.DomainId ?? category.DomainId;
-        transaction.TaxonomyCategoryId = category.Id;
-        transaction.TaxonomySubcategoryId = subcategory?.Id;
-        transaction.TransferKind = isTransferCategory ? TransactionTransferKind.Manual : null;
-        transaction.LinkedTransferTransactionId = null;
-        transaction.LinkedTransferMatchedUtc = null;
+        transaction.TaxonomyDomainId = selectedDomainId;
+        transaction.TaxonomyCategoryId = selectedCategoryId;
+        transaction.TaxonomySubcategoryId = selectedSubcategoryId;
+
+        var keptVerifiedLink = preserveVerifiedLinkedTransfer
+            && await SyncLinkedCounterpartTransferTaxonomyAsync(
+                transaction,
+                selectedDomainId,
+                selectedCategoryId,
+                selectedSubcategoryId,
+                cancellationToken);
+
+        if (!keptVerifiedLink)
+        {
+            transaction.TransferKind = isTransferCategory ? TransactionTransferKind.Manual : null;
+            transaction.LinkedTransferTransactionId = null;
+            transaction.LinkedTransferMatchedUtc = null;
+        }
         transaction.MetadataUpdatedUtc = DateTime.UtcNow;
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -241,6 +268,55 @@ public sealed class TransactionService(
         }
     }
 
+    private async Task<bool> SyncLinkedCounterpartTransferTaxonomyAsync(
+        Transaction transaction,
+        int selectedDomainId,
+        int selectedCategoryId,
+        int? selectedSubcategoryId,
+        CancellationToken cancellationToken)
+    {
+        if (!transaction.LinkedTransferTransactionId.HasValue)
+        {
+            return false;
+        }
+
+        var counterpart = await dbContext.Transactions
+            .Include(x => x.FinancialAccount)
+            .SingleOrDefaultAsync(
+                x => x.Id == transaction.LinkedTransferTransactionId.Value
+                    && x.FinancialAccount != null
+                    && x.FinancialAccount.UserId == currentUserProvider.UserId,
+                cancellationToken);
+
+        if (counterpart is null || counterpart.LinkedTransferTransactionId != transaction.Id)
+        {
+            return false;
+        }
+
+        var now = DateTime.UtcNow;
+        transaction.TransferKind = TransactionTransferKind.LinkedInternal;
+        transaction.LinkedTransferMatchedUtc ??= now;
+
+        counterpart.TransferKind = TransactionTransferKind.LinkedInternal;
+        counterpart.LinkedTransferTransactionId = transaction.Id;
+        counterpart.LinkedTransferMatchedUtc = now;
+
+        var counterpartTaxonomyChanged =
+            counterpart.TaxonomyDomainId != selectedDomainId
+            || counterpart.TaxonomyCategoryId != selectedCategoryId
+            || counterpart.TaxonomySubcategoryId != selectedSubcategoryId;
+
+        if (counterpartTaxonomyChanged)
+        {
+            counterpart.TaxonomyDomainId = selectedDomainId;
+            counterpart.TaxonomyCategoryId = selectedCategoryId;
+            counterpart.TaxonomySubcategoryId = selectedSubcategoryId;
+            counterpart.MetadataUpdatedUtc = now;
+        }
+
+        return true;
+    }
+
     private static string? MapTransferKind(TransactionTransferKind? transferKind)
     {
         return transferKind switch
@@ -251,12 +327,45 @@ public sealed class TransactionService(
         };
     }
 
+    private static string MapTransferPolicyKind(TransferPolicyKind policyKind)
+    {
+        return policyKind switch
+        {
+            TransferPolicyKind.None => "none",
+            TransferPolicyKind.InternalTransferGeneric => "internal_transfer_generic",
+            TransferPolicyKind.BankAccountTransfer => "bank_account_transfer",
+            TransferPolicyKind.SavingsTransfer => "savings_transfer",
+            TransferPolicyKind.InvestmentTransfer => "investment_transfer",
+            TransferPolicyKind.WalletTransfer => "wallet_transfer",
+            TransferPolicyKind.CreditCardPaymentTransfer => "credit_card_payment_transfer",
+            TransferPolicyKind.LoanAccountTransfer => "loan_account_transfer",
+            TransferPolicyKind.DebtConsolidationTransfer => "debt_consolidation_transfer",
+            TransferPolicyKind.CashMovementGeneric => "cash_movement_generic",
+            TransferPolicyKind.CashWithdrawal => "cash_withdrawal",
+            TransferPolicyKind.CashDeposit => "cash_deposit",
+            TransferPolicyKind.AtmWithdrawalTransfer => "atm_withdrawal_transfer",
+            TransferPolicyKind.LiabilityTransferGeneric => "liability_transfer_generic",
+            TransferPolicyKind.BrokerageFundingTransfer => "brokerage_funding_transfer",
+            TransferPolicyKind.CurrencyTransfer => "currency_transfer",
+            TransferPolicyKind.OtherInternalMoneyMovement => "other_internal_money_movement",
+            TransferPolicyKind.OtherTransferGeneric => "other_transfer_generic",
+            _ => "none"
+        };
+    }
+
     private TransactionDto MapToDto(TransactionReadModel transaction)
     {
         var taxonomyDomainName = expenseTaxonomyService.GetDomainName(transaction.TaxonomyDomainId);
         var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(transaction.TaxonomyCategoryId);
         var taxonomySubcategoryName = expenseTaxonomyService.GetSubcategoryName(transaction.TaxonomySubcategoryId);
         var categoryName = taxonomyCategoryName ?? transaction.LegacyCategoryName;
+        var transferPolicy = TransferPolicyEngine.Evaluate(
+            transaction.TaxonomyDomainId,
+            transaction.TaxonomyCategoryId,
+            transaction.TaxonomySubcategoryId,
+            transaction.TransferKind,
+            transaction.LinkedTransferTransactionId,
+            transaction.Amount);
 
         return new TransactionDto(
             transaction.Id,
@@ -275,6 +384,9 @@ public sealed class TransactionService(
             taxonomySubcategoryName,
             MapTransferKind(transaction.TransferKind),
             transaction.LinkedTransferTransactionId,
+            MapTransferPolicyKind(transferPolicy.PolicyKind),
+            transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
+            transferPolicy.IsGloballyNeutralized,
             transaction.Reason,
             transaction.Notes,
             transaction.BookedAtUtc,

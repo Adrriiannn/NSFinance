@@ -1115,7 +1115,9 @@ Version: `2026-03-29-v1`
 
 ### 920 Transfers (user-visible)
 - User-visible domain for internal transfers and money movement.
-- Transfer-tagged activity should remain neutral in income/expense reporting metrics.
+- Transfer handling is policy-based, not a blanket neutral rule.
+- Only verified linked movements (or explicit allowed manual overrides) can be neutralized in global income/expense totals.
+- Cash movement and liability-related transfer subtypes remain conservative by default.
 
 - `92010` Internal Transfers
   - `920101` Bank Account Transfer

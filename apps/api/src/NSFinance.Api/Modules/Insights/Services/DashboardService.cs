@@ -3,6 +3,7 @@ using NSFinance.Api.Modules.Accounts.DTOs;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Insights.DTOs;
 using NSFinance.Api.Modules.Transactions.DTOs;
+using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Modules.Users.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
@@ -44,14 +45,29 @@ public sealed class DashboardService(
 
         var transactionCount = await transactionQuery.CountAsync(cancellationToken);
 
-        var recentOutflow = await transactionQuery
+        var recentOutflowCandidates = await transactionQuery
+            .Where(x => x.BookedAtUtc >= thirtyDaysAgo && x.Amount < 0)
+            .Select(x => new
+            {
+                x.Amount,
+                x.TaxonomyDomainId,
+                x.TaxonomyCategoryId,
+                x.TaxonomySubcategoryId,
+                x.TransferKind,
+                x.LinkedTransferTransactionId
+            })
+            .ToListAsync(cancellationToken);
+
+        var recentOutflow = recentOutflowCandidates
             .Where(x =>
-                x.BookedAtUtc >= thirtyDaysAgo
-                && x.Amount < 0
-                && x.TaxonomyDomainId != ExpenseTaxonomyService.TransferDomainId
-                && x.TransferKind != TransactionTransferKind.Manual
-                && x.TransferKind != TransactionTransferKind.LinkedInternal)
-            .SumAsync(x => Math.Abs(x.Amount), cancellationToken);
+                TransferPolicyEngine.Evaluate(
+                    x.TaxonomyDomainId,
+                    x.TaxonomyCategoryId,
+                    x.TaxonomySubcategoryId,
+                    x.TransferKind,
+                    x.LinkedTransferTransactionId,
+                    x.Amount).CountsTowardExpense)
+            .Sum(x => Math.Abs(x.Amount));
 
         var recentTransactions = await transactionQuery
             .OrderByDescending(x => x.BookedAtUtc)
@@ -87,6 +103,13 @@ public sealed class DashboardService(
                 var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(x.TaxonomyCategoryId);
                 var taxonomySubcategoryName = expenseTaxonomyService.GetSubcategoryName(x.TaxonomySubcategoryId);
                 var categoryName = taxonomyCategoryName ?? x.LegacyCategoryName;
+                var transferPolicy = TransferPolicyEngine.Evaluate(
+                    x.TaxonomyDomainId,
+                    x.TaxonomyCategoryId,
+                    x.TaxonomySubcategoryId,
+                    x.TransferKind,
+                    x.LinkedTransferTransactionId,
+                    x.Amount);
 
                 return new TransactionDto(
                     x.Id,
@@ -109,6 +132,9 @@ public sealed class DashboardService(
                             ? "linked_internal_transfer"
                             : null,
                     x.LinkedTransferTransactionId,
+                    MapTransferPolicyKind(transferPolicy.PolicyKind),
+                    transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
+                    transferPolicy.IsGloballyNeutralized,
                     x.Reason,
                     x.Notes,
                     x.BookedAtUtc,
@@ -125,5 +151,31 @@ public sealed class DashboardService(
             RecentOutflow: recentOutflow,
             AccountPreview: accounts.Take(3).ToList(),
             RecentTransactions: recentTransactionDtos);
+    }
+
+    private static string MapTransferPolicyKind(TransferPolicyKind policyKind)
+    {
+        return policyKind switch
+        {
+            TransferPolicyKind.None => "none",
+            TransferPolicyKind.InternalTransferGeneric => "internal_transfer_generic",
+            TransferPolicyKind.BankAccountTransfer => "bank_account_transfer",
+            TransferPolicyKind.SavingsTransfer => "savings_transfer",
+            TransferPolicyKind.InvestmentTransfer => "investment_transfer",
+            TransferPolicyKind.WalletTransfer => "wallet_transfer",
+            TransferPolicyKind.CreditCardPaymentTransfer => "credit_card_payment_transfer",
+            TransferPolicyKind.LoanAccountTransfer => "loan_account_transfer",
+            TransferPolicyKind.DebtConsolidationTransfer => "debt_consolidation_transfer",
+            TransferPolicyKind.CashMovementGeneric => "cash_movement_generic",
+            TransferPolicyKind.CashWithdrawal => "cash_withdrawal",
+            TransferPolicyKind.CashDeposit => "cash_deposit",
+            TransferPolicyKind.AtmWithdrawalTransfer => "atm_withdrawal_transfer",
+            TransferPolicyKind.LiabilityTransferGeneric => "liability_transfer_generic",
+            TransferPolicyKind.BrokerageFundingTransfer => "brokerage_funding_transfer",
+            TransferPolicyKind.CurrencyTransfer => "currency_transfer",
+            TransferPolicyKind.OtherInternalMoneyMovement => "other_internal_money_movement",
+            TransferPolicyKind.OtherTransferGeneric => "other_transfer_generic",
+            _ => "none"
+        };
     }
 }

@@ -3,6 +3,7 @@ using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Banking.Services.Models;
+using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 
@@ -1492,8 +1493,21 @@ public sealed class BankSyncService(
             return false;
         }
 
-        return !transaction.MetadataUpdatedUtc.HasValue
-            || transaction.TaxonomyDomainId == ExpenseTaxonomyService.TransferDomainId;
+        if (!TransferPolicyEngine.IsAutoLinkedMatchPolicyEligible(
+                transaction.TaxonomyDomainId,
+                transaction.TaxonomyCategoryId,
+                transaction.TaxonomySubcategoryId,
+                transaction.TransferKind))
+        {
+            return false;
+        }
+
+        if (transaction.TaxonomyDomainId == ExpenseTaxonomyService.TransferDomainId)
+        {
+            return true;
+        }
+
+        return !transaction.MetadataUpdatedUtc.HasValue;
     }
 
     private static string CreateInternalTransferAmountCurrencyKey(Transaction transaction)

@@ -98,9 +98,15 @@ NSFinance distinguishes true economic activity from money moved between a userâ€
 - `Transfer` remains a visible taxonomy domain/category that users can assign manually.
 - Sync applies linked-account internal transfer matching using same-user, opposite-sign, same amount/currency, timing tolerance, and transfer-hint signals.
 - Matched pairs persist explicit linkage (`LinkedTransferTransactionId`) and transfer semantics (`TransferKind = linked_internal_transfer`) on both sides.
+- Editing transfer taxonomy on one side of a verified linked pair propagates transfer taxonomy to the counterpart so both sides stay transfer-coherent.
 - Manual transfer categorization sets `TransferKind = manual_transfer` without requiring a matched counterpart.
-- Global income/expense reporting treats both manual and linked internal transfers as neutral.
+- A transfer policy engine applies category/subcategory-specific rules; global neutrality is not blanket.
+- Global neutrality is applied only when policy allows it:
+  - verified linked matches for eligible internal transfer classes
+  - explicit manual overrides for selected subtypes (with warning in transaction details)
+- Cash movement and liability/debt transfer subtypes remain conservative by default.
 - Per-account ledgers still show the actual debit/credit movement for account-level truth.
+- Transaction Details renders a linked transaction preview section only when a linked counterpart exists, and tapping it navigates to the counterpart details page.
 
 ## Consent expiry and reconfirmation continuity
 
