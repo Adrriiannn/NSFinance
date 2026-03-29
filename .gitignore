@@ -20,3 +20,12 @@ coverage/
 **/publish/
 **/*-publish.zip
 .dev-orchestrator/*.pid
+
+# Local build/dev-orchestration artifacts (keep local only)
+local-builds/
+.dev-orchestrator/
+build-preview-local.bat
+dev-orchestrator.bat
+dev-stop.bat
+dev-stop.ps1
+dev-orchestrator.ps1
