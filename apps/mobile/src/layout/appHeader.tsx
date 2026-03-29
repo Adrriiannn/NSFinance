@@ -9,7 +9,7 @@ import { requestOpenGlobalAppMenu } from "../components/layout/GlobalAppMenu";
 import { TextField } from "../components/ui/fields/TextField";
 import { ListRow } from "../components/ui/rows/ListRow";
 import { ModalSheet } from "../components/ui/surfaces/ModalSheet";
-import { layout, palette, spacing, surfaces, zIndex, createRuntimeStyleSheet } from "../theme/tokens";
+import { layout, palette, spacing, surfaces, zIndex, createRuntimeStyleSheet, useThemeTokens } from "../theme/tokens";
 import { useOptionalAdaptiveShell } from "./adaptive/adaptive.hooks";
 
 type HeaderPresetName =
@@ -167,6 +167,7 @@ export function HeaderDropdownSlot({
   containerStyle,
   disabled = false
 }: HeaderDropdownSlotProps) {
+  useThemeTokens();
   const [isOpen, setIsOpen] = useState(false);
   const selected = useMemo(
     () => options?.find((option) => option.value === value) ?? null,
@@ -238,6 +239,7 @@ export function HeaderSearchSlot({
   value,
   ...props
 }: HeaderSearchSlotProps) {
+  useThemeTokens();
   return (
     <View style={[styles.searchSlotWrap, containerStyle]}>
       <TextField
@@ -275,6 +277,7 @@ export function HeaderShell({
   contentStyle,
   hideDivider = false
 }: HeaderShellProps) {
+  useThemeTokens();
   const insets = useSafeAreaInsets();
   const adaptiveShell = useOptionalAdaptiveShell();
   const isGreeting = preset === "primaryGreeting";

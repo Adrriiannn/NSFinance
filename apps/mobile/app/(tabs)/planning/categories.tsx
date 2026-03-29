@@ -26,16 +26,45 @@ import {
   searchExpenseTaxonomy
 } from "../../../src/features/expenseTracker/expenseTaxonomySearch";
 import {
+  setPendingTransactionDetailCategorySelection,
   setPendingActivityAddTransactionSubcategorySelection,
   setPendingActivitySearchCategorySelection,
-  type ActivitySearchCategorySelection
+  type ActivitySearchCategorySelection,
+  type TransactionDetailCategorySelection
 } from "../../../src/features/expenseTracker/categoryPickerBridge";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
+import { TRANSFER_DOMAIN_ID } from "../../../src/features/transactions/transferClassification";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
 import { getFloatingTabBarInset } from "../../../src/theme/insets";
-import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../../../src/theme/tokens";
+import type { ExpenseTaxonomyDomainDto } from "../../../src/types/api";
+
+function normalizeDomainForCategoriesPage(domain: ExpenseTaxonomyDomainDto): ExpenseTaxonomyDomainDto {
+  if (domain.id !== TRANSFER_DOMAIN_ID) {
+    return domain;
+  }
+
+  return {
+    ...domain,
+    isUserSelectable: true,
+    isSystemDomain: false,
+    categories: domain.categories
+      .filter((category) => category.isActive)
+      .map((category) => ({
+        ...category,
+        isUserSelectable: true,
+        subcategories: category.subcategories
+          .filter((subcategory) => subcategory.isActive)
+          .map((subcategory) => ({
+            ...subcategory,
+            isUserSelectable: true
+          }))
+      }))
+  };
+}
 
 export default function PlanningHubCategoriesScreen() {
+  useThemeTokens();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
@@ -60,10 +89,14 @@ export default function PlanningHubCategoriesScreen() {
   const [expandedDomainId, setExpandedDomainId] = useState<number | null>(null);
   const [expandedCategoryIds, setExpandedCategoryIds] = useState<Record<number, number | null>>({});
   const [pendingSubcategoryId, setPendingSubcategoryId] = useState<number | null>(null);
+  const [pendingTransactionDetailSelection, setPendingTransactionDetailSelection] =
+    useState<TransactionDetailCategorySelection | null>(null);
   const [pendingHierarchySelection, setPendingHierarchySelection] =
     useState<ActivitySearchCategorySelection | null>(null);
   const isActivitySearchCategorySelection =
     selectionMode && selectionTarget === "activitySearchCategoryFilter";
+  const isTransactionDetailCategorySelection =
+    selectionMode && selectionTarget === "transactionDetailCategory";
 
   const returnToSelectionOrigin = () => {
     if (selectionReturnPath) {
@@ -75,7 +108,14 @@ export default function PlanningHubCategoriesScreen() {
   };
 
   const visibleDomains = useMemo(
-    () => (taxonomyQuery.data?.domains ?? []).filter((domain) => domain.isUserSelectable && !domain.isSystemDomain && domain.isActive),
+    () =>
+      (taxonomyQuery.data?.domains ?? [])
+        .filter(
+          (domain) =>
+            domain.isActive
+            && ((!domain.isSystemDomain && domain.isUserSelectable) || domain.id === TRANSFER_DOMAIN_ID)
+        )
+        .map(normalizeDomainForCategoriesPage),
     [taxonomyQuery.data?.domains]
   );
   const flattenedSelections = useMemo(() => flattenVisibleExpenseTaxonomy(visibleDomains), [visibleDomains]);
@@ -168,6 +208,36 @@ export default function PlanningHubCategoriesScreen() {
     excludedSubcategoryIds: []
   });
 
+  const buildTransactionDetailCategorySelection = (
+    domainId: number,
+    domainName: string,
+    categoryId: number,
+    categoryName: string
+  ): TransactionDetailCategorySelection => ({
+    domainId,
+    domainName,
+    categoryId,
+    categoryName,
+    subcategoryId: null,
+    subcategoryName: ""
+  });
+
+  const buildTransactionDetailSubcategorySelection = (
+    domainId: number,
+    domainName: string,
+    categoryId: number,
+    categoryName: string,
+    subcategoryId: number,
+    subcategoryName: string
+  ): TransactionDetailCategorySelection => ({
+    domainId,
+    domainName,
+    categoryId,
+    categoryName,
+    subcategoryId,
+    subcategoryName
+  });
+
   const stripCategorySubcategoryExclusions = (
     excludedSubcategoryIds: number[],
     categoryId: number
@@ -237,6 +307,24 @@ export default function PlanningHubCategoriesScreen() {
           );
         });
       }
+    } else if (isTransactionDetailCategorySelection) {
+      const selection = selectionBySubcategoryId.get(subcategoryId);
+      if (selection) {
+        setPendingTransactionDetailSelection((current) => {
+          if (current?.subcategoryId === subcategoryId) {
+            return null;
+          }
+
+          return buildTransactionDetailSubcategorySelection(
+            selection.domain.id,
+            selection.domain.name,
+            selection.category.id,
+            selection.category.name,
+            selection.subcategory.id,
+            selection.subcategory.name
+          );
+        });
+      }
     } else {
       setPendingSubcategoryId(subcategoryId);
     }
@@ -273,6 +361,20 @@ export default function PlanningHubCategoriesScreen() {
     categoryId: number,
     categoryName: string
   ) => {
+    if (isTransactionDetailCategorySelection) {
+      setPendingTransactionDetailSelection((current) => {
+        if (
+          current?.categoryId === categoryId
+          && current.subcategoryId === null
+        ) {
+          return null;
+        }
+
+        return buildTransactionDetailCategorySelection(domainId, domainName, categoryId, categoryName);
+      });
+      return;
+    }
+
     setPendingHierarchySelection((current) => {
       if (current?.scope === "domain" && current.domainId === domainId) {
         const isExcluded = current.excludedCategoryIds.includes(categoryId);
@@ -328,6 +430,10 @@ export default function PlanningHubCategoriesScreen() {
     categoryId: number,
     subcategoryId: number
   ) => {
+    if (isTransactionDetailCategorySelection) {
+      return pendingTransactionDetailSelection?.subcategoryId === subcategoryId;
+    }
+
     if (!pendingHierarchySelection) {
       return false;
     }
@@ -371,6 +477,16 @@ export default function PlanningHubCategoriesScreen() {
       return;
     }
 
+    if (selectionTarget === "transactionDetailCategory") {
+      if (!pendingTransactionDetailSelection) {
+        return;
+      }
+
+      setPendingTransactionDetailCategorySelection(pendingTransactionDetailSelection);
+      returnToSelectionOrigin();
+      return;
+    }
+
     if (!pendingSubcategoryId) {
       return;
     }
@@ -391,7 +507,9 @@ export default function PlanningHubCategoriesScreen() {
 
   const hasPendingSelection = isActivitySearchCategorySelection
     ? Boolean(pendingHierarchySelection)
-    : Boolean(pendingSubcategoryId);
+    : isTransactionDetailCategorySelection
+      ? Boolean(pendingTransactionDetailSelection)
+      : Boolean(pendingSubcategoryId);
   const confirmAnimation = useRef(new Animated.Value(hasPendingSelection ? 1 : 0)).current;
   const confirmVisibleBottom = getFloatingTabBarInset(insets.bottom, 20);
   const confirmHiddenTranslateY = confirmVisibleBottom + spacing[12];
@@ -435,13 +553,17 @@ export default function PlanningHubCategoriesScreen() {
               searchResults.length > 0 ? (
                 <View style={styles.searchResultsList}>
                   {searchResults.slice(0, 20).map((result) => {
-                    const selected = selectionMode && (isActivitySearchCategorySelection
-                      ? isSubcategoryChecked(
-                          result.item.domainId,
-                          result.item.categoryId,
-                          result.item.subcategoryId
-                        )
-                      : pendingSubcategoryId === result.item.subcategoryId);
+                    const selected = selectionMode && (
+                      isActivitySearchCategorySelection
+                        ? isSubcategoryChecked(
+                            result.item.domainId,
+                            result.item.categoryId,
+                            result.item.subcategoryId
+                          )
+                        : isTransactionDetailCategorySelection
+                          ? pendingTransactionDetailSelection?.subcategoryId === result.item.subcategoryId
+                          : pendingSubcategoryId === result.item.subcategoryId
+                    );
                     const visual = getExpenseTrackerSubcategoryVisual({
                       domainId: result.item.domainId,
                       categoryId: result.item.categoryId,
@@ -471,7 +593,7 @@ export default function PlanningHubCategoriesScreen() {
                           <Text style={styles.searchResultPath}>{result.item.categoryName} • {result.item.domainName}</Text>
                         </View>
                         {selectionMode ? (
-                          isActivitySearchCategorySelection ? (
+                          isActivitySearchCategorySelection || isTransactionDetailCategorySelection ? (
                             <View
                               style={[
                                 styles.selectionCheckbox,
@@ -576,7 +698,7 @@ export default function PlanningHubCategoriesScreen() {
                                         size={17}
                                         color={palette.textSecondary}
                                       />
-                                      {isActivitySearchCategorySelection ? (
+                                      {isActivitySearchCategorySelection || isTransactionDetailCategorySelection ? (
                                         <Pressable
                                           onPress={() =>
                                             handleCategorySelectionToggle(
@@ -588,13 +710,19 @@ export default function PlanningHubCategoriesScreen() {
                                           }
                                           style={({ pressed }) => [
                                             styles.selectionCheckbox,
-                                            isCategoryChecked(domain.id, category.id)
+                                            (
+                                              isTransactionDetailCategorySelection
+                                                ? pendingTransactionDetailSelection?.categoryId === category.id
+                                                : isCategoryChecked(domain.id, category.id)
+                                            )
                                               ? styles.selectionCheckboxChecked
                                               : null,
                                             pressed ? styles.selectionCheckboxPressed : null
                                           ]}
                                         >
-                                          {isCategoryChecked(domain.id, category.id) ? (
+                                          {(isTransactionDetailCategorySelection
+                                            ? pendingTransactionDetailSelection?.categoryId === category.id
+                                            : isCategoryChecked(domain.id, category.id)) ? (
                                             <Ionicons
                                               name="checkmark"
                                               size={13}
@@ -609,9 +737,13 @@ export default function PlanningHubCategoriesScreen() {
                                   {isCategoryExpanded ? (
                                     <View style={styles.subcategoryList}>
                                       {category.subcategories.filter((subcategory) => subcategory.isUserSelectable && subcategory.isActive).map((subcategory) => {
-                                        const selected = selectionMode && (isActivitySearchCategorySelection
-                                          ? isSubcategoryChecked(domain.id, category.id, subcategory.id)
-                                          : pendingSubcategoryId === subcategory.id);
+                                        const selected = selectionMode && (
+                                          isActivitySearchCategorySelection
+                                            ? isSubcategoryChecked(domain.id, category.id, subcategory.id)
+                                            : isTransactionDetailCategorySelection
+                                              ? pendingTransactionDetailSelection?.subcategoryId === subcategory.id
+                                              : pendingSubcategoryId === subcategory.id
+                                        );
                                         const subcategoryVisuals = getExpenseTrackerSubcategoryVisual({
                                           domainId: domain.id,
                                           categoryId: category.id,
@@ -642,7 +774,7 @@ export default function PlanningHubCategoriesScreen() {
                                             </View>
                                             <Text style={styles.subcategoryLabel}>{subcategory.name}</Text>
                                             {selectionMode ? (
-                                              isActivitySearchCategorySelection ? (
+                                              isActivitySearchCategorySelection || isTransactionDetailCategorySelection ? (
                                                 <View
                                                   style={[
                                                     styles.selectionCheckbox,

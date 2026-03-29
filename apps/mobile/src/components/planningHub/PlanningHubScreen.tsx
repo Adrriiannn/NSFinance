@@ -10,7 +10,7 @@ import {
   CONTENT_FRAME_HORIZONTAL_PADDING,
   getDockAwareContentBottomInset
 } from "../../layout/contentFrame";
-import { palette, createRuntimeStyleSheet } from "../../theme/tokens";
+import { palette, createRuntimeStyleSheet, useThemeTokens } from "../../theme/tokens";
 import { FloatingBottomNav } from "../layout/FloatingBottomNav";
 import { planningHubBottomNavItems } from "../layout/bottomNavConfigs";
 import { HeaderActionButton, HeaderShell } from "../../layout/appHeader";
@@ -39,6 +39,7 @@ export function PlanningHubScreen({
   onBackPress,
   bottomOverlay
 }: PlanningHubScreenProps) {
+  useThemeTokens();
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();

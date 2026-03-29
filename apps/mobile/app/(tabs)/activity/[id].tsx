@@ -1,15 +1,16 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { AmountText } from "../../../src/components/ui/AmountText";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TextField } from "../../../src/components/ui/TextField";
+import { consumePendingTransactionDetailCategorySelection } from "../../../src/features/expenseTracker/categoryPickerBridge";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import {
   useTransactionDetailQuery,
@@ -90,28 +91,13 @@ export default function PlannerTransactionDetailScreen() {
     return map;
   }, [visibleDomains]);
 
-  const categoryOptions = useMemo(
-    () =>
-      [...categoriesById.values()]
-        .sort((left, right) => left.name.localeCompare(right.name))
-        .map((category) => ({
-          value: String(category.id),
-          label: `${category.name} | ${category.domainName}`
-        })),
-    [categoriesById]
-  );
-
   const selectedCategory = selectedCategoryId ? categoriesById.get(Number(selectedCategoryId)) ?? null : null;
-
-  const subcategoryOptions = useMemo(
+  const selectedSubcategory = useMemo(
     () =>
-      (selectedCategory?.subcategories ?? [])
-        .sort((left, right) => left.name.localeCompare(right.name))
-        .map((subcategory) => ({
-          value: String(subcategory.id),
-          label: subcategory.name
-        })),
-    [selectedCategory]
+      selectedSubcategoryId && selectedCategory
+        ? selectedCategory.subcategories.find((subcategory) => subcategory.id === Number(selectedSubcategoryId)) ?? null
+        : null,
+    [selectedCategory, selectedSubcategoryId]
   );
 
   useEffect(() => {
@@ -131,6 +117,17 @@ export default function PlannerTransactionDetailScreen() {
   }, [transactionQuery.data]);
 
   useEffect(() => {
+    if (!selectedCategoryId) {
+      return;
+    }
+
+    if (!categoriesById.has(Number(selectedCategoryId))) {
+      setSelectedCategoryId(null);
+      setSelectedSubcategoryId(null);
+    }
+  }, [categoriesById, selectedCategoryId]);
+
+  useEffect(() => {
     if (!selectedCategoryId || !selectedSubcategoryId) {
       return;
     }
@@ -143,6 +140,21 @@ export default function PlannerTransactionDetailScreen() {
       setSelectedSubcategoryId(null);
     }
   }, [categoriesById, selectedCategoryId, selectedSubcategoryId]);
+
+  useFocusEffect(() => {
+    const picked = consumePendingTransactionDetailCategorySelection();
+    if (!picked) {
+      return undefined;
+    }
+
+    setSelectedCategoryId(String(picked.categoryId));
+    setSelectedSubcategoryId(picked.subcategoryId ? String(picked.subcategoryId) : null);
+    setErrors((current) => ({
+      ...current,
+      category: undefined
+    }));
+    return undefined;
+  });
 
   const validate = () => {
     const nextErrors: FormErrors = {};
@@ -179,15 +191,17 @@ export default function PlannerTransactionDetailScreen() {
     });
   };
 
-  const categoryLabel =
-    transactionQuery.data?.taxonomyCategoryName ??
-    transactionQuery.data?.categoryName ??
-    "Uncategorized";
-  const subcategoryLabel = transactionQuery.data?.taxonomySubcategoryName ?? "Not set";
+  const categoryLabel = selectedCategory?.name
+    ?? transactionQuery.data?.taxonomyCategoryName
+    ?? transactionQuery.data?.categoryName
+    ?? "Uncategorized";
+  const subcategoryLabel = selectedSubcategory?.name
+    ?? transactionQuery.data?.taxonomySubcategoryName
+    ?? "Not set";
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
-      <HeaderShell preset="secondaryDetail" title="Transaction detail" />
+      <HeaderShell preset="secondaryDetail" title="Transaction details" />
 
       {!transactionId ? (
         <ErrorState title="Transaction not found" message="No transaction was selected." />
@@ -252,30 +266,41 @@ export default function PlannerTransactionDetailScreen() {
               style={styles.notesInput}
             />
 
-            <ModalSelectField
-              label="Category"
-              value={selectedCategoryId}
-              options={categoryOptions}
-              placeholder={categoryOptions.length > 0 ? "Select a category" : "Loading categories..."}
-              onChange={(value) => {
-                setSelectedCategoryId(value);
-                setErrors((current) => ({ ...current, category: undefined }));
-              }}
-              disabled={categoryOptions.length === 0}
-            />
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Category</Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.categoryPickerButton,
+                  errors.category ? styles.categoryPickerButtonError : null,
+                  pressed ? styles.categoryPickerButtonPressed : null
+                ]}
+                onPress={() =>
+                  router.push({
+                    pathname: "/(tabs)/planning/categories",
+                    params: {
+                      selectionMode: "true",
+                      selectionTarget: "transactionDetailCategory"
+                    }
+                  })
+                }
+                disabled={categoriesById.size === 0}
+              >
+                <View style={styles.categoryPickerTextWrap}>
+                  <Text style={styles.categoryPickerTitle}>
+                    {selectedSubcategory?.name ?? selectedCategory?.name ?? "Select category"}
+                  </Text>
+                  <Text style={styles.categoryPickerMeta}>
+                    {selectedSubcategory
+                      ? `${selectedCategory?.name ?? "Category"} | ${selectedCategory?.domainName ?? "Taxonomy"}`
+                      : selectedCategory
+                        ? `${selectedCategory.name} | ${selectedCategory.domainName}`
+                        : "Use the taxonomy picker"}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={palette.textSecondary} />
+              </Pressable>
+            </View>
             {errors.category ? <Text style={styles.fieldError}>{errors.category}</Text> : null}
-
-            <ModalSelectField
-              label="Subcategory"
-              value={selectedSubcategoryId}
-              options={subcategoryOptions}
-              placeholder={selectedCategoryId ? "Select a subcategory (recommended)" : "Select category first"}
-              onChange={setSelectedSubcategoryId}
-              disabled={!selectedCategoryId || subcategoryOptions.length === 0}
-            />
-            <Text style={styles.subcategoryHint}>
-              Subcategory is recommended for more accurate tracking.
-            </Text>
           </GlassCard>
 
           {updateMetadataMutation.isError ? (
@@ -284,7 +309,7 @@ export default function PlannerTransactionDetailScreen() {
 
           <View style={styles.actions}>
             <PrimaryButton
-              label="Save metadata"
+              label="Save changes"
               onPress={() => {
                 void handleSave();
               }}
@@ -346,12 +371,45 @@ const styles = createRuntimeStyleSheet(() => ({
     minHeight: 88,
     textAlignVertical: "top"
   },
-  fieldError: {
-    color: palette.negative,
+  fieldWrap: {
+    gap: spacing[8]
+  },
+  fieldLabel: {
+    color: palette.textPrimary,
     ...typography.caption
   },
-  subcategoryHint: {
+  categoryPickerButton: {
+    minHeight: 56,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.elevatedBackground,
+    paddingHorizontal: spacing[12],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[8]
+  },
+  categoryPickerButtonPressed: {
+    opacity: 0.9
+  },
+  categoryPickerButtonError: {
+    borderColor: palette.negative
+  },
+  categoryPickerTextWrap: {
+    flex: 1,
+    gap: 2
+  },
+  categoryPickerTitle: {
+    color: palette.textPrimary,
+    ...typography.body1
+  },
+  categoryPickerMeta: {
     color: palette.textSecondary,
+    ...typography.caption
+  },
+  fieldError: {
+    color: palette.negative,
     ...typography.caption
   },
   actions: {

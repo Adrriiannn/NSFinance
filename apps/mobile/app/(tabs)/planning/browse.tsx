@@ -17,7 +17,7 @@ import { useExpensePlanning } from "../../../src/features/expenseTracker/Expense
 import { searchAndSortExpensePlanPublications } from "../../../src/features/expenseTracker/expensePlanCommunityUtils";
 import type { ExpensePlanPeriodType, ExpensePlanPublication } from "../../../src/features/expenseTracker/expensePlanningTypes";
 import { HeaderSearchSlot, HeaderShell } from "../../../src/layout/appHeader";
-import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet, useThemeTokens } from "../../../src/theme/tokens";
 
 type DiscoverRankingSort = "trending" | "most_liked" | "most_downloaded" | "recently_added";
 type DiscoverPlanTypeFilter = "all" | ExpensePlanPeriodType | "templates";
@@ -57,6 +57,7 @@ function buildFilteredPublications(input: {
 }
 
 export default function PlanningHubDiscoverScreen() {
+  useThemeTokens();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { publications } = useExpensePlanning();

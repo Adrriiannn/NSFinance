@@ -28,7 +28,7 @@ import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
 import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
-import { getDeviceLocaleProfile } from "../../src/lib/device/deviceLocaleProfile";
+import { getLocaleLocationProfile } from "../../src/lib/device/deviceLocationProfile";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
@@ -402,7 +402,7 @@ export default function RegisterScreen() {
       return;
     }
 
-    const localeProfile = getDeviceLocaleProfile();
+    const localeProfile = getLocaleLocationProfile();
     const timezone = localeProfile.timezone ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
     const locale = localeProfile.localeTag ?? (Intl.DateTimeFormat().resolvedOptions().locale || "en-US");
     const preferredCurrency = localeProfile.currencyCode ?? "EUR";

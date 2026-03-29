@@ -24,7 +24,7 @@ import {
   getExpensePlanStatusMeta
 } from "../../../src/features/expenseTracker/expensePlanningUtils";
 import type { ExpensePlanStatus } from "../../../src/features/expenseTracker/expensePlanningTypes";
-import { layout, palette, radius, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
+import { layout, palette, radius, spacing, typography, createRuntimeStyleSheet, useThemeTokens } from "../../../src/theme/tokens";
 
 const quickActionConfig = [
   { key: "new", label: "New plan", icon: "add-circle-outline" },
@@ -62,6 +62,7 @@ function formatPaceLabel(value: ReturnType<typeof buildExpensePlanComputed>["pac
 }
 
 export default function PlanningHubOverviewScreen() {
+  useThemeTokens();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const entriesQuery = useExpenseTrackerEntriesQuery();

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, Pressable, Text, View } from "react-native";
-import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
+import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../../theme/tokens";
 
 type SegmentedOption<T extends string> = {
   label: string;
@@ -20,6 +20,7 @@ export function PlanningHubSegmentedControl<T extends string>({
   options,
   onChange
 }: PlanningHubSegmentedControlProps<T>) {
+  useThemeTokens();
   const [segmentLayouts, setSegmentLayouts] = useState<Partial<Record<T, { x: number; width: number }>>>({});
   const highlightLeft = useRef(new Animated.Value(0)).current;
   const highlightWidth = useRef(new Animated.Value(0)).current;

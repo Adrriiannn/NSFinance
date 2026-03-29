@@ -3,7 +3,7 @@ import { usePathname, useRouter } from "expo-router";
 import { useMemo, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { palette, createRuntimeStyleSheet } from "../../theme/tokens";
+import { palette, createRuntimeStyleSheet, useThemeTokens } from "../../theme/tokens";
 import { planningHubBottomNavItems } from "../layout/bottomNavConfigs";
 import { FloatingBottomNav, type FloatingBottomNavItem } from "../layout/FloatingBottomNav";
 import { ModalSheet } from "../ui/surfaces/ModalSheet";
@@ -26,6 +26,7 @@ type PlanningHubShellProps = {
 };
 
 export function PlanningHubShell({ children }: PlanningHubShellProps) {
+  useThemeTokens();
   const router = useRouter();
   const pathname = usePathname();
   const [optionsSheetOpen, setOptionsSheetOpen] = useState(false);

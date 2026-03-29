@@ -30,8 +30,15 @@ import {
   supportedCurrencies,
   supportedTimezones
 } from "../../../src/lib/reference/geoData";
-import { requestOptionalDeviceLocation } from "../../../src/lib/device/deviceLocation";
-import { getDeviceLocaleProfile, type DeviceLocaleProfile } from "../../../src/lib/device/deviceLocaleProfile";
+import {
+  getLocaleLocationProfile,
+  resolveDeviceLocationProfile,
+  type DeviceLocationProfile
+} from "../../../src/lib/device/deviceLocationProfile";
+import {
+  resolveCountryMetadataByCode,
+  resolveCountryMetadataByName
+} from "../../../src/lib/reference/countryMetadata";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import {
@@ -102,6 +109,8 @@ const yearOptions = Array.from({ length: latestBirthYear - earliestBirthYear + 1
   return { label: `${year}`, value: `${year}` };
 });
 const DIAL_ITEM_HEIGHT = 44;
+const DEFAULT_TIMEZONE_FALLBACK =
+  Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 type PhoneFormatRule = {
   minDigits: number;
   maxDigits: number;
@@ -244,7 +253,7 @@ function resolveSupportedCountryCode(value?: string | null) {
   return findCountryByCode(normalized) ? normalized : "IE";
 }
 
-function resolveCountryName(profileCountry: string | null | undefined, localeProfile: DeviceLocaleProfile) {
+function resolveCountryName(profileCountry: string | null | undefined, localeProfile: DeviceLocationProfile) {
   const trimmed = profileCountry?.trim();
   if (trimmed) {
     return trimmed;
@@ -261,20 +270,20 @@ function resolveCountryName(profileCountry: string | null | undefined, localePro
   return "Ireland";
 }
 
-function resolveTimezone(profileTimezone: string | null | undefined, localeProfile: DeviceLocaleProfile) {
+function resolveTimezone(profileTimezone: string | null | undefined, localeProfile: DeviceLocationProfile) {
   const trimmed = profileTimezone?.trim();
-  if (trimmed && supportedTimezones.some((timezone) => timezone.id === trimmed)) {
+  if (trimmed) {
     return trimmed;
   }
 
-  if (localeProfile.timezone && supportedTimezones.some((timezone) => timezone.id === localeProfile.timezone)) {
+  if (localeProfile.timezone) {
     return localeProfile.timezone;
   }
 
-  return "Europe/Dublin";
+  return DEFAULT_TIMEZONE_FALLBACK;
 }
 
-function resolveCurrency(profileCurrency: string | null | undefined, localeProfile: DeviceLocaleProfile) {
+function resolveCurrency(profileCurrency: string | null | undefined, localeProfile: DeviceLocationProfile) {
   const normalizedProfile = profileCurrency?.trim().toUpperCase();
   if (normalizedProfile && supportedCurrencies.some((currency) => currency.code === normalizedProfile)) {
     return normalizedProfile;
@@ -505,8 +514,8 @@ export default function ProfileSettingsScreen() {
   const navigation = useNavigation();
   const profileQuery = useUserProfileQuery();
   const updateMutation = useUpdateUserProfileMutation();
-  const [deviceLocaleProfile, setDeviceLocaleProfile] = useState<DeviceLocaleProfile>(() =>
-    getDeviceLocaleProfile()
+  const [deviceLocaleProfile, setDeviceLocaleProfile] = useState<DeviceLocationProfile>(() =>
+    getLocaleLocationProfile()
   );
   const defaultPhoneCountryCode = useMemo(
     () => resolveSupportedCountryCode(deviceLocaleProfile.countryCode),
@@ -535,6 +544,9 @@ export default function ProfileSettingsScreen() {
   const [confirmLeaveVisible, setConfirmLeaveVisible] = useState(false);
   const [pendingLeaveAction, setPendingLeaveAction] = useState<null | (() => void)>(null);
   const [dobDialVisible, setDobDialVisible] = useState(false);
+  const [isResolvingLocation, setIsResolvingLocation] = useState(false);
+  const [hasManualTimezoneOverride, setHasManualTimezoneOverride] = useState(false);
+  const [hasManualCurrencyOverride, setHasManualCurrencyOverride] = useState(false);
   const [timezoneClock, setTimezoneClock] = useState(() => new Date());
   const dobPlaceholder = useMemo(() => getDobPlaceholder(), []);
   const deviceLocaleProfileRef = useRef(deviceLocaleProfile);
@@ -549,7 +561,7 @@ export default function ProfileSettingsScreen() {
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
-        setDeviceLocaleProfile(getDeviceLocaleProfile());
+        setDeviceLocaleProfile(getLocaleLocationProfile());
       }
     });
 
@@ -590,6 +602,8 @@ export default function ProfileSettingsScreen() {
     setCountry(resolvedCountry);
     setTimezone(resolvedTimezone);
     setPreferredCurrency(resolvedCurrency);
+    setHasManualTimezoneOverride(false);
+    setHasManualCurrencyOverride(false);
     setFinancialFocus(profile.financialFocus ?? []);
     setEmploymentStatus(profile.employmentStatus ?? null);
     setIncomeStability(profile.incomeStability ?? null);
@@ -682,12 +696,22 @@ export default function ProfileSettingsScreen() {
     value: item.name
   }));
   const timezoneOptions = useMemo(
-    () =>
-      supportedTimezones.map((item) => ({
+    () => {
+      const options = supportedTimezones.map((item) => ({
         label: `${item.label} - ${formatTimezoneClock(item.id, timezoneClock)}`,
         value: item.id
-      })),
-    [timezoneClock]
+      }));
+
+      if (timezone && !options.some((option) => option.value === timezone)) {
+        options.unshift({
+          label: `${timezone} - ${formatTimezoneClock(timezone, timezoneClock)}`,
+          value: timezone
+        });
+      }
+
+      return options;
+    },
+    [timezoneClock, timezone]
   );
   const currencyOptions = supportedCurrencies.map((item) => ({
     label: `${item.code} - ${item.name}`,
@@ -932,30 +956,65 @@ export default function ProfileSettingsScreen() {
     }
   };
 
-  const applyLocationDefaults = async () => {
+  const handleUseCurrentLocation = async () => {
     setLocalError(null);
+    setIsResolvingLocation(true);
 
     try {
-      const result = await requestOptionalDeviceLocation();
-      if (result.status !== "granted") {
-        showFlashMessage(
-          "Location access was not granted. Using your device locale defaults instead.",
-          { tone: "info" }
-        );
-        return;
+      const resolvedProfile = await resolveDeviceLocationProfile({ requestGps: true });
+      const localeDefaults = deviceLocaleProfileRef.current;
+      const metadata = resolveCountryMetadataByCode(resolvedProfile.countryCode)
+        ?? resolveCountryMetadataByName(resolvedProfile.countryName);
+
+      const fallbackCountryName = resolveCountryName(undefined, localeDefaults);
+      const nextCountryName = metadata?.countryName ?? resolvedProfile.countryName ?? fallbackCountryName;
+      const nextCountryCode = metadata?.countryCode ?? resolvedProfile.countryCode ?? null;
+      const nextPhoneCountryCode = resolveSupportedCountryCode(nextCountryCode);
+
+      const defaultCurrency = resolveCurrency(undefined, localeDefaults);
+      const suggestedCurrency = (
+        metadata?.currencyCode
+        ?? resolvedProfile.currencyCode
+        ?? defaultCurrency
+      )?.toUpperCase() ?? defaultCurrency;
+      const currencyLooksDefault =
+        !preferredCurrency
+        || preferredCurrency === defaultCurrency;
+      const shouldReplaceCurrency =
+        !hasManualCurrencyOverride
+        && currencyLooksDefault;
+      const nextCurrency = shouldReplaceCurrency ? suggestedCurrency : preferredCurrency;
+
+      const defaultTimezone = resolveTimezone(undefined, localeDefaults);
+      const timezoneLooksDefault =
+        !timezone
+        || timezone === defaultTimezone;
+      const shouldReplaceTimezone =
+        !hasManualTimezoneOverride
+        && timezoneLooksDefault;
+      const candidateTimezone = resolvedProfile.timezone ?? defaultTimezone;
+      const nextTimezone = shouldReplaceTimezone ? candidateTimezone : timezone;
+
+      setCountry(nextCountryName);
+      setPhoneCountryCode(nextPhoneCountryCode);
+      setPreferredCurrency(nextCurrency);
+      setTimezone(nextTimezone);
+      if (shouldReplaceCurrency) {
+        setHasManualCurrencyOverride(false);
+      }
+      if (shouldReplaceTimezone) {
+        setHasManualTimezoneOverride(false);
       }
 
-      if (result.countryName) {
-        setCountry(result.countryName);
+      if (resolvedProfile.source === "gps") {
+        showFlashMessage("Location applied from your current position.");
+      } else {
+        showFlashMessage("Location permission unavailable. Applied device locale fallback.", { tone: "info" });
       }
-
-      if (result.currencyCode) {
-        setPreferredCurrency(result.currencyCode);
-      }
-
-      showFlashMessage("Location defaults applied.");
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "Could not read device location.");
+    } finally {
+      setIsResolvingLocation(false);
     }
   };
 
@@ -1074,6 +1133,7 @@ export default function ProfileSettingsScreen() {
               </View>
             </View>
 
+            <Text style={styles.dateGroupLabel}>Date of birth</Text>
             <View style={styles.dateRow}>
               <Pressable
                 style={({ pressed }) => [styles.dateFieldButton, pressed ? styles.dateFieldButtonPressed : null]}
@@ -1097,7 +1157,6 @@ export default function ProfileSettingsScreen() {
                 <Text style={styles.dateFieldValue}>{dateYear || dobPlaceholder.year}</Text>
               </Pressable>
             </View>
-            <Text style={styles.dobPlaceholderText}>Example: {dobPlaceholder.fullLabel}</Text>
             {dobAgeWarning ? <Text style={styles.dobWarningText}>{dobAgeWarning}</Text> : null}
 
             <ModalSelectField
@@ -1111,7 +1170,10 @@ export default function ProfileSettingsScreen() {
               label="Timezone"
               value={timezone}
               options={timezoneOptions}
-              onChange={setTimezone}
+              onChange={(value) => {
+                setHasManualTimezoneOverride(true);
+                setTimezone(value);
+              }}
               placeholder="Select timezone"
               sheetMaxHeightRatio={0.4}
             />
@@ -1119,20 +1181,19 @@ export default function ProfileSettingsScreen() {
               label="Preferred currency"
               value={preferredCurrency}
               options={currencyOptions}
-              onChange={setPreferredCurrency}
+              onChange={(value) => {
+                setHasManualCurrencyOverride(true);
+                setPreferredCurrency(value);
+              }}
               placeholder="Select currency"
             />
-            <Pressable
+            <PrimaryButton
+              label="Use current location"
               onPress={() => {
-                void applyLocationDefaults();
+                void handleUseCurrentLocation();
               }}
-              style={({ pressed }) => [
-                styles.locationButton,
-                pressed ? styles.locationButtonPressed : null
-              ]}
-            >
-              <Text style={styles.locationButtonText}>Use current location (optional)</Text>
-            </Pressable>
+              isLoading={isResolvingLocation}
+            />
           </GlassCard>
 
           <GlassCard style={styles.sectionCard}>
@@ -1423,6 +1484,10 @@ const styles = createRuntimeStyleSheet(() => ({
     flexDirection: "row",
     gap: spacing[8]
   },
+  dateGroupLabel: {
+    color: palette.textSecondary,
+    ...typography.fieldLabel
+  },
   dateFieldButton: {
     flex: 1
       ,
@@ -1446,10 +1511,6 @@ const styles = createRuntimeStyleSheet(() => ({
     color: palette.textPrimary,
     ...typography.body2,
     fontWeight: "600"
-  },
-  dobPlaceholderText: {
-    color: palette.textSecondary,
-    ...typography.caption
   },
   focusWrap: {
     flexDirection: "row",
@@ -1480,23 +1541,6 @@ const styles = createRuntimeStyleSheet(() => ({
   focusChipTextSelected: {
     color: palette.textPrimary,
     fontWeight: "600"
-  },
-  locationButton: {
-    minHeight: 38,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: surfaces.field,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing[12]
-  },
-  locationButtonPressed: {
-    opacity: 0.9
-  },
-  locationButtonText: {
-    color: palette.textSecondary,
-    ...typography.caption
   },
   errorText: {
     color: palette.negative,

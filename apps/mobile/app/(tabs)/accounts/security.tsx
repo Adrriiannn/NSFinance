@@ -10,7 +10,6 @@ import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { TextField } from "../../../src/components/ui/TextField";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
-  getGoogleAuthOptions,
   getSessions,
   logoutAll,
   revokeSession,
@@ -113,7 +112,6 @@ export default function SecuritySettingsScreen() {
   const profileQuery = useUserProfileQuery();
   const updateProfileMutation = useUpdateUserProfileMutation();
   const sessionsQuery = useQuery({ queryKey: sessionKey, queryFn: getSessions });
-  const googleAuthQuery = useQuery({ queryKey: ["auth", "google-options"], queryFn: getGoogleAuthOptions });
   const connectedBanksQuery = useConnectedBanksQuery();
   const disconnectMutation = useDisconnectBankConnectionMutation();
   const deletionRequestsQuery = useMyDeletionRequestsQuery();
@@ -408,9 +406,6 @@ export default function SecuritySettingsScreen() {
       >
         <GlassCard style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Login & authentication</Text>
-          <Text style={styles.metaLine}>
-            Google sign-in: {googleAuthQuery.data?.isConfigured ? "Configured" : "Not configured"}
-          </Text>
           <Text style={styles.metaLine}>2FA status: {profileQuery.data?.twoFactorEnabled ? "On" : "Off"}</Text>
 
           <View style={styles.toggleRow}>

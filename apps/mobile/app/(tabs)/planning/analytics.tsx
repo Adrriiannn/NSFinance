@@ -24,7 +24,7 @@ import {
 import type { ExpenseAnalyticsMode } from "../../../src/features/expenseTracker/expensePlanningTypes";
 import { getExpenseTrackerVisual } from "../../../src/features/expenseTracker/expenseTrackerModels";
 import { HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
-import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../../../src/theme/tokens";
 import type { ExpenseTaxonomyDomainDto, ExpenseTrackerEntryDto } from "../../../src/types/api";
 
 const analyticsModes = [
@@ -156,6 +156,7 @@ function getAnalyticsModeDescription(mode: PlanningAnalyticsMode) {
 }
 
 export default function PlanningHubAnalyticsScreen() {
+  useThemeTokens();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const entriesQuery = useExpenseTrackerEntriesQuery();

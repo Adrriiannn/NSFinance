@@ -20,6 +20,8 @@ type ModalSelectFieldProps = {
   sheetMaxHeightRatio?: number;
 };
 
+const DEFAULT_MODAL_SELECT_SHEET_MAX_HEIGHT_RATIO = 0.4;
+
 export function ModalSelectField({
   label,
   value,
@@ -27,7 +29,7 @@ export function ModalSelectField({
   placeholder = "Select",
   onChange,
   disabled = false,
-  sheetMaxHeightRatio
+  sheetMaxHeightRatio = DEFAULT_MODAL_SELECT_SHEET_MAX_HEIGHT_RATIO
 }: ModalSelectFieldProps) {
   const [isOpen, setIsOpen] = useState(false);
 
