@@ -25,11 +25,20 @@ public static class BankingModule
         protectedGroup.MapGet("/accounts", GetLinkedBankAccountsEndpoint.HandleAsync)
             .WithName("GetLinkedBankAccounts");
 
+        protectedGroup.MapGet("/cards", GetLinkedBankCardsEndpoint.HandleAsync)
+            .WithName("GetLinkedBankCards");
+
         protectedGroup.MapGet("/accounts/{accountId:guid}/balances", GetAccountBalancesEndpoint.HandleAsync)
             .WithName("GetBankAccountBalances");
 
         protectedGroup.MapGet("/accounts/{accountId:guid}/transactions", GetAccountRawTransactionsEndpoint.HandleAsync)
             .WithName("GetBankAccountRawTransactions");
+
+        protectedGroup.MapGet("/accounts/{accountId:guid}/recurring-payments", GetAccountRecurringPaymentsEndpoint.HandleAsync)
+            .WithName("GetBankAccountRecurringPayments");
+
+        protectedGroup.MapGet("/recurring-payments", GetRecurringPaymentsEndpoint.HandleAsync)
+            .WithName("GetRecurringPayments");
 
         protectedGroup.MapPost("/connections/{connectionId:guid}/sync", SyncBankConnectionEndpoint.HandleAsync)
             .WithName("SyncBankConnection");

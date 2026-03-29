@@ -529,6 +529,20 @@ export default function SecuritySettingsScreen() {
                 <Text style={styles.metaLine}>Connected: {formatDateTime(connection.createdUtc)}</Text>
                 <Text style={styles.metaLine}>Last synced at: {formatDateTime(connection.lastSuccessfulSyncUtc)}</Text>
                 <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
+                {connection.connectedFullName ? (
+                  <Text style={styles.metaLine}>Connected as: {connection.connectedFullName}</Text>
+                ) : null}
+                <Text style={styles.metaLine}>
+                  Capabilities:{" "}
+                  {[
+                    connection.supportsCards ? "cards" : null,
+                    connection.supportsDirectDebits ? "direct debits" : null,
+                    connection.supportsStandingOrders ? "standing orders" : null,
+                    connection.supportsInfo ? "identity info" : null
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || "limited by provider"}
+                </Text>
                 <SecondaryButton
                   label={
                     disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
@@ -575,6 +589,9 @@ export default function SecuritySettingsScreen() {
                   <Text style={styles.metaLine}>Provider: {connection.provider}</Text>
                   <Text style={styles.metaLine}>Connected: {formatDateTime(connection.createdUtc)}</Text>
                   <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
+                  {connection.connectedFullName ? (
+                    <Text style={styles.metaLine}>Connected as: {connection.connectedFullName}</Text>
+                  ) : null}
                   <SecondaryButton
                     label={
                       disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"

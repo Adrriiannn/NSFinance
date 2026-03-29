@@ -23,7 +23,7 @@ public class TrueLayerAuthServiceTests
         Assert.Equal("client-123", query["client_id"]);
         Assert.Equal("http://localhost:5080/api/banking/truelayer/callback", query["redirect_uri"]);
         Assert.Equal("state-xyz", query["state"]);
-        Assert.Equal("accounts balance transactions offline_access", query["scope"]);
+        Assert.Equal("info accounts cards balance transactions offline_access direct_debits standing_orders", query["scope"]);
         Assert.Equal("uk-cs-mock", query["providers"]);
     }
 
@@ -67,10 +67,20 @@ public class TrueLayerAuthServiceTests
     }
 
     [Fact]
-    public void BuildScopes_ReturnsPhase2Scopes()
+    public void BuildScopes_ReturnsExpandedScopeSet()
     {
         var scopes = TrueLayerAuthService.BuildScopes();
-        Assert.Equal(["accounts", "balance", "transactions", "offline_access"], scopes);
+        Assert.Equal(
+        [
+            "info",
+            "accounts",
+            "cards",
+            "balance",
+            "transactions",
+            "offline_access",
+            "direct_debits",
+            "standing_orders"
+        ], scopes);
     }
 
     [Theory]

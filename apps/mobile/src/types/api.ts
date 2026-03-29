@@ -549,6 +549,13 @@ export type BankConnectionDto = {
   lastSuccessfulSyncUtc: string | null;
   lastSyncAttemptedUtc: string | null;
   lastErrorCode: string | null;
+  grantedScopesCsv: string | null;
+  supportsInfo: boolean | null;
+  supportsCards: boolean | null;
+  supportsDirectDebits: boolean | null;
+  supportsStandingOrders: boolean | null;
+  connectedFullName: string | null;
+  identityFetchedUtc: string | null;
 };
 
 export type ConnectedBanksOverviewDto = {
@@ -564,6 +571,7 @@ export type StartTrueLayerLinkRequest = {
 export type LinkedBankAccountDto = {
   id: string;
   connectionId: string;
+  financialAccountId: string | null;
   providerAccountId: string;
   providerId: string | null;
   providerDisplayName: string | null;
@@ -580,6 +588,71 @@ export type LinkedBankAccountDto = {
   latestOverdraft: number | null;
   createdUtc: string;
   updatedUtc: string;
+  accountNumberMetadataJson: string | null;
+};
+
+export type LinkedBankCardDto = {
+  id: string;
+  connectionId: string;
+  providerCardId: string;
+  providerAccountId: string | null;
+  displayName: string;
+  currency: string;
+  cardType: string | null;
+  cardNetwork: string | null;
+  cardNumberLastFour: string | null;
+  nameOnCard: string | null;
+  validFromUtc: string | null;
+  validToUtc: string | null;
+  currentConnectionHealth: string;
+  latestAvailable: number | null;
+  latestCurrent: number | null;
+  latestLimit: number | null;
+  latestOutstanding: number | null;
+  createdUtc: string;
+  updatedUtc: string;
+};
+
+export type BankDirectDebitDto = {
+  id: string;
+  linkedBankAccountId: string;
+  connectionId: string;
+  accountDisplayName: string;
+  providerDirectDebitId: string;
+  status: string | null;
+  mandateType: string | null;
+  reference: string | null;
+  merchantName: string | null;
+  previousPaymentDateUtc: string | null;
+  previousPaymentAmount: number | null;
+  previousPaymentCurrency: string | null;
+  nextPaymentDateUtc: string | null;
+  nextPaymentAmount: number | null;
+  nextPaymentCurrency: string | null;
+  updatedUtc: string;
+};
+
+export type BankStandingOrderDto = {
+  id: string;
+  linkedBankAccountId: string;
+  connectionId: string;
+  accountDisplayName: string;
+  providerStandingOrderId: string;
+  status: string | null;
+  frequency: string | null;
+  reference: string | null;
+  payeeName: string | null;
+  firstPaymentDateUtc: string | null;
+  nextPaymentDateUtc: string | null;
+  finalPaymentDateUtc: string | null;
+  nextPaymentAmount: number | null;
+  nextPaymentCurrency: string | null;
+  updatedUtc: string;
+};
+
+export type BankRecurringPaymentsDto = {
+  directDebits: BankDirectDebitDto[];
+  standingOrders: BankStandingOrderDto[];
 };
 
 export type StartTrueLayerLinkResponse = {

@@ -4,17 +4,18 @@
 
 Implemented scope:
 
+- info
 - accounts
-- balances
+- cards
+- balance
 - transactions
-- offline access (refresh)
+- offline_access (refresh continuity)
+- direct_debits
+- standing_orders
 
-Excluded in current phase:
+Not requested in current phase:
 
 - payments
-- direct debits
-- standing orders
-- identity enrichment
 
 ## Flow summary
 
@@ -24,7 +25,49 @@ Excluded in current phase:
 4. API validates callback state ownership.
 5. API exchanges auth code for tokens server-side.
 6. API stores encrypted refresh token.
-7. API performs initial sync and persists accounts/balances/transactions.
+7. API performs initial sync and persists:
+   - accounts
+   - balances
+   - transactions
+   - cards (+ card balances/transactions when available)
+   - direct debits
+   - standing orders
+   - connection identity info
+
+## Product data model mapping
+
+NSFinance now maps the expanded TrueLayer model into explicit product buckets:
+
+- Account core:
+  - linked account identity, display name, type/subtype, currency, account-number metadata
+- Balance and activity:
+  - account balances + transactions
+- Card layer:
+  - linked cards stored separately from bank accounts
+  - card balances/transactions tracked separately
+- Recurring commitments:
+  - direct debits
+  - standing orders
+- Identity/comfort:
+  - `/info` mapped into connection identity metadata
+  - used for "Connected as ..." style trust/personalization surfaces
+
+Important mapping rule:
+
+- account and card labels come from account/card display metadata (`display_name` + safe fallbacks)
+- `/info.full_name` is never used as the account title
+
+## Capability-aware sync behavior
+
+Provider support varies by scope and endpoint. Sync now treats dataset availability explicitly:
+
+- unsupported optional datasets (cards/direct debits/standing orders/info) are marked as unavailable without breaking the whole sync
+- accounts/balances/transactions remain the primary ledger path
+- connection metadata stores support flags:
+  - `SupportsInfo`
+  - `SupportsCards`
+  - `SupportsDirectDebits`
+  - `SupportsStandingOrders`
 
 ## Transaction history model
 

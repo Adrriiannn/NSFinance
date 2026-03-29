@@ -49,8 +49,27 @@ Data checks (authenticated API):
 
 - `GET /api/banking/connections`
 - `GET /api/banking/accounts`
+- `GET /api/banking/cards`
 - `GET /api/banking/accounts/{accountId}/balances`
 - `GET /api/banking/accounts/{accountId}/transactions?page=1&pageSize=50`
+- `GET /api/banking/recurring-payments`
+- `GET /api/banking/accounts/{accountId}/recurring-payments`
+
+Expanded scope checks:
+
+1. Start a new link flow and confirm the returned auth URL `scope` includes:
+   - `info`
+   - `accounts`
+   - `cards`
+   - `balance`
+   - `transactions`
+   - `offline_access`
+   - `direct_debits`
+   - `standing_orders`
+2. After first sync, validate:
+   - connection summary includes capability flags (cards/direct debits/standing orders/info)
+   - "Connected as" is populated when `/info.full_name` is returned
+   - account labels remain account/card display labels (identity name must not replace them)
 
 Consent expiry / reconfirmation continuity:
 

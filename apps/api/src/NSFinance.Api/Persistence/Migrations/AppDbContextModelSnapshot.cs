@@ -163,6 +163,93 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.ToTable("BankBalanceSnapshots", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankCardBalanceSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("Available")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CapturedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<decimal?>("Current")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal?>("Limit")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("LinkedBankCardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("Outstanding")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkedBankCardId");
+
+                    b.HasIndex("LinkedBankCardId", "CapturedUtc");
+
+                    b.ToTable("BankCardBalanceSnapshots", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankConnectionIdentityInfo", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DateOfBirth")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<DateTime>("FetchedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FullName")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId")
+                        .IsUnique();
+
+                    b.ToTable("BankConnectionIdentityInfos", (string)null);
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankConnectionToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -196,6 +283,153 @@ namespace NSFinance.Api.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("BankConnectionTokens", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankDirectDebit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<Guid>("LinkedBankAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("MandateType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("MerchantName")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<decimal?>("NextPaymentAmount")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("NextPaymentCurrency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime?>("NextPaymentDateUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("PreviousPaymentAmount")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("PreviousPaymentCurrency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime?>("PreviousPaymentDateUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderDirectDebitId")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Reference")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkedBankAccountId");
+
+                    b.HasIndex("LinkedBankAccountId", "ProviderDirectDebitId")
+                        .IsUnique();
+
+                    b.ToTable("BankDirectDebits", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankStandingOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<DateTime?>("FinalPaymentDateUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FirstPaymentDateUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Frequency")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("LinkedBankAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("NextPaymentAmount")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("NextPaymentCurrency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime?>("NextPaymentDateUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayeeAccountMetadataJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("PayeeName")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("ProviderStandingOrderId")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Reference")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkedBankAccountId");
+
+                    b.HasIndex("LinkedBankAccountId", "ProviderStandingOrderId")
+                        .IsUnique();
+
+                    b.ToTable("BankStandingOrders", (string)null);
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ConsentRecord", b =>
@@ -1157,6 +1391,85 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.ToTable("LinkedBankAccounts", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.LinkedBankCard", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CardNetwork")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("CardNumberLastFour")
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<string>("CardType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("CurrentConnectionHealth")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("NameOnCard")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("ProviderAccountId")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("ProviderCardId")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<DateTime?>("ValidFromUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ValidToUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId");
+
+                    b.HasIndex("ConnectionId", "ProviderCardId")
+                        .IsUnique();
+
+                    b.ToTable("LinkedBankCards", (string)null);
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.OpenBankingConnection", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1180,6 +1493,10 @@ namespace NSFinance.Api.Persistence.Migrations
 
                     b.Property<DateTime?>("EarliestImportedTransactionUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GrantedScopesCsv")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
 
                     b.Property<DateTime?>("InitialBackfillCompletedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -1245,6 +1562,18 @@ namespace NSFinance.Api.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<bool?>("SupportsCards")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("SupportsDirectDebits")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("SupportsInfo")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("SupportsStandingOrders")
+                        .HasColumnType("boolean");
 
                     b.Property<DateTime>("UpdatedUtc")
                         .ValueGeneratedOnAdd()
@@ -1432,6 +1761,69 @@ namespace NSFinance.Api.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("PolicyVersions", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.RawBankCardTransaction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("BookedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("DedupeKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTime>("ImportedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("LinkedBankCardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProviderTransactionId")
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<string>("RawPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("TransactionStatus")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("TransactionType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkedBankCardId");
+
+                    b.HasIndex("LinkedBankCardId", "DedupeKey")
+                        .IsUnique();
+
+                    b.HasIndex("LinkedBankCardId", "ProviderTransactionId")
+                        .IsUnique()
+                        .HasFilter("\"ProviderTransactionId\" IS NOT NULL");
+
+                    b.ToTable("RawBankCardTransactions", (string)null);
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.RawBankTransaction", b =>
@@ -2035,6 +2427,28 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("LinkedBankAccount");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankCardBalanceSnapshot", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.LinkedBankCard", "LinkedBankCard")
+                        .WithMany("BalanceSnapshots")
+                        .HasForeignKey("LinkedBankCardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LinkedBankCard");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankConnectionIdentityInfo", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.OpenBankingConnection", "Connection")
+                        .WithOne("IdentityInfo")
+                        .HasForeignKey("NSFinance.Api.Persistence.Entities.BankConnectionIdentityInfo", "ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Connection");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankConnectionToken", b =>
                 {
                     b.HasOne("NSFinance.Api.Persistence.Entities.OpenBankingConnection", "Connection")
@@ -2044,6 +2458,28 @@ namespace NSFinance.Api.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Connection");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankDirectDebit", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.LinkedBankAccount", "LinkedBankAccount")
+                        .WithMany("DirectDebits")
+                        .HasForeignKey("LinkedBankAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LinkedBankAccount");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.BankStandingOrder", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.LinkedBankAccount", "LinkedBankAccount")
+                        .WithMany("StandingOrders")
+                        .HasForeignKey("LinkedBankAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LinkedBankAccount");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ConsentRecord", b =>
@@ -2282,6 +2718,17 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("FinancialAccount");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.LinkedBankCard", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.OpenBankingConnection", "Connection")
+                        .WithMany("LinkedCards")
+                        .HasForeignKey("ConnectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Connection");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.OpenBankingConnection", b =>
                 {
                     b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
@@ -2332,6 +2779,17 @@ namespace NSFinance.Api.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("PolicyDocument");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.RawBankCardTransaction", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.LinkedBankCard", "LinkedBankCard")
+                        .WithMany("Transactions")
+                        .HasForeignKey("LinkedBankCardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LinkedBankCard");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.RawBankTransaction", b =>
@@ -2479,12 +2937,27 @@ namespace NSFinance.Api.Persistence.Migrations
                 {
                     b.Navigation("BalanceSnapshots");
 
+                    b.Navigation("DirectDebits");
+
+                    b.Navigation("StandingOrders");
+
+                    b.Navigation("Transactions");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.LinkedBankCard", b =>
+                {
+                    b.Navigation("BalanceSnapshots");
+
                     b.Navigation("Transactions");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.OpenBankingConnection", b =>
                 {
+                    b.Navigation("IdentityInfo");
+
                     b.Navigation("LinkedAccounts");
+
+                    b.Navigation("LinkedCards");
 
                     b.Navigation("Token");
                 });

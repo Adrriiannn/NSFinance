@@ -15,4 +15,11 @@ public sealed record BankConnectionDto(
     DateTime UpdatedUtc,
     DateTime? LastSuccessfulSyncUtc,
     DateTime? LastSyncAttemptedUtc,
-    string? LastErrorCode);
+    string? LastErrorCode,
+    string? GrantedScopesCsv = null,
+    bool? SupportsInfo = null,
+    bool? SupportsCards = null,
+    bool? SupportsDirectDebits = null,
+    bool? SupportsStandingOrders = null,
+    string? ConnectedFullName = null,
+    DateTime? IdentityFetchedUtc = null);

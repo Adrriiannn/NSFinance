@@ -14,6 +14,7 @@ import {
   useBankConnectionQuery,
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
+  useLinkedBankCardsQuery,
   useStartTrueLayerLinkMutation,
   useSyncBankConnectionMutation
 } from "../../../src/features/banking/useBanking";
@@ -137,6 +138,22 @@ function formatDateAdded(createdUtc?: string | null) {
   return `${byType("weekday")}, ${byType("day")} ${byType("month")} ${byType("year")}, ${byType("hour")}:${byType("minute")}`;
 }
 
+function formatCapabilityLabel(
+  supported: boolean | null | undefined,
+  availableLabel: string,
+  unavailableLabel: string
+) {
+  if (supported === true) {
+    return availableLabel;
+  }
+
+  if (supported === false) {
+    return unavailableLabel;
+  }
+
+  return "Unknown";
+}
+
 function isLinkStillValid(link: PendingConsentLink | null, nowMs: number) {
   if (!link) {
     return false;
@@ -214,6 +231,7 @@ export default function AddAccountModalScreen() {
   const connectionsQuery = useBankConnectionsQuery(!pendingConnectionId && !forceNewConnectionFlow);
   const activeConnectionQuery = useBankConnectionQuery(pendingConnectionId);
   const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
+  const linkedBankCardsQuery = useLinkedBankCardsQuery();
   const startLinkMutation = useStartTrueLayerLinkMutation();
   const syncMutation = useSyncBankConnectionMutation();
 
@@ -252,6 +270,8 @@ export default function AddAccountModalScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
       queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
       queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.banking.cards }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.banking.recurringPayments }),
       queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
       queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
@@ -309,6 +329,25 @@ export default function AddAccountModalScreen() {
     );
   }, [forceNewConnectionFlow, linkedBankAccountsQuery.data, pendingConnectionId]);
 
+  const linkedCardNames = useMemo(() => {
+    if (forceNewConnectionFlow && !pendingConnectionId) {
+      return [];
+    }
+
+    const cards = linkedBankCardsQuery.data ?? [];
+    const filtered = pendingConnectionId
+      ? cards.filter((card) => card.connectionId === pendingConnectionId)
+      : cards;
+    const sorted = [...filtered].sort((a, b) => Date.parse(b.createdUtc) - Date.parse(a.createdUtc));
+    return Array.from(
+      new Set(
+        sorted
+          .map((card) => card.displayName.trim())
+          .filter((name) => name.length > 0)
+      )
+    );
+  }, [forceNewConnectionFlow, linkedBankCardsQuery.data, pendingConnectionId]);
+
   const pendingLinkValid = useMemo(
     () => isLinkStillValid(pendingConsentLink, Date.now()),
     [pendingConsentLink]
@@ -362,7 +401,11 @@ export default function AddAccountModalScreen() {
           ? activeConnectionQuery.refetch()
           : connectionsQuery.refetch();
 
-        await Promise.all([connectionRefresh, linkedBankAccountsQuery.refetch()]);
+        await Promise.all([
+          connectionRefresh,
+          linkedBankAccountsQuery.refetch(),
+          linkedBankCardsQuery.refetch()
+        ]);
 
         if (options?.fullInvalidate) {
           await invalidatePortfolioQueries();
@@ -389,6 +432,7 @@ export default function AddAccountModalScreen() {
       connectionsQuery,
       invalidatePortfolioQueries,
       linkedBankAccountsQuery,
+      linkedBankCardsQuery,
       logBankingEvent,
       pendingConnectionId
     ]
@@ -769,6 +813,30 @@ export default function AddAccountModalScreen() {
     lastManualSyncUtc ?? activeConnection?.lastSuccessfulSyncUtc ?? null
   );
   const lastSyncLabel = lastSyncUtc ? formatDateAdded(lastSyncUtc) : "Not synced yet";
+  const grantedScopes = (activeConnection?.grantedScopesCsv ?? "")
+    .split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
+  const supportsInfoLabel = formatCapabilityLabel(
+    activeConnection?.supportsInfo,
+    "Identity info available",
+    "Identity info unavailable"
+  );
+  const supportsCardsLabel = formatCapabilityLabel(
+    activeConnection?.supportsCards,
+    "Cards available",
+    "Cards unavailable from this provider"
+  );
+  const supportsDirectDebitsLabel = formatCapabilityLabel(
+    activeConnection?.supportsDirectDebits,
+    "Direct debits available",
+    "Direct debits unavailable from this provider"
+  );
+  const supportsStandingOrdersLabel = formatCapabilityLabel(
+    activeConnection?.supportsStandingOrders,
+    "Standing orders available",
+    "Standing orders unavailable from this provider"
+  );
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset bottomInsetOffset={spacing[12]}>
@@ -793,6 +861,16 @@ export default function AddAccountModalScreen() {
             message={formatUnknownError(linkedBankAccountsQuery.error)}
             onRetry={() => {
               void refreshBankingState("linked_accounts_error_retry", { force: true });
+            }}
+          />
+        ) : null}
+
+        {linkedBankCardsQuery.isError ? (
+          <ErrorState
+            title="Could not load linked cards"
+            message={formatUnknownError(linkedBankCardsQuery.error)}
+            onRetry={() => {
+              void refreshBankingState("linked_cards_error_retry", { force: true });
             }}
           />
         ) : null}
@@ -850,10 +928,38 @@ export default function AddAccountModalScreen() {
             <Text style={styles.metadataLabel}>Connection provider: </Text>
             TrueLayer
           </Text>
+          {activeConnection?.connectedFullName ? (
+            <Text style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>Connected as: </Text>
+              {activeConnection.connectedFullName}
+            </Text>
+          ) : null}
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Capabilities: </Text>
+            {supportsInfoLabel}; {supportsCardsLabel}; {supportsDirectDebitsLabel}; {supportsStandingOrdersLabel}
+          </Text>
+          {grantedScopes.length > 0 ? (
+            <Text style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>Granted scopes: </Text>
+              {grantedScopes.join(", ")}
+            </Text>
+          ) : null}
           <Text style={styles.metadataRow}>
             <Text style={styles.metadataLabel}>Date added: </Text>
             {dateAdded}
           </Text>
+          <Text style={styles.metadataRow}>
+            <Text style={styles.metadataLabel}>Card name(s): </Text>
+          </Text>
+          {linkedCardNames.length > 0 ? (
+            linkedCardNames.map((cardName) => (
+              <Text key={cardName} style={styles.metadataListItem}>
+                - {cardName}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.metadataRow}>No cards linked or provider does not expose card data.</Text>
+          )}
         </View>
 
         {showRefreshAction ? (

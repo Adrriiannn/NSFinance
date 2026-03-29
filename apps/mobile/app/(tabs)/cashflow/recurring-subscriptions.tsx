@@ -4,9 +4,11 @@ import { EmptyState } from "../../../src/components/ui/EmptyState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { HeaderShell } from "../../../src/layout/appHeader";
+import { useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { buildRecurringPaymentForecast } from "../../../src/features/planner/forecasting";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
+import type { BankRecurringPaymentsDto } from "../../../src/types/api";
 
 function formatCountdown(daysUntilDue: number) {
   if (daysUntilDue <= 0) {
@@ -16,8 +18,62 @@ function formatCountdown(daysUntilDue: number) {
   return `in ${daysUntilDue} day${daysUntilDue === 1 ? "" : "s"}`;
 }
 
+type ProviderRecurringPayment = {
+  id: string;
+  label: string;
+  amount: number | null;
+  currency: string | null;
+  nextPaymentDateUtc: string | null;
+  source: "direct_debit" | "standing_order";
+};
+
+function normalizeProviderRecurringPayments(data: BankRecurringPaymentsDto | undefined): ProviderRecurringPayment[] {
+  if (!data) {
+    return [];
+  }
+
+  const directDebits = data.directDebits.map((entry) => ({
+    id: `dd-${entry.id}`,
+    label: entry.merchantName || entry.reference || entry.accountDisplayName || "Direct debit",
+    amount: entry.nextPaymentAmount,
+    currency: entry.nextPaymentCurrency,
+    nextPaymentDateUtc: entry.nextPaymentDateUtc,
+    source: "direct_debit" as const
+  }));
+
+  const standingOrders = data.standingOrders.map((entry) => ({
+    id: `so-${entry.id}`,
+    label: entry.payeeName || entry.reference || entry.accountDisplayName || "Standing order",
+    amount: entry.nextPaymentAmount,
+    currency: entry.nextPaymentCurrency,
+    nextPaymentDateUtc: entry.nextPaymentDateUtc,
+    source: "standing_order" as const
+  }));
+
+  return [...directDebits, ...standingOrders].sort((left, right) => {
+    const leftStamp = left.nextPaymentDateUtc ? Date.parse(left.nextPaymentDateUtc) : Number.MAX_SAFE_INTEGER;
+    const rightStamp = right.nextPaymentDateUtc ? Date.parse(right.nextPaymentDateUtc) : Number.MAX_SAFE_INTEGER;
+    return leftStamp - rightStamp;
+  });
+}
+
+function computeDaysUntilDue(nextPaymentDateUtc: string | null, now: Date) {
+  if (!nextPaymentDateUtc) {
+    return 0;
+  }
+
+  const dueDate = new Date(nextPaymentDateUtc);
+  if (Number.isNaN(dueDate.getTime())) {
+    return 0;
+  }
+
+  const diffMs = dueDate.getTime() - now.getTime();
+  return Math.max(0, Math.ceil(diffMs / (24 * 60 * 60 * 1000)));
+}
+
 export default function RecurringSubscriptionsScreen() {
   const transactionsQuery = useTransactionsQuery();
+  const recurringPaymentsQuery = useRecurringPaymentsQuery();
   const [clockNow, setClockNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -32,6 +88,14 @@ export default function RecurringSubscriptionsScreen() {
     () => buildRecurringPaymentForecast(transactionsQuery.data ?? [], clockNow),
     [clockNow, transactionsQuery.data]
   );
+  const providerRecurring = useMemo(
+    () =>
+      normalizeProviderRecurringPayments(recurringPaymentsQuery.data).map((item) => ({
+        ...item,
+        daysUntilDue: computeDaysUntilDue(item.nextPaymentDateUtc, clockNow)
+      })),
+    [clockNow, recurringPaymentsQuery.data]
+  );
 
   return (
     <ScreenContainer
@@ -43,7 +107,27 @@ export default function RecurringSubscriptionsScreen() {
 
       <GlassCard style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Detected recurring charges</Text>
-        {forecast.next7Days.length > 0 ? (
+        {providerRecurring.length > 0 ? (
+          providerRecurring.slice(0, 5).map((payment) => (
+            <View key={payment.id} style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>
+                {payment.label}{" "}
+                <Text style={styles.sourceLabel}>
+                  ({payment.source === "direct_debit" ? "direct debit" : "standing order"})
+                </Text>
+              </Text>
+              <Text style={styles.paymentMeta}>
+                {payment.amount !== null && payment.currency
+                  ? new Intl.NumberFormat("en-GB", {
+                      style: "currency",
+                      currency: payment.currency
+                    }).format(payment.amount)
+                  : "Amount pending"}{" "}
+                {payment.nextPaymentDateUtc ? formatCountdown(payment.daysUntilDue) : "date pending"}
+              </Text>
+            </View>
+          ))
+        ) : forecast.next7Days.length > 0 ? (
           forecast.next7Days.map((payment) => (
             <View key={payment.id} style={styles.paymentRow}>
               <Text style={styles.paymentLabel}>{payment.label}</Text>
@@ -62,26 +146,45 @@ export default function RecurringSubscriptionsScreen() {
       </GlassCard>
 
       <Text style={styles.sectionTitle}>Subscription outlook</Text>
-      {forecast.restOfMonth.length === 0 ? (
+      {providerRecurring.length === 0 && forecast.restOfMonth.length === 0 ? (
         <EmptyState
           title="No recurring subscriptions detected"
           message="As transaction history grows, subscription-style recurring charges will appear here."
         />
       ) : (
         <View style={styles.listWrap}>
-          {forecast.restOfMonth.map((payment) => (
+          {providerRecurring.map((payment) => (
             <GlassCard key={payment.id} style={styles.itemCard}>
               <Text style={styles.itemTitle}>{payment.label}</Text>
               <Text style={styles.itemMeta}>
-                {new Intl.NumberFormat("en-GB", {
-                  style: "currency",
-                  currency: payment.currency
-                }).format(payment.amount)}{" "}
-                {formatCountdown(payment.daysUntilDue)}
+                {payment.amount !== null && payment.currency
+                  ? new Intl.NumberFormat("en-GB", {
+                      style: "currency",
+                      currency: payment.currency
+                    }).format(payment.amount)
+                  : "Amount pending"}{" "}
+                · {payment.nextPaymentDateUtc ? formatCountdown(payment.daysUntilDue) : "date pending"}
               </Text>
-              <Text style={styles.itemMeta}>Estimated cadence: {payment.cadenceLabel}</Text>
+              <Text style={styles.itemMeta}>
+                Source: {payment.source === "direct_debit" ? "Direct debit" : "Standing order"}
+              </Text>
             </GlassCard>
           ))}
+          {providerRecurring.length === 0
+            ? forecast.restOfMonth.map((payment) => (
+                <GlassCard key={payment.id} style={styles.itemCard}>
+                  <Text style={styles.itemTitle}>{payment.label}</Text>
+                  <Text style={styles.itemMeta}>
+                    {new Intl.NumberFormat("en-GB", {
+                      style: "currency",
+                      currency: payment.currency
+                    }).format(payment.amount)}{" "}
+                    {formatCountdown(payment.daysUntilDue)}
+                  </Text>
+                  <Text style={styles.itemMeta}>Estimated cadence: {payment.cadenceLabel}</Text>
+                </GlassCard>
+              ))
+            : null}
         </View>
       )}
     </ScreenContainer>
@@ -103,6 +206,10 @@ const styles = createRuntimeStyleSheet(() => ({
   paymentLabel: {
     color: palette.textPrimary,
     ...typography.body2
+  },
+  sourceLabel: {
+    color: palette.textSecondary,
+    ...typography.caption
   },
   paymentMeta: {
     color: palette.textSecondary,

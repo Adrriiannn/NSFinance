@@ -1,7 +1,9 @@
 import { apiRequest } from "../../lib/api/client";
 import type {
+  BankRecurringPaymentsDto,
   BankConnectionDto,
   ConnectedBanksOverviewDto,
+  LinkedBankCardDto,
   LinkedBankAccountDto,
   StartTrueLayerLinkRequest,
   StartTrueLayerLinkResponse,
@@ -22,6 +24,18 @@ export function getBankConnection(connectionId: string): Promise<BankConnectionD
 
 export function getLinkedBankAccounts(): Promise<LinkedBankAccountDto[]> {
   return apiRequest<LinkedBankAccountDto[]>("/api/banking/accounts");
+}
+
+export function getLinkedBankCards(): Promise<LinkedBankCardDto[]> {
+  return apiRequest<LinkedBankCardDto[]>("/api/banking/cards");
+}
+
+export function getRecurringPayments(): Promise<BankRecurringPaymentsDto> {
+  return apiRequest<BankRecurringPaymentsDto>("/api/banking/recurring-payments");
+}
+
+export function getRecurringPaymentsForAccount(accountId: string): Promise<BankRecurringPaymentsDto> {
+  return apiRequest<BankRecurringPaymentsDto>(`/api/banking/accounts/${accountId}/recurring-payments`);
 }
 
 export function startTrueLayerLink(payload: StartTrueLayerLinkRequest): Promise<StartTrueLayerLinkResponse> {

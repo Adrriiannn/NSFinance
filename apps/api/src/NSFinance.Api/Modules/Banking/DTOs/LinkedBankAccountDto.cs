@@ -3,6 +3,7 @@ namespace NSFinance.Api.Modules.Banking.DTOs;
 public sealed record LinkedBankAccountDto(
     Guid Id,
     Guid ConnectionId,
+    Guid? FinancialAccountId,
     string ProviderAccountId,
     string? ProviderId,
     string? ProviderDisplayName,
@@ -18,4 +19,5 @@ public sealed record LinkedBankAccountDto(
     decimal? LatestCurrent,
     decimal? LatestOverdraft,
     DateTime CreatedUtc,
-    DateTime UpdatedUtc);
+    DateTime UpdatedUtc,
+    string? AccountNumberMetadataJson = null);

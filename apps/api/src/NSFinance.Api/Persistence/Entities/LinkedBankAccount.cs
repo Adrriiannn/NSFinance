@@ -20,4 +20,6 @@ public class LinkedBankAccount
     public FinancialAccount? FinancialAccount { get; set; }
     public ICollection<BankBalanceSnapshot> BalanceSnapshots { get; set; } = [];
     public ICollection<RawBankTransaction> Transactions { get; set; } = [];
+    public ICollection<BankDirectDebit> DirectDebits { get; set; } = [];
+    public ICollection<BankStandingOrder> StandingOrders { get; set; } = [];
 }

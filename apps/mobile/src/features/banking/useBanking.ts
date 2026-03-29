@@ -5,8 +5,11 @@ import {
   disconnectBankConnection,
   getBankConnection,
   getBankConnections,
+  getLinkedBankCards,
   getConnectedBanks,
   getLinkedBankAccounts,
+  getRecurringPayments,
+  getRecurringPaymentsForAccount,
   startTrueLayerLink,
   syncBankConnection
 } from "./bankingApi";
@@ -64,6 +67,33 @@ export function useLinkedBankAccountsQuery() {
   });
 }
 
+export function useLinkedBankCardsQuery() {
+  return useQuery({
+    queryKey: queryKeys.banking.cards,
+    queryFn: getLinkedBankCards,
+    ...nearLiveFinanceQueryOptions
+  });
+}
+
+export function useRecurringPaymentsQuery() {
+  return useQuery({
+    queryKey: queryKeys.banking.recurringPayments,
+    queryFn: getRecurringPayments,
+    ...nearLiveFinanceQueryOptions
+  });
+}
+
+export function useAccountRecurringPaymentsQuery(accountId: string | null) {
+  return useQuery({
+    queryKey: accountId
+      ? queryKeys.banking.recurringPaymentsByAccount(accountId)
+      : queryKeys.banking.recurringPayments,
+    queryFn: () => getRecurringPaymentsForAccount(accountId as string),
+    enabled: Boolean(accountId),
+    ...nearLiveFinanceQueryOptions
+  });
+}
+
 export function useStartTrueLayerLinkMutation() {
   const queryClient = useQueryClient();
 
@@ -87,6 +117,8 @@ export function useSyncBankConnectionMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.cards }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.recurringPayments }),
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
@@ -106,6 +138,8 @@ export function useDisconnectBankConnectionMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.cards }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.banking.recurringPayments }),
         queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })

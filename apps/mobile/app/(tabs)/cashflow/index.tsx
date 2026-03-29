@@ -24,10 +24,12 @@ import {
   buildRecurringPaymentForecast
 } from "../../../src/features/planner/forecasting";
 import { buildPlannerSuggestions } from "../../../src/features/planner/plannerInsights";
+import { useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
 import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
+import type { BankRecurringPaymentsDto } from "../../../src/types/api";
 
 function formatCountdown(daysUntilDue: number) {
   if (daysUntilDue <= 0) {
@@ -71,6 +73,59 @@ function splitAbsoluteMonth(absoluteMonth: number) {
   return { year, month };
 }
 
+type ProviderRecurringPayment = {
+  id: string;
+  label: string;
+  amount: number | null;
+  currency: string | null;
+  nextPaymentDateUtc: string | null;
+  source: "direct_debit" | "standing_order";
+};
+
+function normalizeProviderRecurringPayments(data: BankRecurringPaymentsDto | undefined): ProviderRecurringPayment[] {
+  if (!data) {
+    return [];
+  }
+
+  const directDebits = data.directDebits.map((entry) => ({
+    id: `dd-${entry.id}`,
+    label: entry.merchantName || entry.reference || entry.accountDisplayName || "Direct debit",
+    amount: entry.nextPaymentAmount,
+    currency: entry.nextPaymentCurrency,
+    nextPaymentDateUtc: entry.nextPaymentDateUtc,
+    source: "direct_debit" as const
+  }));
+
+  const standingOrders = data.standingOrders.map((entry) => ({
+    id: `so-${entry.id}`,
+    label: entry.payeeName || entry.reference || entry.accountDisplayName || "Standing order",
+    amount: entry.nextPaymentAmount,
+    currency: entry.nextPaymentCurrency,
+    nextPaymentDateUtc: entry.nextPaymentDateUtc,
+    source: "standing_order" as const
+  }));
+
+  return [...directDebits, ...standingOrders].sort((left, right) => {
+    const leftStamp = left.nextPaymentDateUtc ? Date.parse(left.nextPaymentDateUtc) : Number.MAX_SAFE_INTEGER;
+    const rightStamp = right.nextPaymentDateUtc ? Date.parse(right.nextPaymentDateUtc) : Number.MAX_SAFE_INTEGER;
+    return leftStamp - rightStamp;
+  });
+}
+
+function computeDaysUntilDue(nextPaymentDateUtc: string | null, now: Date) {
+  if (!nextPaymentDateUtc) {
+    return 0;
+  }
+
+  const dueDate = new Date(nextPaymentDateUtc);
+  if (Number.isNaN(dueDate.getTime())) {
+    return 0;
+  }
+
+  const diffMs = dueDate.getTime() - now.getTime();
+  return Math.max(0, Math.ceil(diffMs / (24 * 60 * 60 * 1000)));
+}
+
 export default function CashflowScreen() {
   useThemeRuntime();
   const router = useRouter();
@@ -79,6 +134,7 @@ export default function CashflowScreen() {
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/cashflow");
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
+  const recurringPaymentsQuery = useRecurringPaymentsQuery();
   const [clockNow, setClockNow] = useState(() => new Date());
   const [currentPeriod, setCurrentPeriod] = useState<PlannerComparisonPeriod>(() => ({
     year: new Date().getFullYear(),
@@ -150,6 +206,18 @@ export default function CashflowScreen() {
     () => buildRecurringPaymentForecast(transactions, clockNow),
     [clockNow, transactions]
   );
+  const providerRecurringPayments = useMemo(
+    () => normalizeProviderRecurringPayments(recurringPaymentsQuery.data),
+    [recurringPaymentsQuery.data]
+  );
+  const providerUpcoming = useMemo(() => {
+    return providerRecurringPayments
+      .map((entry) => ({
+        ...entry,
+        daysUntilDue: computeDaysUntilDue(entry.nextPaymentDateUtc, clockNow)
+      }))
+      .slice(0, 3);
+  }, [clockNow, providerRecurringPayments]);
   const suggestions = useMemo(
     () =>
       buildPlannerSuggestions({
@@ -399,7 +467,27 @@ export default function CashflowScreen() {
               onPress={() => router.push("/(tabs)/cashflow/upcoming-payments")}
             >
               <Text style={styles.upcomingTitle}>Upcoming payments</Text>
-              {recurringForecast.next7Days.length > 0 ? (
+              {providerUpcoming.length > 0 ? (
+                providerUpcoming.map((payment) => (
+                  <View key={payment.id} style={styles.upcomingRow}>
+                    <Text style={styles.upcomingLabel}>
+                      {payment.label}{" "}
+                      <Text style={styles.upcomingSource}>
+                        ({payment.source === "direct_debit" ? "direct debit" : "standing order"})
+                      </Text>
+                    </Text>
+                    <Text style={styles.upcomingMeta}>
+                      {payment.amount !== null && payment.currency
+                        ? new Intl.NumberFormat("en-GB", {
+                            style: "currency",
+                            currency: payment.currency
+                          }).format(payment.amount)
+                        : "Amount pending"}{" "}
+                      {payment.nextPaymentDateUtc ? formatCountdown(payment.daysUntilDue) : "date pending"}
+                    </Text>
+                  </View>
+                ))
+              ) : recurringForecast.next7Days.length > 0 ? (
                 recurringForecast.next7Days.slice(0, 3).map((payment) => (
                   <View key={payment.id} style={styles.upcomingRow}>
                     <Text style={styles.upcomingLabel}>{payment.label}</Text>
@@ -414,7 +502,7 @@ export default function CashflowScreen() {
                 ))
               ) : (
                 <Text style={styles.upcomingEmpty}>
-                  No recurring payments detected in the next 7 days.
+                  No provider recurring payments available yet. Detected recurring transactions will appear as history grows.
                 </Text>
               )}
             </Pressable>
@@ -684,6 +772,10 @@ const styles = createRuntimeStyleSheet(() => ({
   upcomingLabel: {
     color: palette.textPrimary,
     ...typography.body2
+  },
+  upcomingSource: {
+    color: palette.textSecondary,
+    ...typography.caption
   },
   upcomingMeta: {
     color: palette.textSecondary,

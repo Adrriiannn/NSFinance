@@ -607,6 +607,9 @@ public sealed class BankConnectionService(
             var linkedAccountIdsQuery = dbContext.LinkedBankAccounts
                 .Where(x => x.ConnectionId == connectionId)
                 .Select(x => x.Id);
+            var linkedCardIdsQuery = dbContext.LinkedBankCards
+                .Where(x => x.ConnectionId == connectionId)
+                .Select(x => x.Id);
 
             var projectedFinancialAccountIdsQuery = dbContext.LinkedBankAccounts
                 .Where(x => x.ConnectionId == connectionId && x.FinancialAccountId.HasValue)
@@ -628,17 +631,47 @@ public sealed class BankConnectionService(
             var projectionTransactionsTargeted = await dbContext.Transactions
                 .Where(x => projectedFinancialAccountIdsQuery.Contains(x.FinancialAccountId))
                 .CountAsync(cancellationToken);
+            var linkedCardsTargeted = await dbContext.LinkedBankCards
+                .Where(x => x.ConnectionId == connectionId)
+                .CountAsync(cancellationToken);
+            var cardTransactionsTargeted = await dbContext.RawBankCardTransactions
+                .Where(x => linkedCardIdsQuery.Contains(x.LinkedBankCardId))
+                .CountAsync(cancellationToken);
+            var cardBalanceSnapshotsTargeted = await dbContext.BankCardBalanceSnapshots
+                .Where(x => linkedCardIdsQuery.Contains(x.LinkedBankCardId))
+                .CountAsync(cancellationToken);
+            var directDebitsTargeted = await dbContext.BankDirectDebits
+                .Where(x => linkedAccountIdsQuery.Contains(x.LinkedBankAccountId))
+                .CountAsync(cancellationToken);
+            var standingOrdersTargeted = await dbContext.BankStandingOrders
+                .Where(x => linkedAccountIdsQuery.Contains(x.LinkedBankAccountId))
+                .CountAsync(cancellationToken);
+            var identityRowsTargeted = await dbContext.BankConnectionIdentityInfos
+                .Where(x => x.ConnectionId == connectionId)
+                .CountAsync(cancellationToken);
 
             logger.LogInformation(
-                "Disconnect cleanup started for connectionId={ConnectionId} linkedAccountsTargeted={LinkedAccountsTargeted} projectedAccountsTargeted={ProjectedAccountsTargeted} rawTransactionsTargeted={RawTransactionsTargeted} balancesTargeted={BalanceSnapshotsTargeted} projectionTransactionsTargeted={ProjectionTransactionsTargeted}",
+                "Disconnect cleanup started for connectionId={ConnectionId} linkedAccountsTargeted={LinkedAccountsTargeted} projectedAccountsTargeted={ProjectedAccountsTargeted} rawTransactionsTargeted={RawTransactionsTargeted} balancesTargeted={BalanceSnapshotsTargeted} projectionTransactionsTargeted={ProjectionTransactionsTargeted} linkedCardsTargeted={LinkedCardsTargeted} cardTransactionsTargeted={CardTransactionsTargeted} cardBalancesTargeted={CardBalancesTargeted} directDebitsTargeted={DirectDebitsTargeted} standingOrdersTargeted={StandingOrdersTargeted} identityRowsTargeted={IdentityRowsTargeted}",
                 connectionId,
                 linkedAccountsTargeted,
                 projectedAccountsTargeted,
                 rawTransactionsTargeted,
                 balanceSnapshotsTargeted,
-                projectionTransactionsTargeted);
+                projectionTransactionsTargeted,
+                linkedCardsTargeted,
+                cardTransactionsTargeted,
+                cardBalanceSnapshotsTargeted,
+                directDebitsTargeted,
+                standingOrdersTargeted,
+                identityRowsTargeted);
 
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            var identityRowsDeleted = await dbContext.BankConnectionIdentityInfos
+                .Where(x => x.ConnectionId == connectionId)
+                .ExecuteDeleteAsync(cancellationToken);
+            var linkedCardsDeleted = await dbContext.LinkedBankCards
+                .Where(x => x.ConnectionId == connectionId)
+                .ExecuteDeleteAsync(cancellationToken);
             var projectedAccountsDeleted = await dbContext.FinancialAccounts
                 .Where(x => x.UserId == userId && projectedFinancialAccountIdsQuery.Contains(x.Id))
                 .ExecuteDeleteAsync(cancellationToken);
@@ -656,13 +689,19 @@ public sealed class BankConnectionService(
             await transaction.CommitAsync(cancellationToken);
 
             logger.LogInformation(
-                "Disconnect cleanup completed for connectionId={ConnectionId} linkedAccountsDeleted={LinkedAccountsDeleted} projectedAccountsDeleted={ProjectedAccountsDeleted} targetedRawTransactions={RawTransactionsTargeted} targetedBalanceSnapshots={BalanceSnapshotsTargeted} targetedProjectionTransactions={ProjectionTransactionsTargeted} elapsedMs={ElapsedMs}",
+                "Disconnect cleanup completed for connectionId={ConnectionId} linkedAccountsDeleted={LinkedAccountsDeleted} projectedAccountsDeleted={ProjectedAccountsDeleted} linkedCardsDeleted={LinkedCardsDeleted} identityRowsDeleted={IdentityRowsDeleted} targetedRawTransactions={RawTransactionsTargeted} targetedBalanceSnapshots={BalanceSnapshotsTargeted} targetedProjectionTransactions={ProjectionTransactionsTargeted} targetedCardTransactions={CardTransactionsTargeted} targetedCardBalances={CardBalancesTargeted} targetedDirectDebits={DirectDebitsTargeted} targetedStandingOrders={StandingOrdersTargeted} elapsedMs={ElapsedMs}",
                 connectionId,
                 linkedAccountsDeleted,
                 projectedAccountsDeleted,
+                linkedCardsDeleted,
+                identityRowsDeleted,
                 rawTransactionsTargeted,
                 balanceSnapshotsTargeted,
                 projectionTransactionsTargeted,
+                cardTransactionsTargeted,
+                cardBalanceSnapshotsTargeted,
+                directDebitsTargeted,
+                standingOrdersTargeted,
                 startedAt.ElapsedMilliseconds);
 
             await WriteAuditSafeAsync(
@@ -677,9 +716,15 @@ public sealed class BankConnectionService(
                     status = connection.Status,
                     linkedAccountsDeleted,
                     projectedAccountsDeleted,
+                    linkedCardsDeleted,
+                    identityRowsDeleted,
                     rawTransactionsTargeted,
                     balanceSnapshotsTargeted,
-                    projectionTransactionsTargeted
+                    projectionTransactionsTargeted,
+                    cardTransactionsTargeted,
+                    cardBalanceSnapshotsTargeted,
+                    directDebitsTargeted,
+                    standingOrdersTargeted
                 },
                 cancellationToken);
         }
@@ -761,6 +806,7 @@ public sealed class BankConnectionService(
     private sealed record LinkedBankAccountProjection(
         Guid Id,
         Guid ConnectionId,
+        Guid? FinancialAccountId,
         string ProviderAccountId,
         string? ProviderId,
         string? ProviderDisplayName,
@@ -771,6 +817,24 @@ public sealed class BankConnectionService(
         string? AccountType,
         string? AccountSubType,
         string Currency,
+        string? AccountNumberMetadataJson,
+        string CurrentConnectionHealth,
+        DateTime CreatedUtc,
+        DateTime UpdatedUtc);
+
+    private sealed record LinkedBankCardProjection(
+        Guid Id,
+        Guid ConnectionId,
+        string ProviderCardId,
+        string? ProviderAccountId,
+        string DisplayName,
+        string Currency,
+        string? CardType,
+        string? CardNetwork,
+        string? CardNumberLastFour,
+        string? NameOnCard,
+        DateTime? ValidFromUtc,
+        DateTime? ValidToUtc,
         string CurrentConnectionHealth,
         DateTime CreatedUtc,
         DateTime UpdatedUtc);
@@ -798,7 +862,14 @@ public sealed class BankConnectionService(
                 x.UpdatedUtc,
                 x.LastSuccessfulSyncUtc,
                 x.LastSyncAttemptedUtc,
-                x.LastErrorCode))
+                x.LastErrorCode,
+                x.GrantedScopesCsv,
+                x.SupportsInfo,
+                x.SupportsCards,
+                x.SupportsDirectDebits,
+                x.SupportsStandingOrders,
+                x.IdentityInfo != null ? x.IdentityInfo.FullName : null,
+                x.IdentityInfo != null ? x.IdentityInfo.FetchedUtc : null))
             .ToListAsync(cancellationToken);
     }
 
@@ -825,7 +896,14 @@ public sealed class BankConnectionService(
                 x.UpdatedUtc,
                 x.LastSuccessfulSyncUtc,
                 x.LastSyncAttemptedUtc,
-                x.LastErrorCode))
+                x.LastErrorCode,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null))
             .ToListAsync(cancellationToken);
     }
 
@@ -852,7 +930,14 @@ public sealed class BankConnectionService(
                 x.UpdatedUtc,
                 x.LastSuccessfulSyncUtc,
                 x.LastSyncAttemptedUtc,
-                x.LastErrorCode))
+                x.LastErrorCode,
+                x.GrantedScopesCsv,
+                x.SupportsInfo,
+                x.SupportsCards,
+                x.SupportsDirectDebits,
+                x.SupportsStandingOrders,
+                x.IdentityInfo != null ? x.IdentityInfo.FullName : null,
+                x.IdentityInfo != null ? x.IdentityInfo.FetchedUtc : null))
             .SingleOrDefaultAsync(cancellationToken);
     }
 
@@ -879,7 +964,14 @@ public sealed class BankConnectionService(
                 x.UpdatedUtc,
                 x.LastSuccessfulSyncUtc,
                 x.LastSyncAttemptedUtc,
-                x.LastErrorCode))
+                x.LastErrorCode,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null))
             .SingleOrDefaultAsync(cancellationToken);
     }
 
@@ -911,7 +1003,14 @@ public sealed class BankConnectionService(
                     x.UpdatedUtc,
                     x.LastSuccessfulSyncUtc,
                     x.LastSyncAttemptedUtc,
-                    x.LastErrorCode),
+                    x.LastErrorCode,
+                    x.GrantedScopesCsv,
+                    x.SupportsInfo,
+                    x.SupportsCards,
+                    x.SupportsDirectDebits,
+                    x.SupportsStandingOrders,
+                    x.IdentityInfo != null ? x.IdentityInfo.FullName : null,
+                    x.IdentityInfo != null ? x.IdentityInfo.FetchedUtc : null),
                 x.ProviderConnectionReference,
                 x.ProviderDisplayName,
                 x.ProviderName,
@@ -949,7 +1048,14 @@ public sealed class BankConnectionService(
                     x.UpdatedUtc,
                     x.LastSuccessfulSyncUtc,
                     x.LastSyncAttemptedUtc,
-                    x.LastErrorCode),
+                    x.LastErrorCode,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null),
                 x.ProviderConnectionReference,
                 x.ProviderDisplayName,
                 x.ProviderName,
@@ -989,6 +1095,7 @@ public sealed class BankConnectionService(
             .Select(x => new LinkedBankAccountProjection(
                 x.Id,
                 x.ConnectionId,
+                x.FinancialAccountId,
                 x.ProviderAccountId,
                 x.Connection != null ? x.Connection.ProviderId : null,
                 x.Connection != null ? x.Connection.ProviderDisplayName : null,
@@ -999,6 +1106,7 @@ public sealed class BankConnectionService(
                 x.AccountType,
                 x.AccountSubType,
                 x.Currency,
+                x.AccountNumberMetadataJson,
                 x.CurrentConnectionHealth,
                 x.CreatedUtc,
                 x.UpdatedUtc))
@@ -1018,6 +1126,7 @@ public sealed class BankConnectionService(
             .Select(x => new LinkedBankAccountProjection(
                 x.Id,
                 x.ConnectionId,
+                x.FinancialAccountId,
                 x.ProviderAccountId,
                 null,
                 x.Connection != null ? x.Connection.ProviderDisplayName : null,
@@ -1028,6 +1137,7 @@ public sealed class BankConnectionService(
                 x.AccountType,
                 x.AccountSubType,
                 x.Currency,
+                x.AccountNumberMetadataJson,
                 x.CurrentConnectionHealth,
                 x.CreatedUtc,
                 x.UpdatedUtc))
@@ -1055,6 +1165,7 @@ public sealed class BankConnectionService(
                 return new LinkedBankAccountDto(
                     account.Id,
                     account.ConnectionId,
+                    account.FinancialAccountId,
                     account.ProviderAccountId,
                     account.ProviderId,
                     account.ProviderDisplayName,
@@ -1070,9 +1181,249 @@ public sealed class BankConnectionService(
                     latestBalance?.Current,
                     latestBalance?.Overdraft,
                     account.CreatedUtc,
-                    account.UpdatedUtc);
+                    account.UpdatedUtc,
+                    account.AccountNumberMetadataJson);
             })
             .ToList();
+    }
+
+    public async Task<IReadOnlyList<LinkedBankCardDto>> ListLinkedCardsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var cards = await dbContext.LinkedBankCards
+                .AsNoTracking()
+                .Where(x => x.Connection != null && x.Connection.UserId == userId)
+                .OrderBy(x => x.DisplayName)
+                .Select(x => new LinkedBankCardProjection(
+                    x.Id,
+                    x.ConnectionId,
+                    x.ProviderCardId,
+                    x.ProviderAccountId,
+                    x.DisplayName,
+                    x.Currency,
+                    x.CardType,
+                    x.CardNetwork,
+                    x.CardNumberLastFour,
+                    x.NameOnCard,
+                    x.ValidFromUtc,
+                    x.ValidToUtc,
+                    x.CurrentConnectionHealth,
+                    x.CreatedUtc,
+                    x.UpdatedUtc))
+                .ToListAsync(cancellationToken);
+
+            if (cards.Count == 0)
+            {
+                return [];
+            }
+
+            var cardIds = cards.Select(x => x.Id).ToList();
+            var latestBalances = await dbContext.BankCardBalanceSnapshots
+                .AsNoTracking()
+                .Where(x => cardIds.Contains(x.LinkedBankCardId))
+                .GroupBy(x => x.LinkedBankCardId)
+                .Select(g => g.OrderByDescending(x => x.CapturedUtc).First())
+                .ToDictionaryAsync(x => x.LinkedBankCardId, cancellationToken);
+
+            return cards
+                .Select(card =>
+                {
+                    latestBalances.TryGetValue(card.Id, out var latestBalance);
+                    return new LinkedBankCardDto(
+                        card.Id,
+                        card.ConnectionId,
+                        card.ProviderCardId,
+                        card.ProviderAccountId,
+                        card.DisplayName,
+                        card.Currency,
+                        card.CardType,
+                        card.CardNetwork,
+                        card.CardNumberLastFour,
+                        card.NameOnCard,
+                        card.ValidFromUtc,
+                        card.ValidToUtc,
+                        card.CurrentConnectionHealth,
+                        latestBalance?.Available,
+                        latestBalance?.Current,
+                        latestBalance?.Limit,
+                        latestBalance?.Outstanding,
+                        card.CreatedUtc,
+                        card.UpdatedUtc);
+                })
+                .ToList();
+        }
+        catch (Exception ex) when (IsExpandedBankingSchemaMissing(ex))
+        {
+            logger.LogWarning(
+                ex,
+                "Expanded banking schema is unavailable while reading cards for userId={UserId}. Returning empty card list.",
+                userId);
+            return [];
+        }
+    }
+
+    public async Task<ServiceResult<BankRecurringPaymentsDto>> GetRecurringPaymentsForLinkedAccountAsync(
+        Guid userId,
+        Guid linkedBankAccountId,
+        CancellationToken cancellationToken)
+    {
+        var ownsAccount = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Include(x => x.Connection)
+            .AnyAsync(
+                x => x.Id == linkedBankAccountId
+                    && x.Connection != null
+                    && x.Connection.UserId == userId,
+                cancellationToken);
+
+        if (!ownsAccount)
+        {
+            return ServiceResult<BankRecurringPaymentsDto>.Fail(
+                "Account not found.",
+                "bank_account_not_found",
+                StatusCodes.Status404NotFound);
+        }
+
+        try
+        {
+            var directDebits = await dbContext.BankDirectDebits
+                .AsNoTracking()
+                .Where(x => x.LinkedBankAccountId == linkedBankAccountId)
+                .Join(
+                    dbContext.LinkedBankAccounts.AsNoTracking(),
+                    debit => debit.LinkedBankAccountId,
+                    account => account.Id,
+                    (debit, account) => new BankDirectDebitDto(
+                        debit.Id,
+                        debit.LinkedBankAccountId,
+                        account.ConnectionId,
+                        account.DisplayName,
+                        debit.ProviderDirectDebitId,
+                        debit.Status,
+                        debit.MandateType,
+                        debit.Reference,
+                        debit.MerchantName,
+                        debit.PreviousPaymentDateUtc,
+                        debit.PreviousPaymentAmount,
+                        debit.PreviousPaymentCurrency,
+                        debit.NextPaymentDateUtc,
+                        debit.NextPaymentAmount,
+                        debit.NextPaymentCurrency,
+                        debit.UpdatedUtc))
+                .OrderBy(x => x.NextPaymentDateUtc ?? DateTime.MaxValue)
+                .ThenBy(x => x.AccountDisplayName)
+                .ToListAsync(cancellationToken);
+
+            var standingOrders = await dbContext.BankStandingOrders
+                .AsNoTracking()
+                .Where(x => x.LinkedBankAccountId == linkedBankAccountId)
+                .Join(
+                    dbContext.LinkedBankAccounts.AsNoTracking(),
+                    order => order.LinkedBankAccountId,
+                    account => account.Id,
+                    (order, account) => new BankStandingOrderDto(
+                        order.Id,
+                        order.LinkedBankAccountId,
+                        account.ConnectionId,
+                        account.DisplayName,
+                        order.ProviderStandingOrderId,
+                        order.Status,
+                        order.Frequency,
+                        order.Reference,
+                        order.PayeeName,
+                        order.FirstPaymentDateUtc,
+                        order.NextPaymentDateUtc,
+                        order.FinalPaymentDateUtc,
+                        order.NextPaymentAmount,
+                        order.NextPaymentCurrency,
+                        order.UpdatedUtc))
+                .OrderBy(x => x.NextPaymentDateUtc ?? DateTime.MaxValue)
+                .ThenBy(x => x.AccountDisplayName)
+                .ToListAsync(cancellationToken);
+
+            return ServiceResult<BankRecurringPaymentsDto>.Ok(
+                new BankRecurringPaymentsDto(directDebits, standingOrders));
+        }
+        catch (Exception ex) when (IsExpandedBankingSchemaMissing(ex))
+        {
+            logger.LogWarning(
+                ex,
+                "Expanded banking schema is unavailable while reading recurring payments for linkedAccountId={LinkedAccountId}. Returning empty recurring payload.",
+                linkedBankAccountId);
+            return ServiceResult<BankRecurringPaymentsDto>.Ok(new BankRecurringPaymentsDto([], []));
+        }
+    }
+
+    public async Task<BankRecurringPaymentsDto> ListRecurringPaymentsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var directDebits = await dbContext.BankDirectDebits
+                .AsNoTracking()
+                .Where(x => x.LinkedBankAccount != null
+                    && x.LinkedBankAccount.Connection != null
+                    && x.LinkedBankAccount.Connection.UserId == userId)
+                .Select(x => new BankDirectDebitDto(
+                    x.Id,
+                    x.LinkedBankAccountId,
+                    x.LinkedBankAccount!.ConnectionId,
+                    x.LinkedBankAccount.DisplayName,
+                    x.ProviderDirectDebitId,
+                    x.Status,
+                    x.MandateType,
+                    x.Reference,
+                    x.MerchantName,
+                    x.PreviousPaymentDateUtc,
+                    x.PreviousPaymentAmount,
+                    x.PreviousPaymentCurrency,
+                    x.NextPaymentDateUtc,
+                    x.NextPaymentAmount,
+                    x.NextPaymentCurrency,
+                    x.UpdatedUtc))
+                .OrderBy(x => x.NextPaymentDateUtc ?? DateTime.MaxValue)
+                .ThenBy(x => x.AccountDisplayName)
+                .ToListAsync(cancellationToken);
+
+            var standingOrders = await dbContext.BankStandingOrders
+                .AsNoTracking()
+                .Where(x => x.LinkedBankAccount != null
+                    && x.LinkedBankAccount.Connection != null
+                    && x.LinkedBankAccount.Connection.UserId == userId)
+                .Select(x => new BankStandingOrderDto(
+                    x.Id,
+                    x.LinkedBankAccountId,
+                    x.LinkedBankAccount!.ConnectionId,
+                    x.LinkedBankAccount.DisplayName,
+                    x.ProviderStandingOrderId,
+                    x.Status,
+                    x.Frequency,
+                    x.Reference,
+                    x.PayeeName,
+                    x.FirstPaymentDateUtc,
+                    x.NextPaymentDateUtc,
+                    x.FinalPaymentDateUtc,
+                    x.NextPaymentAmount,
+                    x.NextPaymentCurrency,
+                    x.UpdatedUtc))
+                .OrderBy(x => x.NextPaymentDateUtc ?? DateTime.MaxValue)
+                .ThenBy(x => x.AccountDisplayName)
+                .ToListAsync(cancellationToken);
+
+            return new BankRecurringPaymentsDto(directDebits, standingOrders);
+        }
+        catch (Exception ex) when (IsExpandedBankingSchemaMissing(ex))
+        {
+            logger.LogWarning(
+                ex,
+                "Expanded banking schema is unavailable while reading recurring payments for userId={UserId}. Returning empty recurring payload.",
+                userId);
+            return new BankRecurringPaymentsDto([], []);
+        }
     }
 
     private async Task MarkDisconnectFailedAsync(
@@ -1190,7 +1541,12 @@ public sealed class BankConnectionService(
                     || columnName.Equals("ProviderIconUri", StringComparison.OrdinalIgnoreCase)
                     || columnName.Equals("ProviderLogoUri", StringComparison.OrdinalIgnoreCase)
                     || columnName.Equals("ProviderBrandBgColor", StringComparison.OrdinalIgnoreCase)
-                    || columnName.Equals("BrandingLastSyncedAtUtc", StringComparison.OrdinalIgnoreCase))
+                    || columnName.Equals("BrandingLastSyncedAtUtc", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("GrantedScopesCsv", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("SupportsInfo", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("SupportsCards", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("SupportsDirectDebits", StringComparison.OrdinalIgnoreCase)
+                    || columnName.Equals("SupportsStandingOrders", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
@@ -1200,7 +1556,60 @@ public sealed class BankConnectionService(
                     || message.Contains("\"ProviderIconUri\"", StringComparison.OrdinalIgnoreCase)
                     || message.Contains("\"ProviderLogoUri\"", StringComparison.OrdinalIgnoreCase)
                     || message.Contains("\"ProviderBrandBgColor\"", StringComparison.OrdinalIgnoreCase)
-                    || message.Contains("\"BrandingLastSyncedAtUtc\"", StringComparison.OrdinalIgnoreCase))
+                    || message.Contains("\"BrandingLastSyncedAtUtc\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"GrantedScopesCsv\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"SupportsInfo\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"SupportsCards\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"SupportsDirectDebits\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"SupportsStandingOrders\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"BankConnectionIdentityInfos\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            if (current is PostgresException tableException
+                && tableException.SqlState == PostgresErrorCodes.UndefinedTable)
+            {
+                var message = tableException.MessageText ?? string.Empty;
+                if (message.Contains("\"BankConnectionIdentityInfos\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            current = current.InnerException;
+        }
+
+        return false;
+    }
+
+    private static bool IsExpandedBankingSchemaMissing(Exception exception)
+    {
+        Exception? current = exception;
+        while (current is not null)
+        {
+            if (current is PostgresException postgresException
+                && postgresException.SqlState == PostgresErrorCodes.UndefinedTable)
+            {
+                var tableName = postgresException.TableName ?? string.Empty;
+                if (tableName.Equals("LinkedBankCards", StringComparison.OrdinalIgnoreCase)
+                    || tableName.Equals("BankCardBalanceSnapshots", StringComparison.OrdinalIgnoreCase)
+                    || tableName.Equals("RawBankCardTransactions", StringComparison.OrdinalIgnoreCase)
+                    || tableName.Equals("BankDirectDebits", StringComparison.OrdinalIgnoreCase)
+                    || tableName.Equals("BankStandingOrders", StringComparison.OrdinalIgnoreCase)
+                    || tableName.Equals("BankConnectionIdentityInfos", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                var message = postgresException.MessageText ?? string.Empty;
+                if (message.Contains("\"LinkedBankCards\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"BankCardBalanceSnapshots\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"RawBankCardTransactions\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"BankDirectDebits\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"BankStandingOrders\"", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("\"BankConnectionIdentityInfos\"", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }

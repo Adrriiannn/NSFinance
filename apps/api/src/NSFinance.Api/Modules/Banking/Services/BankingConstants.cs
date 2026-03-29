@@ -26,10 +26,14 @@ public static class TrueLayerScopes
 {
     public static readonly IReadOnlyList<string> Default =
     [
+        "info",
         "accounts",
+        "cards",
         "balance",
         "transactions",
-        "offline_access"
+        "offline_access",
+        "direct_debits",
+        "standing_orders"
     ];
 }
 

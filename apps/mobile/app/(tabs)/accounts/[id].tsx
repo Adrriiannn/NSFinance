@@ -14,13 +14,19 @@ import { SectionHeader } from "../../../src/components/ui/SectionHeader";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
-import { useBankConnectionsQuery } from "../../../src/features/banking/useBanking";
+import {
+  useAccountRecurringPaymentsQuery,
+  useBankConnectionsQuery,
+  useLinkedBankAccountsQuery,
+  useLinkedBankCardsQuery
+} from "../../../src/features/banking/useBanking";
 import { useCreateExportRequestMutation } from "../../../src/features/support/useSupport";
 import { downloadExportRequestFile } from "../../../src/features/support/supportApi";
 import { useAccountTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency, formatDate } from "../../../src/lib/format";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
+import type { LinkedBankAccountDto } from "../../../src/types/api";
 
 function formatDateTime(isoDate?: string | null) {
   if (!isoDate) {
@@ -42,6 +48,56 @@ function formatDateTime(isoDate?: string | null) {
   }).format(parsed);
 }
 
+function extractAccountNumberLines(metadataJson?: string | null) {
+  if (!metadataJson) {
+    return [] as { label: string; value: string }[];
+  }
+
+  try {
+    const parsed = JSON.parse(metadataJson) as Record<string, unknown>;
+    const lines: { label: string; value: string }[] = [];
+    const read = (key: string) => {
+      const value = parsed[key];
+      return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+    };
+
+    const iban = read("iban");
+    if (iban) {
+      lines.push({ label: "IBAN", value: iban });
+    }
+
+    const number = read("number");
+    if (number) {
+      lines.push({ label: "Account number", value: number });
+    }
+
+    const sortCode = read("sort_code");
+    if (sortCode) {
+      lines.push({ label: "Sort code", value: sortCode });
+    }
+
+    const bic = read("swift_bic") ?? read("bic");
+    if (bic) {
+      lines.push({ label: "BIC/SWIFT", value: bic });
+    }
+
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+function findLinkedAccountForFinancialAccount(
+  linkedAccounts: LinkedBankAccountDto[] | undefined,
+  financialAccountId: string | undefined
+) {
+  if (!linkedAccounts || !financialAccountId) {
+    return null;
+  }
+
+  return linkedAccounts.find((item) => item.financialAccountId === financialAccountId) ?? null;
+}
+
 export default function AccountDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -51,6 +107,8 @@ export default function AccountDetailsScreen() {
   const accountQuery = useAccountDetailQuery(accountId);
   const transactionsQuery = useAccountTransactionsQuery(accountId);
   const connectionsQuery = useBankConnectionsQuery();
+  const linkedAccountsQuery = useLinkedBankAccountsQuery();
+  const linkedCardsQuery = useLinkedBankCardsQuery();
   const createExportMutation = useCreateExportRequestMutation();
   const downloadExportMutation = useMutation({
     mutationFn: async (requestId: string) => downloadExportRequestFile(requestId)
@@ -82,8 +140,47 @@ export default function AccountDetailsScreen() {
     (transactionsQuery.isLoading && !transactionsQuery.data) ||
     (connectionsQuery.isLoading && !connectionsQuery.data);
 
-  const error = accountQuery.error ?? transactionsQuery.error ?? connectionsQuery.error;
+  const error =
+    accountQuery.error ??
+    transactionsQuery.error ??
+    connectionsQuery.error ??
+    linkedAccountsQuery.error ??
+    linkedCardsQuery.error;
   const account = accountQuery.data;
+  const linkedAccount = useMemo(
+    () => findLinkedAccountForFinancialAccount(linkedAccountsQuery.data, account?.id),
+    [account?.id, linkedAccountsQuery.data]
+  );
+  const recurringPaymentsQuery = useAccountRecurringPaymentsQuery(linkedAccount?.id ?? null);
+  const accountConnection = useMemo(() => {
+    if (!linkedAccount) {
+      return latestConnection;
+    }
+
+    const byId = (connectionsQuery.data ?? []).find((item) => item.id === linkedAccount.connectionId);
+    return byId ?? latestConnection;
+  }, [connectionsQuery.data, latestConnection, linkedAccount]);
+  const relatedCards = useMemo(() => {
+    if (!linkedAccount) {
+      return [];
+    }
+
+    return (linkedCardsQuery.data ?? []).filter((card) => {
+      if (card.connectionId !== linkedAccount.connectionId) {
+        return false;
+      }
+
+      if (!card.providerAccountId || !linkedAccount.providerAccountId) {
+        return true;
+      }
+
+      return card.providerAccountId === linkedAccount.providerAccountId;
+    });
+  }, [linkedAccount, linkedCardsQuery.data]);
+  const accountNumberLines = useMemo(
+    () => extractAccountNumberLines(linkedAccount?.accountNumberMetadataJson),
+    [linkedAccount?.accountNumberMetadataJson]
+  );
   const transactions = transactionsQuery.data ?? [];
   const listBottomInset = Math.max(
     spacing[12],
@@ -166,14 +263,22 @@ export default function AccountDetailsScreen() {
                 <Text style={styles.accountMeta}>Currency: {account.currency}</Text>
                 <Text style={styles.accountMeta}>Created: {formatDate(account.createdUtc)}</Text>
                 <Text style={styles.accountMeta}>
-                  Connected bank: {latestConnection?.providerDisplayName ?? "Not linked yet"}
+                  Connected bank: {accountConnection?.providerDisplayName ?? "Not linked yet"}
                 </Text>
                 <Text style={styles.accountMeta}>
-                  Connection provider: {latestConnection?.provider ?? "TrueLayer"}
+                  Connection provider: {accountConnection?.provider ?? "TrueLayer"}
                 </Text>
                 <Text style={styles.accountMeta}>
-                  Last synced at: {formatDateTime(latestConnection?.lastSuccessfulSyncUtc ?? latestConnection?.lastSyncAttemptedUtc)}
+                  Last synced at: {formatDateTime(accountConnection?.lastSuccessfulSyncUtc ?? accountConnection?.lastSyncAttemptedUtc)}
                 </Text>
+                {accountConnection?.connectedFullName ? (
+                  <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
+                ) : null}
+                {accountNumberLines.map((line) => (
+                  <Text key={line.label} style={styles.accountMeta}>
+                    {line.label}: {line.value}
+                  </Text>
+                ))}
               </View>
             </GlassCard>
 
@@ -188,6 +293,70 @@ export default function AccountDetailsScreen() {
                 onPress={() => router.push("/(tabs)/accounts/support")}
               />
             </View>
+
+            <GlassCard style={styles.recurringCard}>
+              <Text style={styles.sectionTitle}>Recurring commitments</Text>
+              {recurringPaymentsQuery.isError ? (
+                <Text style={styles.accountMeta}>{String(recurringPaymentsQuery.error?.message ?? "Could not load recurring payments.")}</Text>
+              ) : recurringPaymentsQuery.data &&
+                recurringPaymentsQuery.data.directDebits.length === 0 &&
+                recurringPaymentsQuery.data.standingOrders.length === 0 ? (
+                <Text style={styles.accountMeta}>
+                  No direct debits or standing orders were returned for this account.
+                </Text>
+              ) : (
+                <>
+                  {recurringPaymentsQuery.data?.directDebits.slice(0, 4).map((debit) => (
+                    <View key={debit.id} style={styles.recurringRow}>
+                      <Text style={styles.recurringTitle}>
+                        {debit.merchantName || debit.reference || "Direct debit"}
+                      </Text>
+                      <Text style={styles.accountMeta}>
+                        {debit.nextPaymentAmount !== null && debit.nextPaymentCurrency
+                          ? formatCurrency(debit.nextPaymentAmount, debit.nextPaymentCurrency)
+                          : "Amount pending"}{" "}
+                        · {formatDateTime(debit.nextPaymentDateUtc)}
+                      </Text>
+                    </View>
+                  ))}
+                  {recurringPaymentsQuery.data?.standingOrders.slice(0, 4).map((order) => (
+                    <View key={order.id} style={styles.recurringRow}>
+                      <Text style={styles.recurringTitle}>
+                        {order.payeeName || order.reference || "Standing order"}
+                      </Text>
+                      <Text style={styles.accountMeta}>
+                        {order.nextPaymentAmount !== null && order.nextPaymentCurrency
+                          ? formatCurrency(order.nextPaymentAmount, order.nextPaymentCurrency)
+                          : "Amount pending"}{" "}
+                        · {formatDateTime(order.nextPaymentDateUtc)}
+                      </Text>
+                    </View>
+                  ))}
+                </>
+              )}
+            </GlassCard>
+
+            {relatedCards.length > 0 ? (
+              <GlassCard style={styles.recurringCard}>
+                <Text style={styles.sectionTitle}>Linked cards</Text>
+                {relatedCards.map((card) => (
+                  <View key={card.id} style={styles.recurringRow}>
+                    <Text style={styles.recurringTitle}>{card.displayName}</Text>
+                    <Text style={styles.accountMeta}>
+                      {[card.cardNetwork, card.cardType, card.cardNumberLastFour ? `•••• ${card.cardNumberLastFour}` : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
+                    <Text style={styles.accountMeta}>
+                      Balance:{" "}
+                      {card.latestCurrent !== null
+                        ? formatCurrency(card.latestCurrent, card.currency)
+                        : "Unavailable"}
+                    </Text>
+                  </View>
+                ))}
+              </GlassCard>
+            ) : null}
 
             <SectionHeader title="Recent transactions" />
             <View style={styles.transactionsWrap}>
@@ -254,6 +423,20 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   accountMeta: {
     color: palette.textSecondary,
+    ...typography.body2
+  },
+  sectionTitle: {
+    color: palette.textPrimary,
+    ...typography.bodyStrong
+  },
+  recurringCard: {
+    gap: spacing[8]
+  },
+  recurringRow: {
+    gap: spacing[2]
+  },
+  recurringTitle: {
+    color: palette.textPrimary,
     ...typography.body2
   },
   primaryActions: {

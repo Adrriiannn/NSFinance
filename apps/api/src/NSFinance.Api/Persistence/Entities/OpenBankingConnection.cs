@@ -23,6 +23,11 @@ public class OpenBankingConnection
     public DateTime? InitialBackfillWindowStartUtc { get; set; }
     public DateTime? EarliestImportedTransactionUtc { get; set; }
     public DateTime? LatestImportedTransactionUtc { get; set; }
+    public string? GrantedScopesCsv { get; set; }
+    public bool? SupportsInfo { get; set; }
+    public bool? SupportsCards { get; set; }
+    public bool? SupportsDirectDebits { get; set; }
+    public bool? SupportsStandingOrders { get; set; }
     public string? LastErrorCode { get; set; }
     public string? LastErrorReason { get; set; }
     public string? AuthStateNonce { get; set; }
@@ -30,5 +35,7 @@ public class OpenBankingConnection
 
     public User? User { get; set; }
     public BankConnectionToken? Token { get; set; }
+    public BankConnectionIdentityInfo? IdentityInfo { get; set; }
     public ICollection<LinkedBankAccount> LinkedAccounts { get; set; } = [];
+    public ICollection<LinkedBankCard> LinkedCards { get; set; } = [];
 }

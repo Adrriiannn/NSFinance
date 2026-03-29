@@ -83,6 +83,15 @@ Actively consumed by runtime:
 TrueLayer note:
 
 - provider/country targeting is decided by backend auth-link generation logic, not by TrueLayer Console auth-link builder UI state.
+- requested OAuth scopes are also backend-driven (`BankingConstants.TrueLayerScopes.Default`) and currently include:
+  - `info`
+  - `accounts`
+  - `cards`
+  - `balance`
+  - `transactions`
+  - `offline_access`
+  - `direct_debits`
+  - `standing_orders`
 
 Not yet bound by runtime services (template-ready only):
 

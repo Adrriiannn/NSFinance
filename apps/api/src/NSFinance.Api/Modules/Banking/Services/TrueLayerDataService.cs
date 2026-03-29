@@ -12,6 +12,58 @@ public sealed class TrueLayerDataService(
     TrueLayerHttpClient httpClient,
     ILogger<TrueLayerDataService> logger)
 {
+    public async Task<ServiceResult<TrueLayerIdentityInfoRecord?>> GetInfoAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/info";
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogWarning(
+                "Failed to fetch TrueLayer info status={StatusCode}",
+                response.Error?.StatusCode);
+            return ServiceResult<TrueLayerIdentityInfoRecord?>.Fail(
+                "TrueLayer info request failed.",
+                "truelayer_info_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            var payload = document.RootElement;
+            var node = payload;
+            if (payload.TryGetProperty("results", out var resultsNode))
+            {
+                if (resultsNode.ValueKind == JsonValueKind.Array && resultsNode.GetArrayLength() > 0)
+                {
+                    node = resultsNode[0];
+                }
+                else if (resultsNode.ValueKind == JsonValueKind.Object)
+                {
+                    node = resultsNode;
+                }
+            }
+
+            return ServiceResult<TrueLayerIdentityInfoRecord?>.Ok(
+                new TrueLayerIdentityInfoRecord(
+                    FullName: GetString(node, "full_name"),
+                    Email: GetString(node, "email"),
+                    Phone: GetString(node, "phone"),
+                    DateOfBirth: GetString(node, "date_of_birth"),
+                    RawPayloadJson: node.GetRawText()));
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<TrueLayerIdentityInfoRecord?>.Fail(
+                "TrueLayer info response could not be parsed.",
+                "truelayer_info_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
     public async Task<ServiceResult<IReadOnlyList<TrueLayerAccountRecord>>> GetAccountsAsync(
         TrueLayerResolvedConfiguration configuration,
         string accessToken,
@@ -75,6 +127,77 @@ public sealed class TrueLayerDataService(
             return ServiceResult<IReadOnlyList<TrueLayerAccountRecord>>.Fail(
                 "TrueLayer accounts response could not be parsed.",
                 "truelayer_accounts_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<TrueLayerCardRecord>>> GetCardsAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/cards";
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogWarning(
+                "Failed to fetch TrueLayer cards status={StatusCode}",
+                response.Error?.StatusCode);
+            return ServiceResult<IReadOnlyList<TrueLayerCardRecord>>.Fail(
+                "TrueLayer cards request failed.",
+                "truelayer_cards_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            if (!document.RootElement.TryGetProperty("results", out var resultsNode)
+                || resultsNode.ValueKind != JsonValueKind.Array)
+            {
+                return ServiceResult<IReadOnlyList<TrueLayerCardRecord>>.Ok([]);
+            }
+
+            var records = new List<TrueLayerCardRecord>();
+            foreach (var item in resultsNode.EnumerateArray())
+            {
+                var cardId = GetString(item, "card_id");
+                if (string.IsNullOrWhiteSpace(cardId))
+                {
+                    continue;
+                }
+
+                var cardNumber = item.TryGetProperty("card_number", out var cardNumberNode)
+                    ? cardNumberNode
+                    : default;
+                var cardDetails = item.TryGetProperty("card_details", out var cardDetailsNode)
+                    ? cardDetailsNode
+                    : default;
+
+                records.Add(new TrueLayerCardRecord(
+                    CardId: cardId,
+                    DisplayName: GetString(item, "display_name") ?? "Linked card",
+                    Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    ProviderAccountId: GetString(item, "account_id"),
+                    CardType: GetString(item, "card_type"),
+                    CardNetwork: GetString(item, "card_network"),
+                    CardNumberLastFour:
+                        GetString(cardNumber, "last_4_digits")
+                        ?? GetString(cardDetails, "last_4_digits")
+                        ?? GetString(item, "last4"),
+                    NameOnCard: GetString(cardDetails, "name_on_card") ?? GetString(item, "name_on_card"),
+                    ValidFromUtc: ParseDateTime(GetString(cardDetails, "valid_from")),
+                    ValidToUtc: ParseDateTime(GetString(cardDetails, "valid_to")),
+                    RawPayloadJson: item.GetRawText()));
+            }
+
+            return ServiceResult<IReadOnlyList<TrueLayerCardRecord>>.Ok(records);
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<IReadOnlyList<TrueLayerCardRecord>>.Fail(
+                "TrueLayer cards response could not be parsed.",
+                "truelayer_cards_payload_invalid",
                 StatusCodes.Status502BadGateway);
         }
     }
@@ -199,6 +322,57 @@ public sealed class TrueLayerDataService(
         }
     }
 
+    public async Task<ServiceResult<TrueLayerCardBalanceRecord?>> GetCardBalanceAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        string cardId,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/cards/{cardId}/balance";
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogWarning(
+                "Failed to fetch TrueLayer card balance cardId={CardId} status={StatusCode}",
+                cardId,
+                response.Error?.StatusCode);
+            return ServiceResult<TrueLayerCardBalanceRecord?>.Fail(
+                "TrueLayer card balance request failed.",
+                "truelayer_card_balance_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            if (!document.RootElement.TryGetProperty("results", out var resultsNode)
+                || resultsNode.ValueKind != JsonValueKind.Array
+                || resultsNode.GetArrayLength() == 0)
+            {
+                return ServiceResult<TrueLayerCardBalanceRecord?>.Ok(null);
+            }
+
+            var first = resultsNode[0];
+            var updateTimestamp = ParseDateTime(GetString(first, "update_timestamp")) ?? DateTime.UtcNow;
+            return ServiceResult<TrueLayerCardBalanceRecord?>.Ok(
+                new TrueLayerCardBalanceRecord(
+                    Available: GetDecimal(first, "available"),
+                    Current: GetDecimal(first, "current"),
+                    Limit: GetDecimal(first, "credit_limit") ?? GetDecimal(first, "limit"),
+                    Outstanding: GetDecimal(first, "outstanding"),
+                    Currency: (GetString(first, "currency") ?? "EUR").ToUpperInvariant(),
+                    CapturedAtUtc: updateTimestamp,
+                    RawPayloadJson: first.GetRawText()));
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<TrueLayerCardBalanceRecord?>.Fail(
+                "TrueLayer card balance response could not be parsed.",
+                "truelayer_card_balance_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
     public async Task<ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>> GetTransactionsAsync(
         TrueLayerResolvedConfiguration configuration,
         string accessToken,
@@ -283,6 +457,228 @@ public sealed class TrueLayerDataService(
             return ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>.Fail(
                 "TrueLayer transactions response could not be parsed.",
                 "truelayer_transactions_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>> GetCardTransactionsAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        string cardId,
+        DateTime? fromUtc,
+        DateTime? toUtc,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/cards/{cardId}/transactions";
+        var query = new Dictionary<string, string?>();
+
+        if (fromUtc.HasValue)
+        {
+            query["from"] = fromUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (toUtc.HasValue)
+        {
+            query["to"] = toUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (query.Count > 0)
+        {
+            endpoint = QueryHelpers.AddQueryString(endpoint, query);
+        }
+
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogWarning(
+                "Failed to fetch TrueLayer card transactions cardId={CardId} status={StatusCode}",
+                cardId,
+                response.Error?.StatusCode);
+            return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Fail(
+                "TrueLayer card transactions request failed.",
+                "truelayer_card_transactions_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            if (!document.RootElement.TryGetProperty("results", out var resultsNode)
+                || resultsNode.ValueKind != JsonValueKind.Array)
+            {
+                return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Ok([]);
+            }
+
+            var records = new List<TrueLayerCardTransactionRecord>();
+            foreach (var item in resultsNode.EnumerateArray())
+            {
+                var timestamp = ParseDateTime(GetString(item, "timestamp")) ?? DateTime.UtcNow;
+                var amount = GetDecimal(item, "amount");
+                if (!amount.HasValue)
+                {
+                    continue;
+                }
+
+                var description = GetString(item, "description") ?? "Imported card transaction";
+                var providerTransactionId = GetString(item, "transaction_id");
+                var stableTransactionId =
+                    GetString(item, "normalised_provider_transaction_id")
+                    ?? providerTransactionId
+                    ?? $"{timestamp:O}|{amount.Value:0.00}|{description}";
+
+                records.Add(new TrueLayerCardTransactionRecord(
+                    ProviderTransactionId: providerTransactionId,
+                    Amount: amount.Value,
+                    Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    BookedAtUtc: timestamp,
+                    Description: description,
+                    TransactionType: GetString(item, "transaction_type"),
+                    TransactionStatus: GetString(item, "status"),
+                    DedupeKey: ComputeDedupeKey(stableTransactionId),
+                    RawPayloadJson: item.GetRawText()));
+            }
+
+            return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Ok(records);
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Fail(
+                "TrueLayer card transactions response could not be parsed.",
+                "truelayer_card_transactions_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<TrueLayerDirectDebitRecord>>> GetDirectDebitsAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        string accountId,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/accounts/{accountId}/direct_debits";
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogWarning(
+                "Failed to fetch TrueLayer direct debits accountId={AccountId} status={StatusCode}",
+                accountId,
+                response.Error?.StatusCode);
+            return ServiceResult<IReadOnlyList<TrueLayerDirectDebitRecord>>.Fail(
+                "TrueLayer direct debits request failed.",
+                "truelayer_direct_debits_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            if (!document.RootElement.TryGetProperty("results", out var resultsNode)
+                || resultsNode.ValueKind != JsonValueKind.Array)
+            {
+                return ServiceResult<IReadOnlyList<TrueLayerDirectDebitRecord>>.Ok([]);
+            }
+
+            var records = new List<TrueLayerDirectDebitRecord>();
+            foreach (var item in resultsNode.EnumerateArray())
+            {
+                var directDebitId = GetString(item, "direct_debit_id") ?? GetString(item, "id");
+                if (string.IsNullOrWhiteSpace(directDebitId))
+                {
+                    continue;
+                }
+
+                records.Add(new TrueLayerDirectDebitRecord(
+                    DirectDebitId: directDebitId,
+                    Status: GetString(item, "status"),
+                    MandateType: GetString(item, "mandate_type"),
+                    Reference: GetString(item, "reference"),
+                    MerchantName: GetString(item, "name"),
+                    PreviousPaymentDateUtc: ParseDateTime(GetString(item, "previous_payment_timestamp") ?? GetString(item, "previous_payment_date")),
+                    PreviousPaymentAmount: GetDecimal(item, "previous_payment_amount"),
+                    PreviousPaymentCurrency: GetString(item, "previous_payment_currency"),
+                    NextPaymentDateUtc: ParseDateTime(GetString(item, "next_payment_timestamp") ?? GetString(item, "next_payment_date")),
+                    NextPaymentAmount: GetDecimal(item, "next_payment_amount"),
+                    NextPaymentCurrency: GetString(item, "next_payment_currency"),
+                    RawPayloadJson: item.GetRawText()));
+            }
+
+            return ServiceResult<IReadOnlyList<TrueLayerDirectDebitRecord>>.Ok(records);
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<IReadOnlyList<TrueLayerDirectDebitRecord>>.Fail(
+                "TrueLayer direct debits response could not be parsed.",
+                "truelayer_direct_debits_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<TrueLayerStandingOrderRecord>>> GetStandingOrdersAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        string accountId,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/accounts/{accountId}/standing_orders";
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogWarning(
+                "Failed to fetch TrueLayer standing orders accountId={AccountId} status={StatusCode}",
+                accountId,
+                response.Error?.StatusCode);
+            return ServiceResult<IReadOnlyList<TrueLayerStandingOrderRecord>>.Fail(
+                "TrueLayer standing orders request failed.",
+                "truelayer_standing_orders_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            if (!document.RootElement.TryGetProperty("results", out var resultsNode)
+                || resultsNode.ValueKind != JsonValueKind.Array)
+            {
+                return ServiceResult<IReadOnlyList<TrueLayerStandingOrderRecord>>.Ok([]);
+            }
+
+            var records = new List<TrueLayerStandingOrderRecord>();
+            foreach (var item in resultsNode.EnumerateArray())
+            {
+                var standingOrderId = GetString(item, "standing_order_id") ?? GetString(item, "id");
+                if (string.IsNullOrWhiteSpace(standingOrderId))
+                {
+                    continue;
+                }
+
+                var payee = item.TryGetProperty("payee", out var payeeNode)
+                    ? payeeNode
+                    : default;
+
+                records.Add(new TrueLayerStandingOrderRecord(
+                    StandingOrderId: standingOrderId,
+                    Status: GetString(item, "status"),
+                    Frequency: GetString(item, "frequency"),
+                    Reference: GetString(item, "reference"),
+                    PayeeName: GetString(payee, "name"),
+                    FirstPaymentDateUtc: ParseDateTime(GetString(item, "first_payment_date")),
+                    NextPaymentDateUtc: ParseDateTime(GetString(item, "next_payment_date") ?? GetString(item, "next_payment_timestamp")),
+                    FinalPaymentDateUtc: ParseDateTime(GetString(item, "final_payment_date")),
+                    NextPaymentAmount: GetDecimal(item, "next_payment_amount") ?? GetDecimal(item, "amount"),
+                    NextPaymentCurrency: GetString(item, "next_payment_currency") ?? GetString(item, "currency"),
+                    PayeeAccountMetadataJson: payee.ValueKind != JsonValueKind.Undefined && payee.ValueKind != JsonValueKind.Null
+                        ? payee.GetRawText()
+                        : null,
+                    RawPayloadJson: item.GetRawText()));
+            }
+
+            return ServiceResult<IReadOnlyList<TrueLayerStandingOrderRecord>>.Ok(records);
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<IReadOnlyList<TrueLayerStandingOrderRecord>>.Fail(
+                "TrueLayer standing orders response could not be parsed.",
+                "truelayer_standing_orders_payload_invalid",
                 StatusCodes.Status502BadGateway);
         }
     }

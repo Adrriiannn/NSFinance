@@ -28,9 +28,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<OpenBankingConnection> OpenBankingConnections => Set<OpenBankingConnection>();
     public DbSet<BankConnectionToken> BankConnectionTokens => Set<BankConnectionToken>();
+    public DbSet<BankConnectionIdentityInfo> BankConnectionIdentityInfos => Set<BankConnectionIdentityInfo>();
     public DbSet<LinkedBankAccount> LinkedBankAccounts => Set<LinkedBankAccount>();
+    public DbSet<LinkedBankCard> LinkedBankCards => Set<LinkedBankCard>();
     public DbSet<BankBalanceSnapshot> BankBalanceSnapshots => Set<BankBalanceSnapshot>();
+    public DbSet<BankCardBalanceSnapshot> BankCardBalanceSnapshots => Set<BankCardBalanceSnapshot>();
     public DbSet<RawBankTransaction> RawBankTransactions => Set<RawBankTransaction>();
+    public DbSet<RawBankCardTransaction> RawBankCardTransactions => Set<RawBankCardTransaction>();
+    public DbSet<BankDirectDebit> BankDirectDebits => Set<BankDirectDebit>();
+    public DbSet<BankStandingOrder> BankStandingOrders => Set<BankStandingOrder>();
     public DbSet<ExpenseTrackerEntry> ExpenseTrackerEntries => Set<ExpenseTrackerEntry>();
     public DbSet<ExpensePlan> ExpensePlans => Set<ExpensePlan>();
     public DbSet<ExpensePlanLineItem> ExpensePlanLineItems => Set<ExpensePlanLineItem>();

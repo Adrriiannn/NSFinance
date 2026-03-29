@@ -14,7 +14,10 @@ export const queryKeys = {
     connections: ["banking", "connections"] as const,
     connection: (id: string) => ["banking", "connections", id] as const,
     connectedBanks: ["banking", "connected-banks"] as const,
-    accounts: ["banking", "accounts"] as const
+    accounts: ["banking", "accounts"] as const,
+    cards: ["banking", "cards"] as const,
+    recurringPayments: ["banking", "recurring-payments"] as const,
+    recurringPaymentsByAccount: (accountId: string) => ["banking", "recurring-payments", accountId] as const
   },
   expenseTracker: {
     root: ["expense-tracker"] as const,
