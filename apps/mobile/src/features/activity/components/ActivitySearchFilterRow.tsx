@@ -8,7 +8,7 @@ type ActivitySearchFilterRowProps = {
   onPress: (tokenType: ActivitySearchFilterOption["tokenType"]) => void;
 };
 
-const HINT_PREFIX_PATTERN = /(transaction:|merchant:|category:|currency:|amount:|date:)/gi;
+const HINT_PREFIX_PATTERN = /(transaction:|merchant:|category:|account:|currency:|amount:|date:)/gi;
 
 function renderHintWithBoldPrefixes(hint: string) {
   const parts = hint.split(HINT_PREFIX_PATTERN);
@@ -23,6 +23,7 @@ function renderHintWithBoldPrefixes(hint: string) {
       normalized === "transaction:" ||
       normalized === "merchant:" ||
       normalized === "category:" ||
+      normalized === "account:" ||
       normalized === "currency:" ||
       normalized === "amount:" ||
       normalized === "date:";

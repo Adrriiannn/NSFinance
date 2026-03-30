@@ -462,6 +462,101 @@ public sealed class TrueLayerDataService(
         }
     }
 
+    public async Task<ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>> GetPendingTransactionsAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        string accountId,
+        DateTime? fromUtc,
+        DateTime? toUtc,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/accounts/{accountId}/transactions/pending";
+        var query = new Dictionary<string, string?>();
+
+        if (fromUtc.HasValue)
+        {
+            query["from"] = fromUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (toUtc.HasValue)
+        {
+            query["to"] = toUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (query.Count > 0)
+        {
+            endpoint = QueryHelpers.AddQueryString(endpoint, query);
+        }
+
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogInformation(
+                "Pending transactions endpoint unavailable or failed accountId={AccountId} status={StatusCode}",
+                accountId,
+                response.Error?.StatusCode);
+            return ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>.Fail(
+                "TrueLayer pending transactions request failed.",
+                "truelayer_pending_transactions_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            if (!document.RootElement.TryGetProperty("results", out var resultsNode)
+                || resultsNode.ValueKind != JsonValueKind.Array)
+            {
+                return ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>.Ok([]);
+            }
+
+            var records = new List<TrueLayerTransactionRecord>();
+            foreach (var item in resultsNode.EnumerateArray())
+            {
+                var timestamp = ParseDateTime(GetString(item, "timestamp")) ?? DateTime.UtcNow;
+                var amount = GetDecimal(item, "amount");
+                if (!amount.HasValue)
+                {
+                    continue;
+                }
+
+                var rawDescription = GetString(item, "description") ?? "Pending transaction";
+                var description = ResolveTransactionDisplayDescription(item, rawDescription, "Pending transaction");
+                var providerTransactionId = GetString(item, "transaction_id");
+                var stableTransactionId =
+                    GetString(item, "normalised_provider_transaction_id")
+                    ?? providerTransactionId
+                    ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}|pending";
+
+                var pendingStatus = GetString(item, "status");
+                if (string.IsNullOrWhiteSpace(pendingStatus))
+                {
+                    pendingStatus = "pending";
+                }
+
+                records.Add(new TrueLayerTransactionRecord(
+                    providerTransactionId,
+                    amount.Value,
+                    (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    timestamp,
+                    description,
+                    GetString(item, "transaction_type"),
+                    pendingStatus,
+                    ComputeDedupeKey(stableTransactionId),
+                    item.GetRawText()));
+            }
+
+            return ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>.Ok(records);
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>.Fail(
+                "TrueLayer pending transactions response could not be parsed.",
+                "truelayer_pending_transactions_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
     public async Task<ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>> GetCardTransactionsAsync(
         TrueLayerResolvedConfiguration configuration,
         string accessToken,
@@ -547,6 +642,101 @@ public sealed class TrueLayerDataService(
             return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Fail(
                 "TrueLayer card transactions response could not be parsed.",
                 "truelayer_card_transactions_payload_invalid",
+                StatusCodes.Status502BadGateway);
+        }
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>> GetPendingCardTransactionsAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        string cardId,
+        DateTime? fromUtc,
+        DateTime? toUtc,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = $"{configuration.ApiBaseUrl}/data/v1/cards/{cardId}/transactions/pending";
+        var query = new Dictionary<string, string?>();
+
+        if (fromUtc.HasValue)
+        {
+            query["from"] = fromUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (toUtc.HasValue)
+        {
+            query["to"] = toUtc.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        }
+
+        if (query.Count > 0)
+        {
+            endpoint = QueryHelpers.AddQueryString(endpoint, query);
+        }
+
+        var response = await httpClient.GetAsync(endpoint, accessToken, cancellationToken);
+        if (!response.Succeeded)
+        {
+            logger.LogInformation(
+                "Pending card transactions endpoint unavailable or failed cardId={CardId} status={StatusCode}",
+                cardId,
+                response.Error?.StatusCode);
+            return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Fail(
+                "TrueLayer pending card transactions request failed.",
+                "truelayer_pending_card_transactions_fetch_failed",
+                response.Error?.StatusCode ?? StatusCodes.Status502BadGateway);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Value!);
+            if (!document.RootElement.TryGetProperty("results", out var resultsNode)
+                || resultsNode.ValueKind != JsonValueKind.Array)
+            {
+                return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Ok([]);
+            }
+
+            var records = new List<TrueLayerCardTransactionRecord>();
+            foreach (var item in resultsNode.EnumerateArray())
+            {
+                var timestamp = ParseDateTime(GetString(item, "timestamp")) ?? DateTime.UtcNow;
+                var amount = GetDecimal(item, "amount");
+                if (!amount.HasValue)
+                {
+                    continue;
+                }
+
+                var rawDescription = GetString(item, "description") ?? "Pending card transaction";
+                var description = ResolveTransactionDisplayDescription(item, rawDescription, "Pending card transaction");
+                var providerTransactionId = GetString(item, "transaction_id");
+                var stableTransactionId =
+                    GetString(item, "normalised_provider_transaction_id")
+                    ?? providerTransactionId
+                    ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}|pending";
+
+                var pendingStatus = GetString(item, "status");
+                if (string.IsNullOrWhiteSpace(pendingStatus))
+                {
+                    pendingStatus = "pending";
+                }
+
+                records.Add(new TrueLayerCardTransactionRecord(
+                    ProviderTransactionId: providerTransactionId,
+                    Amount: amount.Value,
+                    Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    BookedAtUtc: timestamp,
+                    Description: description,
+                    TransactionType: GetString(item, "transaction_type"),
+                    TransactionStatus: pendingStatus,
+                    DedupeKey: ComputeDedupeKey(stableTransactionId),
+                    RawPayloadJson: item.GetRawText()));
+            }
+
+            return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Ok(records);
+        }
+        catch (JsonException)
+        {
+            return ServiceResult<IReadOnlyList<TrueLayerCardTransactionRecord>>.Fail(
+                "TrueLayer pending card transactions response could not be parsed.",
+                "truelayer_pending_card_transactions_payload_invalid",
                 StatusCodes.Status502BadGateway);
         }
     }

@@ -26,6 +26,8 @@ import {
   upsertUniqueToken
 } from "./activitySearch.tokens";
 import type {
+  ActivityAccountSuggestion,
+  ActivityAccountTokenValue,
   ActivityCategoryTokenValue,
   ActivityDateTokenValue,
   ActivitySearchSnapshot,
@@ -41,6 +43,7 @@ type UseActivitySearchParams = {
   annotations: Record<string, TransactionPlannerAnnotation>;
   preferredCurrency?: string | null;
   accountCurrencies?: string[];
+  accountSuggestions: ActivityAccountSuggestion[];
   taxonomyEntries: ActivityTaxonomySearchEntry[];
   onRequestCategoryPicker: (snapshot: ActivitySearchSnapshot) => void;
   initialSnapshot?: ActivitySearchSnapshot | null;
@@ -75,8 +78,32 @@ function normalizeCategoryTokenDisplay(token: ActivitySearchToken) {
   };
 }
 
+function buildAccountDisplayValue(value: ActivityAccountTokenValue) {
+  return value.accountName.trim() || "a bank account";
+}
+
+function normalizeAccountTokenDisplay(token: ActivitySearchToken) {
+  if (token.type !== "account") {
+    return token;
+  }
+
+  const current = token.value as Partial<ActivityAccountTokenValue> | null;
+  const normalizedValue: ActivityAccountTokenValue = {
+    accountId: typeof current?.accountId === "string" ? current.accountId : null,
+    accountName: typeof current?.accountName === "string" ? current.accountName : ""
+  };
+  const display = buildAccountDisplayValue(normalizedValue);
+
+  return {
+    ...token,
+    value: normalizedValue,
+    displayValue: display,
+    rawValue: normalizedValue.accountName
+  };
+}
+
 function normalizeSnapshotTokens(tokens: ActivitySearchToken[]) {
-  return tokens.map((token) => normalizeCategoryTokenDisplay(token));
+  return tokens.map((token) => normalizeAccountTokenDisplay(normalizeCategoryTokenDisplay(token)));
 }
 
 function buildTokenLabel(type: ActivitySearchTokenType) {
@@ -101,6 +128,23 @@ function createCategoryToken(): ActivitySearchToken {
     type: "category",
     label: "category",
     displayValue: "Select categories",
+    rawValue: "",
+    value,
+    isDraft: false
+  };
+}
+
+function createAccountToken(): ActivitySearchToken {
+  const value: ActivityAccountTokenValue = {
+    accountId: null,
+    accountName: ""
+  };
+
+  return {
+    id: createActivityTokenId("account"),
+    type: "account",
+    label: "account",
+    displayValue: "a bank account",
     rawValue: "",
     value,
     isDraft: false
@@ -151,6 +195,7 @@ export function useActivitySearch({
   annotations,
   preferredCurrency,
   accountCurrencies,
+  accountSuggestions,
   taxonomyEntries,
   onRequestCategoryPicker,
   initialSnapshot
@@ -220,6 +265,19 @@ export function useActivitySearch({
     });
   }, [activeTokenDraft, activeTokenType, observedMerchants]);
 
+  const availableAccountSuggestions = useMemo(
+    () => [...accountSuggestions].sort((left, right) => left.name.localeCompare(right.name)),
+    [accountSuggestions]
+  );
+
+  const accountSuggestionsForDropdown = useMemo(() => {
+    if (activeTokenType !== "account") {
+      return [];
+    }
+
+    return availableAccountSuggestions;
+  }, [activeTokenType, availableAccountSuggestions]);
+
   const dateSuggestionResult = useMemo(() => {
     if (activeTokenType !== "date") {
       return {
@@ -266,6 +324,10 @@ export function useActivitySearch({
 
     if (activeTokenType === "currency") {
       return "currencySuggestions";
+    }
+
+    if (activeTokenType === "account") {
+      return "accountSuggestions";
     }
 
     return "filters";
@@ -339,6 +401,14 @@ export function useActivitySearch({
         return;
       }
 
+      if (token.type === "account") {
+        setActiveTokenId(token.id);
+        setActiveTokenType("account");
+        setDropdownOpen(true);
+        setSearchFocused(true);
+        return;
+      }
+
       setActiveTokenId(token.id);
       setActiveTokenType(token.type);
       setActiveTokenDraft(token.rawValue);
@@ -403,11 +473,57 @@ export function useActivitySearch({
         return;
       }
 
+      if (type === "account") {
+        const existing = getTokenByType(tokens, "account");
+        const nextAccountToken = existing ?? createAccountToken();
+        const nextTokens = existing ? tokens : [...tokens, nextAccountToken];
+        const withAccount = upsertUniqueToken(nextTokens, nextAccountToken);
+        setTokens(withAccount);
+        setActiveTokenId(nextAccountToken.id);
+        setActiveTokenType("account");
+        setActiveTokenDraft("");
+        setDropdownOpen(true);
+        setSearchFocused(true);
+        return;
+      }
+
       if (type === "transaction" || type === "merchant" || type === "date") {
         ensureTokenDraft(type);
       }
     },
     [ensureAmountFilter, ensureTokenDraft, onRequestCategoryPicker, rawSearchText, tokens]
+  );
+
+  const selectAccountSuggestion = useCallback(
+    (account: ActivityAccountSuggestion) => {
+      const targetToken = (activeToken && activeToken.type === "account")
+        ? activeToken
+        : getTokenByType(tokens, "account");
+      if (!targetToken) {
+        return;
+      }
+
+      const nextValue: ActivityAccountTokenValue = {
+        accountId: account.id,
+        accountName: account.name
+      };
+      const displayValue = buildAccountDisplayValue(nextValue);
+
+      setTokens((current) =>
+        updateTokenById(current, targetToken.id, (token) => ({
+          ...token,
+          rawValue: account.name,
+          displayValue,
+          value: nextValue,
+          isDraft: false
+        }))
+      );
+      setActiveTokenType(null);
+      setActiveTokenId(null);
+      setActiveTokenDraft("");
+      setDropdownOpen(true);
+    },
+    [activeToken, tokens]
   );
 
   const removeToken = useCallback(
@@ -773,6 +889,7 @@ export function useActivitySearch({
     dropdownMode,
     filterOptionAvailability,
     merchantSuggestions,
+    accountSuggestions: accountSuggestionsForDropdown,
     dateSuggestionResult,
     availableCurrencies,
     activeCurrencyCode,
@@ -784,6 +901,7 @@ export function useActivitySearch({
     dismissDropdown,
     beginEditingToken,
     selectFilterOption,
+    selectAccountSuggestion,
     removeToken,
     confirmTokenDraft,
     selectMerchantSuggestion,

@@ -109,6 +109,107 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_ManualTrigger_EnforcesCooldown()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-manual-cooldown@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-global-cooldown", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+
+        var first = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_manual_first",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", first.Outcome);
+
+        var second = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_manual_second",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("skipped_cooldown", second.Outcome);
+        Assert.True(second.CooldownRemainingSeconds > 0);
+        Assert.NotNull(second.CooldownUntilUtc);
+    }
+
+    [Fact]
+    public async Task GlobalSync_AutoTrigger_SkipsWhenNotDue()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-auto-not-due@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-global-not-due", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "auto",
+            source: "test_auto_not_due",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("skipped_not_due", result.Outcome);
+        Assert.False(result.DueNow);
+    }
+
+    [Fact]
+    public async Task GlobalSync_AutoTrigger_ExecutesWhenDue()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-auto-due@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-global-due", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.LastSuccessfulSyncUtc = DateTime.UtcNow.AddHours(-2);
+        connection.UpdatedUtc = DateTime.UtcNow;
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "auto",
+            source: "test_auto_due",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", result.Outcome);
+    }
+
+    [Fact]
     public async Task CallbackFlow_InvalidAuthorizationCode_MarksReauthRequired()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -1044,12 +1145,39 @@ public class OpenBankingIntegrationTests
 
         public TrueLayerAuthService BuildAuthService(TrueLayerOptions options)
         {
+            var syncService = CreateSyncService(options);
+            var configurationService = new TrueLayerConfigurationService(Options.Create(options));
+            var tokenService = new TrueLayerTokenService(
+                new TrueLayerHttpClient(new HttpClient(_httpHandler)),
+                NullLogger<TrueLayerTokenService>.Instance);
+
+            return new TrueLayerAuthService(
+                configurationService,
+                CreateConnectionService(),
+                tokenService,
+                syncService,
+                new TestTrueLayerSyncQueue(syncService),
+                _auditService,
+                NullLogger<TrueLayerAuthService>.Instance);
+        }
+
+        public BankGlobalSyncService CreateGlobalSyncService(TrueLayerOptions options)
+        {
+            return new BankGlobalSyncService(
+                DbContext,
+                CreateSyncService(options),
+                _auditService,
+                NullLogger<BankGlobalSyncService>.Instance);
+        }
+
+        private BankSyncService CreateSyncService(TrueLayerOptions options)
+        {
             var configurationService = new TrueLayerConfigurationService(Options.Create(options));
             var httpClient = new TrueLayerHttpClient(new HttpClient(_httpHandler));
             var tokenService = new TrueLayerTokenService(httpClient, NullLogger<TrueLayerTokenService>.Instance);
             var dataService = new TrueLayerDataService(httpClient, NullLogger<TrueLayerDataService>.Instance);
             var connectionService = CreateConnectionService();
-            var syncService = new BankSyncService(
+            return new BankSyncService(
                 DbContext,
                 connectionService,
                 configurationService,
@@ -1058,15 +1186,6 @@ public class OpenBankingIntegrationTests
                 new TestSecretProtector(),
                 _auditService,
                 NullLogger<BankSyncService>.Instance);
-
-            return new TrueLayerAuthService(
-                configurationService,
-                connectionService,
-                tokenService,
-                syncService,
-                new TestTrueLayerSyncQueue(syncService),
-                _auditService,
-                NullLogger<TrueLayerAuthService>.Instance);
         }
 
         public BankConnectionService CreateConnectionService()

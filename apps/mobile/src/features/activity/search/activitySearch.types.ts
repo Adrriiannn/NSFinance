@@ -5,6 +5,7 @@ export type ActivitySearchTokenType =
   | "transaction"
   | "category"
   | "merchant"
+  | "account"
   | "currency"
   | "amount"
   | "date";
@@ -13,6 +14,7 @@ export type ActivityFilterOptionKey =
   | "transaction"
   | "category"
   | "merchant"
+  | "account"
   | "amount"
   | "date";
 
@@ -33,6 +35,11 @@ export type ActivityCategoryTokenValue = {
 export type ActivityAmountTokenValue = {
   amount: number | null;
   rawAmount: string;
+};
+
+export type ActivityAccountTokenValue = {
+  accountId: string | null;
+  accountName: string;
 };
 
 export type ActivityDateTokenValue =
@@ -57,6 +64,7 @@ export type ActivitySearchToken = {
     | string
     | ActivityCategoryTokenValue
     | ActivityAmountTokenValue
+    | ActivityAccountTokenValue
     | ActivityDateTokenValue;
   isDraft?: boolean;
 };
@@ -127,6 +135,19 @@ export type ActivityTaxonomySearchEntry = {
   subcategoryName: string;
 };
 
+export type ActivityAccountSuggestion = {
+  id: string;
+  name: string;
+  type: string;
+  currentBalance: number;
+  currency: string;
+  transactionCount: number;
+  providerId: string | null;
+  providerDisplayName: string | null;
+  providerIconUrl: string | null;
+  providerLogoUrl: string | null;
+};
+
 export type ActivitySearchSnapshot = {
   tokens: ActivitySearchToken[];
   rawSearchText: string;
@@ -143,6 +164,7 @@ export type ActivitySearchFilterInput = {
 export type ActivitySearchDropdownMode =
   | "filters"
   | "merchantSuggestions"
+  | "accountSuggestions"
   | "dateSuggestions"
   | "currencySuggestions"
   | "hidden";

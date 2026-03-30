@@ -42,7 +42,8 @@ public static class SyncBankConnectionEndpoint
             result.Value.BalancesSynced,
             result.Value.TransactionsImported,
             result.Value.Status,
-            result.Value.SyncedAtUtc);
+            result.Value.SyncedAtUtc,
+            result.Value.DataChanged);
 
         return Results.Ok(response);
     }

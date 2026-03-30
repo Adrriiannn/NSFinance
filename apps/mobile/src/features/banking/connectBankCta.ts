@@ -28,12 +28,12 @@ function getLinkedBankCount(data: ReturnType<typeof useConnectedBanksQuery>["dat
   return activeLinkedCount + attentionLinkedCount;
 }
 
-export function getConnectBankLabel(linkedBankCount: number) {
-  return linkedBankCount > 0 ? "Connect another bank account" : "Connect a bank account";
+export function getConnectBankLabel(_linkedBankCount: number) {
+  return "Connect a bank account";
 }
 
-export function getCompactConnectBankLabel(linkedBankCount: number) {
-  return linkedBankCount > 0 ? "Connect another bank" : "Connect a bank";
+export function getCompactConnectBankLabel(_linkedBankCount: number) {
+  return "Connect a bank";
 }
 
 export function useConnectBankCtaLabels() {

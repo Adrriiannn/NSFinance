@@ -1,5 +1,6 @@
 import { View } from "react-native";
 import { useRef } from "react";
+import { BankingAutoSyncController } from "../features/banking/BankingAutoSyncController";
 import { ExpensePlanningProvider } from "../features/expenseTracker/ExpensePlanningProvider";
 import { AuthProvider, useAuthSession } from "./AuthProvider";
 import { PlannerProvider } from "./PlannerProvider";
@@ -44,6 +45,7 @@ export function AppProviders({ children }: AppProvidersProps) {
   return (
     <QueryProvider>
       <AuthProvider>
+        <BankingAutoSyncController />
         <ExpensePlanningProvider>
           <PlannerProvider>
             <InteractionCapture>{children}</InteractionCapture>

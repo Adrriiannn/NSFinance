@@ -44,6 +44,11 @@ Happy path:
 8. Validate incremental behavior:
    - trigger another sync
    - verify follow-up transaction fetches use incremental windows (not full initial backfill again)
+9. Validate global sync endpoint behavior:
+   - call `POST /api/banking/sync` with `{ "trigger": "manual", "source": "qa_manual" }`
+   - verify `outcome=completed` on first run
+   - call again within one hour and verify `outcome=skipped_cooldown` with remaining cooldown seconds
+   - call with `{ "trigger": "auto", "source": "qa_auto" }` shortly after a successful run and verify `outcome=skipped_not_due`
 
 Data checks (authenticated API):
 
@@ -111,3 +116,18 @@ Linked transfer coherence:
 4. In Transaction Details, verify the `Linked transaction` section appears only for linked rows.
 5. Tap the linked transaction preview row and verify navigation opens the counterpart details page.
 6. Open a normal non-linked merchant transaction and verify no `Linked transaction` section is rendered.
+
+Mobile freshness UX:
+
+1. Open Accounts tab and verify a global sync icon exists in header (orange-border style).
+2. Open Activity tab and verify the same global sync icon exists in header.
+3. Tap header sync and verify:
+   - first run returns success/info feedback
+   - icon spins only during a real in-flight sync
+4. Tap again during cooldown and verify:
+   - cooldown message with mm:ss remaining
+   - no long-running fake spinner
+5. Keep app in foreground for the auto-sync cadence window and verify backend receives `trigger=auto`.
+6. Background app and resume after >1 hour; verify auto-sync runs immediately on resume when due.
+7. Login after a long idle period; verify post-login session entry triggers due auto-sync without waiting for interval timer.
+8. Open connect-bank screen and verify no standalone `Sync now` button is shown there.

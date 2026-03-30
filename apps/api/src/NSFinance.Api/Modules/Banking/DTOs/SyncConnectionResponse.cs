@@ -6,4 +6,5 @@ public sealed record SyncConnectionResponse(
     int BalancesSynced,
     int TransactionsImported,
     string Status,
-    DateTime SyncedAtUtc);
+    DateTime SyncedAtUtc,
+    bool DataChanged);

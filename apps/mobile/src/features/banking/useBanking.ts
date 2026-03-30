@@ -3,7 +3,9 @@ import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type {
   BankConnectionDto,
-  ConnectedBanksOverviewDto
+  ConnectedBanksOverviewDto,
+  GlobalBankSyncRequest,
+  GlobalBankSyncResponse
 } from "../../types/api";
 import {
   disconnectBankConnection,
@@ -15,6 +17,7 @@ import {
   getRecurringPayments,
   getRecurringPaymentsForAccount,
   startTrueLayerLink,
+  syncAllBankConnections,
   syncBankConnection
 } from "./bankingApi";
 
@@ -23,6 +26,47 @@ const {
   refetchIntervalInBackground: _defaultRefetchIntervalInBackground,
   ...nearLiveOptionsWithoutInterval
 } = nearLiveFinanceQueryOptions;
+
+const postBankingSyncInvalidateQueryKeys = [
+  queryKeys.banking.connections,
+  queryKeys.banking.connectedBanks,
+  queryKeys.banking.accounts,
+  queryKeys.banking.cards,
+  queryKeys.banking.recurringPayments,
+  queryKeys.accounts.all,
+  queryKeys.transactions.all,
+  queryKeys.dashboard.summary
+] as const;
+
+async function invalidateAndRefetchPostBankingSyncQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  connectionId?: string
+) {
+  const invalidateOperations = postBankingSyncInvalidateQueryKeys.map((queryKey) =>
+    queryClient.invalidateQueries({ queryKey })
+  );
+  if (connectionId) {
+    invalidateOperations.push(
+      queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) })
+    );
+  }
+
+  await Promise.all(invalidateOperations);
+
+  const refetchOperations = postBankingSyncInvalidateQueryKeys.map((queryKey) =>
+    queryClient.refetchQueries({ queryKey, type: "all" })
+  );
+  if (connectionId) {
+    refetchOperations.push(
+      queryClient.refetchQueries({
+        queryKey: queryKeys.banking.connection(connectionId),
+        type: "all"
+      })
+    );
+  }
+
+  await Promise.all(refetchOperations);
+}
 
 export function useBankConnectionsQuery(enabled = true) {
   return useQuery({
@@ -116,33 +160,39 @@ export function useSyncBankConnectionMutation() {
   return useMutation({
     mutationFn: (connectionId: string) => syncBankConnection(connectionId),
     onSuccess: async (_, connectionId) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.cards }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.recurringPayments }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
-      ]);
-
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.connections, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.connectedBanks, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.connection(connectionId), type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.accounts, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.cards, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.recurringPayments, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.accounts.all, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.transactions.all, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.dashboard.summary, type: "all" })
-      ]);
+      await invalidateAndRefetchPostBankingSyncQueries(queryClient, connectionId);
 
       console.info("[Banking Sync]", {
         event: "post_sync_queries_refetched",
         connectionId
+      });
+    }
+  });
+}
+
+export function useGlobalBankSyncMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload?: GlobalBankSyncRequest | null) => syncAllBankConnections(payload ?? {}),
+    onSuccess: async (result: GlobalBankSyncResponse) => {
+      if (result.outcome === "completed") {
+        await invalidateAndRefetchPostBankingSyncQueries(queryClient);
+      } else {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks });
+      }
+
+      console.info("[Banking Sync]", {
+        event: "global_sync_result",
+        trigger: result.trigger,
+        outcome: result.outcome,
+        dueNow: result.dueNow,
+        cooldownRemainingSeconds: result.cooldownRemainingSeconds,
+        eligibleConnectionCount: result.eligibleConnectionCount,
+        changedConnectionCount: result.changedConnectionCount,
+        noChangeConnectionCount: result.noChangeConnectionCount,
+        failedConnectionCount: result.failedConnectionCount,
+        skippedConnectionCount: result.skippedConnectionCount
       });
     }
   });
@@ -251,29 +301,7 @@ export function useDisconnectBankConnectionMutation() {
       }
     },
     onSettled: async (_, __, connectionId) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connectedBanks }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.connection(connectionId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.accounts }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.cards }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.banking.recurringPayments }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
-      ]);
-
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.connections, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.connectedBanks, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.connection(connectionId), type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.accounts, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.cards, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.banking.recurringPayments, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.accounts.all, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.transactions.all, type: "all" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.dashboard.summary, type: "all" })
-      ]);
+      await invalidateAndRefetchPostBankingSyncQueries(queryClient, connectionId);
 
       console.info("[Banking Sync]", {
         event: "post_disconnect_queries_refetched",

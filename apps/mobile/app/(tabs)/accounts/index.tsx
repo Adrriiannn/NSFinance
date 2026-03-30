@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert, Animated, Modal, Pressable, ScrollView, Text, View } from "react-native";
+  Alert, Animated, Easing, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendingsCard";
@@ -30,12 +30,15 @@ import {
   useUpdateAccountMutation
 } from "../../../src/features/accounts/useAccounts";
 import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
+import { getGlobalSyncFeedbackMessage } from "../../../src/features/banking/bankingSyncFeedback";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
+import { useGlobalBankSyncMutation } from "../../../src/features/banking/useBanking";
 import {
   buildActivityFocusRoute,
   logActivityFocusEvent
 } from "../../../src/features/transactions/activityFocusNavigation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
+import { showFlashMessage } from "../../../src/lib/flashMessage";
 import { formatCurrency } from "../../../src/lib/format";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
 import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
@@ -61,11 +64,16 @@ export default function AccountsTabScreen() {
   const accountsQuery = useAccountsQuery();
   const updateAccountMutation = useUpdateAccountMutation();
   const deleteAccountMutation = useDeleteAccountMutation();
+  const globalSyncMutation = useGlobalBankSyncMutation();
   const connectBankCta = useConnectBankCtaLabels();
   const handledSelectedAccountRef = useRef<string | null>(null);
+  const syncSpinValue = useRef(new Animated.Value(0)).current;
+  const syncSpinDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncSpinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectorVisible, setSelectorVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
+  const [showSyncSpin, setShowSyncSpin] = useState(false);
   const [editedName, setEditedName] = useState("");
   const [editedType, setEditedType] = useState<AccountType>("Current");
 
@@ -106,6 +114,83 @@ export default function AccountsTabScreen() {
       setSelectedAccountId(requestedSelectedAccountId);
     }
   }, [accounts, focusKey, requestedSelectedAccountId]);
+
+  useEffect(() => {
+    if (!showSyncSpin) {
+      syncSpinLoopRef.current?.stop();
+      syncSpinLoopRef.current = null;
+      syncSpinValue.stopAnimation();
+      syncSpinValue.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.timing(syncSpinValue, {
+        toValue: 1,
+        duration: 740,
+        easing: Easing.linear,
+        useNativeDriver: true
+      })
+    );
+
+    syncSpinLoopRef.current = loop;
+    loop.start();
+
+    return () => {
+      loop.stop();
+      syncSpinLoopRef.current = null;
+      syncSpinValue.stopAnimation();
+      syncSpinValue.setValue(0);
+    };
+  }, [showSyncSpin, syncSpinValue]);
+
+  useEffect(() => {
+    return () => {
+      if (syncSpinDelayTimerRef.current) {
+        clearTimeout(syncSpinDelayTimerRef.current);
+        syncSpinDelayTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleGlobalSyncPress = useCallback(async () => {
+    if (globalSyncMutation.isPending) {
+      return;
+    }
+
+    if (syncSpinDelayTimerRef.current) {
+      clearTimeout(syncSpinDelayTimerRef.current);
+    }
+
+    syncSpinDelayTimerRef.current = setTimeout(() => {
+      setShowSyncSpin(true);
+    }, 220);
+
+    try {
+      const result = await globalSyncMutation.mutateAsync({
+        trigger: "manual",
+        source: "accounts_header"
+      });
+      const feedback = getGlobalSyncFeedbackMessage(result);
+      showFlashMessage(feedback.message, { tone: feedback.tone });
+    } catch (error) {
+      showFlashMessage(
+        error instanceof Error ? error.message : "Sync failed. Please try again.",
+        { tone: "error" }
+      );
+    } finally {
+      if (syncSpinDelayTimerRef.current) {
+        clearTimeout(syncSpinDelayTimerRef.current);
+        syncSpinDelayTimerRef.current = null;
+      }
+      setShowSyncSpin(false);
+    }
+  }, [globalSyncMutation]);
+
+  const syncIconRotate = syncSpinValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"]
+  });
 
   const openEditModal = (accountToEdit?: (typeof accounts)[number] | null) => {
     const target = accountToEdit ?? selectedAccount;
@@ -174,6 +259,22 @@ export default function AccountsTabScreen() {
         preset="primaryTwoRowSelector"
         includeTopInset
         title="Accounts"
+        trailingAction={
+          <HeaderActionButton
+            icon={
+              <Animated.View
+                style={showSyncSpin ? { transform: [{ rotate: syncIconRotate }] } : undefined}
+              >
+                <Ionicons name="refresh-outline" size={18} color={palette.textPrimary} />
+              </Animated.View>
+            }
+            accessibilityLabel="Sync all linked banks"
+            onPress={() => {
+              void handleGlobalSyncPress();
+            }}
+            style={styles.headerSyncAction}
+          />
+        }
           secondRow={
             <>
               <HeaderActionButton
@@ -483,6 +584,13 @@ const styles = createRuntimeStyleSheet(() => ({
     height: 36,
     borderRadius: 6,
     backgroundColor: surfaces.field
+  },
+  headerSyncAction: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
+    borderColor: "rgba(242,140,40,0.55)",
+    backgroundColor: "rgba(89,92,98,0.38)"
   },
   heroCard: {
     gap: spacing[8]

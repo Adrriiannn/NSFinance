@@ -131,4 +131,5 @@ public sealed record BankSyncResult(
     int BalancesSynced,
     int TransactionsImported,
     string Status,
-    DateTime SyncedAtUtc);
+    DateTime SyncedAtUtc,
+    bool DataChanged);

@@ -29,10 +29,46 @@ Not requested in current phase:
    - accounts
    - balances
    - transactions
+   - pending transactions (raw ingest only, no booked-ledger projection)
    - cards (+ card balances/transactions when available)
    - direct debits
    - standing orders
    - connection identity info
+
+## Freshness and sync orchestration
+
+NSFinance now uses a global sync orchestration model:
+
+- `POST /api/banking/sync` is the shared sync endpoint for manual and auto triggers.
+- Request body:
+  - `trigger`: `manual` or `auto`
+  - `source`: optional source tag (for diagnostics)
+- Response includes:
+  - `outcome` (`completed`, `skipped_cooldown`, `skipped_not_due`, `skipped_no_eligible_connections`)
+  - per-connection sync results
+  - cooldown metadata
+  - changed/no-change counts
+
+### Manual sync
+
+- Manual sync is now available from global headers (Accounts + Activity), not the connect-bank screen.
+- Backend enforces one-hour cooldown for user-triggered manual sync requests.
+- Cooldown truth is API-side (not client-only throttling).
+
+### Auto sync
+
+- Mobile triggers auto-sync checks while the app is active in foreground.
+- Auto sync is also evaluated immediately on:
+  - app resume/foreground
+  - post-login session entry
+- Due/not-due decisions are made on backend connection freshness state, not guessed on-device.
+- Auto sync skips when not due (calm behavior, no API hammering).
+
+### Last synced semantics
+
+- `LastSuccessfulSyncUtc` is the ledger-facing "last synced" source.
+- Sync attempts that do not complete successfully do not advance this value.
+- Sync responses also expose `dataChanged` to distinguish successful/no-change runs.
 
 ## Product data model mapping
 
@@ -84,6 +120,7 @@ NSFinance now treats imported banking data as a long-term ledger:
   - AIB: target up to 1 year on initial sync
   - fallback for others: target up to 6 years on initial sync
 - Ongoing syncs switch to incremental mode using the latest imported checkpoint with a guarded lookback window to catch late-posted items.
+- Pending endpoints are queried where available and ingested as raw pending activity; pending rows are intentionally not projected as booked ledger entries.
 - Connection metadata tracks:
   - initial backfill started/completed
   - requested initial backfill window start
@@ -190,3 +227,4 @@ This ensures live bank chooser flows open with Ireland providers instead of UK d
 - disconnect cleanup queue is also in-memory (`Channel`) and not fully durable; startup requeue recovers `disconnect_pending` connections, and manual retry is idempotent if a pending cleanup did not finish
 - provider-side max history remains provider-dependent; requesting a wider window cannot exceed what the institution exposes through TrueLayer
 - card transactions can only be projected into the shared activity ledger when they can be linked to a clear projected account (`provider_account_id` match or single-account connection fallback)
+- pending transactions are currently a freshness layer in raw banking ingest and are not yet rendered as first-class pending rows in the main booked activity feed

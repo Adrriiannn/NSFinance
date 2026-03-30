@@ -7,6 +7,7 @@ import {
 } from "./activitySearch.parsers";
 import { formatActivityTokenAmount } from "./activitySearch.currencies";
 import type {
+  ActivityAccountTokenValue,
   ActivityCategoryTokenValue,
   ActivitySearchFilterInput,
   ActivitySearchToken,
@@ -187,6 +188,15 @@ function matchesToken(
 
       const merchant = normalizeActivitySearchText(resolveTransactionMerchant(transaction, annotations));
       return merchant.includes(query) || query.includes(merchant);
+    }
+    case "account": {
+      const value = token.value as ActivityAccountTokenValue;
+      const accountId = value?.accountId?.trim();
+      if (!accountId) {
+        return true;
+      }
+
+      return transaction.accountId === accountId;
     }
     case "category":
       return matchesCategoryToken(transaction, annotations, token, taxonomyBySubcategoryId);

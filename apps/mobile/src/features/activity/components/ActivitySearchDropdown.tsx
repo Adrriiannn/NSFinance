@@ -3,11 +3,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_CONSTANTS } from "../../../layout/header/header.constants";
 import { getFloatingTabBarContentInset } from "../../../theme/insets";
 import { zIndex, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../theme/tokens";
+import { ActivityAccountSuggestionList } from "./ActivityAccountSuggestionList";
 import { ActivitySearchFilterRow } from "./ActivitySearchFilterRow";
 import { CurrencySuggestionList } from "./CurrencySuggestionList";
 import { DateSuggestionList } from "./DateSuggestionList";
 import { MerchantSuggestionList } from "./MerchantSuggestionList";
 import type {
+  ActivityAccountSuggestion,
   ActivityDateSuggestion,
   ActivityMerchantSuggestion,
   ActivitySearchDropdownMode,
@@ -19,11 +21,13 @@ type ActivitySearchDropdownProps = {
   mode: ActivitySearchDropdownMode;
   filterOptions: (ActivitySearchFilterOption & { disabled?: boolean })[];
   merchantSuggestions: ActivityMerchantSuggestion[];
+  accountSuggestions: ActivityAccountSuggestion[];
   dateSuggestions: ActivityDateSuggestion[];
   currencyOptions: string[];
   selectedCurrency: string;
   onSelectFilter: (tokenType: ActivitySearchFilterOption["tokenType"]) => void;
   onSelectMerchant: (value: string) => void;
+  onSelectAccount: (account: ActivityAccountSuggestion) => void;
   onSelectDateSuggestion: (selection: ActivityDateSuggestion) => void;
   onSelectCurrency: (currencyCode: string) => void;
 };
@@ -33,11 +37,13 @@ export function ActivitySearchDropdown({
   mode,
   filterOptions,
   merchantSuggestions,
+  accountSuggestions,
   dateSuggestions,
   currencyOptions,
   selectedCurrency,
   onSelectFilter,
   onSelectMerchant,
+  onSelectAccount,
   onSelectDateSuggestion,
   onSelectCurrency
 }: ActivitySearchDropdownProps) {
@@ -53,8 +59,10 @@ export function ActivitySearchDropdown({
       ? 460
       : mode === "dateSuggestions"
         ? 460
-        : mode === "merchantSuggestions"
+      : mode === "merchantSuggestions"
           ? 420
+        : mode === "accountSuggestions"
+          ? 430
           : 380;
 
   const estimatedPanelTop =
@@ -92,6 +100,16 @@ export function ActivitySearchDropdown({
             <MerchantSuggestionList
               suggestions={merchantSuggestions}
               onSelect={onSelectMerchant}
+            />
+          </View>
+        ) : null}
+
+        {mode === "accountSuggestions" ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Your linked accounts</Text>
+            <ActivityAccountSuggestionList
+              accounts={accountSuggestions}
+              onSelect={onSelectAccount}
             />
           </View>
         ) : null}

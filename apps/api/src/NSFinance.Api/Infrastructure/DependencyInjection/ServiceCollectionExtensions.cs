@@ -259,6 +259,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TrueLayerDataService>();
         services.AddScoped<BankConnectionService>();
         services.AddScoped<BankSyncService>();
+        services.AddScoped<BankGlobalSyncService>();
         services.AddSingleton<TrueLayerSyncBackgroundWorker>();
         services.AddSingleton<ITrueLayerSyncQueue>(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
         services.AddHostedService(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());

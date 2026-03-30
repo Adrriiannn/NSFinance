@@ -15,8 +15,7 @@ import {
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
   useLinkedBankCardsQuery,
-  useStartTrueLayerLinkMutation,
-  useSyncBankConnectionMutation
+  useStartTrueLayerLinkMutation
 } from "../../../src/features/banking/useBanking";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import {
@@ -56,13 +55,6 @@ const successStatuses = new Set<BankConnectionStatus>([
   "connected_pending_sync",
   "connected",
   "synced"
-]);
-
-const syncableStatuses = new Set<BankConnectionStatus>([
-  "connected_pending_sync",
-  "connected",
-  "synced",
-  "failed"
 ]);
 
 const connectedFlowStatuses = new Set<BankConnectionStatus>([
@@ -281,7 +273,6 @@ export default function AddAccountModalScreen() {
   const [pendingConnectionId, setPendingConnectionId] = useState<string | null>(null);
   const [consentStartedAtMs, setConsentStartedAtMs] = useState<number | null>(null);
   const [returnStartedAtMs, setReturnStartedAtMs] = useState<number | null>(null);
-  const [lastManualSyncUtc, setLastManualSyncUtc] = useState<string | null>(null);
   const [consentTimedOut, setConsentTimedOut] = useState(false);
 
   const connectionsQuery = useBankConnectionsQuery(!pendingConnectionId && !forceNewConnectionFlow);
@@ -289,7 +280,6 @@ export default function AddAccountModalScreen() {
   const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
   const linkedBankCardsQuery = useLinkedBankCardsQuery();
   const startLinkMutation = useStartTrueLayerLinkMutation();
-  const syncMutation = useSyncBankConnectionMutation();
 
   const successPlayedRef = useRef(false);
   const lastPolledStatusRef = useRef<string | null>(null);
@@ -586,18 +576,6 @@ export default function AddAccountModalScreen() {
     });
   };
 
-  const handleSyncNow = async () => {
-    if (!activeConnection) {
-      return;
-    }
-
-    logBankingEvent("manual_sync_start", { connectionId: activeConnection.id });
-    const syncResult = await syncMutation.mutateAsync(activeConnection.id);
-    setLastManualSyncUtc(syncResult.syncedAtUtc);
-    await refreshBankingState("manual_sync_complete", { fullInvalidate: true, force: true });
-    playSuccess();
-  };
-
   useEffect(() => {
     logBankingEvent("screen_mount", { route: "accounts/connect-bank" });
   }, [logBankingEvent]);
@@ -852,24 +830,20 @@ export default function AddAccountModalScreen() {
           ? "Finish the bank consent flow in your browser. As soon as you return, we will start checking the saved connection."
         : uiState === "connected_pending_sync"
             ? "Connection confirmed. We are syncing the first account details now. Some providers may still return cached data briefly."
-            : uiState === "syncing_data"
+              : uiState === "syncing_data"
               ? "Connected to your bank. We are importing account details and recent transactions now. Pending card/bank payments may not appear until booked."
               : uiState === "failed"
-                ? "The bank connection exists, but data sync failed. You can retry sync without reconnecting."
+                ? "The bank connection exists, but data sync failed. Retry from the Accounts or Activity sync icon without reconnecting."
                 : uiState === "reauth_required"
                   ? "Provider access expired or failed. Your imported history is still saved. Reconnect your bank to resume syncing."
                   : undefined;
   const providerFreshnessNote =
     "Provider note: balances/transactions can be briefly cached, and pending payments appear only after booking.";
 
-  const canSyncNow = activeConnection ? syncableStatuses.has(activeConnection.status) : false;
   const bankName = activeConnection?.providerDisplayName?.trim() || "Waiting for institution details";
   const lastSyncUtc =
     activeConnection?.lastSuccessfulSyncUtc ?? activeConnection?.lastSyncAttemptedUtc ?? null;
   const dateAdded = formatDateAdded(activeConnection?.createdUtc);
-  const lastManualSyncLabel = formatDateAdded(
-    lastManualSyncUtc ?? activeConnection?.lastSuccessfulSyncUtc ?? null
-  );
   const lastSyncLabel = lastSyncUtc ? formatDateAdded(lastSyncUtc) : "Not synced yet";
   const meaningfulCapabilities = [
     activeConnection?.supportsInfo ? "Identity info available" : null,
@@ -926,17 +900,6 @@ export default function AddAccountModalScreen() {
           />
         ) : null}
 
-        {syncMutation.isError ? (
-          <ErrorState
-            title="Sync failed"
-            message={formatUnknownError(syncMutation.error)}
-            onRetry={() => {
-              void handleSyncNow();
-            }}
-            retryLabel="Retry sync"
-          />
-        ) : null}
-
         <ConnectionStatusIndicator status={uiState} helperText={statusHelperText} />
 
         <View style={styles.metadataCard}>
@@ -956,10 +919,6 @@ export default function AddAccountModalScreen() {
           ) : (
             <Text style={styles.metadataRow}>Waiting for account sync</Text>
           )}
-          <Text style={styles.metadataRow}>
-            <Text style={styles.metadataLabel}>Last manual sync: </Text>
-            {lastManualSyncLabel}
-          </Text>
           <Text style={styles.metadataRow}>
             <Text style={styles.metadataLabel}>Last sync: </Text>
             {lastSyncLabel}
@@ -1031,26 +990,14 @@ export default function AddAccountModalScreen() {
         ) : null}
 
         <View style={styles.primaryActions}>
-          <View style={styles.primaryActionRow}>
-            <PrimaryButton
-              label={connectBankCta.primaryLabel}
-              onPress={() => {
-                void handleConnectBank();
-              }}
-              isLoading={startLinkMutation.isPending}
-              style={styles.connectBankButton}
-            />
-
-            <PrimaryButton
-              label="Sync now"
-              onPress={() => {
-                void handleSyncNow();
-              }}
-              isLoading={syncMutation.isPending}
-              disabled={!canSyncNow}
-              style={styles.syncNowButton}
-            />
-          </View>
+          <PrimaryButton
+            label={connectBankCta.primaryLabel}
+            onPress={() => {
+              void handleConnectBank();
+            }}
+            isLoading={startLinkMutation.isPending}
+            style={styles.connectBankButton}
+          />
 
           <SecondaryButton
             label="Cancel"
@@ -1144,16 +1091,8 @@ const styles = createRuntimeStyleSheet(() => ({
   primaryActions: {
     gap: spacing[12]
   },
-  primaryActionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[10]
-  },
   connectBankButton: {
-    flex: 0.65
-  },
-  syncNowButton: {
-    flex: 0.35
+    width: "100%"
   }
 }));
 

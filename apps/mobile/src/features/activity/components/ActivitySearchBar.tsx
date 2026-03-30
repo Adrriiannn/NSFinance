@@ -6,6 +6,7 @@ import { palette, radius, spacing, surfaces, typography, createRuntimeStyleSheet
 import { ActivitySearchDropdown } from "./ActivitySearchDropdown";
 import { ActivitySearchToken } from "./ActivitySearchToken";
 import type {
+  ActivityAccountSuggestion,
   ActivityDateSuggestion,
   ActivitySearchDropdownMode,
   ActivitySearchFilterOption,
@@ -22,6 +23,7 @@ type ActivitySearchBarProps = {
   dropdownMode: ActivitySearchDropdownMode;
   filterOptions: (ActivitySearchFilterOption & { disabled?: boolean })[];
   merchantSuggestions: { displayName: string; normalizedName: string; score: number }[];
+  accountSuggestions: ActivityAccountSuggestion[];
   dateSuggestions: ActivityDateSuggestion[];
   currencies: string[];
   selectedCurrency: string;
@@ -32,6 +34,7 @@ type ActivitySearchBarProps = {
   onConfirmActiveDraft: (options?: { reopenDropdown?: boolean }) => void;
   onSelectFilter: (tokenType: ActivitySearchFilterOption["tokenType"]) => void;
   onSelectMerchantSuggestion: (value: string) => void;
+  onSelectAccountSuggestion: (account: ActivityAccountSuggestion) => void;
   onSelectDateSuggestion: (selection: ActivityDateSuggestion) => void;
   onSelectCurrency: (currencyCode: string) => void;
   onEditToken: (tokenId: string) => void;
@@ -59,6 +62,7 @@ export function ActivitySearchBar({
   dropdownMode,
   filterOptions,
   merchantSuggestions,
+  accountSuggestions,
   dateSuggestions,
   currencies,
   selectedCurrency,
@@ -69,6 +73,7 @@ export function ActivitySearchBar({
   onConfirmActiveDraft,
   onSelectFilter,
   onSelectMerchantSuggestion,
+  onSelectAccountSuggestion,
   onSelectDateSuggestion,
   onSelectCurrency,
   onEditToken,
@@ -216,11 +221,13 @@ export function ActivitySearchBar({
         mode={dropdownMode}
         filterOptions={filterOptions}
         merchantSuggestions={merchantSuggestions}
+        accountSuggestions={accountSuggestions}
         dateSuggestions={dateSuggestions}
         currencyOptions={currencies}
         selectedCurrency={selectedCurrency}
         onSelectFilter={onSelectFilter}
         onSelectMerchant={onSelectMerchantSuggestion}
+        onSelectAccount={onSelectAccountSuggestion}
         onSelectDateSuggestion={onSelectDateSuggestion}
         onSelectCurrency={onSelectCurrency}
       />

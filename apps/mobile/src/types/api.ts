@@ -676,6 +676,54 @@ export type SyncConnectionResponse = {
   transactionsImported: number;
   status: BankConnectionStatus;
   syncedAtUtc: string;
+  dataChanged: boolean;
+};
+
+export type GlobalBankSyncTrigger = "manual" | "auto";
+
+export type GlobalBankSyncRequest = {
+  trigger?: GlobalBankSyncTrigger | null;
+  source?: string | null;
+};
+
+export type GlobalBankSyncConnectionResponse = {
+  connectionId: string;
+  providerDisplayName: string | null;
+  status: BankConnectionStatus;
+  outcome:
+    | "completed_changed"
+    | "completed_no_change"
+    | "failed"
+    | "skipped_unavailable"
+    | "skipped_sync_in_progress";
+  accountsSynced: number;
+  balancesSynced: number;
+  transactionsImported: number;
+  syncedAtUtc: string | null;
+  dataChanged: boolean;
+  errorCode: string | null;
+  errorMessage: string | null;
+};
+
+export type GlobalBankSyncResponse = {
+  trigger: GlobalBankSyncTrigger;
+  outcome:
+    | "completed"
+    | "skipped_cooldown"
+    | "skipped_not_due"
+    | "skipped_no_eligible_connections";
+  requestedAtUtc: string;
+  completedAtUtc: string | null;
+  dueNow: boolean;
+  cooldownRemainingSeconds: number;
+  cooldownUntilUtc: string | null;
+  eligibleConnectionCount: number;
+  changedConnectionCount: number;
+  noChangeConnectionCount: number;
+  failedConnectionCount: number;
+  skippedConnectionCount: number;
+  lastSuccessfulSyncUtc: string | null;
+  connections: GlobalBankSyncConnectionResponse[];
 };
 
 

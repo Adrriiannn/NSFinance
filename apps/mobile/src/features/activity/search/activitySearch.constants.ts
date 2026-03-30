@@ -7,6 +7,7 @@ export const ACTIVITY_SEARCH_TOKEN_LABELS: Record<ActivitySearchTokenType, strin
   transaction: "transaction",
   category: "category",
   merchant: "merchant",
+  account: "account",
   currency: "currency",
   amount: "amount",
   date: "date"
@@ -16,6 +17,7 @@ export const ACTIVITY_SEARCH_UNIQUE_TOKEN_TYPES: ActivitySearchTokenType[] = [
   "transaction",
   "category",
   "merchant",
+  "account",
   "currency",
   "amount",
   "date"
@@ -39,6 +41,12 @@ export const ACTIVITY_SEARCH_FILTER_OPTIONS: ActivitySearchFilterOption[] = [
     tokenType: "merchant",
     title: "Made to a specific merchant",
     hint: "merchant: transaction's merchant"
+  },
+  {
+    key: "account",
+    tokenType: "account",
+    title: "From a specific bank account",
+    hint: "account: a bank account"
   },
   {
     key: "amount",

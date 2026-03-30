@@ -327,6 +327,7 @@ public sealed class BankSyncService(
         var cardsSynced = 0;
         var cardBalancesSynced = 0;
         var cardTransactionsImported = 0;
+        var projectedTransactionsBackfilled = 0;
         var directDebitsSynced = 0;
         var standingOrdersSynced = 0;
         var identityInfoSynced = false;
@@ -426,26 +427,42 @@ public sealed class BankSyncService(
             if (balanceResult.Value is not null)
             {
                 var capturedAtUtc = balanceResult.Value.CapturedAtUtc;
-                dbContext.BankBalanceSnapshots.Add(new BankBalanceSnapshot
-                {
-                    Id = Guid.NewGuid(),
-                    LinkedBankAccountId = linkedAccount.Id,
-                    Available = balanceResult.Value.Available,
-                    Current = balanceResult.Value.Current,
-                    Overdraft = balanceResult.Value.Overdraft,
-                    Currency = balanceResult.Value.Currency,
-                    CapturedUtc = capturedAtUtc,
-                    RawPayloadJson = balanceResult.Value.RawPayloadJson
-                });
-                balancesSynced++;
-                logger.LogInformation(
-                    "Recorded bank balance snapshot accountId={AccountId} linkedAccountId={LinkedAccountId} capturedUtc={CapturedUtc} current={Current} available={Available} currency={Currency}",
-                    providerAccount.AccountId,
+                var shouldPersistBalanceSnapshot = await ShouldPersistBalanceSnapshotAsync(
                     linkedAccount.Id,
-                    capturedAtUtc,
-                    balanceResult.Value.Current,
-                    balanceResult.Value.Available,
-                    balanceResult.Value.Currency);
+                    balanceResult.Value,
+                    cancellationToken);
+
+                if (shouldPersistBalanceSnapshot)
+                {
+                    dbContext.BankBalanceSnapshots.Add(new BankBalanceSnapshot
+                    {
+                        Id = Guid.NewGuid(),
+                        LinkedBankAccountId = linkedAccount.Id,
+                        Available = balanceResult.Value.Available,
+                        Current = balanceResult.Value.Current,
+                        Overdraft = balanceResult.Value.Overdraft,
+                        Currency = balanceResult.Value.Currency,
+                        CapturedUtc = capturedAtUtc,
+                        RawPayloadJson = balanceResult.Value.RawPayloadJson
+                    });
+                    balancesSynced++;
+                    logger.LogInformation(
+                        "Recorded bank balance snapshot accountId={AccountId} linkedAccountId={LinkedAccountId} capturedUtc={CapturedUtc} current={Current} available={Available} currency={Currency}",
+                        providerAccount.AccountId,
+                        linkedAccount.Id,
+                        capturedAtUtc,
+                        balanceResult.Value.Current,
+                        balanceResult.Value.Available,
+                        balanceResult.Value.Currency);
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "Skipped unchanged bank balance snapshot accountId={AccountId} linkedAccountId={LinkedAccountId} capturedUtc={CapturedUtc}",
+                        providerAccount.AccountId,
+                        linkedAccount.Id,
+                        capturedAtUtc);
+                }
             }
 
             var transactionWindow = BuildTransactionWindow(
@@ -477,6 +494,37 @@ public sealed class BankSyncService(
                 return await HandleSyncFailureAsync(connection, transactionsResult.Error!, trigger, cancellationToken);
             }
 
+            var allAccountTransactions = transactionsResult.Value!.ToList();
+            var pendingTransactionsResult = await dataService.GetPendingTransactionsAsync(
+                configuration,
+                accessToken,
+                providerAccount.AccountId,
+                transactionWindow.FromUtc,
+                transactionWindow.ToUtc,
+                cancellationToken);
+
+            if (pendingTransactionsResult.Succeeded)
+            {
+                allAccountTransactions.AddRange(pendingTransactionsResult.Value!);
+            }
+            else if (IsOptionalDatasetUnsupported(pendingTransactionsResult.Error))
+            {
+                logger.LogInformation(
+                    "Pending account transactions endpoint unavailable for accountId={AccountId} connectionId={ConnectionId} status={StatusCode}",
+                    providerAccount.AccountId,
+                    connection.Id,
+                    pendingTransactionsResult.Error?.StatusCode);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Pending account transactions sync failed for accountId={AccountId} connectionId={ConnectionId} status={StatusCode} code={Code}",
+                    providerAccount.AccountId,
+                    connection.Id,
+                    pendingTransactionsResult.Error?.StatusCode,
+                    pendingTransactionsResult.Error?.Code);
+            }
+
             if (isInitialBackfill
                 && string.Equals(transactionWindow.PolicyName, "revolut_initial_6y", StringComparison.Ordinal)
                 && now - connection.CreatedUtc > RevolutMaxHistoryWindow)
@@ -489,16 +537,17 @@ public sealed class BankSyncService(
 
             requestedBackfillWindowStartUtc = MinUtc(requestedBackfillWindowStartUtc, transactionWindow.FromUtc);
 
-            var observedForAccount = ExtractObservedTransactionBounds(transactionsResult.Value!);
+            var observedForAccount = ExtractObservedTransactionBounds(allAccountTransactions);
             syncObservedEarliestBookedAtUtc = MinUtc(syncObservedEarliestBookedAtUtc, observedForAccount.EarliestBookedAtUtc);
             syncObservedLatestBookedAtUtc = MaxUtc(syncObservedLatestBookedAtUtc, observedForAccount.LatestBookedAtUtc);
 
             var transactionUpsert = await UpsertTransactionsAsync(
                 linkedAccount,
-                transactionsResult.Value!,
+                allAccountTransactions,
                 now,
                 cancellationToken);
             transactionsImported += transactionUpsert.RawInserted;
+            projectedTransactionsBackfilled += transactionUpsert.ProjectedBackfilled;
 
             logger.LogInformation(
                 "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} fetched={Fetched} rawInserted={RawInserted} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
@@ -634,19 +683,27 @@ public sealed class BankSyncService(
 
                         if (cardBalanceResult.Succeeded && cardBalanceResult.Value is not null)
                         {
-                            dbContext.BankCardBalanceSnapshots.Add(new BankCardBalanceSnapshot
+                            var shouldPersistCardBalanceSnapshot = await ShouldPersistCardBalanceSnapshotAsync(
+                                linkedCard.Id,
+                                cardBalanceResult.Value,
+                                cancellationToken);
+
+                            if (shouldPersistCardBalanceSnapshot)
                             {
-                                Id = Guid.NewGuid(),
-                                LinkedBankCardId = linkedCard.Id,
-                                Available = cardBalanceResult.Value.Available,
-                                Current = cardBalanceResult.Value.Current,
-                                Limit = cardBalanceResult.Value.Limit,
-                                Outstanding = cardBalanceResult.Value.Outstanding,
-                                Currency = cardBalanceResult.Value.Currency,
-                                CapturedUtc = cardBalanceResult.Value.CapturedAtUtc,
-                                RawPayloadJson = cardBalanceResult.Value.RawPayloadJson
-                            });
-                            cardBalancesSynced++;
+                                dbContext.BankCardBalanceSnapshots.Add(new BankCardBalanceSnapshot
+                                {
+                                    Id = Guid.NewGuid(),
+                                    LinkedBankCardId = linkedCard.Id,
+                                    Available = cardBalanceResult.Value.Available,
+                                    Current = cardBalanceResult.Value.Current,
+                                    Limit = cardBalanceResult.Value.Limit,
+                                    Outstanding = cardBalanceResult.Value.Outstanding,
+                                    Currency = cardBalanceResult.Value.Currency,
+                                    CapturedUtc = cardBalanceResult.Value.CapturedAtUtc,
+                                    RawPayloadJson = cardBalanceResult.Value.RawPayloadJson
+                                });
+                                cardBalancesSynced++;
+                            }
                         }
                         else if (!cardBalanceResult.Succeeded && !IsOptionalDatasetUnsupported(cardBalanceResult.Error))
                         {
@@ -672,9 +729,40 @@ public sealed class BankSyncService(
 
                         if (cardTransactionsResult.Succeeded)
                         {
+                            var allCardTransactions = cardTransactionsResult.Value!.ToList();
+                            var pendingCardTransactionsResult = await dataService.GetPendingCardTransactionsAsync(
+                                configuration,
+                                accessToken,
+                                providerCard.CardId,
+                                cardTransactionWindow.FromUtc,
+                                cardTransactionWindow.ToUtc,
+                                cancellationToken);
+
+                            if (pendingCardTransactionsResult.Succeeded)
+                            {
+                                allCardTransactions.AddRange(pendingCardTransactionsResult.Value!);
+                            }
+                            else if (IsOptionalDatasetUnsupported(pendingCardTransactionsResult.Error))
+                            {
+                                logger.LogInformation(
+                                    "Pending card transactions endpoint unavailable for cardId={CardId} connectionId={ConnectionId} status={StatusCode}",
+                                    providerCard.CardId,
+                                    connection.Id,
+                                    pendingCardTransactionsResult.Error?.StatusCode);
+                            }
+                            else
+                            {
+                                logger.LogWarning(
+                                    "Pending card transactions sync failed for cardId={CardId} connectionId={ConnectionId} status={StatusCode} code={Code}",
+                                    providerCard.CardId,
+                                    connection.Id,
+                                    pendingCardTransactionsResult.Error?.StatusCode,
+                                    pendingCardTransactionsResult.Error?.Code);
+                            }
+
                             cardTransactionsImported += await UpsertCardTransactionsAsync(
                                 linkedCard,
-                                cardTransactionsResult.Value!,
+                                allCardTransactions,
                                 now,
                                 cancellationToken);
                         }
@@ -762,6 +850,14 @@ public sealed class BankSyncService(
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
+        var dataChanged =
+            transactionsImported > 0
+            || cardTransactionsImported > 0
+            || projectedTransactionsBackfilled > 0
+            || balancesSynced > 0
+            || cardBalancesSynced > 0
+            || linkedTransfersMatched > 0;
+
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
             BankConnectionStatuses.Synced,
@@ -788,6 +884,7 @@ public sealed class BankSyncService(
                 standingOrdersSynced,
                 identityInfoSynced,
                 linkedTransfersMatched,
+                dataChanged,
                 transactionMode = transactionSyncMode,
                 requestedBackfillWindowStartUtc,
                 observedEarliestTransactionUtc = syncObservedEarliestBookedAtUtc,
@@ -797,7 +894,7 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} transactionsImported={TransactionsImported} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
+            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} transactionsImported={TransactionsImported} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
             connection.Id,
             accountsSynced,
             balancesSynced,
@@ -809,6 +906,7 @@ public sealed class BankSyncService(
             standingOrdersSynced,
             identityInfoSynced,
             linkedTransfersMatched,
+            dataChanged,
             transactionSyncMode,
             connection.InitialBackfillCompletedUtc,
             connection.EarliestImportedTransactionUtc,
@@ -821,7 +919,8 @@ public sealed class BankSyncService(
                 balancesSynced,
                 transactionsImported,
                 BankConnectionStatuses.Synced,
-                DateTime.UtcNow));
+                DateTime.UtcNow,
+                dataChanged));
     }
 
     private async Task<ServiceResult> StoreRefreshedTokenAsync(
@@ -919,6 +1018,70 @@ public sealed class BankSyncService(
         }
 
         return linkedAccount;
+    }
+
+    private async Task<bool> ShouldPersistBalanceSnapshotAsync(
+        Guid linkedBankAccountId,
+        TrueLayerBalanceRecord candidate,
+        CancellationToken cancellationToken)
+    {
+        var latest = await dbContext.BankBalanceSnapshots
+            .AsNoTracking()
+            .Where(x => x.LinkedBankAccountId == linkedBankAccountId)
+            .OrderByDescending(x => x.CapturedUtc)
+            .Select(x => new
+            {
+                x.Available,
+                x.Current,
+                x.Overdraft,
+                x.Currency,
+                x.CapturedUtc
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latest is null)
+        {
+            return true;
+        }
+
+        return latest.CapturedUtc != candidate.CapturedAtUtc
+            || latest.Available != candidate.Available
+            || latest.Current != candidate.Current
+            || latest.Overdraft != candidate.Overdraft
+            || !string.Equals(latest.Currency, candidate.Currency, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<bool> ShouldPersistCardBalanceSnapshotAsync(
+        Guid linkedBankCardId,
+        TrueLayerCardBalanceRecord candidate,
+        CancellationToken cancellationToken)
+    {
+        var latest = await dbContext.BankCardBalanceSnapshots
+            .AsNoTracking()
+            .Where(x => x.LinkedBankCardId == linkedBankCardId)
+            .OrderByDescending(x => x.CapturedUtc)
+            .Select(x => new
+            {
+                x.Available,
+                x.Current,
+                x.Limit,
+                x.Outstanding,
+                x.Currency,
+                x.CapturedUtc
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latest is null)
+        {
+            return true;
+        }
+
+        return latest.CapturedUtc != candidate.CapturedAtUtc
+            || latest.Available != candidate.Available
+            || latest.Current != candidate.Current
+            || latest.Limit != candidate.Limit
+            || latest.Outstanding != candidate.Outstanding
+            || !string.Equals(latest.Currency, candidate.Currency, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<TransactionUpsertSummary> UpsertTransactionsAsync(
@@ -2040,7 +2203,8 @@ public sealed class BankSyncService(
 
         return error.StatusCode is StatusCodes.Status400BadRequest
             or StatusCodes.Status403Forbidden
-            or StatusCodes.Status404NotFound;
+            or StatusCodes.Status404NotFound
+            or StatusCodes.Status405MethodNotAllowed;
     }
 
     private static void ApplyGrantedScopes(OpenBankingConnection connection, string? scope)

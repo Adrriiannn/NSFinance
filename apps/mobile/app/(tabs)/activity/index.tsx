@@ -1,7 +1,9 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  Easing,
   InteractionManager,
   PanResponder,
   Pressable,
@@ -23,9 +25,12 @@ import {
   setActivitySearchSnapshot
 } from "../../../src/features/activity/search/activitySearch.bridge";
 import { useActivitySearch } from "../../../src/features/activity/search/activitySearch.hooks";
-import type { ActivityTaxonomySearchEntry } from "../../../src/features/activity/search/activitySearch.types";
+import type {
+  ActivityAccountSuggestion,
+  ActivityTaxonomySearchEntry
+} from "../../../src/features/activity/search/activitySearch.types";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
-import { HeaderShell } from "../../../src/layout/appHeader";
+import { HeaderActionButton, HeaderShell } from "../../../src/layout/appHeader";
 import { HEADER_CONSTANTS } from "../../../src/layout/header/header.constants";
 import {
   CONTENT_FRAME_HEADER_GAP,
@@ -39,9 +44,12 @@ import { flattenVisibleExpenseTaxonomy } from "../../../src/features/expenseTrac
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
 import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
+import { getGlobalSyncFeedbackMessage } from "../../../src/features/banking/bankingSyncFeedback";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
+import { useGlobalBankSyncMutation } from "../../../src/features/banking/useBanking";
 import { logActivityFocusEvent } from "../../../src/features/transactions/activityFocusNavigation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
+import { showFlashMessage } from "../../../src/lib/flashMessage";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
@@ -69,6 +77,7 @@ export default function ActivityTabScreen() {
   const accountsQuery = useAccountsQuery();
   const connectBankCta = useConnectBankCtaLabels();
   const profileQuery = useUserProfileQuery();
+  const globalSyncMutation = useGlobalBankSyncMutation();
   const [highlightedTransactionId, setHighlightedTransactionId] = useState<string | null>(
     null
   );
@@ -78,9 +87,13 @@ export default function ActivityTabScreen() {
   const initialSearchSnapshotRef = useRef(consumeActivitySearchSnapshot());
   const sectionListRef = useRef<SectionList<TransactionDto>>(null);
   const handledFocusKeyRef = useRef<string | null>(null);
+  const syncSpinValue = useRef(new Animated.Value(0)).current;
+  const syncSpinDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncSpinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const transactionsQuery = useTransactionsQuery();
   const isInitialLoading = transactionsQuery.isLoading && !transactionsQuery.data;
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const [showSyncSpin, setShowSyncSpin] = useState(false);
   const refreshing = isManualRefreshing && !isInitialLoading;
   const focusTransactionId =
     typeof params.focusTransactionId === "string" ? params.focusTransactionId : "";
@@ -101,11 +114,28 @@ export default function ActivityTabScreen() {
       subcategoryName: entry.subcategory.name
     }));
   }, [taxonomyQuery.data?.domains]);
+  const linkedAccountSuggestions = useMemo<ActivityAccountSuggestion[]>(
+    () =>
+      (accountsQuery.data ?? []).map((account) => ({
+        id: account.id,
+        name: account.name,
+        type: account.type,
+        currentBalance: account.currentBalance,
+        currency: account.currency,
+        transactionCount: account.transactionCount,
+        providerId: account.providerId,
+        providerDisplayName: account.providerDisplayName,
+        providerIconUrl: account.providerIconUrl,
+        providerLogoUrl: account.providerLogoUrl
+      })),
+    [accountsQuery.data]
+  );
   const search = useActivitySearch({
     transactions: transactionsQuery.data ?? [],
     annotations: plannerStore.annotations,
     preferredCurrency: profileQuery.data?.preferredCurrency,
     accountCurrencies: (accountsQuery.data ?? []).map((account) => account.currency),
+    accountSuggestions: linkedAccountSuggestions,
     taxonomyEntries,
     initialSnapshot: initialSearchSnapshotRef.current,
     onRequestCategoryPicker: (snapshot) => {
@@ -167,6 +197,82 @@ export default function ActivityTabScreen() {
       return undefined;
     }, [applyPickedCategory, setSearchSnapshot])
   );
+
+  useEffect(() => {
+    if (!showSyncSpin) {
+      syncSpinLoopRef.current?.stop();
+      syncSpinLoopRef.current = null;
+      syncSpinValue.stopAnimation();
+      syncSpinValue.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.timing(syncSpinValue, {
+        toValue: 1,
+        duration: 740,
+        easing: Easing.linear,
+        useNativeDriver: true
+      })
+    );
+    syncSpinLoopRef.current = loop;
+    loop.start();
+
+    return () => {
+      loop.stop();
+      syncSpinLoopRef.current = null;
+      syncSpinValue.stopAnimation();
+      syncSpinValue.setValue(0);
+    };
+  }, [showSyncSpin, syncSpinValue]);
+
+  useEffect(() => {
+    return () => {
+      if (syncSpinDelayTimerRef.current) {
+        clearTimeout(syncSpinDelayTimerRef.current);
+        syncSpinDelayTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleGlobalSyncPress = useCallback(async () => {
+    if (globalSyncMutation.isPending) {
+      return;
+    }
+
+    if (syncSpinDelayTimerRef.current) {
+      clearTimeout(syncSpinDelayTimerRef.current);
+    }
+
+    syncSpinDelayTimerRef.current = setTimeout(() => {
+      setShowSyncSpin(true);
+    }, 220);
+
+    try {
+      const result = await globalSyncMutation.mutateAsync({
+        trigger: "manual",
+        source: "activity_header"
+      });
+      const feedback = getGlobalSyncFeedbackMessage(result);
+      showFlashMessage(feedback.message, { tone: feedback.tone });
+    } catch (error) {
+      showFlashMessage(
+        error instanceof Error ? error.message : "Sync failed. Please try again.",
+        { tone: "error" }
+      );
+    } finally {
+      if (syncSpinDelayTimerRef.current) {
+        clearTimeout(syncSpinDelayTimerRef.current);
+        syncSpinDelayTimerRef.current = null;
+      }
+      setShowSyncSpin(false);
+    }
+  }, [globalSyncMutation]);
+
+  const syncIconRotate = syncSpinValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"]
+  });
 
   useFocusEffect(
     useCallback(() => {
@@ -300,6 +406,22 @@ export default function ActivityTabScreen() {
           preset="primaryTwoRowSearch"
           includeTopInset
           title="Activity"
+          trailingAction={
+            <HeaderActionButton
+              icon={
+                <Animated.View
+                  style={showSyncSpin ? { transform: [{ rotate: syncIconRotate }] } : undefined}
+                >
+                  <Ionicons name="refresh-outline" size={18} color={palette.textPrimary} />
+                </Animated.View>
+              }
+              accessibilityLabel="Sync all linked banks"
+              onPress={() => {
+                void handleGlobalSyncPress();
+              }}
+              style={styles.headerSyncAction}
+            />
+          }
           secondRow={
             <ActivitySearchBar
               tokens={search.tokens}
@@ -311,6 +433,7 @@ export default function ActivityTabScreen() {
               dropdownMode={search.dropdownMode}
               filterOptions={search.filterOptionAvailability}
               merchantSuggestions={search.merchantSuggestions}
+              accountSuggestions={search.accountSuggestions}
               dateSuggestions={search.dateSuggestionResult.suggestions}
               currencies={search.availableCurrencies}
               selectedCurrency={search.activeCurrencyCode}
@@ -321,6 +444,7 @@ export default function ActivityTabScreen() {
               onConfirmActiveDraft={search.confirmTokenDraft}
               onSelectFilter={search.selectFilterOption}
               onSelectMerchantSuggestion={search.selectMerchantSuggestion}
+              onSelectAccountSuggestion={search.selectAccountSuggestion}
               onSelectDateSuggestion={search.selectDateSuggestion}
               onSelectCurrency={search.selectCurrency}
               onEditToken={search.beginEditingToken}
@@ -678,6 +802,13 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   tabStage: {
     flex: 1
+  },
+  headerSyncAction: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
+    borderColor: "rgba(242,140,40,0.55)",
+    backgroundColor: "rgba(89,92,98,0.38)"
   },
   searchBackdrop: {
     ...StyleSheet.absoluteFillObject,

@@ -3,6 +3,8 @@ import type {
   BankRecurringPaymentsDto,
   BankConnectionDto,
   ConnectedBanksOverviewDto,
+  GlobalBankSyncRequest,
+  GlobalBankSyncResponse,
   LinkedBankCardDto,
   LinkedBankAccountDto,
   StartTrueLayerLinkRequest,
@@ -48,6 +50,13 @@ export function startTrueLayerLink(payload: StartTrueLayerLinkRequest): Promise<
 export function syncBankConnection(connectionId: string): Promise<SyncConnectionResponse> {
   return apiRequest<SyncConnectionResponse>(`/api/banking/connections/${connectionId}/sync`, {
     method: "POST"
+  });
+}
+
+export function syncAllBankConnections(payload?: GlobalBankSyncRequest): Promise<GlobalBankSyncResponse> {
+  return apiRequest<GlobalBankSyncResponse>("/api/banking/sync", {
+    method: "POST",
+    body: JSON.stringify(payload ?? {})
   });
 }
 

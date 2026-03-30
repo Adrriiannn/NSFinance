@@ -8,7 +8,7 @@ type DateSuggestionListProps = {
   onSelect: (selection: ActivityDateSuggestion) => void;
 };
 
-const HINT_PREFIX_PATTERN = /(transaction:|merchant:|category:|currency:|amount:|date:)/gi;
+const HINT_PREFIX_PATTERN = /(transaction:|merchant:|category:|account:|currency:|amount:|date:)/gi;
 
 function renderHintWithPrefix(hint: string) {
   const parts = hint.split(HINT_PREFIX_PATTERN);
@@ -23,6 +23,7 @@ function renderHintWithPrefix(hint: string) {
       normalized === "transaction:" ||
       normalized === "merchant:" ||
       normalized === "category:" ||
+      normalized === "account:" ||
       normalized === "currency:" ||
       normalized === "amount:" ||
       normalized === "date:";

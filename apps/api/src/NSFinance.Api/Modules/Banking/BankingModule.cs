@@ -43,6 +43,9 @@ public static class BankingModule
         protectedGroup.MapPost("/connections/{connectionId:guid}/sync", SyncBankConnectionEndpoint.HandleAsync)
             .WithName("SyncBankConnection");
 
+        protectedGroup.MapPost("/sync", SyncAllBankConnectionsEndpoint.HandleAsync)
+            .WithName("SyncAllBankConnections");
+
         protectedGroup.MapPost("/connections/{connectionId:guid}/disconnect", DisconnectBankConnectionEndpoint.HandleAsync)
             .WithName("DisconnectBankConnection");
 
