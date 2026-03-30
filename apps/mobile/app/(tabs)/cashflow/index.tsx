@@ -18,6 +18,7 @@ import {
   getDockAwareContentBottomInset
 } from "../../../src/layout/contentFrame";
 import { useDashboardSummaryQuery } from "../../../src/features/dashboard/useDashboardSummaryQuery";
+import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import {
   buildPlannerGraphModel,
@@ -385,7 +386,9 @@ export default function CashflowScreen() {
             title="No cashflow data yet"
             subtitle="Connect your bank to start building cashflow insights from your spending data."
             ctaLabel={connectBankCta.primaryLabel}
-            onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+            onCtaPress={() =>
+              router.push(buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/cashflow" }))
+            }
             verticalSpacingMode="tab-aligned"
             hideOrb
             centerText

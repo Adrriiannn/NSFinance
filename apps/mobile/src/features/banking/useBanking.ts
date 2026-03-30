@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
+import type {
+  BankConnectionDto,
+  ConnectedBanksOverviewDto
+} from "../../types/api";
 import {
   disconnectBankConnection,
   getBankConnection,
@@ -149,6 +153,103 @@ export function useDisconnectBankConnectionMutation() {
 
   return useMutation({
     mutationFn: (connectionId: string) => disconnectBankConnection(connectionId),
+    onMutate: async (connectionId: string) => {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: queryKeys.banking.connections }),
+        queryClient.cancelQueries({ queryKey: queryKeys.banking.connectedBanks }),
+        queryClient.cancelQueries({ queryKey: queryKeys.banking.connection(connectionId) })
+      ]);
+
+      const previousConnections =
+        queryClient.getQueryData<BankConnectionDto[]>(queryKeys.banking.connections);
+      const previousConnectedBanks =
+        queryClient.getQueryData<ConnectedBanksOverviewDto>(queryKeys.banking.connectedBanks);
+      const previousConnectionDetail =
+        queryClient.getQueryData<BankConnectionDto>(queryKeys.banking.connection(connectionId));
+      const disconnectRequestedAtUtc = new Date().toISOString();
+
+      queryClient.setQueryData<BankConnectionDto[] | undefined>(
+        queryKeys.banking.connections,
+        (current) =>
+          current?.map((connection) =>
+            connection.id === connectionId
+              ? {
+                  ...connection,
+                  status: "disconnect_pending",
+                  updatedUtc: disconnectRequestedAtUtc
+                }
+              : connection
+          ) ?? current
+      );
+
+      queryClient.setQueryData<BankConnectionDto | undefined>(
+        queryKeys.banking.connection(connectionId),
+        (current) =>
+          current
+            ? {
+                ...current,
+                status: "disconnect_pending",
+                updatedUtc: disconnectRequestedAtUtc
+              }
+            : current
+      );
+
+      queryClient.setQueryData<ConnectedBanksOverviewDto | undefined>(
+        queryKeys.banking.connectedBanks,
+        (current) => {
+          if (!current) {
+            return current;
+          }
+
+          const allConnections = [
+            ...current.activeConnections,
+            ...current.attentionConnections
+          ];
+          const targetConnection = allConnections.find((connection) => connection.id === connectionId);
+          if (!targetConnection) {
+            return current;
+          }
+
+          const disconnectPendingConnection: BankConnectionDto = {
+            ...targetConnection,
+            status: "disconnect_pending",
+            updatedUtc: disconnectRequestedAtUtc
+          };
+
+          return {
+            activeConnections: current.activeConnections.filter(
+              (connection) => connection.id !== connectionId
+            ),
+            attentionConnections: [
+              disconnectPendingConnection,
+              ...current.attentionConnections.filter((connection) => connection.id !== connectionId)
+            ]
+          };
+        }
+      );
+
+      return {
+        previousConnections,
+        previousConnectedBanks,
+        previousConnectionDetail
+      };
+    },
+    onError: (_error, connectionId, context) => {
+      if (context?.previousConnections) {
+        queryClient.setQueryData(queryKeys.banking.connections, context.previousConnections);
+      }
+
+      if (context?.previousConnectedBanks) {
+        queryClient.setQueryData(queryKeys.banking.connectedBanks, context.previousConnectedBanks);
+      }
+
+      if (context?.previousConnectionDetail) {
+        queryClient.setQueryData(
+          queryKeys.banking.connection(connectionId),
+          context.previousConnectionDetail
+        );
+      }
+    },
     onSettled: async (_, __, connectionId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.banking.connections }),
@@ -161,6 +262,23 @@ export function useDisconnectBankConnectionMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
       ]);
+
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.connections, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.connectedBanks, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.connection(connectionId), type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.accounts, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.cards, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.recurringPayments, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.accounts.all, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.transactions.all, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.dashboard.summary, type: "all" })
+      ]);
+
+      console.info("[Banking Sync]", {
+        event: "post_disconnect_queries_refetched",
+        connectionId
+      });
     }
   });
 }

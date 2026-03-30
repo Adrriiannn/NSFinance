@@ -14,6 +14,7 @@ import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
 import { useAccountsQuery } from "../../src/features/accounts/useAccounts";
 import { useConnectBankCtaLabels } from "../../src/features/banking/connectBankCta";
+import { buildConnectBankRoute } from "../../src/features/banking/bankingLinking";
 import { useDashboardSummaryQuery } from "../../src/features/dashboard/useDashboardSummaryQuery";
 import {
   buildHomeInsights
@@ -404,7 +405,9 @@ export default function DashboardTabScreen() {
               title="No connected accounts"
               subtitle="Connect your bank to start tracking balances and spending."
               ctaLabel={connectBankCta.primaryLabel}
-              onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+              onCtaPress={() =>
+                router.push(buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)" }))
+              }
               verticalSpacingMode="tab-aligned"
               hideOrb
               centerText
@@ -546,7 +549,9 @@ export default function DashboardTabScreen() {
                 <View style={styles.quickActionSecondary}>
                   <SecondaryButton
                     label={connectBankCta.compactLabel}
-                    onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+                    onPress={() =>
+                      router.push(buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)" }))
+                    }
                   />
                 </View>
               </View>

@@ -29,6 +29,7 @@ import {
   useDeleteAccountMutation,
   useUpdateAccountMutation
 } from "../../../src/features/accounts/useAccounts";
+import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import {
   buildActivityFocusRoute,
@@ -178,7 +179,11 @@ export default function AccountsTabScreen() {
               <HeaderActionButton
                 icon={<Ionicons name="link-outline" size={18} color={palette.textPrimary} />}
                 accessibilityLabel={connectBankCta.primaryLabel}
-                onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+                onPress={() =>
+                  router.push(
+                    buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/accounts" })
+                  )
+                }
                 style={styles.headerIconAction}
               />
               <HeaderDropdownSlot
@@ -210,7 +215,9 @@ export default function AccountsTabScreen() {
           title="No connected accounts"
           subtitle="Connect your bank to start tracking balances and spending."
           ctaLabel={connectBankCta.primaryLabel}
-          onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+          onCtaPress={() =>
+            router.push(buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/accounts" }))
+          }
           verticalSpacingMode="tab-aligned"
           hideOrb
           centerText
@@ -250,7 +257,11 @@ export default function AccountsTabScreen() {
             <ActionItem
               label={connectBankCta.compactLabel}
               icon="link-outline"
-              onPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+              onPress={() =>
+                router.push(
+                  buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/accounts" })
+                )
+              }
             />
             <ActionItem
               label="Details"
@@ -366,7 +377,9 @@ export default function AccountsTabScreen() {
                 style={({ pressed }) => [styles.createAccountItem, pressed ? styles.modalItemPressed : null]}
                 onPress={() => {
                   setSelectorVisible(false);
-                  router.push("/(tabs)/accounts/connect-bank?intent=new");
+                  router.push(
+                    buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/accounts" })
+                  );
                 }}
               >
                 <View style={styles.createAccountTextWrap}>

@@ -38,6 +38,7 @@ import { consumePendingActivitySearchCategorySelection } from "../../../src/feat
 import { flattenVisibleExpenseTaxonomy } from "../../../src/features/expenseTracker/expenseTrackerModels";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
+import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { logActivityFocusEvent } from "../../../src/features/transactions/activityFocusNavigation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
@@ -314,7 +315,7 @@ export default function ActivityTabScreen() {
               currencies={search.availableCurrencies}
               selectedCurrency={search.activeCurrencyCode}
               onFocusSearch={search.focusSearch}
-              onOpenFilters={search.openFilters}
+              onOpenFilters={search.toggleFilters}
               onSetRawSearchText={search.setRawSearchText}
               onSetActiveDraft={search.setActiveTokenDraft}
               onConfirmActiveDraft={search.confirmTokenDraft}
@@ -378,7 +379,9 @@ export default function ActivityTabScreen() {
               title="No activity yet"
               subtitle="Connect your bank to start tracking spending activity."
               ctaLabel={connectBankCta.primaryLabel}
-              onCtaPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+              onCtaPress={() =>
+                router.push(buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/activity" }))
+              }
               verticalSpacingMode="tab-aligned"
               hideOrb
               centerText

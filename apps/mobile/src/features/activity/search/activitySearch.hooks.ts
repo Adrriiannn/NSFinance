@@ -306,6 +306,16 @@ export function useActivitySearch({
     setActiveTokenDraft("");
   }, []);
 
+  const toggleFilters = useCallback(() => {
+    const isFilterDropdownVisible = dropdownOpen && dropdownMode === "filters";
+    if (isFilterDropdownVisible) {
+      dismissDropdown();
+      return;
+    }
+
+    openFilters();
+  }, [dismissDropdown, dropdownMode, dropdownOpen, openFilters]);
+
   const beginEditingToken = useCallback(
     (tokenId: string) => {
       const token = tokens.find((item) => item.id === tokenId);
@@ -770,6 +780,7 @@ export function useActivitySearch({
     filteredTransactions,
     focusSearch,
     openFilters,
+    toggleFilters,
     dismissDropdown,
     beginEditingToken,
     selectFilterOption,

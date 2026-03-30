@@ -1432,8 +1432,8 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   avatarBadge: {
     position: "absolute",
-    right: -2,
-    bottom: -2,
+    right: 2,
+    bottom: 2,
     width: 20,
     height: 20,
     borderRadius: 6,

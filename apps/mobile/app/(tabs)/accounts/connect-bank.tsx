@@ -19,7 +19,10 @@ import {
   useSyncBankConnectionMutation
 } from "../../../src/features/banking/useBanking";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
-import { buildBankConnectReturnUri } from "../../../src/features/banking/bankingLinking";
+import {
+  buildBankConnectReturnUri,
+  sanitizeConnectBankReturnPath
+} from "../../../src/features/banking/bankingLinking";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { queryKeys } from "../../../src/lib/api/queryKeys";
 import { useFeedbackSound } from "../../../src/lib/sound/useFeedbackSound";
@@ -256,13 +259,21 @@ function deriveUiState(
 
 export default function AddAccountModalScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ bankingResult?: string; connectionId?: string; intent?: string }>();
+  const params = useLocalSearchParams<{
+    bankingResult?: string;
+    connectionId?: string;
+    intent?: string;
+    returnTo?: string;
+  }>();
   const queryClient = useQueryClient();
   const { isAuthenticated, isBootstrapping } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const connectBankCta = useConnectBankCtaLabels();
 
   const forceNewConnectionFlow = params.intent === "new";
+  const cancelReturnPath = sanitizeConnectBankReturnPath(
+    typeof params.returnTo === "string" ? params.returnTo : null
+  );
 
   const [awaitingConsentReturn, setAwaitingConsentReturn] = useState(false);
   const [browserPhase, setBrowserPhase] = useState<BrowserPhase>("idle");
@@ -527,20 +538,20 @@ export default function AddAccountModalScreen() {
       logBankingEvent("connect_start", {
         connectionId: response.connectionId,
         expiresAtUtc: response.expiresAtUtc,
-        appReturnUri: buildBankConnectReturnUri()
+        appReturnUri: buildBankConnectReturnUri(cancelReturnPath)
       });
       await launchConsentInBrowser(response.authorizationUrl, response.connectionId);
       setBrowserPhase("awaiting_consent");
       logBankingEvent("awaiting_consent", { connectionId: response.connectionId });
     },
-    [launchConsentInBrowser, logBankingEvent]
+    [cancelReturnPath, launchConsentInBrowser, logBankingEvent]
   );
 
   const handleConnectBank = async () => {
     try {
       setBrowserPhase("opening_bank");
       const response = await startLinkMutation.mutateAsync({
-        appReturnUri: buildBankConnectReturnUri(),
+        appReturnUri: buildBankConnectReturnUri(cancelReturnPath),
         connectionId: reconnectConnectionId
       });
       await beginConsentSession(response);
@@ -561,7 +572,7 @@ export default function AddAccountModalScreen() {
     }
 
     const response = await startLinkMutation.mutateAsync({
-      appReturnUri: buildBankConnectReturnUri(),
+      appReturnUri: buildBankConnectReturnUri(cancelReturnPath),
       connectionId: reconnectConnectionId
     });
     await beginConsentSession(response);
@@ -1049,9 +1060,20 @@ export default function AddAccountModalScreen() {
                 uiState,
                 backendStatus: activeConnection?.status ?? null,
                 linkedAccountCount: linkedAccountNames.length,
-                completionReached
+                completionReached,
+                returnTo: cancelReturnPath
               });
-              router.back();
+              if (cancelReturnPath) {
+                router.replace(cancelReturnPath as never);
+                return;
+              }
+
+              if (typeof router.canGoBack === "function" && router.canGoBack()) {
+                router.back();
+                return;
+              }
+
+              router.replace("/(tabs)" as never);
             }}
           />
         </View>

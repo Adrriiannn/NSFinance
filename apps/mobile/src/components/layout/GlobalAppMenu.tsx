@@ -307,9 +307,11 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
                 )}
               </View>
               <View style={styles.profileMeta}>
-                <Text style={styles.fullName}>{fullName}</Text>
-                <Text style={styles.handle}>{displayName}</Text>
-                <Text style={styles.subtitle} numberOfLines={2}>
+                <View style={styles.profileIdentityCopy}>
+                  <Text style={styles.fullName}>{fullName}</Text>
+                  <Text style={styles.handle}>{displayName}</Text>
+                </View>
+                <Text style={styles.subtitle} numberOfLines={1}>
                   {subtitle}
                 </Text>
               </View>
@@ -611,7 +613,10 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   profileMeta: {
     flex: 1,
-    gap: 2,
+    minWidth: 0,
+    gap: 2
+  },
+  profileIdentityCopy: {
     paddingRight: THEME_CONTROL_WIDTH + spacing[8]
   },
   themeControlWrap: {
@@ -728,7 +733,8 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   subtitle: {
     color: palette.textSecondary,
-    ...typography.caption
+    ...typography.caption,
+    flexShrink: 1
   },
   menuItems: {
     gap: spacing[8]

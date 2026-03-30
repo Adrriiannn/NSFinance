@@ -11,6 +11,7 @@ import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TextField } from "../../../src/components/ui/TextField";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
+import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { consumePendingActivityAddTransactionSubcategorySelection } from "../../../src/features/expenseTracker/categoryPickerBridge";
 import {
@@ -195,7 +196,11 @@ export default function AddTransactionScreen() {
           title="No connected accounts"
           message="Connect your bank first before adding transactions."
           actionLabel={connectBankCta.primaryLabel}
-          onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+          onActionPress={() =>
+            router.push(
+              buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/activity/add" })
+            )
+          }
           hideOrb
           centerText
         />

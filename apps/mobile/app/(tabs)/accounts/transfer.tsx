@@ -8,6 +8,7 @@ import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { TextField } from "../../../src/components/ui/TextField";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
+import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAuthSession } from "../../../src/providers/AuthProvider";
@@ -205,7 +206,11 @@ export default function TransferMoneyScreen() {
           title="No connected accounts"
           message="Connect your bank first to set a source account."
           actionLabel={connectBankCta.primaryLabel}
-          onActionPress={() => router.push("/(tabs)/accounts/connect-bank?intent=new")}
+          onActionPress={() =>
+            router.push(
+              buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)/accounts/transfer" })
+            )
+          }
           hideOrb
           centerText
         />
