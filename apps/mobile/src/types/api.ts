@@ -711,7 +711,8 @@ export type GlobalBankSyncResponse = {
     | "completed"
     | "skipped_cooldown"
     | "skipped_not_due"
-    | "skipped_no_eligible_connections";
+    | "skipped_no_eligible_connections"
+    | "failed_unexpected";
   requestedAtUtc: string;
   completedAtUtc: string | null;
   dueNow: boolean;

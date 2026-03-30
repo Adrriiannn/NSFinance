@@ -12,6 +12,13 @@ export function formatSyncCooldown(remainingSeconds: number) {
 }
 
 export function getGlobalSyncFeedbackMessage(result: GlobalBankSyncResponse) {
+  if (result.outcome === "failed_unexpected") {
+    return {
+      tone: "error" as const,
+      message: "Sync failed. Please try again later."
+    };
+  }
+
   if (result.outcome === "skipped_cooldown") {
     return {
       tone: "info" as const,
@@ -34,6 +41,21 @@ export function getGlobalSyncFeedbackMessage(result: GlobalBankSyncResponse) {
   }
 
   if (result.failedConnectionCount > 0) {
+    const hasReauthFailure = result.connections.some(
+      (connection) =>
+        connection.errorCode === "bank_connection_reauth_required"
+        || connection.errorCode === "refresh_token_missing"
+        || connection.errorCode === "refresh_token_invalid"
+        || connection.status === "reauth_required"
+    );
+
+    if (hasReauthFailure) {
+      return {
+        tone: "error" as const,
+        message: "Some banks need reconnection before syncing."
+      };
+    }
+
     return {
       tone: "error" as const,
       message: "Sync finished with partial issues. Some bank connections need attention."

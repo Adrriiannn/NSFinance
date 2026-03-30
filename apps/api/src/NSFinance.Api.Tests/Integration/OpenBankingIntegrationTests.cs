@@ -210,6 +210,83 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_Continues_WhenAuditWriteFails()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-audit-failure@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-audit-failure", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var globalSyncService = harness.CreateGlobalSyncService(
+            ValidSandboxOptions(),
+            new ThrowingAuditService());
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_audit_failure",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", result.Outcome);
+    }
+
+    [Fact]
+    public async Task GlobalSync_HandlesPerConnectionExceptions_AsStructuredFailures()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: ThrowingNetworkHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-connection-throw@test.local");
+        var now = DateTime.UtcNow;
+        var connectionId = Guid.NewGuid();
+
+        harness.DbContext.OpenBankingConnections.Add(new OpenBankingConnection
+        {
+            Id = connectionId,
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Throwing Bank",
+            Status = BankConnectionStatuses.Synced,
+            CreatedUtc = now.AddDays(-1),
+            UpdatedUtc = now.AddMinutes(-2),
+            Token = new BankConnectionToken
+            {
+                Id = Guid.NewGuid(),
+                ConnectionId = connectionId,
+                EncryptedRefreshToken = Convert.ToBase64String(Encoding.UTF8.GetBytes("refresh-token")),
+                AccessTokenExpiresUtc = now.AddHours(1),
+                TokenObtainedUtc = now.AddDays(-1),
+                IsRevoked = false
+            }
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_connection_exception",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", result.Outcome);
+        Assert.Equal(1, result.FailedConnectionCount);
+        Assert.Single(result.Connections);
+        Assert.Equal("failed", result.Connections[0].Outcome);
+        Assert.Equal("sync_unexpected_exception", result.Connections[0].ErrorCode);
+    }
+
+    [Fact]
     public async Task CallbackFlow_InvalidAuthorizationCode_MarksReauthRequired()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -892,6 +969,12 @@ public class OpenBankingIntegrationTests
         });
     }
 
+    private static HttpMessageHandler ThrowingNetworkHandler()
+    {
+        return new StubHttpMessageHandler((_, _) =>
+            throw new HttpRequestException("Simulated network failure"));
+    }
+
     private static HttpMessageHandler SuccessfulCrossBankTransferFlowHandler()
     {
         return new StubHttpMessageHandler(async (request, _) =>
@@ -1161,12 +1244,12 @@ public class OpenBankingIntegrationTests
                 NullLogger<TrueLayerAuthService>.Instance);
         }
 
-        public BankGlobalSyncService CreateGlobalSyncService(TrueLayerOptions options)
+        public BankGlobalSyncService CreateGlobalSyncService(TrueLayerOptions options, IAuditService? auditService = null)
         {
             return new BankGlobalSyncService(
                 DbContext,
                 CreateSyncService(options),
-                _auditService,
+                auditService ?? _auditService,
                 NullLogger<BankGlobalSyncService>.Instance);
         }
 
@@ -1256,6 +1339,22 @@ public class OpenBankingIntegrationTests
         public async ValueTask QueueInitialSyncAsync(Guid userId, Guid connectionId, CancellationToken cancellationToken = default)
         {
             await syncService.SyncConnectionAsync(userId, connectionId, cancellationToken);
+        }
+    }
+
+    private sealed class ThrowingAuditService : IAuditService
+    {
+        public Task WriteEventAsync(
+            string category,
+            string eventName,
+            string targetEntityType,
+            string? targetEntityId,
+            Guid? actorId,
+            string actorType,
+            object? metadata,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("Simulated audit write failure");
         }
     }
 

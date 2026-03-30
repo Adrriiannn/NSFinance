@@ -256,10 +256,12 @@ export default function ActivityTabScreen() {
       const feedback = getGlobalSyncFeedbackMessage(result);
       showFlashMessage(feedback.message, { tone: feedback.tone });
     } catch (error) {
-      showFlashMessage(
-        error instanceof Error ? error.message : "Sync failed. Please try again.",
-        { tone: "error" }
-      );
+      console.info("[Banking Sync]", {
+        event: "manual_sync_request_failed",
+        source: "activity_header",
+        message: error instanceof Error ? error.message : "unknown_sync_error"
+      });
+      showFlashMessage("Sync failed. Please try again later.", { tone: "error" });
     } finally {
       if (syncSpinDelayTimerRef.current) {
         clearTimeout(syncSpinDelayTimerRef.current);
@@ -419,7 +421,6 @@ export default function ActivityTabScreen() {
               onPress={() => {
                 void handleGlobalSyncPress();
               }}
-              style={styles.headerSyncAction}
             />
           }
           secondRow={
@@ -802,13 +803,6 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   tabStage: {
     flex: 1
-  },
-  headerSyncAction: {
-    width: 36,
-    height: 36,
-    borderRadius: 6,
-    borderColor: "rgba(242,140,40,0.55)",
-    backgroundColor: "rgba(89,92,98,0.38)"
   },
   searchBackdrop: {
     ...StyleSheet.absoluteFillObject,
