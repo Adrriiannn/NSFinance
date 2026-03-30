@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -106,6 +107,49 @@ public class OpenBankingIntegrationTests
 
         var raw = await harness.DbContext.RawBankTransactions.SingleAsync();
         Assert.Equal("pending", raw.TransactionStatus);
+    }
+
+    [Fact]
+    public async Task GlobalSync_PromotesPendingAccountTransactionToBooked_WhenProviderIdIsReused()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: PendingThenBookedAccountFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.pending-promote@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-pending-promote", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+        Assert.Single(await harness.DbContext.RawBankTransactions.ToListAsync());
+        Assert.Empty(await harness.DbContext.Transactions.ToListAsync());
+
+        var firstRaw = await harness.DbContext.RawBankTransactions.SingleAsync();
+        Assert.Equal("pending", firstRaw.TransactionStatus);
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var secondSync = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_pending_to_booked_promotion",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", secondSync.Outcome);
+        Assert.True(secondSync.ChangedConnectionCount >= 1);
+
+        var rawRows = await harness.DbContext.RawBankTransactions.ToListAsync();
+        Assert.Single(rawRows);
+        Assert.Equal("booked", rawRows[0].TransactionStatus);
+        Assert.Equal("tx-pending-booked-1", rawRows[0].ProviderTransactionId);
+
+        var projected = await harness.DbContext.Transactions.ToListAsync();
+        Assert.Single(projected);
+        Assert.Equal(-42.00m, projected[0].Amount);
     }
 
     [Fact]
@@ -1179,6 +1223,121 @@ public class OpenBankingIntegrationTests
                       ]
                     }
                     """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler PendingThenBookedAccountFlowHandler()
+    {
+        var transactionCallCount = 0;
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-pending-promote",
+                      "refresh_token":"refresh-token-pending-promote",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-pending-booked-001",
+                          "display_name": "AIB Pending Promote",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "aib-ie-ob",
+                            "display_name": "Allied Irish Bank"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-pending-booked-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 950.00,
+                          "current": 1000.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T08:15:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-pending-booked-001/transactions", StringComparison.Ordinal))
+            {
+                var currentCall = Interlocked.Increment(ref transactionCallCount);
+                if (currentCall == 1)
+                {
+                    return Json(HttpStatusCode.OK, """{ "results": [] }""");
+                }
+
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-pending-booked-1",
+                          "normalised_provider_transaction_id":"norm-pending-booked-1",
+                          "amount":-42.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-30T09:40:00Z",
+                          "description":"AIB Card Payment",
+                          "transaction_type":"DEBIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-pending-booked-001/transactions/pending", StringComparison.Ordinal))
+            {
+                if (Volatile.Read(ref transactionCallCount) <= 1)
+                {
+                    return Json(HttpStatusCode.OK,
+                        """
+                        {
+                          "results": [
+                            {
+                              "transaction_id":"tx-pending-booked-1",
+                              "normalised_provider_transaction_id":"norm-pending-booked-1",
+                              "amount":-42.00,
+                              "currency":"EUR",
+                              "timestamp":"2026-03-30T09:40:00Z",
+                              "description":"AIB Card Payment",
+                              "transaction_type":"DEBIT",
+                              "status":"pending"
+                            }
+                          ]
+                        }
+                        """);
+                }
+
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }
 
             return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");

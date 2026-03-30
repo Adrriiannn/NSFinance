@@ -22,6 +22,7 @@ public sealed class BankGlobalSyncService(
         BankConnectionStatuses.ConnectedPendingSync,
         BankConnectionStatuses.Connected,
         BankConnectionStatuses.Synced,
+        BankConnectionStatuses.ReauthRequired,
         BankConnectionStatuses.Expired,
         BankConnectionStatuses.Failed,
         BankConnectionStatuses.SyncPending
@@ -73,8 +74,25 @@ public sealed class BankGlobalSyncService(
             var eligibleCandidates = connectionCandidates
                 .Where(x => eligibleStatuses.Contains(x.Status))
                 .ToList();
+            var ineligibleCandidates = connectionCandidates
+                .Where(x => !eligibleStatuses.Contains(x.Status))
+                .ToList();
             var dueNow = IsAnyConnectionDue(eligibleCandidates, requestedAtUtc);
             var lastSuccessfulSyncUtc = MaxUtc(eligibleCandidates.Select(x => x.LastSuccessfulSyncUtc));
+
+            if (ineligibleCandidates.Count > 0)
+            {
+                logger.LogInformation(
+                    "Global banking sync has ineligible connections userId={UserId} trigger={Trigger} ineligibleCount={IneligibleCount} ineligibleStatuses={IneligibleStatuses}",
+                    userId,
+                    normalizedTrigger,
+                    ineligibleCandidates.Count,
+                    string.Join(",",
+                        ineligibleCandidates
+                            .Select(candidate => candidate.Status)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(status => status, StringComparer.OrdinalIgnoreCase)));
+            }
 
             if (eligibleCandidates.Count == 0)
             {
@@ -160,11 +178,24 @@ public sealed class BankGlobalSyncService(
                 },
                 cancellationToken);
 
-            var connectionResults = new List<BankGlobalSyncConnectionResult>(eligibleCandidates.Count);
+            var connectionResults = ineligibleCandidates
+                .Select(candidate => new BankGlobalSyncConnectionResult(
+                    candidate.Id,
+                    candidate.ProviderDisplayName,
+                    candidate.Status,
+                    Outcome: "skipped_ineligible_status",
+                    AccountsSynced: 0,
+                    BalancesSynced: 0,
+                    TransactionsImported: 0,
+                    SyncedAtUtc: null,
+                    DataChanged: false,
+                    ErrorCode: "connection_status_not_syncable",
+                    ErrorMessage: $"Connection status '{candidate.Status}' is not eligible for {normalizedTrigger} sync."))
+                .ToList();
             var changedConnectionCount = 0;
             var noChangeConnectionCount = 0;
             var failedConnectionCount = 0;
-            var skippedConnectionCount = 0;
+            var skippedConnectionCount = ineligibleCandidates.Count;
 
             foreach (var candidate in eligibleCandidates)
             {

@@ -448,7 +448,7 @@ public sealed class AccountService(
                     .Select(linked => dbContext.BankBalanceSnapshots
                         .Where(balance => balance.LinkedBankAccountId == linked.Id)
                         .OrderByDescending(balance => balance.CapturedUtc)
-                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .Select(balance => (decimal?)(balance.Available ?? balance.Current))
                         .FirstOrDefault())
                     .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
                 TransactionCount = x.Transactions.Count,
@@ -501,7 +501,7 @@ public sealed class AccountService(
                     .Select(linked => dbContext.BankBalanceSnapshots
                         .Where(balance => balance.LinkedBankAccountId == linked.Id)
                         .OrderByDescending(balance => balance.CapturedUtc)
-                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .Select(balance => (decimal?)(balance.Available ?? balance.Current))
                         .FirstOrDefault())
                     .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
                 x.Transactions.Count,
@@ -530,7 +530,7 @@ public sealed class AccountService(
                     .Select(linked => dbContext.BankBalanceSnapshots
                         .Where(balance => balance.LinkedBankAccountId == linked.Id)
                         .OrderByDescending(balance => balance.CapturedUtc)
-                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .Select(balance => (decimal?)(balance.Available ?? balance.Current))
                         .FirstOrDefault())
                     .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
                 TransactionCount = x.Transactions.Count,
@@ -582,7 +582,7 @@ public sealed class AccountService(
                     .Select(linked => dbContext.BankBalanceSnapshots
                         .Where(balance => balance.LinkedBankAccountId == linked.Id)
                         .OrderByDescending(balance => balance.CapturedUtc)
-                        .Select(balance => (decimal?)(balance.Current ?? balance.Available))
+                        .Select(balance => (decimal?)(balance.Available ?? balance.Current))
                         .FirstOrDefault())
                     .FirstOrDefault() ?? (x.Transactions.Select(t => (decimal?)t.Amount).Sum() ?? 0m),
                 x.Transactions.Count,

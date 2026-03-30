@@ -328,6 +328,7 @@ public sealed class BankSyncService(
         var cardBalancesSynced = 0;
         var cardTransactionsImported = 0;
         var projectedTransactionsBackfilled = 0;
+        var projectedTransactionsPromoted = 0;
         var directDebitsSynced = 0;
         var standingOrdersSynced = 0;
         var identityInfoSynced = false;
@@ -427,6 +428,15 @@ public sealed class BankSyncService(
             if (balanceResult.Value is not null)
             {
                 var capturedAtUtc = balanceResult.Value.CapturedAtUtc;
+                logger.LogInformation(
+                    "Fetched bank balance accountId={AccountId} linkedAccountId={LinkedAccountId} capturedUtc={CapturedUtc} current={Current} available={Available} currency={Currency}",
+                    providerAccount.AccountId,
+                    linkedAccount.Id,
+                    capturedAtUtc,
+                    balanceResult.Value.Current,
+                    balanceResult.Value.Available,
+                    balanceResult.Value.Currency);
+
                 var shouldPersistBalanceSnapshot = await ShouldPersistBalanceSnapshotAsync(
                     linkedAccount.Id,
                     balanceResult.Value,
@@ -464,6 +474,13 @@ public sealed class BankSyncService(
                         capturedAtUtc);
                 }
             }
+            else
+            {
+                logger.LogInformation(
+                    "No bank balance payload returned accountId={AccountId} linkedAccountId={LinkedAccountId}",
+                    providerAccount.AccountId,
+                    linkedAccount.Id);
+            }
 
             var transactionWindow = BuildTransactionWindow(
                 connection,
@@ -494,7 +511,11 @@ public sealed class BankSyncService(
                 return await HandleSyncFailureAsync(connection, transactionsResult.Error!, trigger, cancellationToken);
             }
 
-            var allAccountTransactions = transactionsResult.Value!.ToList();
+            var settledTransactions = transactionsResult.Value!;
+            var settledFetched = settledTransactions.Count;
+            var allAccountTransactions = settledTransactions.ToList();
+            var pendingFetched = 0;
+            var pendingOutcome = "not_requested";
             var pendingTransactionsResult = await dataService.GetPendingTransactionsAsync(
                 configuration,
                 accessToken,
@@ -505,10 +526,13 @@ public sealed class BankSyncService(
 
             if (pendingTransactionsResult.Succeeded)
             {
-                allAccountTransactions.AddRange(pendingTransactionsResult.Value!);
+                pendingFetched = pendingTransactionsResult.Value!.Count;
+                pendingOutcome = "succeeded";
+                allAccountTransactions.AddRange(pendingTransactionsResult.Value);
             }
             else if (IsOptionalDatasetUnsupported(pendingTransactionsResult.Error))
             {
+                pendingOutcome = "unsupported";
                 logger.LogInformation(
                     "Pending account transactions endpoint unavailable for accountId={AccountId} connectionId={ConnectionId} status={StatusCode}",
                     providerAccount.AccountId,
@@ -517,6 +541,7 @@ public sealed class BankSyncService(
             }
             else
             {
+                pendingOutcome = "failed";
                 logger.LogWarning(
                     "Pending account transactions sync failed for accountId={AccountId} connectionId={ConnectionId} status={StatusCode} code={Code}",
                     providerAccount.AccountId,
@@ -524,6 +549,15 @@ public sealed class BankSyncService(
                     pendingTransactionsResult.Error?.StatusCode,
                     pendingTransactionsResult.Error?.Code);
             }
+
+            logger.LogInformation(
+                "Fetched bank transactions accountId={AccountId} connectionId={ConnectionId} settledFetched={SettledFetched} pendingFetched={PendingFetched} pendingOutcome={PendingOutcome} totalFetched={TotalFetched}",
+                providerAccount.AccountId,
+                connection.Id,
+                settledFetched,
+                pendingFetched,
+                pendingOutcome,
+                allAccountTransactions.Count);
 
             if (isInitialBackfill
                 && string.Equals(transactionWindow.PolicyName, "revolut_initial_6y", StringComparison.Ordinal)
@@ -546,18 +580,21 @@ public sealed class BankSyncService(
                 allAccountTransactions,
                 now,
                 cancellationToken);
-            transactionsImported += transactionUpsert.RawInserted;
+            transactionsImported += transactionUpsert.RawInserted + transactionUpsert.RawUpdated;
+            projectedTransactionsPromoted += transactionUpsert.ProjectedFromStatusTransition;
             projectedTransactionsBackfilled += transactionUpsert.ProjectedBackfilled;
 
             logger.LogInformation(
-                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} fetched={Fetched} rawInserted={RawInserted} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
+                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} fetched={Fetched} rawInserted={RawInserted} rawUpdated={RawUpdated} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedFromStatusTransition={ProjectedFromStatusTransition} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
                 providerAccount.AccountId,
                 connection.Id,
                 transactionUpsert.Fetched,
                 transactionUpsert.RawInserted,
+                transactionUpsert.RawUpdated,
                 transactionUpsert.RawSkippedProviderId,
                 transactionUpsert.RawSkippedDedupe,
                 transactionUpsert.ProjectedFromNewRaw,
+                transactionUpsert.ProjectedFromStatusTransition,
                 transactionUpsert.ProjectedBackfilled,
                 transactionUpsert.ProjectedSkippedUnbooked);
 
@@ -853,6 +890,7 @@ public sealed class BankSyncService(
         var dataChanged =
             transactionsImported > 0
             || cardTransactionsImported > 0
+            || projectedTransactionsPromoted > 0
             || projectedTransactionsBackfilled > 0
             || balancesSynced > 0
             || cardBalancesSynced > 0
@@ -877,6 +915,7 @@ public sealed class BankSyncService(
                 accountsSynced,
                 balancesSynced,
                 transactionsImported,
+                projectedTransactionsPromoted,
                 cardsSynced,
                 cardBalancesSynced,
                 cardTransactionsImported,
@@ -1091,43 +1130,43 @@ public sealed class BankSyncService(
         CancellationToken cancellationToken)
     {
         var fetchedCount = providerTransactions.Count;
-
-        var existingProviderIds = await dbContext.RawBankTransactions
-            .Where(x => x.LinkedBankAccountId == linkedAccount.Id && x.ProviderTransactionId != null)
-            .Select(x => x.ProviderTransactionId!)
-            .ToHashSetAsync(cancellationToken);
-
-        var existingDedupeKeys = await dbContext.RawBankTransactions
+        var existingRawRows = await dbContext.RawBankTransactions
             .Where(x => x.LinkedBankAccountId == linkedAccount.Id)
-            .Select(x => x.DedupeKey)
-            .ToHashSetAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        var existingRawByProviderId = new Dictionary<string, RawBankTransaction>(StringComparer.Ordinal);
+        var existingRawByDedupeKey = new Dictionary<string, RawBankTransaction>(StringComparer.Ordinal);
+        foreach (var row in existingRawRows.OrderByDescending(x => x.ImportedUtc))
+        {
+            if (!string.IsNullOrWhiteSpace(row.ProviderTransactionId)
+                && !existingRawByProviderId.ContainsKey(row.ProviderTransactionId))
+            {
+                existingRawByProviderId[row.ProviderTransactionId] = row;
+            }
+
+            if (!existingRawByDedupeKey.ContainsKey(row.DedupeKey))
+            {
+                existingRawByDedupeKey[row.DedupeKey] = row;
+            }
+        }
 
         var rawInserted = 0;
+        var rawUpdated = 0;
         var rawSkippedProviderId = 0;
         var rawSkippedDedupe = 0;
         var projectedFromNewRaw = 0;
+        var projectedFromStatusTransition = 0;
         var projectedBackfilled = 0;
         var projectedSkippedUnbooked = 0;
+        var projectionFingerprints = new HashSet<string>(StringComparer.Ordinal);
 
         if (linkedAccount.FinancialAccountId.HasValue)
         {
             var projectedAccountId = linkedAccount.FinancialAccountId.Value;
-            var projectionFingerprints = await dbContext.Transactions
+            projectionFingerprints = await dbContext.Transactions
                 .Where(x => x.FinancialAccountId == projectedAccountId)
                 .Select(x => CreateProjectionFingerprint(x.Amount, x.Currency, x.BookedAtUtc, x.Description))
                 .ToHashSetAsync(cancellationToken);
-
-            var existingRawRows = await dbContext.RawBankTransactions
-                .Where(x => x.LinkedBankAccountId == linkedAccount.Id)
-                .Select(x => new
-                {
-                    x.Amount,
-                    x.Currency,
-                    x.BookedAtUtc,
-                    x.Description,
-                    x.TransactionStatus
-                })
-                .ToListAsync(cancellationToken);
 
             foreach (var row in existingRawRows)
             {
@@ -1164,16 +1203,83 @@ public sealed class BankSyncService(
 
         foreach (var providerTransaction in providerTransactions)
         {
+            var matchedByProviderId = false;
+            RawBankTransaction? existingRaw = null;
             if (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId)
-                && existingProviderIds.Contains(providerTransaction.ProviderTransactionId))
+                && existingRawByProviderId.TryGetValue(providerTransaction.ProviderTransactionId, out var existingByProviderId))
             {
-                rawSkippedProviderId++;
-                continue;
+                existingRaw = existingByProviderId;
+                matchedByProviderId = true;
+            }
+            else if (existingRawByDedupeKey.TryGetValue(providerTransaction.DedupeKey, out var existingByDedupeKey))
+            {
+                existingRaw = existingByDedupeKey;
             }
 
-            if (existingDedupeKeys.Contains(providerTransaction.DedupeKey))
+            if (existingRaw is not null)
             {
-                rawSkippedDedupe++;
+                var wasBooked = IsBookedProjectionStatus(existingRaw.TransactionStatus);
+                var previousProviderTransactionId = existingRaw.ProviderTransactionId;
+                var previousDedupeKey = existingRaw.DedupeKey;
+                var changed = ApplyRawTransactionUpdate(existingRaw, providerTransaction, now);
+                if (changed)
+                {
+                    rawUpdated++;
+                }
+                else if (matchedByProviderId)
+                {
+                    rawSkippedProviderId++;
+                }
+                else
+                {
+                    rawSkippedDedupe++;
+                }
+
+                if (!string.Equals(previousProviderTransactionId, existingRaw.ProviderTransactionId, StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(previousProviderTransactionId))
+                {
+                    existingRawByProviderId.Remove(previousProviderTransactionId);
+                }
+
+                if (!string.Equals(previousDedupeKey, existingRaw.DedupeKey, StringComparison.Ordinal))
+                {
+                    existingRawByDedupeKey.Remove(previousDedupeKey);
+                }
+
+                if (!string.IsNullOrWhiteSpace(existingRaw.ProviderTransactionId))
+                {
+                    existingRawByProviderId[existingRaw.ProviderTransactionId] = existingRaw;
+                }
+
+                existingRawByDedupeKey[existingRaw.DedupeKey] = existingRaw;
+
+                var isNowBooked = IsBookedProjectionStatus(existingRaw.TransactionStatus);
+                if (!wasBooked
+                    && isNowBooked
+                    && linkedAccount.FinancialAccountId.HasValue)
+                {
+                    var projectionFingerprint = CreateProjectionFingerprint(
+                        existingRaw.Amount,
+                        existingRaw.Currency,
+                        existingRaw.BookedAtUtc,
+                        existingRaw.Description);
+
+                    if (projectionFingerprints.Add(projectionFingerprint))
+                    {
+                        dbContext.Transactions.Add(new Transaction
+                        {
+                            Id = Guid.NewGuid(),
+                            FinancialAccountId = linkedAccount.FinancialAccountId.Value,
+                            Amount = existingRaw.Amount,
+                            Currency = existingRaw.Currency,
+                            Description = existingRaw.Description,
+                            BookedAtUtc = existingRaw.BookedAtUtc,
+                            CreatedUtc = now
+                        });
+                        projectedFromStatusTransition++;
+                    }
+                }
+
                 continue;
             }
 
@@ -1218,21 +1324,93 @@ public sealed class BankSyncService(
 
             if (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId))
             {
-                existingProviderIds.Add(providerTransaction.ProviderTransactionId);
+                existingRawByProviderId[providerTransaction.ProviderTransactionId] = rawTransaction;
             }
 
-            existingDedupeKeys.Add(providerTransaction.DedupeKey);
+            existingRawByDedupeKey[providerTransaction.DedupeKey] = rawTransaction;
             rawInserted++;
         }
 
         return new TransactionUpsertSummary(
             fetchedCount,
             rawInserted,
+            rawUpdated,
             rawSkippedProviderId,
             rawSkippedDedupe,
             projectedFromNewRaw,
+            projectedFromStatusTransition,
             projectedBackfilled,
             projectedSkippedUnbooked);
+    }
+
+    private static bool ApplyRawTransactionUpdate(
+        RawBankTransaction existing,
+        TrueLayerTransactionRecord incoming,
+        DateTime importedUtc)
+    {
+        var changed = false;
+
+        if (!string.IsNullOrWhiteSpace(incoming.ProviderTransactionId)
+            && !string.Equals(existing.ProviderTransactionId, incoming.ProviderTransactionId, StringComparison.Ordinal))
+        {
+            existing.ProviderTransactionId = incoming.ProviderTransactionId;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.DedupeKey, incoming.DedupeKey, StringComparison.Ordinal))
+        {
+            existing.DedupeKey = incoming.DedupeKey;
+            changed = true;
+        }
+
+        if (existing.Amount != incoming.Amount)
+        {
+            existing.Amount = incoming.Amount;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.Currency, incoming.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            existing.Currency = incoming.Currency;
+            changed = true;
+        }
+
+        if (existing.BookedAtUtc != incoming.BookedAtUtc)
+        {
+            existing.BookedAtUtc = incoming.BookedAtUtc;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.Description, incoming.Description, StringComparison.Ordinal))
+        {
+            existing.Description = incoming.Description;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.TransactionType, incoming.TransactionType, StringComparison.Ordinal))
+        {
+            existing.TransactionType = incoming.TransactionType;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.TransactionStatus, incoming.TransactionStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            existing.TransactionStatus = incoming.TransactionStatus;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.RawPayloadJson, incoming.RawPayloadJson, StringComparison.Ordinal))
+        {
+            existing.RawPayloadJson = incoming.RawPayloadJson;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            existing.ImportedUtc = importedUtc;
+        }
+
+        return changed;
     }
 
     private async Task UpsertIdentityInfoAsync(
@@ -1551,9 +1729,11 @@ public sealed class BankSyncService(
     private sealed record TransactionUpsertSummary(
         int Fetched,
         int RawInserted,
+        int RawUpdated,
         int RawSkippedProviderId,
         int RawSkippedDedupe,
         int ProjectedFromNewRaw,
+        int ProjectedFromStatusTransition,
         int ProjectedBackfilled,
         int ProjectedSkippedUnbooked);
 

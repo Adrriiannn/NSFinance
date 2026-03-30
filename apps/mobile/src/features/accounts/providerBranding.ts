@@ -1,71 +1,170 @@
-type ProviderFallback = {
-  monogram: string;
+import type { ImageSourcePropType } from "react-native";
+
+type BankLogoRecord = {
+  source: ImageSourcePropType;
+  aliases: RegExp[];
+  fallbackMonogram: string;
 };
 
-type KnownProviderKey =
-  | "aib"
-  | "boi"
-  | "revolut"
-  | "n26"
-  | "monzo"
-  | "starling"
-  | "wise"
-  | "santander"
-  | "bunq";
-
-const KNOWN_PROVIDER_FALLBACKS: Record<KnownProviderKey, ProviderFallback> = {
-  aib: { monogram: "AIB" },
-  boi: { monogram: "BOI" },
-  revolut: { monogram: "R" },
-  n26: { monogram: "N26" },
-  monzo: { monogram: "MZ" },
-  starling: { monogram: "ST" },
-  wise: { monogram: "W" },
-  santander: { monogram: "SAN" },
-  bunq: { monogram: "BQ" }
-};
-
-const PROVIDER_PATTERNS: {
-  key: KnownProviderKey;
-  patterns: RegExp[];
-}[] = [
-  {
-    key: "aib",
-    patterns: [/\baib\b/i, /\ballied irish bank\b/i]
+const BANK_LOGOS = {
+  aib: {
+    source: require("../../../assets/Banks/AIB/AIB.png"),
+    aliases: [/\baib\b/i, /\ballied irish bank\b/i],
+    fallbackMonogram: "AIB"
   },
-  {
-    key: "boi",
-    patterns: [/\bboi\b/i, /\bbank of ireland\b/i]
+  americanExpress: {
+    source: require("../../../assets/Banks/AmericanExpress/AmericanExpress.png"),
+    aliases: [/\bamerican express\b/i, /\bamex\b/i],
+    fallbackMonogram: "AMEX"
   },
-  {
-    key: "revolut",
-    patterns: [/\brevolut\b/i]
+  bankOfScotland: {
+    source: require("../../../assets/Banks/BankOfScotland/BankOfScotland.png"),
+    aliases: [/\bbank of scotland\b/i],
+    fallbackMonogram: "BOS"
   },
-  {
-    key: "n26",
-    patterns: [/\bn26\b/i]
+  barclaycard: {
+    source: require("../../../assets/Banks/Barclaycard/Barclaycard.png"),
+    aliases: [/\bbarclaycard\b/i],
+    fallbackMonogram: "BAR"
   },
-  {
-    key: "monzo",
-    patterns: [/\bmonzo\b/i]
+  barclays: {
+    source: require("../../../assets/Banks/Barclays/Barclays.png"),
+    aliases: [/\bbarclays\b/i],
+    fallbackMonogram: "BAR"
   },
-  {
-    key: "starling",
-    patterns: [/\bstarling\b/i]
+  boi: {
+    source: require("../../../assets/Banks/BOI/BOI.png"),
+    aliases: [/\bboi\b/i, /\bbank of ireland\b/i],
+    fallbackMonogram: "BOI"
   },
-  {
-    key: "wise",
-    patterns: [/\bwise\b/i]
+  capitalOne: {
+    source: require("../../../assets/Banks/CapitalOne/CapitalOne.png"),
+    aliases: [/\bcapital one\b/i],
+    fallbackMonogram: "CO"
   },
-  {
-    key: "santander",
-    patterns: [/\bsantander\b/i]
+  chelseaBuildingSociety: {
+    source: require("../../../assets/Banks/ChelseaBuildingSociety/ChelseaBuildingSociety.png"),
+    aliases: [/\bchelsea building society\b/i],
+    fallbackMonogram: "CBS"
   },
-  {
-    key: "bunq",
-    patterns: [/\bbunq\b/i]
+  danskeBank: {
+    source: require("../../../assets/Banks/DanskeBank/DanskeBank.png"),
+    aliases: [/\bdanske\b/i],
+    fallbackMonogram: "DB"
+  },
+  firstDirect: {
+    source: require("../../../assets/Banks/FirstDirect/FirstDirect.png"),
+    aliases: [/\bfirst direct\b/i],
+    fallbackMonogram: "FD"
+  },
+  halifax: {
+    source: require("../../../assets/Banks/Halifax/Halifax.png"),
+    aliases: [/\bhalifax\b/i],
+    fallbackMonogram: "HX"
+  },
+  hsbc: {
+    source: require("../../../assets/Banks/HSBC/HSBC.png"),
+    aliases: [/\bhsbc\b/i],
+    fallbackMonogram: "HSBC"
+  },
+  lloydsBank: {
+    source: require("../../../assets/Banks/LloydsBank/LloydsBank.png"),
+    aliases: [/\blloyds\b/i],
+    fallbackMonogram: "LB"
+  },
+  mbna: {
+    source: require("../../../assets/Banks/MBNA/MBNA.png"),
+    aliases: [/\bmbna\b/i],
+    fallbackMonogram: "MBNA"
+  },
+  mettle: {
+    source: require("../../../assets/Banks/Mettle/Mettle.png"),
+    aliases: [/\bmettle\b/i],
+    fallbackMonogram: "MET"
+  },
+  monzo: {
+    source: require("../../../assets/Banks/Monzo/Monzo.png"),
+    aliases: [/\bmonzo\b/i],
+    fallbackMonogram: "MZ"
+  },
+  msBank: {
+    source: require("../../../assets/Banks/MSBank/MSBank.png"),
+    aliases: [/\bms bank\b/i, /\bm&s bank\b/i, /\bmarks and spencer bank\b/i],
+    fallbackMonogram: "MS"
+  },
+  nationwide: {
+    source: require("../../../assets/Banks/Nationwide/Nationwide.png"),
+    aliases: [/\bnationwide\b/i],
+    fallbackMonogram: "NW"
+  },
+  natWest: {
+    source: require("../../../assets/Banks/NatWest/Natwest.png"),
+    aliases: [/\bnatwest\b/i],
+    fallbackMonogram: "NW"
+  },
+  ptsb: {
+    source: require("../../../assets/Banks/PTSB/PTSB.png"),
+    aliases: [/\bptsb\b/i, /\bpermanent tsb\b/i],
+    fallbackMonogram: "PTSB"
+  },
+  revolut: {
+    source: require("../../../assets/Banks/Revolut/Revolut.png"),
+    aliases: [/\brevolut\b/i],
+    fallbackMonogram: "R"
+  },
+  santander: {
+    source: require("../../../assets/Banks/Santander/Santander.png"),
+    aliases: [/\bsantander\b/i],
+    fallbackMonogram: "SAN"
+  },
+  starlingBank: {
+    source: require("../../../assets/Banks/StarlingBank/StarlingBank.png"),
+    aliases: [/\bstarling\b/i],
+    fallbackMonogram: "SB"
+  },
+  tescoBank: {
+    source: require("../../../assets/Banks/TescoBank/TescoBank.png"),
+    aliases: [/\btesco bank\b/i],
+    fallbackMonogram: "TB"
+  },
+  royalBankOfScotland: {
+    source: require("../../../assets/Banks/TheRoyalBankOfScotland/RoyalBankOfScotland.png"),
+    aliases: [/\broyal bank of scotland\b/i, /\brbs\b/i],
+    fallbackMonogram: "RBS"
+  },
+  tide: {
+    source: require("../../../assets/Banks/Tide/Tide.png"),
+    aliases: [/\btide\b/i],
+    fallbackMonogram: "TD"
+  },
+  ulsterBank: {
+    source: require("../../../assets/Banks/UlsterBank/UlsterBank.png"),
+    aliases: [/\bulster\b/i],
+    fallbackMonogram: "UB"
+  },
+  virginMoney: {
+    source: require("../../../assets/Banks/VirginMoney/VirginMoney.png"),
+    aliases: [/\bvirgin money\b/i],
+    fallbackMonogram: "VM"
+  },
+  wise: {
+    source: require("../../../assets/Banks/WISE/WISE.png"),
+    aliases: [/\bwise\b/i],
+    fallbackMonogram: "W"
+  },
+  yorkshireBuildingSociety: {
+    source: require("../../../assets/Banks/YorkshireBuildingSociety/YorkshireBuildingSociety.png"),
+    aliases: [/\byorkshire building society\b/i],
+    fallbackMonogram: "YBS"
+  },
+  zemplerBank: {
+    source: require("../../../assets/Banks/ZemplerBank/ZemplerBank.png"),
+    aliases: [/\bzempler\b/i],
+    fallbackMonogram: "ZB"
   }
-];
+} satisfies Record<string, BankLogoRecord>;
+
+type BankLogoKey = keyof typeof BANK_LOGOS;
 
 export type ProviderBadgeInput = {
   providerId?: string | null;
@@ -75,60 +174,46 @@ export type ProviderBadgeInput = {
 };
 
 export type ResolvedProviderBadge = {
-  remoteIconUrls: string[];
+  logoSource: ImageSourcePropType | null;
   displayName: string | null;
   monogram: string | null;
-  canonicalProviderKey: KnownProviderKey | null;
+  bankLogoKey: BankLogoKey | null;
 };
 
 export function resolveProviderBadge(input: ProviderBadgeInput): ResolvedProviderBadge {
-  const providerIdKey = normalizeProviderKey(input.providerId);
-  const providerName = input.providerDisplayName?.trim() || null;
-  const providerNameKey = normalizeProviderKey(providerName);
-  const canonicalProviderKey = resolveCanonicalProviderKey(providerIdKey, providerNameKey);
-  const fallback = canonicalProviderKey ? KNOWN_PROVIDER_FALLBACKS[canonicalProviderKey] : undefined;
-
-  const remoteIconUrls = dedupeUrls([
-    normalizeUrl(input.providerLogoUrl),
-    normalizeUrl(input.providerIconUrl)
-  ]);
-  const monogram = fallback?.monogram ?? deriveMonogram(providerName);
+  const providerName = normalizeLabel(input.providerDisplayName);
+  const providerId = normalizeLabel(input.providerId);
+  const bankLogoKey = resolveBankLogoKey(providerId, providerName);
+  const bankLogo = bankLogoKey ? BANK_LOGOS[bankLogoKey] : null;
 
   return {
-    remoteIconUrls,
+    logoSource: bankLogo?.source ?? null,
     displayName: providerName,
-    monogram,
-    canonicalProviderKey
+    monogram: bankLogo?.fallbackMonogram ?? deriveMonogram(providerName ?? providerId),
+    bankLogoKey
   };
 }
 
-function resolveCanonicalProviderKey(
-  providerIdKey: string | null,
-  providerNameKey: string | null
-): KnownProviderKey | null {
-  const candidates = [providerIdKey, providerNameKey].filter((value): value is string => Boolean(value));
-  if (candidates.length === 0) {
-    return null;
-  }
+function resolveBankLogoKey(
+  normalizedProviderId: string | null,
+  normalizedProviderDisplayName: string | null
+): BankLogoKey | null {
+  const candidates = [normalizedProviderId, normalizedProviderDisplayName].filter(
+    (value): value is string => Boolean(value)
+  );
 
   for (const candidate of candidates) {
-    const exact = PROVIDER_PATTERNS.find(({ key }) => key === candidate);
-    if (exact) {
-      return exact.key;
-    }
-
-    const fuzzy = PROVIDER_PATTERNS.find(({ patterns }) =>
-      patterns.some((pattern) => pattern.test(candidate))
-    );
-    if (fuzzy) {
-      return fuzzy.key;
+    for (const [key, value] of Object.entries(BANK_LOGOS) as [BankLogoKey, BankLogoRecord][]) {
+      if (value.aliases.some((alias) => alias.test(candidate))) {
+        return key;
+      }
     }
   }
 
   return null;
 }
 
-function normalizeProviderKey(value: string | null | undefined): string | null {
+function normalizeLabel(value: string | null | undefined): string | null {
   if (!value) {
     return null;
   }
@@ -143,48 +228,12 @@ function normalizeProviderKey(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function normalizeUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
+function deriveMonogram(value: string | null): string | null {
+  if (!value) {
     return null;
   }
 
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
-  }
-
-  if (/^\/\//.test(trimmed)) {
-    return `https:${trimmed}`;
-  }
-
-  if (/^data:image\//i.test(trimmed)) {
-    return trimmed;
-  }
-
-  return null;
-}
-
-function dedupeUrls(urls: (string | null)[]): string[] {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const candidate of urls) {
-    if (!candidate || seen.has(candidate)) {
-      continue;
-    }
-
-    seen.add(candidate);
-    deduped.push(candidate);
-  }
-
-  return deduped;
-}
-
-function deriveMonogram(providerName: string | null): string | null {
-  if (!providerName) {
-    return null;
-  }
-
-  const words = providerName
+  const words = value
     .split(/[\s&/-]+/)
     .map((segment) => segment.trim())
     .filter(Boolean);
@@ -195,7 +244,7 @@ function deriveMonogram(providerName: string | null): string | null {
 
   if (words.length === 1) {
     const cleaned = words[0].replace(/[^a-z0-9]/gi, "");
-    if (cleaned.length <= 3) {
+    if (cleaned.length <= 4) {
       return cleaned.toUpperCase();
     }
 
