@@ -26,6 +26,7 @@ type ActivitySearchBarProps = {
   currencies: string[];
   selectedCurrency: string;
   onFocusSearch: () => void;
+  onOpenFilters: () => void;
   onSetRawSearchText: (value: string) => void;
   onSetActiveDraft: (value: string) => void;
   onConfirmActiveDraft: (options?: { reopenDropdown?: boolean }) => void;
@@ -62,6 +63,7 @@ export function ActivitySearchBar({
   currencies,
   selectedCurrency,
   onFocusSearch,
+  onOpenFilters,
   onSetRawSearchText,
   onSetActiveDraft,
   onConfirmActiveDraft,
@@ -143,9 +145,16 @@ export function ActivitySearchBar({
     onFocusSearch();
   };
 
+  const handleInputShellPress = () => {
+    onFocusSearch();
+    requestAnimationFrame(() => {
+      mainInputRef.current?.focus();
+    });
+  };
+
   return (
     <View style={styles.wrap}>
-      <Pressable style={styles.inputShell} onPress={onFocusSearch}>
+      <Pressable style={styles.inputShell} onPress={handleInputShellPress}>
         <Ionicons name="search-outline" size={18} color={palette.textSecondary} />
 
         <ScrollView
@@ -190,11 +199,16 @@ export function ActivitySearchBar({
           />
         </ScrollView>
 
-        {hasSearchContent ? (
-          <Pressable onPress={onClearSearch} style={styles.clearButton}>
-            <Ionicons name="close" size={16} color={palette.textSecondary} />
+        <View style={styles.trailingActions}>
+          {hasSearchContent ? (
+            <Pressable onPress={onClearSearch} style={styles.clearButton}>
+              <Ionicons name="close" size={16} color={palette.textSecondary} />
+            </Pressable>
+          ) : null}
+          <Pressable onPress={onOpenFilters} style={styles.filterButton}>
+            <Ionicons name="options-outline" size={18} color={palette.textSecondary} />
           </Pressable>
-        ) : null}
+        </View>
       </Pressable>
 
       <ActivitySearchDropdown
@@ -254,6 +268,17 @@ const styles = createRuntimeStyleSheet(() => ({
     flexGrow: 0
   },
   clearButton: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  trailingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[2]
+  },
+  filterButton: {
     width: 24,
     height: 24,
     alignItems: "center",

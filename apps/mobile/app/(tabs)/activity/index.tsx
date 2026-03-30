@@ -314,6 +314,7 @@ export default function ActivityTabScreen() {
               currencies={search.availableCurrencies}
               selectedCurrency={search.activeCurrencyCode}
               onFocusSearch={search.focusSearch}
+              onOpenFilters={search.openFilters}
               onSetRawSearchText={search.setRawSearchText}
               onSetActiveDraft={search.setActiveTokenDraft}
               onConfirmActiveDraft={search.confirmTokenDraft}

@@ -293,11 +293,18 @@ export function useActivitySearch({
 
   const focusSearch = useCallback(() => {
     setSearchFocused(true);
-    setDropdownOpen(true);
     if (!activeTokenType) {
       setActiveTokenId(null);
     }
   }, [activeTokenType]);
+
+  const openFilters = useCallback(() => {
+    setSearchFocused(true);
+    setDropdownOpen(true);
+    setActiveTokenType(null);
+    setActiveTokenId(null);
+    setActiveTokenDraft("");
+  }, []);
 
   const beginEditingToken = useCallback(
     (tokenId: string) => {
@@ -762,6 +769,7 @@ export function useActivitySearch({
     activeCurrencyMetadata,
     filteredTransactions,
     focusSearch,
+    openFilters,
     dismissDropdown,
     beginEditingToken,
     selectFilterOption,
