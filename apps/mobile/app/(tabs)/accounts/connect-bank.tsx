@@ -839,15 +839,17 @@ export default function AddAccountModalScreen() {
         ? "We still have not seen the completed bank connection. If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
         : uiState === "awaiting_consent"
           ? "Finish the bank consent flow in your browser. As soon as you return, we will start checking the saved connection."
-          : uiState === "connected_pending_sync"
-            ? "Connection confirmed. We are syncing the first account details now."
+        : uiState === "connected_pending_sync"
+            ? "Connection confirmed. We are syncing the first account details now. Some providers may still return cached data briefly."
             : uiState === "syncing_data"
-              ? "Connected to your bank. We are importing account details and recent transactions now."
+              ? "Connected to your bank. We are importing account details and recent transactions now. Pending card/bank payments may not appear until booked."
               : uiState === "failed"
                 ? "The bank connection exists, but data sync failed. You can retry sync without reconnecting."
                 : uiState === "reauth_required"
                   ? "Provider access expired or failed. Your imported history is still saved. Reconnect your bank to resume syncing."
                   : undefined;
+  const providerFreshnessNote =
+    "Provider note: balances/transactions can be briefly cached, and pending payments appear only after booking.";
 
   const canSyncNow = activeConnection ? syncableStatuses.has(activeConnection.status) : false;
   const bankName = activeConnection?.providerDisplayName?.trim() || "Waiting for institution details";
@@ -983,6 +985,7 @@ export default function AddAccountModalScreen() {
               ))}
             </>
           ) : null}
+          <Text style={styles.metadataHint}>{providerFreshnessNote}</Text>
         </View>
 
         {showRefreshAction ? (
@@ -1096,6 +1099,10 @@ const styles = createRuntimeStyleSheet(() => ({
     color: palette.textSecondary,
     ...typography.body2,
     marginLeft: spacing[8]
+  },
+  metadataHint: {
+    color: palette.textSecondary,
+    ...typography.caption
   },
   resumeCard: {
     borderWidth: 1,

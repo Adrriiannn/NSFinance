@@ -1,6 +1,6 @@
 export const nearLiveFinanceQueryOptions = {
   staleTime: 30_000,
-  refetchOnMount: false,
+  refetchOnMount: true,
   refetchOnWindowFocus: false,
   refetchOnReconnect: true,
   refetchInterval: false as const,

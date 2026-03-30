@@ -26,6 +26,21 @@ public sealed class BankSyncService(
     private const int InternalTransferMatchMaxWindowHours = 72;
     private const int InternalTransferMatchMinimumScore = 5;
     private static readonly TimeSpan RevolutMaxHistoryWindow = TimeSpan.FromMinutes(5);
+    private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
+    [
+        "account",
+        "accounts",
+        "current",
+        "savings",
+        "bank",
+        "card",
+        "payment",
+        "transfer",
+        "from",
+        "into",
+        "the",
+        "and"
+    ];
     private static readonly HashSet<string> RequestedScopeSet = TrueLayerScopes.Default
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -410,6 +425,7 @@ public sealed class BankSyncService(
 
             if (balanceResult.Value is not null)
             {
+                var capturedAtUtc = balanceResult.Value.CapturedAtUtc;
                 dbContext.BankBalanceSnapshots.Add(new BankBalanceSnapshot
                 {
                     Id = Guid.NewGuid(),
@@ -418,10 +434,18 @@ public sealed class BankSyncService(
                     Current = balanceResult.Value.Current,
                     Overdraft = balanceResult.Value.Overdraft,
                     Currency = balanceResult.Value.Currency,
-                    CapturedUtc = balanceResult.Value.CapturedAtUtc,
+                    CapturedUtc = capturedAtUtc,
                     RawPayloadJson = balanceResult.Value.RawPayloadJson
                 });
                 balancesSynced++;
+                logger.LogInformation(
+                    "Recorded bank balance snapshot accountId={AccountId} linkedAccountId={LinkedAccountId} capturedUtc={CapturedUtc} current={Current} available={Available} currency={Currency}",
+                    providerAccount.AccountId,
+                    linkedAccount.Id,
+                    capturedAtUtc,
+                    balanceResult.Value.Current,
+                    balanceResult.Value.Available,
+                    balanceResult.Value.Currency);
             }
 
             var transactionWindow = BuildTransactionWindow(
@@ -477,7 +501,7 @@ public sealed class BankSyncService(
             transactionsImported += transactionUpsert.RawInserted;
 
             logger.LogInformation(
-                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} fetched={Fetched} rawInserted={RawInserted} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedBackfilled={ProjectedBackfilled}",
+                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} fetched={Fetched} rawInserted={RawInserted} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
                 providerAccount.AccountId,
                 connection.Id,
                 transactionUpsert.Fetched,
@@ -485,7 +509,8 @@ public sealed class BankSyncService(
                 transactionUpsert.RawSkippedProviderId,
                 transactionUpsert.RawSkippedDedupe,
                 transactionUpsert.ProjectedFromNewRaw,
-                transactionUpsert.ProjectedBackfilled);
+                transactionUpsert.ProjectedBackfilled,
+                transactionUpsert.ProjectedSkippedUnbooked);
 
             if (transactionUpsert.ProjectedBackfilled > 0)
             {
@@ -494,6 +519,15 @@ public sealed class BankSyncService(
                     providerAccount.AccountId,
                     connection.Id,
                     transactionUpsert.ProjectedBackfilled);
+            }
+
+            if (transactionUpsert.ProjectedSkippedUnbooked > 0)
+            {
+                logger.LogInformation(
+                    "Skipped projecting non-booked bank transactions into ledger accountId={AccountId} connectionId={ConnectionId} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
+                    providerAccount.AccountId,
+                    connection.Id,
+                    transactionUpsert.ProjectedSkippedUnbooked);
             }
 
             if (ShouldRequestScope(connection.GrantedScopesCsv, "direct_debits"))
@@ -910,6 +944,7 @@ public sealed class BankSyncService(
         var rawSkippedDedupe = 0;
         var projectedFromNewRaw = 0;
         var projectedBackfilled = 0;
+        var projectedSkippedUnbooked = 0;
 
         if (linkedAccount.FinancialAccountId.HasValue)
         {
@@ -926,12 +961,19 @@ public sealed class BankSyncService(
                     x.Amount,
                     x.Currency,
                     x.BookedAtUtc,
-                    x.Description
+                    x.Description,
+                    x.TransactionStatus
                 })
                 .ToListAsync(cancellationToken);
 
             foreach (var row in existingRawRows)
             {
+                if (!IsBookedProjectionStatus(row.TransactionStatus))
+                {
+                    projectedSkippedUnbooked++;
+                    continue;
+                }
+
                 var projectionFingerprint = CreateProjectionFingerprint(
                     row.Amount,
                     row.Currency,
@@ -991,17 +1033,24 @@ public sealed class BankSyncService(
 
             if (linkedAccount.FinancialAccountId.HasValue)
             {
-                dbContext.Transactions.Add(new Transaction
+                if (IsBookedProjectionStatus(providerTransaction.TransactionStatus))
                 {
-                    Id = Guid.NewGuid(),
-                    FinancialAccountId = linkedAccount.FinancialAccountId.Value,
-                    Amount = providerTransaction.Amount,
-                    Currency = providerTransaction.Currency,
-                    Description = providerTransaction.Description,
-                    BookedAtUtc = providerTransaction.BookedAtUtc,
-                    CreatedUtc = now
-                });
-                projectedFromNewRaw++;
+                    dbContext.Transactions.Add(new Transaction
+                    {
+                        Id = Guid.NewGuid(),
+                        FinancialAccountId = linkedAccount.FinancialAccountId.Value,
+                        Amount = providerTransaction.Amount,
+                        Currency = providerTransaction.Currency,
+                        Description = providerTransaction.Description,
+                        BookedAtUtc = providerTransaction.BookedAtUtc,
+                        CreatedUtc = now
+                    });
+                    projectedFromNewRaw++;
+                }
+                else
+                {
+                    projectedSkippedUnbooked++;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId))
@@ -1019,7 +1068,8 @@ public sealed class BankSyncService(
             rawSkippedProviderId,
             rawSkippedDedupe,
             projectedFromNewRaw,
-            projectedBackfilled);
+            projectedBackfilled,
+            projectedSkippedUnbooked);
     }
 
     private async Task UpsertIdentityInfoAsync(
@@ -1141,12 +1191,18 @@ public sealed class BankSyncService(
                     x.Amount,
                     x.Currency,
                     x.BookedAtUtc,
-                    x.Description
+                    x.Description,
+                    x.TransactionStatus
                 })
                 .ToListAsync(cancellationToken);
 
             foreach (var row in existingCardRows)
             {
+                if (!IsBookedProjectionStatus(row.TransactionStatus))
+                {
+                    continue;
+                }
+
                 if (!string.IsNullOrWhiteSpace(row.ProviderTransactionId)
                     && existingAccountProviderIds.Contains(row.ProviderTransactionId))
                 {
@@ -1183,6 +1239,7 @@ public sealed class BankSyncService(
         }
 
         var importedCount = 0;
+        var projectedSkippedUnbooked = 0;
         foreach (var providerTransaction in providerTransactions)
         {
             if (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId)
@@ -1219,6 +1276,14 @@ public sealed class BankSyncService(
 
             if (projectedFinancialAccountId.HasValue && projectionFingerprints is not null)
             {
+                if (!IsBookedProjectionStatus(providerTransaction.TransactionStatus))
+                {
+                    projectedSkippedUnbooked++;
+                    existingDedupeKeys.Add(providerTransaction.DedupeKey);
+                    importedCount++;
+                    continue;
+                }
+
                 var existsInAccountFeed =
                     (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId)
                      && existingAccountProviderIds.Contains(providerTransaction.ProviderTransactionId))
@@ -1250,6 +1315,14 @@ public sealed class BankSyncService(
 
             existingDedupeKeys.Add(providerTransaction.DedupeKey);
             importedCount++;
+        }
+
+        if (projectedSkippedUnbooked > 0)
+        {
+            logger.LogInformation(
+                "Skipped projecting non-booked card transactions into ledger linkedCardId={LinkedCardId} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
+                linkedCard.Id,
+                projectedSkippedUnbooked);
         }
 
         return importedCount;
@@ -1301,13 +1374,25 @@ public sealed class BankSyncService(
         return $"{amount:0.00}|{normalizedCurrency}|{bookedAtUtc:O}|{normalizedDescription}";
     }
 
+    private static bool IsBookedProjectionStatus(string? transactionStatus)
+    {
+        if (string.IsNullOrWhiteSpace(transactionStatus))
+        {
+            return true;
+        }
+
+        var normalized = transactionStatus.Trim().ToLowerInvariant();
+        return normalized is "booked" or "posted" or "settled";
+    }
+
     private sealed record TransactionUpsertSummary(
         int Fetched,
         int RawInserted,
         int RawSkippedProviderId,
         int RawSkippedDedupe,
         int ProjectedFromNewRaw,
-        int ProjectedBackfilled);
+        int ProjectedBackfilled,
+        int ProjectedSkippedUnbooked);
 
     private async Task<int> UpsertDirectDebitsAsync(
         LinkedBankAccount linkedAccount,
@@ -1449,6 +1534,42 @@ public sealed class BankSyncService(
             return 0;
         }
 
+        var accountHintRows = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.FinancialAccountId.HasValue
+                && x.Connection != null
+                && x.Connection.UserId == userId)
+            .Select(x => new
+            {
+                FinancialAccountId = x.FinancialAccountId!.Value,
+                x.DisplayName,
+                ProviderDisplayName = x.Connection != null ? x.Connection.ProviderDisplayName : null,
+                ProviderId = x.Connection != null ? x.Connection.ProviderId : null
+            })
+            .ToListAsync(cancellationToken);
+
+        var accountHintTokensByFinancialAccountId = new Dictionary<Guid, HashSet<string>>();
+        foreach (var row in accountHintRows)
+        {
+            var tokens = BuildInternalTransferAccountHintTokens(
+                row.DisplayName,
+                row.ProviderDisplayName,
+                row.ProviderId);
+            if (tokens.Count == 0)
+            {
+                continue;
+            }
+
+            if (!accountHintTokensByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var current))
+            {
+                current = new HashSet<string>(StringComparer.Ordinal);
+                accountHintTokensByFinancialAccountId[row.FinancialAccountId] = current;
+            }
+
+            current.UnionWith(tokens);
+        }
+
         var windowStartUtc = now.AddDays(-InternalTransferMatchLookbackDays);
 
         var candidates = await dbContext.Transactions
@@ -1515,18 +1636,25 @@ public sealed class BankSyncService(
 
         var usedIncomingIds = new HashSet<Guid>();
         var matchedPairs = 0;
+        var unmatchedNoAmountCurrencyKey = 0;
+        var unmatchedNoCandidatesAfterFilters = 0;
+        var unmatchedNoTransferEvidence = 0;
+        var unmatchedBelowThreshold = 0;
 
         foreach (var debit in outgoing)
         {
             var key = CreateInternalTransferAmountCurrencyKey(debit);
             if (!incomingByKey.TryGetValue(key, out var incomingCandidates))
             {
+                unmatchedNoAmountCurrencyKey++;
                 continue;
             }
 
             Transaction? bestCredit = null;
             var bestScore = int.MinValue;
             var bestTimeDistance = TimeSpan.MaxValue;
+            var hadEligibleCounterpartyCandidate = false;
+            var hadTransferEvidenceCandidate = false;
 
             foreach (var credit in incomingCandidates)
             {
@@ -1535,7 +1663,18 @@ public sealed class BankSyncService(
                     continue;
                 }
 
-                var (score, distance) = ScoreInternalTransferPair(debit, credit);
+                hadEligibleCounterpartyCandidate = true;
+                var scoreResult = ScoreInternalTransferPair(
+                    debit,
+                    credit,
+                    accountHintTokensByFinancialAccountId);
+                if (scoreResult.HasTransferEvidence)
+                {
+                    hadTransferEvidenceCandidate = true;
+                }
+
+                var score = scoreResult.Score;
+                var distance = scoreResult.Distance;
                 if (score < InternalTransferMatchMinimumScore)
                 {
                     continue;
@@ -1551,6 +1690,18 @@ public sealed class BankSyncService(
 
             if (bestCredit is null)
             {
+                if (!hadEligibleCounterpartyCandidate)
+                {
+                    unmatchedNoCandidatesAfterFilters++;
+                }
+                else if (!hadTransferEvidenceCandidate)
+                {
+                    unmatchedNoTransferEvidence++;
+                }
+                else
+                {
+                    unmatchedBelowThreshold++;
+                }
                 continue;
             }
 
@@ -1562,10 +1713,29 @@ public sealed class BankSyncService(
         if (matchedPairs > 0)
         {
             logger.LogInformation(
-                "Matched linked internal transfers userId={UserId} matchedPairs={MatchedPairs} lookbackDays={LookbackDays}",
+                "Matched linked internal transfers userId={UserId} matchedPairs={MatchedPairs} lookbackDays={LookbackDays} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
                 userId,
                 matchedPairs,
-                InternalTransferMatchLookbackDays);
+                InternalTransferMatchLookbackDays,
+                outgoing.Count,
+                incoming.Count,
+                unmatchedNoAmountCurrencyKey,
+                unmatchedNoCandidatesAfterFilters,
+                unmatchedNoTransferEvidence,
+                unmatchedBelowThreshold);
+        }
+        else
+        {
+            logger.LogInformation(
+                "No linked internal transfer pairs matched userId={UserId} lookbackDays={LookbackDays} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
+                userId,
+                InternalTransferMatchLookbackDays,
+                outgoing.Count,
+                incoming.Count,
+                unmatchedNoAmountCurrencyKey,
+                unmatchedNoCandidatesAfterFilters,
+                unmatchedNoTransferEvidence,
+                unmatchedBelowThreshold);
         }
 
         return matchedPairs;
@@ -1609,24 +1779,42 @@ public sealed class BankSyncService(
         return $"{amount:0.00}|{currency}";
     }
 
-    private static (int Score, TimeSpan Distance) ScoreInternalTransferPair(Transaction debit, Transaction credit)
+    private static InternalTransferPairScore ScoreInternalTransferPair(
+        Transaction debit,
+        Transaction credit,
+        IReadOnlyDictionary<Guid, HashSet<string>> accountHintTokensByFinancialAccountId)
     {
-        var distance = (debit.BookedAtUtc - credit.BookedAtUtc).Duration();
-        if (distance.TotalHours > InternalTransferMatchMaxWindowHours)
-        {
-            return (int.MinValue, distance);
-        }
-
         var debitLooksTransfer = LooksLikeInternalTransferDescription(debit.Description);
         var creditLooksTransfer = LooksLikeInternalTransferDescription(credit.Description);
         var hasTransferHint = debitLooksTransfer || creditLooksTransfer;
         var hasTransferTaxonomyHint =
             debit.TaxonomyDomainId == ExpenseTaxonomyService.TransferDomainId
             || credit.TaxonomyDomainId == ExpenseTaxonomyService.TransferDomainId;
+        var hasCounterpartyAccountHint =
+            DescriptionContainsCounterpartyAccountHint(
+                debit.Description,
+                credit.FinancialAccountId,
+                accountHintTokensByFinancialAccountId)
+            || DescriptionContainsCounterpartyAccountHint(
+                credit.Description,
+                debit.FinancialAccountId,
+                accountHintTokensByFinancialAccountId);
+        var hasSharedTransferToken = HasSharedTransferToken(debit.Description, credit.Description);
+        var hasTransferEvidence =
+            hasTransferHint
+            || hasTransferTaxonomyHint
+            || hasCounterpartyAccountHint
+            || (hasSharedTransferToken && (hasTransferHint || hasCounterpartyAccountHint));
 
-        if (!hasTransferHint && !hasTransferTaxonomyHint)
+        var distance = (debit.BookedAtUtc - credit.BookedAtUtc).Duration();
+        if (distance.TotalHours > InternalTransferMatchMaxWindowHours)
         {
-            return (int.MinValue, distance);
+            return new InternalTransferPairScore(int.MinValue, distance, hasTransferEvidence);
+        }
+
+        if (!hasTransferEvidence)
+        {
+            return new InternalTransferPairScore(int.MinValue, distance, HasTransferEvidence: false);
         }
 
         var score = 0;
@@ -1652,7 +1840,12 @@ public sealed class BankSyncService(
             score += 2;
         }
 
-        if (HasSharedTransferToken(debit.Description, credit.Description))
+        if (hasCounterpartyAccountHint)
+        {
+            score += 2;
+        }
+
+        if (hasSharedTransferToken)
         {
             score += 1;
         }
@@ -1662,7 +1855,40 @@ public sealed class BankSyncService(
             score += 1;
         }
 
-        return (score, distance);
+        if (hasTransferTaxonomyHint)
+        {
+            score += 1;
+        }
+
+        return new InternalTransferPairScore(score, distance, hasTransferEvidence);
+    }
+
+    private static bool DescriptionContainsCounterpartyAccountHint(
+        string description,
+        Guid counterpartyFinancialAccountId,
+        IReadOnlyDictionary<Guid, HashSet<string>> accountHintTokensByFinancialAccountId)
+    {
+        if (!accountHintTokensByFinancialAccountId.TryGetValue(counterpartyFinancialAccountId, out var hintTokens)
+            || hintTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var descriptionTokens = TokenizeTransferDescription(description);
+        if (descriptionTokens.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var token in descriptionTokens)
+        {
+            if (hintTokens.Contains(token))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool HasSharedTransferToken(string leftDescription, string rightDescription)
@@ -1706,6 +1932,34 @@ public sealed class BankSyncService(
             .ToHashSet(StringComparer.Ordinal);
     }
 
+    private static HashSet<string> BuildInternalTransferAccountHintTokens(
+        string? displayName,
+        string? providerDisplayName,
+        string? providerId)
+    {
+        var tokens = new HashSet<string>(StringComparer.Ordinal);
+        AddTransferHintTokens(tokens, displayName);
+        AddTransferHintTokens(tokens, providerDisplayName);
+        AddTransferHintTokens(tokens, providerId);
+        tokens.RemoveWhere(token =>
+            InternalTransferAccountHintStopTokens.Contains(token)
+            || token.All(char.IsDigit));
+        return tokens;
+    }
+
+    private static void AddTransferHintTokens(HashSet<string> output, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        foreach (var token in TokenizeTransferDescription(value))
+        {
+            output.Add(token);
+        }
+    }
+
     private static bool LooksLikeInternalTransferDescription(string? description)
     {
         if (string.IsNullOrWhiteSpace(description))
@@ -1725,6 +1979,11 @@ public sealed class BankSyncService(
             || normalized.Contains("bank to bank", StringComparison.Ordinal)
             || normalized.Contains("internal", StringComparison.Ordinal);
     }
+
+    private readonly record struct InternalTransferPairScore(
+        int Score,
+        TimeSpan Distance,
+        bool HasTransferEvidence);
 
     private static void ApplyLinkedInternalTransferPair(Transaction debit, Transaction credit, DateTime now)
     {

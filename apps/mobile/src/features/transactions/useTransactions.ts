@@ -63,6 +63,35 @@ function replaceTransaction(list: TransactionDto[] | undefined, transaction: Tra
   return next;
 }
 
+function applyTransactionCacheUpdate(
+  queryClient: ReturnType<typeof useQueryClient>,
+  transaction: TransactionDto
+) {
+  queryClient.setQueryData(queryKeys.transactions.detail(transaction.id), transaction);
+  queryClient.setQueryData<TransactionDto[]>(
+    queryKeys.transactions.list(),
+    (current) => replaceTransaction(current, transaction)
+  );
+  queryClient.setQueryData<TransactionDto[]>(
+    queryKeys.transactions.list(transaction.accountId),
+    (current) => replaceTransaction(current, transaction)
+  );
+  queryClient.setQueryData<TransactionDto[]>(
+    queryKeys.accounts.transactions(transaction.accountId),
+    (current) => replaceTransaction(current, transaction)
+  );
+  queryClient.setQueryData<DashboardSummaryDto | undefined>(
+    queryKeys.dashboard.summary,
+    (current) =>
+      current
+        ? {
+            ...current,
+            recentTransactions: replaceTransaction(current.recentTransactions, transaction)
+          }
+        : current
+  );
+}
+
 export function useCreateTransactionMutation() {
   const queryClient = useQueryClient();
 
@@ -146,35 +175,40 @@ export function useUpdateTransactionMetadataMutation() {
       payload: UpdateTransactionMetadataRequest;
     }) => updateTransactionMetadata(transactionId, payload),
     onSuccess: async (transaction) => {
-      queryClient.setQueryData(queryKeys.transactions.detail(transaction.id), transaction);
-      queryClient.setQueryData<TransactionDto[]>(
-        queryKeys.transactions.list(),
-        (current) => replaceTransaction(current, transaction)
-      );
-      queryClient.setQueryData<TransactionDto[]>(
-        queryKeys.transactions.list(transaction.accountId),
-        (current) => replaceTransaction(current, transaction)
-      );
-      queryClient.setQueryData<TransactionDto[]>(
-        queryKeys.accounts.transactions(transaction.accountId),
-        (current) => replaceTransaction(current, transaction)
-      );
-      queryClient.setQueryData<DashboardSummaryDto | undefined>(
-        queryKeys.dashboard.summary,
-        (current) =>
-          current
-            ? {
-                ...current,
-                recentTransactions: replaceTransaction(current.recentTransactions, transaction)
-              }
-            : current
-      );
+      applyTransactionCacheUpdate(queryClient, transaction);
+
+      let linkedCounterpartId: string | null = null;
+      if (
+        transaction.transferKind === "linked_internal_transfer"
+        && transaction.linkedTransferTransactionId
+      ) {
+        linkedCounterpartId = transaction.linkedTransferTransactionId;
+        try {
+          const counterpart = await getTransactionById(linkedCounterpartId);
+          applyTransactionCacheUpdate(queryClient, counterpart);
+          console.info("[Transactions]", {
+            event: "metadata_sync_linked_counterpart",
+            transactionId: transaction.id,
+            counterpartId: counterpart.id
+          });
+        } catch (error) {
+          console.warn("[Transactions]", {
+            event: "metadata_sync_linked_counterpart_failed",
+            transactionId: transaction.id,
+            counterpartId: linkedCounterpartId,
+            message: error instanceof Error ? error.message : "Unknown error"
+          });
+        }
+      }
 
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.transactions(transaction.accountId) }),
+        queryClient.invalidateQueries({ queryKey: ["accounts", "transactions"] }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.detail(transaction.id) })
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.detail(transaction.id) }),
+        linkedCounterpartId
+          ? queryClient.invalidateQueries({ queryKey: queryKeys.transactions.detail(linkedCounterpartId) })
+          : Promise.resolve()
       ]);
     }
   });

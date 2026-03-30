@@ -755,31 +755,58 @@ public sealed class TrueLayerDataService(
         string? rawDescription,
         string fallback)
     {
-        var preferredCandidates = new[]
+        var candidates = new[]
         {
-            GetString(item, "merchant_name"),
-            GetString(item, "normalised_provider_merchant_name"),
-            GetString(item, "provider_merchant_name"),
-            GetString(item, "display_name"),
-            GetNestedString(item, "merchant", "name"),
-            GetNestedString(item, "counterparty", "name"),
-            GetNestedString(item, "meta", "merchant_name"),
-            GetNestedString(item, "meta", "display_name"),
-            rawDescription
+            new DisplayLabelCandidate(GetString(item, "merchant_name"), 100, IsRawFallback: false),
+            new DisplayLabelCandidate(GetString(item, "normalised_provider_merchant_name"), 98, IsRawFallback: false),
+            new DisplayLabelCandidate(GetString(item, "provider_merchant_name"), 96, IsRawFallback: false),
+            new DisplayLabelCandidate(GetNestedString(item, "merchant", "name"), 95, IsRawFallback: false),
+            new DisplayLabelCandidate(GetNestedString(item, "counterparty", "name"), 94, IsRawFallback: false),
+            new DisplayLabelCandidate(GetNestedString(item, "meta", "merchant_name"), 92, IsRawFallback: false),
+            new DisplayLabelCandidate(GetString(item, "display_name"), 84, IsRawFallback: false),
+            new DisplayLabelCandidate(GetNestedString(item, "meta", "display_name"), 82, IsRawFallback: false),
+            new DisplayLabelCandidate(rawDescription, 70, IsRawFallback: true)
         };
 
-        foreach (var candidate in preferredCandidates)
+        string? bestLabel = null;
+        var bestScore = int.MinValue;
+        foreach (var candidate in candidates)
         {
-            var normalized = NormalizeDisplayLabel(candidate);
+            var normalized = NormalizeDisplayLabel(candidate.Value);
             if (normalized is null)
             {
                 continue;
             }
 
-            return normalized;
+            var score = candidate.Priority;
+            if (LooksGenericTransferDescriptor(normalized))
+            {
+                score -= 26;
+            }
+
+            if (LooksReferenceHeavyDescriptor(normalized))
+            {
+                score -= 18;
+            }
+
+            if (!normalized.Any(char.IsLetter))
+            {
+                score -= 20;
+            }
+
+            if (candidate.IsRawFallback)
+            {
+                score += 2;
+            }
+
+            if (bestLabel is null || score > bestScore || (score == bestScore && normalized.Length > bestLabel.Length))
+            {
+                bestLabel = normalized;
+                bestScore = score;
+            }
         }
 
-        return fallback;
+        return bestLabel ?? fallback;
     }
 
     private static string? GetNestedString(JsonElement item, string parentPropertyName, string childPropertyName)
@@ -822,6 +849,64 @@ public sealed class TrueLayerDataService(
 
         return normalized;
     }
+
+    private static bool LooksGenericTransferDescriptor(string label)
+    {
+        var normalized = label.Trim().ToLowerInvariant();
+        if (normalized.Length <= 3)
+        {
+            return true;
+        }
+
+        string[] genericDescriptors =
+        [
+            "bank transfer",
+            "transfer",
+            "credit transfer",
+            "sepa credit transfer",
+            "sepa transfer",
+            "faster payment",
+            "card payment",
+            "payment",
+            "cash withdrawal",
+            "cash deposit",
+            "outgoing transfer",
+            "incoming transfer",
+            "direct debit",
+            "standing order",
+            "outgoing",
+            "incoming",
+            "debit",
+            "credit"
+        ];
+
+        return genericDescriptors.Any(descriptor =>
+            string.Equals(normalized, descriptor, StringComparison.Ordinal)
+            || normalized.StartsWith($"{descriptor} ", StringComparison.Ordinal));
+    }
+
+    private static bool LooksReferenceHeavyDescriptor(string label)
+    {
+        var compact = new string(label.Where(ch => !char.IsWhiteSpace(ch)).ToArray());
+        if (compact.Length < 8)
+        {
+            return false;
+        }
+
+        var digitCount = compact.Count(char.IsDigit);
+        var letterCount = compact.Count(char.IsLetter);
+        if (digitCount < 4)
+        {
+            return false;
+        }
+
+        return letterCount == 0 || digitCount > letterCount * 2;
+    }
+
+    private readonly record struct DisplayLabelCandidate(
+        string? Value,
+        int Priority,
+        bool IsRawFallback);
 
     private static string? GetProviderBrandingString(JsonElement element, string propertyName)
     {

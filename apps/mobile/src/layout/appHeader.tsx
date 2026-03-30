@@ -81,6 +81,7 @@ const HEADER = {
   iconButtonRadius: 6,
   titleMaxWidthDefault: "56%",
   titleMaxWidthCentered: "62%",
+  titleMaxWidthSecondary: "82%",
   subtitleMaxWidth: "72%",
   greetingTitleMaxWidth: "100%",
   greetingSubtitleMaxWidth: "100%",
@@ -313,7 +314,9 @@ export function HeaderShell({
                 centeredTitle ? styles.titleCentered : styles.titleLeading,
                 {
                   maxWidth: centeredTitle
-                    ? HEADER.titleMaxWidthCentered
+                    ? isSecondary
+                      ? HEADER.titleMaxWidthSecondary
+                      : HEADER.titleMaxWidthCentered
                     : isGreeting
                       ? HEADER.greetingTitleMaxWidth
                       : HEADER.titleMaxWidthDefault

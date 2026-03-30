@@ -1,5 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
@@ -49,6 +49,7 @@ export default function PlannerTransactionDetailScreen() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<string | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
+  const hydratedServerSignatureRef = useRef<string | null>(null);
 
   const visibleDomains = useMemo(
     () =>
@@ -112,8 +113,28 @@ export default function PlannerTransactionDetailScreen() {
     [selectedCategory, selectedSubcategoryId]
   );
 
+  const serverDraftSignature = useMemo(() => {
+    const transaction = transactionQuery.data;
+    if (!transaction) {
+      return null;
+    }
+
+    return JSON.stringify({
+      id: transaction.id,
+      reason: transaction.reason ?? "",
+      notes: transaction.notes ?? "",
+      taxonomyCategoryId: transaction.taxonomyCategoryId ?? null,
+      taxonomySubcategoryId: transaction.taxonomySubcategoryId ?? null,
+      metadataUpdatedUtc: transaction.metadataUpdatedUtc ?? null
+    });
+  }, [transactionQuery.data]);
+
   useEffect(() => {
-    if (!transactionQuery.data) {
+    if (!transactionQuery.data || !serverDraftSignature) {
+      return;
+    }
+
+    if (hydratedServerSignatureRef.current === serverDraftSignature) {
       return;
     }
 
@@ -126,7 +147,8 @@ export default function PlannerTransactionDetailScreen() {
       transactionQuery.data.taxonomySubcategoryId ? String(transactionQuery.data.taxonomySubcategoryId) : null
     );
     setErrors({});
-  }, [transactionQuery.data]);
+    hydratedServerSignatureRef.current = serverDraftSignature;
+  }, [serverDraftSignature, transactionQuery.data]);
 
   useEffect(() => {
     if (!selectedCategoryId) {
@@ -153,20 +175,28 @@ export default function PlannerTransactionDetailScreen() {
     }
   }, [categoriesById, selectedCategoryId, selectedSubcategoryId]);
 
-  useFocusEffect(() => {
-    const picked = consumePendingTransactionDetailCategorySelection();
-    if (!picked) {
-      return undefined;
-    }
+  useFocusEffect(
+    useCallback(() => {
+      const picked = consumePendingTransactionDetailCategorySelection();
+      if (!picked) {
+        return undefined;
+      }
 
-    setSelectedCategoryId(String(picked.categoryId));
-    setSelectedSubcategoryId(picked.subcategoryId ? String(picked.subcategoryId) : null);
-    setErrors((current) => ({
-      ...current,
-      category: undefined
-    }));
-    return undefined;
-  });
+      console.info("[Transaction Details]", {
+        event: "category_selection_consumed",
+        transactionId,
+        categoryId: picked.categoryId,
+        subcategoryId: picked.subcategoryId
+      });
+      setSelectedCategoryId(String(picked.categoryId));
+      setSelectedSubcategoryId(picked.subcategoryId ? String(picked.subcategoryId) : null);
+      setErrors((current) => ({
+        ...current,
+        category: undefined
+      }));
+      return undefined;
+    }, [transactionId])
+  );
 
   const validate = () => {
     const nextErrors: FormErrors = {};
@@ -200,6 +230,12 @@ export default function PlannerTransactionDetailScreen() {
         taxonomyCategoryId: Number(selectedCategoryId),
         taxonomySubcategoryId: selectedSubcategoryId ? Number(selectedSubcategoryId) : null
       }
+    });
+    console.info("[Transaction Details]", {
+      event: "metadata_saved",
+      transactionId: transactionQuery.data.id,
+      categoryId: selectedCategoryId ? Number(selectedCategoryId) : null,
+      subcategoryId: selectedSubcategoryId ? Number(selectedSubcategoryId) : null
     });
   };
 
@@ -360,7 +396,8 @@ export default function PlannerTransactionDetailScreen() {
                     pathname: "/(tabs)/planning/categories",
                     params: {
                       selectionMode: "true",
-                      selectionTarget: "transactionDetailCategory"
+                      selectionTarget: "transactionDetailCategory",
+                      selectionReturnTransactionId: transactionId
                     }
                   })
                 }

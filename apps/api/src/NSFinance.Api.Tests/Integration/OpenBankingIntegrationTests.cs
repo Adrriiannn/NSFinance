@@ -8,6 +8,7 @@ using NSFinance.Api.Infrastructure.RequestContext;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Services;
+using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 
@@ -46,6 +47,65 @@ public class OpenBankingIntegrationTests
         Assert.Equal(2, await harness.DbContext.RawBankTransactions.CountAsync());
         Assert.Single(await harness.DbContext.FinancialAccounts.ToListAsync());
         Assert.Equal(2, await harness.DbContext.Transactions.CountAsync());
+    }
+
+    [Fact]
+    public async Task CallbackFlow_MatchesLinkedInternalTransfers_ForAibLikeDateOnlyAndCounterpartyHints()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulCrossBankTransferFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.transfer-match@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-transfer-link", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+
+        var transactions = await harness.DbContext.Transactions
+            .OrderBy(x => x.Amount)
+            .ToListAsync();
+
+        Assert.Equal(2, transactions.Count);
+
+        var debit = transactions.Single(x => x.Amount < 0);
+        var credit = transactions.Single(x => x.Amount > 0);
+
+        Assert.Equal(TransactionTransferKind.LinkedInternal, debit.TransferKind);
+        Assert.Equal(TransactionTransferKind.LinkedInternal, credit.TransferKind);
+        Assert.Equal(credit.Id, debit.LinkedTransferTransactionId);
+        Assert.Equal(debit.Id, credit.LinkedTransferTransactionId);
+        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, debit.TaxonomyDomainId);
+        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, credit.TaxonomyDomainId);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_PersistsPendingRawTransactionsWithoutProjectingIntoLedger()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: PendingOnlyFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.pending-only@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-pending-only", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, await harness.DbContext.RawBankTransactions.CountAsync());
+        Assert.Empty(await harness.DbContext.Transactions.ToListAsync());
+
+        var raw = await harness.DbContext.RawBankTransactions.SingleAsync();
+        Assert.Equal("pending", raw.TransactionStatus);
     }
 
     [Fact]
@@ -728,6 +788,216 @@ public class OpenBankingIntegrationTests
             }
 
             return Task.FromResult(Json(HttpStatusCode.NotFound, """{ "error": "not_found" }"""));
+        });
+    }
+
+    private static HttpMessageHandler SuccessfulCrossBankTransferFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-transfer",
+                      "refresh_token":"refresh-token-transfer",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-001",
+                          "display_name": "AIB Current",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "aib-ie-ob",
+                            "display_name": "Allied Irish Bank"
+                          }
+                        },
+                        {
+                          "account_id": "acc-revolut-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "revolut-ie-ob",
+                            "display_name": "Revolut"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 900.00,
+                          "current": 900.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-20T00:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1100.00,
+                          "current": 1100.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-20T13:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-aib-100",
+                          "normalised_provider_transaction_id":"norm-aib-100",
+                          "amount":-100.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-20",
+                          "description":"REVOLUT 85701",
+                          "transaction_type":"DEBIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-revolut-100",
+                          "normalised_provider_transaction_id":"norm-revolut-100",
+                          "amount":100.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-20T13:00:00Z",
+                          "description":"AIB 85701",
+                          "transaction_type":"CREDIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler PendingOnlyFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-pending",
+                      "refresh_token":"refresh-token-pending",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-pending-001",
+                          "display_name": "Pending Feed Account",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "pending-bank",
+                            "display_name": "Pending Bank"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-pending-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1200.00,
+                          "current": 1200.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-20T15:00:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-pending-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-pending-001",
+                          "normalised_provider_transaction_id":"norm-pending-001",
+                          "amount":-42.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-20T15:15:00Z",
+                          "description":"Cafe hold",
+                          "transaction_type":"DEBIT",
+                          "status":"pending"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
         });
     }
 

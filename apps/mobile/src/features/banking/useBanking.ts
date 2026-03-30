@@ -123,6 +123,23 @@ export function useSyncBankConnectionMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
       ]);
+
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.connections, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.connectedBanks, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.connection(connectionId), type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.accounts, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.cards, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.banking.recurringPayments, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.accounts.all, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.transactions.all, type: "all" }),
+        queryClient.refetchQueries({ queryKey: queryKeys.dashboard.summary, type: "all" })
+      ]);
+
+      console.info("[Banking Sync]", {
+        event: "post_sync_queries_refetched",
+        connectionId
+      });
     }
   });
 }

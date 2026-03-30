@@ -45,11 +45,16 @@ export default function PlanningHubCategoriesScreen() {
     selectionMode?: string;
     lineItemId?: string;
     selectionTarget?: string;
+    selectionReturnTransactionId?: string;
   }>();
   const selectionMode = params.selectionMode === "true";
   const lineItemId = typeof params.lineItemId === "string" ? params.lineItemId : "";
   const selectionTarget =
     typeof params.selectionTarget === "string" ? params.selectionTarget : "";
+  const selectionReturnTransactionId =
+    typeof params.selectionReturnTransactionId === "string"
+      ? params.selectionReturnTransactionId.trim()
+      : "";
   const selectionReturnPath: "/(tabs)/activity" | "/(tabs)/activity/add" | null =
     selectionTarget === "activitySearchCategoryFilter"
       ? "/(tabs)/activity"
@@ -71,8 +76,16 @@ export default function PlanningHubCategoriesScreen() {
     selectionMode && selectionTarget === "activitySearchCategoryFilter";
   const isTransactionDetailCategorySelection =
     selectionMode && selectionTarget === "transactionDetailCategory";
+  const hasDeterministicSelectionReturn =
+    Boolean(selectionReturnPath)
+    || (isTransactionDetailCategorySelection && selectionReturnTransactionId.length > 0);
 
   const returnToSelectionOrigin = () => {
+    if (isTransactionDetailCategorySelection && selectionReturnTransactionId.length > 0) {
+      router.replace(`/(tabs)/activity/${selectionReturnTransactionId}` as never);
+      return;
+    }
+
     if (selectionReturnPath) {
       router.replace(selectionReturnPath);
       return;
@@ -826,7 +839,7 @@ export default function PlanningHubCategoriesScreen() {
       {selectionMode ? (
         <PlanningHubScreen
           title="Select category"
-          onBackPress={selectionReturnPath ? returnToSelectionOrigin : undefined}
+          onBackPress={hasDeterministicSelectionReturn ? returnToSelectionOrigin : undefined}
           bottomOverlay={selectionConfirmOverlay}
         >
           {content}
