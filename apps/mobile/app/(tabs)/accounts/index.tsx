@@ -30,6 +30,10 @@ import {
   useUpdateAccountMutation
 } from "../../../src/features/accounts/useAccounts";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
+import {
+  buildActivityFocusRoute,
+  logActivityFocusEvent
+} from "../../../src/features/transactions/activityFocusNavigation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { formatCurrency } from "../../../src/lib/format";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
@@ -277,15 +281,19 @@ export default function AccountsTabScreen() {
                 key={transaction.id}
                 transaction={transaction}
                 index={index}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(tabs)/activity",
-                    params: {
-                      focusTransactionId: transaction.id,
-                      focusNonce: Date.now().toString()
-                    }
-                  })
-                }
+                onPress={() => {
+                  const focusRoute = buildActivityFocusRoute(transaction.id);
+                  if (!focusRoute) {
+                    return;
+                  }
+
+                  logActivityFocusEvent("recent_activity_press", {
+                    source: "accounts",
+                    transactionId: transaction.id,
+                    accountId: selectedAccount.id
+                  });
+                  router.push(focusRoute);
+                }}
               />
             ))
           ) : (

@@ -469,12 +469,32 @@ public sealed class BankSyncService(
             syncObservedEarliestBookedAtUtc = MinUtc(syncObservedEarliestBookedAtUtc, observedForAccount.EarliestBookedAtUtc);
             syncObservedLatestBookedAtUtc = MaxUtc(syncObservedLatestBookedAtUtc, observedForAccount.LatestBookedAtUtc);
 
-            var importedForAccount = await UpsertTransactionsAsync(
+            var transactionUpsert = await UpsertTransactionsAsync(
                 linkedAccount,
                 transactionsResult.Value!,
                 now,
                 cancellationToken);
-            transactionsImported += importedForAccount;
+            transactionsImported += transactionUpsert.RawInserted;
+
+            logger.LogInformation(
+                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} fetched={Fetched} rawInserted={RawInserted} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedBackfilled={ProjectedBackfilled}",
+                providerAccount.AccountId,
+                connection.Id,
+                transactionUpsert.Fetched,
+                transactionUpsert.RawInserted,
+                transactionUpsert.RawSkippedProviderId,
+                transactionUpsert.RawSkippedDedupe,
+                transactionUpsert.ProjectedFromNewRaw,
+                transactionUpsert.ProjectedBackfilled);
+
+            if (transactionUpsert.ProjectedBackfilled > 0)
+            {
+                logger.LogWarning(
+                    "Backfilled previously missing projected bank transactions accountId={AccountId} connectionId={ConnectionId} projectedBackfilled={ProjectedBackfilled}",
+                    providerAccount.AccountId,
+                    connection.Id,
+                    transactionUpsert.ProjectedBackfilled);
+            }
 
             if (ShouldRequestScope(connection.GrantedScopesCsv, "direct_debits"))
             {
@@ -867,12 +887,14 @@ public sealed class BankSyncService(
         return linkedAccount;
     }
 
-    private async Task<int> UpsertTransactionsAsync(
+    private async Task<TransactionUpsertSummary> UpsertTransactionsAsync(
         LinkedBankAccount linkedAccount,
         IReadOnlyList<TrueLayerTransactionRecord> providerTransactions,
         DateTime now,
         CancellationToken cancellationToken)
     {
+        var fetchedCount = providerTransactions.Count;
+
         var existingProviderIds = await dbContext.RawBankTransactions
             .Where(x => x.LinkedBankAccountId == linkedAccount.Id && x.ProviderTransactionId != null)
             .Select(x => x.ProviderTransactionId!)
@@ -883,17 +905,70 @@ public sealed class BankSyncService(
             .Select(x => x.DedupeKey)
             .ToHashSetAsync(cancellationToken);
 
-        var importedCount = 0;
+        var rawInserted = 0;
+        var rawSkippedProviderId = 0;
+        var rawSkippedDedupe = 0;
+        var projectedFromNewRaw = 0;
+        var projectedBackfilled = 0;
+
+        if (linkedAccount.FinancialAccountId.HasValue)
+        {
+            var projectedAccountId = linkedAccount.FinancialAccountId.Value;
+            var projectionFingerprints = await dbContext.Transactions
+                .Where(x => x.FinancialAccountId == projectedAccountId)
+                .Select(x => CreateProjectionFingerprint(x.Amount, x.Currency, x.BookedAtUtc, x.Description))
+                .ToHashSetAsync(cancellationToken);
+
+            var existingRawRows = await dbContext.RawBankTransactions
+                .Where(x => x.LinkedBankAccountId == linkedAccount.Id)
+                .Select(x => new
+                {
+                    x.Amount,
+                    x.Currency,
+                    x.BookedAtUtc,
+                    x.Description
+                })
+                .ToListAsync(cancellationToken);
+
+            foreach (var row in existingRawRows)
+            {
+                var projectionFingerprint = CreateProjectionFingerprint(
+                    row.Amount,
+                    row.Currency,
+                    row.BookedAtUtc,
+                    row.Description);
+
+                if (!projectionFingerprints.Add(projectionFingerprint))
+                {
+                    continue;
+                }
+
+                dbContext.Transactions.Add(new Transaction
+                {
+                    Id = Guid.NewGuid(),
+                    FinancialAccountId = projectedAccountId,
+                    Amount = row.Amount,
+                    Currency = row.Currency,
+                    Description = row.Description,
+                    BookedAtUtc = row.BookedAtUtc,
+                    CreatedUtc = now
+                });
+                projectedBackfilled++;
+            }
+        }
+
         foreach (var providerTransaction in providerTransactions)
         {
             if (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId)
                 && existingProviderIds.Contains(providerTransaction.ProviderTransactionId))
             {
+                rawSkippedProviderId++;
                 continue;
             }
 
             if (existingDedupeKeys.Contains(providerTransaction.DedupeKey))
             {
+                rawSkippedDedupe++;
                 continue;
             }
 
@@ -926,6 +1001,7 @@ public sealed class BankSyncService(
                     BookedAtUtc = providerTransaction.BookedAtUtc,
                     CreatedUtc = now
                 });
+                projectedFromNewRaw++;
             }
 
             if (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId))
@@ -934,10 +1010,16 @@ public sealed class BankSyncService(
             }
 
             existingDedupeKeys.Add(providerTransaction.DedupeKey);
-            importedCount++;
+            rawInserted++;
         }
 
-        return importedCount;
+        return new TransactionUpsertSummary(
+            fetchedCount,
+            rawInserted,
+            rawSkippedProviderId,
+            rawSkippedDedupe,
+            projectedFromNewRaw,
+            projectedBackfilled);
     }
 
     private async Task UpsertIdentityInfoAsync(
@@ -1218,6 +1300,14 @@ public sealed class BankSyncService(
 
         return $"{amount:0.00}|{normalizedCurrency}|{bookedAtUtc:O}|{normalizedDescription}";
     }
+
+    private sealed record TransactionUpsertSummary(
+        int Fetched,
+        int RawInserted,
+        int RawSkippedProviderId,
+        int RawSkippedDedupe,
+        int ProjectedFromNewRaw,
+        int ProjectedBackfilled);
 
     private async Task<int> UpsertDirectDebitsAsync(
         LinkedBankAccount linkedAccount,

@@ -2,6 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  InteractionManager,
   PanResponder,
   Pressable,
   RefreshControl,
@@ -38,6 +39,7 @@ import { flattenVisibleExpenseTaxonomy } from "../../../src/features/expenseTrac
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import { useAccountsQuery } from "../../../src/features/accounts/useAccounts";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
+import { logActivityFocusEvent } from "../../../src/features/transactions/activityFocusNavigation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
@@ -46,6 +48,11 @@ import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from 
 import type { TransactionDto } from "../../../src/types/api";
 
 const transactionSwipeHoldDelayMs = 1000;
+
+type PendingFocusRequest = {
+  key: string;
+  transactionId: string;
+};
 
 export default function ActivityTabScreen() {
   useThemeRuntime();
@@ -64,9 +71,12 @@ export default function ActivityTabScreen() {
   const [highlightedTransactionId, setHighlightedTransactionId] = useState<string | null>(
     null
   );
+  const [pendingFocusRequest, setPendingFocusRequest] = useState<PendingFocusRequest | null>(
+    null
+  );
   const initialSearchSnapshotRef = useRef(consumeActivitySearchSnapshot());
   const sectionListRef = useRef<SectionList<TransactionDto>>(null);
-  const handledFocusTransactionIdRef = useRef<string | null>(null);
+  const handledFocusKeyRef = useRef<string | null>(null);
   const transactionsQuery = useTransactionsQuery();
   const isInitialLoading = transactionsQuery.isLoading && !transactionsQuery.data;
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
@@ -108,6 +118,9 @@ export default function ActivityTabScreen() {
       });
     }
   });
+  const setSearchSnapshot = search.setSnapshot;
+  const applyPickedCategory = search.applyPickedCategory;
+  const dismissSearchDropdown = search.dismissDropdown;
 
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
@@ -142,37 +155,71 @@ export default function ActivityTabScreen() {
     useCallback(() => {
       const restoredSnapshot = consumeActivitySearchSnapshot();
       if (restoredSnapshot) {
-        search.setSnapshot(restoredSnapshot);
+        setSearchSnapshot(restoredSnapshot);
       }
 
       const pickedCategorySelection = consumePendingActivitySearchCategorySelection();
       if (pickedCategorySelection) {
-        search.applyPickedCategory(pickedCategorySelection);
+        applyPickedCategory(pickedCategorySelection);
       }
 
       return undefined;
-    }, [search])
+    }, [applyPickedCategory, setSearchSnapshot])
   );
 
   useFocusEffect(
     useCallback(() => {
       return () => {
-        search.dismissDropdown();
+        dismissSearchDropdown();
       };
-    }, [search])
+    }, [dismissSearchDropdown])
   );
 
   useEffect(() => {
-    if (!focusTransactionId || handledFocusTransactionIdRef.current === focusKey) {
+    if (!focusTransactionId || !focusKey || handledFocusKeyRef.current === focusKey) {
       return;
     }
 
-    handledFocusTransactionIdRef.current = focusKey;
+    handledFocusKeyRef.current = focusKey;
+    setPendingFocusRequest({
+      key: focusKey,
+      transactionId: focusTransactionId
+    });
     setHighlightedTransactionId(focusTransactionId);
+    logActivityFocusEvent("focus_target_received", {
+      focusKey,
+      transactionId: focusTransactionId
+    });
   }, [focusKey, focusTransactionId]);
 
   useEffect(() => {
-    if (!focusTransactionId || grouped.length === 0) {
+    if (!pendingFocusRequest) {
+      return;
+    }
+
+    if (transactionsQuery.isError) {
+      logActivityFocusEvent("focus_target_skipped", {
+        reason: "transactions_query_error",
+        focusKey: pendingFocusRequest.key,
+        transactionId: pendingFocusRequest.transactionId
+      });
+      setPendingFocusRequest(null);
+      setHighlightedTransactionId(null);
+      return;
+    }
+
+    if (isInitialLoading) {
+      return;
+    }
+
+    if (grouped.length === 0) {
+      logActivityFocusEvent("focus_target_skipped", {
+        reason: "activity_feed_empty",
+        focusKey: pendingFocusRequest.key,
+        transactionId: pendingFocusRequest.transactionId
+      });
+      setPendingFocusRequest(null);
+      setHighlightedTransactionId(null);
       return;
     }
 
@@ -184,7 +231,7 @@ export default function ActivityTabScreen() {
         return;
       }
 
-      const itemIndex = section.data.findIndex((item) => item.id === focusTransactionId);
+      const itemIndex = section.data.findIndex((item) => item.id === pendingFocusRequest.transactionId);
       if (itemIndex >= 0) {
         targetSectionIndex = sectionIndex;
         targetItemIndex = itemIndex;
@@ -192,28 +239,58 @@ export default function ActivityTabScreen() {
     });
 
     if (targetSectionIndex < 0 || targetItemIndex < 0) {
+      logActivityFocusEvent("focus_target_skipped", {
+        reason: hasActiveSearch ? "target_not_found_in_filtered_activity_feed" : "target_not_found_in_activity_feed",
+        focusKey: pendingFocusRequest.key,
+        transactionId: pendingFocusRequest.transactionId,
+        hasActiveSearch,
+        groupedSectionCount: grouped.length
+      });
+      setPendingFocusRequest(null);
+      setHighlightedTransactionId(null);
       return;
     }
 
-    requestAnimationFrame(() => {
-      sectionListRef.current?.scrollToLocation({
-        sectionIndex: targetSectionIndex,
-        itemIndex: targetItemIndex,
-        viewPosition: 0.34,
-        animated: true
-      });
+    logActivityFocusEvent("focus_target_scroll_attempt", {
+      focusKey: pendingFocusRequest.key,
+      transactionId: pendingFocusRequest.transactionId,
+      sectionIndex: targetSectionIndex,
+      itemIndex: targetItemIndex
     });
 
-    const highlightTimer = setTimeout(() => {
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        try {
+          sectionListRef.current?.scrollToLocation({
+            sectionIndex: targetSectionIndex,
+            itemIndex: targetItemIndex,
+            viewPosition: 0.34,
+            animated: true
+          });
+          logActivityFocusEvent("focus_target_scroll_success", {
+            focusKey: pendingFocusRequest.key,
+            transactionId: pendingFocusRequest.transactionId,
+            sectionIndex: targetSectionIndex,
+            itemIndex: targetItemIndex
+          });
+        } catch (error) {
+          logActivityFocusEvent("focus_target_scroll_failed", {
+            focusKey: pendingFocusRequest.key,
+            transactionId: pendingFocusRequest.transactionId,
+            message: error instanceof Error ? error.message : "unknown_scroll_error"
+          });
+          setHighlightedTransactionId(null);
+        }
+      });
+    });
+    setPendingFocusRequest(null);
+
+    setTimeout(() => {
       setHighlightedTransactionId((current) =>
-        current === focusTransactionId ? null : current
+        current === pendingFocusRequest.transactionId ? null : current
       );
     }, 1800);
-
-    return () => {
-      clearTimeout(highlightTimer);
-    };
-  }, [focusTransactionId, grouped]);
+  }, [grouped, hasActiveSearch, isInitialLoading, pendingFocusRequest, transactionsQuery.isError]);
 
   return (
     <AdaptiveScreen contentStyle={styles.container} gestureHandlers={gestureHandlers}>

@@ -18,6 +18,10 @@ import { useDashboardSummaryQuery } from "../../src/features/dashboard/useDashbo
 import {
   buildHomeInsights
 } from "../../src/features/planner/plannerInsights";
+import {
+  buildActivityFocusRoute,
+  logActivityFocusEvent
+} from "../../src/features/transactions/activityFocusNavigation";
 import { useTransactionsQuery } from "../../src/features/transactions/useTransactions";
 import { useEntranceAnimation } from "../../src/hooks/useEntranceAnimation";
 import { formatGreetingForDisplay, useLocalClock } from "../../src/hooks/useLocalClock";
@@ -583,15 +587,18 @@ export default function DashboardTabScreen() {
                     key={transaction.id}
                     transaction={transaction}
                     index={index}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/(tabs)/activity",
-                        params: {
-                          focusTransactionId: transaction.id,
-                          focusNonce: Date.now().toString()
-                        }
-                      })
-                    }
+                    onPress={() => {
+                      const focusRoute = buildActivityFocusRoute(transaction.id);
+                      if (!focusRoute) {
+                        return;
+                      }
+
+                      logActivityFocusEvent("recent_activity_press", {
+                        source: "home",
+                        transactionId: transaction.id
+                      });
+                      router.push(focusRoute);
+                    }}
                   />
                 ))}
               </View>

@@ -276,6 +276,88 @@ public class OpenBankingIntegrationTests
         Assert.NotNull(refreshedConnection.LatestImportedTransactionUtc);
     }
 
+    [Fact]
+    public async Task ReconfirmFlow_BackfillsMissingProjectionForExistingRawTransaction()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.reconfirm-backfill@test.local");
+        var now = DateTime.UtcNow;
+        var connectionId = Guid.NewGuid();
+        var financialAccountId = Guid.NewGuid();
+        var linkedAccountId = Guid.NewGuid();
+
+        harness.DbContext.OpenBankingConnections.Add(new OpenBankingConnection
+        {
+            Id = connectionId,
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Mock Bank Plc",
+            ProviderConnectionReference = "mock-bank",
+            Status = BankConnectionStatuses.ReauthRequired,
+            CreatedUtc = now.AddDays(-30),
+            UpdatedUtc = now.AddDays(-1),
+            LastSuccessfulSyncUtc = now.AddDays(-1)
+        });
+
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = financialAccountId,
+            UserId = user.Id,
+            Name = "Sandbox Main Account",
+            Type = "Current",
+            Currency = "GBP",
+            CreatedUtc = now.AddDays(-30)
+        });
+
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = linkedAccountId,
+            ConnectionId = connectionId,
+            ProviderAccountId = "acc-001",
+            DisplayName = "Sandbox Main Account",
+            Currency = "GBP",
+            CurrentConnectionHealth = "healthy",
+            RawPayloadJson = "{}",
+            FinancialAccountId = financialAccountId,
+            CreatedUtc = now.AddDays(-30),
+            UpdatedUtc = now.AddDays(-1)
+        });
+
+        harness.DbContext.RawBankTransactions.Add(new RawBankTransaction
+        {
+            Id = Guid.NewGuid(),
+            LinkedBankAccountId = linkedAccountId,
+            ProviderTransactionId = "tx-001",
+            DedupeKey = "raw-legacy-dedupe-key",
+            Amount = -25.20m,
+            Currency = "GBP",
+            BookedAtUtc = new DateTime(2026, 3, 8, 12, 0, 0, DateTimeKind.Utc),
+            Description = "Coffee Shop",
+            TransactionType = "DEBIT",
+            TransactionStatus = "booked",
+            RawPayloadJson = "{}",
+            ImportedUtc = now.AddDays(-20)
+        });
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, connectionId, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-reconfirm", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+        Assert.Equal(2, await harness.DbContext.RawBankTransactions.CountAsync());
+        Assert.Equal(2, await harness.DbContext.Transactions.CountAsync());
+    }
+
 
     [Fact]
     public async Task ListUserVisibleConnectionsAsync_ShowsOnlyActiveAndAttentionConnectionsWithoutHistoryNoise()
