@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Image, Text, View } from "react-native";
 import { SvgUri } from "react-native-svg";
 import type { AccountDto } from "../../types/api";
@@ -14,8 +14,16 @@ type AccountProviderBadgeProps = {
   compact?: boolean;
 };
 
+type LogoRenderMode = "svg" | "image";
+
+type ProviderLogoRenderAttempt = {
+  uri: string;
+  mode: LogoRenderMode;
+};
+
 export function AccountProviderBadge({ account, compact = false }: AccountProviderBadgeProps) {
-  const [remoteImageIndex, setRemoteImageIndex] = useState(0);
+  const [attemptIndex, setAttemptIndex] = useState(0);
+  const lastDebugSignatureRef = useRef<string | null>(null);
   const resolved = useMemo(
     () =>
       resolveProviderBadge({
@@ -23,40 +31,96 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
         providerDisplayName: account.providerDisplayName,
         providerIconUrl: account.providerIconUrl,
         providerLogoUrl: account.providerLogoUrl
-    }),
+      }),
     [account.providerDisplayName, account.providerIconUrl, account.providerId, account.providerLogoUrl]
   );
-  const activeRemoteIconUrl = resolved.remoteIconUrls[remoteImageIndex] ?? null;
+
+  const renderAttempts = useMemo(
+    () => buildProviderLogoRenderAttempts(resolved.remoteIconUrls),
+    [resolved.remoteIconUrls]
+  );
+  const activeAttempt = renderAttempts[attemptIndex] ?? null;
 
   useEffect(() => {
-    setRemoteImageIndex(0);
-  }, [resolved.remoteIconUrls]);
+    setAttemptIndex(0);
+  }, [renderAttempts]);
 
-  const isSvgLogo = Boolean(activeRemoteIconUrl && /\.svg(?:$|[?#])/i.test(activeRemoteIconUrl));
+  useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+
+    const signature = [
+      account.providerId ?? "",
+      account.providerDisplayName ?? "",
+      resolved.remoteIconUrls.join("|"),
+      String(attemptIndex)
+    ].join("::");
+
+    if (lastDebugSignatureRef.current === signature) {
+      return;
+    }
+
+    if (renderAttempts.length === 0 && (account.providerId || account.providerDisplayName)) {
+      console.info("[ProviderBadge]", {
+        event: "logo_missing",
+        providerId: account.providerId ?? null,
+        providerDisplayName: account.providerDisplayName ?? null,
+        canonicalProviderKey: resolved.canonicalProviderKey
+      });
+      lastDebugSignatureRef.current = signature;
+      return;
+    }
+
+    if (attemptIndex >= renderAttempts.length && renderAttempts.length > 0) {
+      console.info("[ProviderBadge]", {
+        event: "logo_attempts_exhausted",
+        providerId: account.providerId ?? null,
+        providerDisplayName: account.providerDisplayName ?? null,
+        canonicalProviderKey: resolved.canonicalProviderKey,
+        attemptedUris: resolved.remoteIconUrls
+      });
+      lastDebugSignatureRef.current = signature;
+    }
+  }, [
+    account.providerDisplayName,
+    account.providerId,
+    attemptIndex,
+    renderAttempts.length,
+    resolved.canonicalProviderKey,
+    resolved.remoteIconUrls
+  ]);
+
   const accessibilityLabel = resolved.displayName
     ? `${resolved.displayName} logo`
     : "Connected bank logo";
+  const hasRealArtwork = Boolean(activeAttempt);
+  const goToNextAttempt = () => setAttemptIndex((current) => current + 1);
 
   return (
     <View
       accessibilityRole="image"
       accessibilityLabel={accessibilityLabel}
-      style={[styles.badge, compact ? styles.badgeCompact : null]}
+      style={[
+        styles.badge,
+        hasRealArtwork ? styles.badgeArtwork : styles.badgeFallback,
+        compact ? styles.badgeCompact : null
+      ]}
     >
-      {activeRemoteIconUrl ? (
-        isSvgLogo ? (
+      {activeAttempt ? (
+        activeAttempt.mode === "svg" ? (
           <SvgUri
-            uri={activeRemoteIconUrl}
+            uri={activeAttempt.uri}
             width={compact ? 24 : 30}
             height={compact ? 18 : 22}
-            onError={() => setRemoteImageIndex((current) => current + 1)}
+            onError={goToNextAttempt}
           />
         ) : (
           <Image
-            source={{ uri: activeRemoteIconUrl }}
+            source={{ uri: activeAttempt.uri }}
             style={[styles.logo, compact ? styles.logoCompact : null]}
             resizeMode="contain"
-            onError={() => setRemoteImageIndex((current) => current + 1)}
+            onError={goToNextAttempt}
           />
         )
       ) : resolved.monogram ? (
@@ -72,6 +136,53 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
   );
 }
 
+function buildProviderLogoRenderAttempts(uris: string[]): ProviderLogoRenderAttempt[] {
+  const attempts: ProviderLogoRenderAttempt[] = [];
+  for (const uri of uris) {
+    const renderMode = inferProviderLogoRenderMode(uri);
+    if (renderMode === "svg") {
+      attempts.push({ uri, mode: "svg" });
+      continue;
+    }
+
+    if (renderMode === "image") {
+      attempts.push({ uri, mode: "image" });
+      continue;
+    }
+
+    attempts.push({ uri, mode: "svg" });
+    attempts.push({ uri, mode: "image" });
+  }
+
+  return attempts;
+}
+
+function inferProviderLogoRenderMode(uri: string): LogoRenderMode | "unknown" {
+  if (/^data:image\/svg\+xml/i.test(uri)) {
+    return "svg";
+  }
+
+  if (/^data:image\/(?:png|jpe?g|webp|gif|bmp|avif|heic|heif)/i.test(uri)) {
+    return "image";
+  }
+
+  const extensionMatch = uri.match(/\.([a-z0-9]+)(?:$|[?#])/i);
+  const extension = extensionMatch?.[1]?.toLowerCase();
+  if (!extension) {
+    return "unknown";
+  }
+
+  if (extension === "svg" || extension === "svgz") {
+    return "svg";
+  }
+
+  if (["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "heic", "heif"].includes(extension)) {
+    return "image";
+  }
+
+  return "unknown";
+}
+
 const styles = createRuntimeStyleSheet(() => ({
   badge: {
     minWidth: 58,
@@ -79,11 +190,16 @@ const styles = createRuntimeStyleSheet(() => ({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.fieldStrong,
     paddingHorizontal: spacing[10],
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden"
+  },
+  badgeArtwork: {
+    backgroundColor: surfaces.field
+  },
+  badgeFallback: {
+    backgroundColor: surfaces.fieldStrong
   },
   badgeCompact: {
     minWidth: 46,
@@ -107,4 +223,3 @@ const styles = createRuntimeStyleSheet(() => ({
     fontSize: 11
   }
 }));
-
