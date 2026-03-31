@@ -63,6 +63,10 @@ NSFinance now uses a global sync orchestration model:
   - post-login session entry
 - Due/not-due decisions are made on backend connection freshness state, not guessed on-device.
 - Auto sync skips when not due (calm behavior, no API hammering).
+- Connections in `sync_pending` are evaluated with stale-state recovery:
+  - fresh `sync_pending` connections are skipped as `skipped_sync_in_progress`
+  - stale `sync_pending` connections (older than recovery threshold) are reconciled back to a syncable state and retried in the same global run
+  - logs include current status, last sync-attempt timestamp, stale/fresh decision, and whether stale recovery was applied
 
 ### Last synced semantics
 
@@ -125,6 +129,9 @@ NSFinance now treats imported banking data as a long-term ledger:
   - if a window still appears capped, sync adaptively splits again until a safe minimum window size
   - results are merged idempotently before upsert so metadata/category continuity is preserved
 - Pending endpoints are queried where available and ingested as raw pending activity; pending rows are intentionally not projected as booked ledger entries.
+- Fetch-truth diagnostics now explicitly separate provider freshness from projection behavior:
+  - fetched logs include `latestImportedCheckpointUtcBefore`, `hasFetchedRowNewerThanCheckpoint`, `latestReturnedLagHours`, and `staleReturnedSlice`
+  - this makes it explicit whether missing activity was absent from provider payload vs fetched and filtered later in projection
 - Transaction status normalization is endpoint-aware:
   - rows from `/transactions` (settled/booked endpoint) are normalized as booked for ledger projection, even if provider payload status strings are noisy
   - rows from `/transactions/pending` are normalized as pending and remain raw-only until a booked version arrives

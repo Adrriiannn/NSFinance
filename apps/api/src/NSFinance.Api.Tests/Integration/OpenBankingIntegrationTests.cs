@@ -317,6 +317,81 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_RecoversStaleSyncPendingConnection_AndRunsSync()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-stale-sync-pending@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-global-stale-sync-pending", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.Status = BankConnectionStatuses.SyncPending;
+        connection.LastSyncAttemptedUtc = DateTime.UtcNow.AddMinutes(-20);
+        connection.UpdatedUtc = DateTime.UtcNow.AddMinutes(-20);
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_stale_sync_pending_recovery",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", result.Outcome);
+        Assert.Single(result.Connections);
+        Assert.NotEqual("skipped_sync_in_progress", result.Connections[0].Outcome);
+
+        var refreshedConnection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        Assert.NotEqual(BankConnectionStatuses.SyncPending, refreshedConnection.Status);
+    }
+
+    [Fact]
+    public async Task GlobalSync_SkipsFreshSyncPendingConnection_AsInProgress()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-fresh-sync-pending@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-global-fresh-sync-pending", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.Status = BankConnectionStatuses.SyncPending;
+        connection.LastSyncAttemptedUtc = DateTime.UtcNow.AddMinutes(-2);
+        connection.UpdatedUtc = DateTime.UtcNow.AddMinutes(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_fresh_sync_pending_skip",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", result.Outcome);
+        Assert.Single(result.Connections);
+        Assert.Equal("skipped_sync_in_progress", result.Connections[0].Outcome);
+    }
+
+    [Fact]
     public async Task GlobalSync_AutoTrigger_SkipsWhenNotDue()
     {
         await using var harness = new OpenBankingTestHarness(

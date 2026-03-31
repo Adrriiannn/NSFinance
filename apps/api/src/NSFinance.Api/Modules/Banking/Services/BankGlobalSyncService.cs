@@ -36,11 +36,14 @@ public sealed class BankGlobalSyncService(
         BankConnectionStatuses.SyncPending
     ];
 
+    private static readonly TimeSpan SyncPendingStaleAfter = TimeSpan.FromMinutes(10);
+
     private sealed record ConnectionSyncCandidate(
         Guid Id,
         string Status,
         string? ProviderId,
         string? ProviderDisplayName,
+        DateTime? LastSyncAttemptedUtc,
         DateTime? LastSuccessfulSyncUtc,
         DateTime UpdatedUtc);
 
@@ -65,6 +68,7 @@ public sealed class BankGlobalSyncService(
                     x.Status,
                     x.ProviderId,
                     x.ProviderDisplayName,
+                    x.LastSyncAttemptedUtc,
                     x.LastSuccessfulSyncUtc,
                     x.UpdatedUtc))
                 .ToListAsync(cancellationToken);
@@ -201,30 +205,106 @@ public sealed class BankGlobalSyncService(
 
             foreach (var candidate in eligibleCandidates)
             {
-                if (candidate.Status == BankConnectionStatuses.SyncPending)
+                logger.LogInformation(
+                    "Global sync evaluating connection userId={UserId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} lastSyncAttemptedUtc={LastSyncAttemptedUtc} lastSuccessfulSyncUtc={LastSuccessfulSyncUtc}",
+                    userId,
+                    candidate.Id,
+                    candidate.ProviderId ?? "<unknown>",
+                    candidate.ProviderDisplayName ?? "<unknown>",
+                    candidate.Status,
+                    candidate.LastSyncAttemptedUtc,
+                    candidate.LastSuccessfulSyncUtc);
+
+                var effectiveStatus = candidate.Status;
+                var staleSyncPendingRecovered = false;
+
+                if (effectiveStatus == BankConnectionStatuses.SyncPending)
                 {
-                    skippedConnectionCount++;
-                    connectionResults.Add(new BankGlobalSyncConnectionResult(
-                        candidate.Id,
-                        candidate.ProviderDisplayName,
-                        candidate.Status,
-                        Outcome: "skipped_sync_in_progress",
-                        AccountsSynced: 0,
-                        BalancesSynced: 0,
-                        TransactionsImported: 0,
-                        SyncedAtUtc: null,
-                        DataChanged: false,
-                        ErrorCode: null,
-                        ErrorMessage: "Sync already in progress for this connection."));
+                    var pendingSinceUtc = candidate.LastSyncAttemptedUtc ?? candidate.UpdatedUtc;
+                    var pendingAge = requestedAtUtc - pendingSinceUtc;
+                    var isStalePending = pendingAge >= SyncPendingStaleAfter;
 
                     logger.LogInformation(
-                        "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome}",
+                        "Global sync evaluated sync_pending state connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} pendingSinceUtc={PendingSinceUtc} pendingAgeSeconds={PendingAgeSeconds} staleThresholdSeconds={StaleThresholdSeconds} isStale={IsStale}",
                         candidate.Id,
                         candidate.ProviderId ?? "<unknown>",
                         candidate.ProviderDisplayName ?? "<unknown>",
-                        candidate.Status,
-                        "skipped_sync_in_progress");
-                    continue;
+                        pendingSinceUtc,
+                        (int)Math.Max(0, pendingAge.TotalSeconds),
+                        (int)SyncPendingStaleAfter.TotalSeconds,
+                        isStalePending);
+
+                    if (!isStalePending)
+                    {
+                        skippedConnectionCount++;
+                        connectionResults.Add(new BankGlobalSyncConnectionResult(
+                            candidate.Id,
+                            candidate.ProviderDisplayName,
+                            effectiveStatus,
+                            Outcome: "skipped_sync_in_progress",
+                            AccountsSynced: 0,
+                            BalancesSynced: 0,
+                            TransactionsImported: 0,
+                            SyncedAtUtc: null,
+                            DataChanged: false,
+                            ErrorCode: null,
+                            ErrorMessage: "Sync already in progress for this connection."));
+
+                        logger.LogInformation(
+                            "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome}",
+                            candidate.Id,
+                            candidate.ProviderId ?? "<unknown>",
+                            candidate.ProviderDisplayName ?? "<unknown>",
+                            effectiveStatus,
+                            "skipped_sync_in_progress");
+                        continue;
+                    }
+
+                    var recoveredStatus = candidate.LastSuccessfulSyncUtc.HasValue
+                        ? BankConnectionStatuses.Synced
+                        : BankConnectionStatuses.Connected;
+
+                    var recoveredRows = await RecoverStaleSyncPendingConnectionAsync(
+                        userId,
+                        candidate,
+                        recoveredStatus,
+                        requestedAtUtc,
+                        cancellationToken);
+
+                    if (recoveredRows == 0)
+                    {
+                        skippedConnectionCount++;
+                        connectionResults.Add(new BankGlobalSyncConnectionResult(
+                            candidate.Id,
+                            candidate.ProviderDisplayName,
+                            effectiveStatus,
+                            Outcome: "skipped_sync_in_progress",
+                            AccountsSynced: 0,
+                            BalancesSynced: 0,
+                            TransactionsImported: 0,
+                            SyncedAtUtc: null,
+                            DataChanged: false,
+                            ErrorCode: "sync_pending_state_changed",
+                            ErrorMessage: "Sync pending state changed during stale recovery check."));
+
+                        logger.LogInformation(
+                            "Global sync stale sync_pending recovery skipped because state changed connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName}",
+                            candidate.Id,
+                            candidate.ProviderId ?? "<unknown>",
+                            candidate.ProviderDisplayName ?? "<unknown>");
+                        continue;
+                    }
+
+                    staleSyncPendingRecovered = true;
+                    effectiveStatus = recoveredStatus;
+                    logger.LogWarning(
+                        "Recovered stale sync_pending connection state connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} previousStatus={PreviousStatus} recoveredStatus={RecoveredStatus} pendingAgeSeconds={PendingAgeSeconds}",
+                        candidate.Id,
+                        candidate.ProviderId ?? "<unknown>",
+                        candidate.ProviderDisplayName ?? "<unknown>",
+                        BankConnectionStatuses.SyncPending,
+                        recoveredStatus,
+                        (int)Math.Max(0, pendingAge.TotalSeconds));
                 }
 
                 ServiceResult<BankSyncResult> syncResult;
@@ -244,7 +324,7 @@ public sealed class BankGlobalSyncService(
                     connectionResults.Add(new BankGlobalSyncConnectionResult(
                         candidate.Id,
                         candidate.ProviderDisplayName,
-                        candidate.Status,
+                        effectiveStatus,
                         Outcome: "failed",
                         AccountsSynced: 0,
                         BalancesSynced: 0,
@@ -259,7 +339,7 @@ public sealed class BankGlobalSyncService(
                         candidate.Id,
                         candidate.ProviderId ?? "<unknown>",
                         candidate.ProviderDisplayName ?? "<unknown>",
-                        candidate.Status,
+                        effectiveStatus,
                         "failed",
                         "sync_unexpected_exception");
                     continue;
@@ -291,12 +371,13 @@ public sealed class BankGlobalSyncService(
                         ErrorMessage: null));
 
                     logger.LogInformation(
-                        "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} dataChanged={DataChanged}",
+                        "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome} staleSyncPendingRecovered={StaleSyncPendingRecovered} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} dataChanged={DataChanged}",
                         value.ConnectionId,
                         candidate.ProviderId ?? "<unknown>",
                         candidate.ProviderDisplayName ?? "<unknown>",
                         value.Status,
                         value.DataChanged ? "completed_changed" : "completed_no_change",
+                        staleSyncPendingRecovered,
                         value.AccountsSynced,
                         value.BalancesSynced,
                         value.TransactionsImported,
@@ -318,7 +399,7 @@ public sealed class BankGlobalSyncService(
                 connectionResults.Add(new BankGlobalSyncConnectionResult(
                     candidate.Id,
                     candidate.ProviderDisplayName,
-                    candidate.Status,
+                    effectiveStatus,
                     skipped ? "skipped_unavailable" : "failed",
                     AccountsSynced: 0,
                     BalancesSynced: 0,
@@ -333,7 +414,7 @@ public sealed class BankGlobalSyncService(
                     candidate.Id,
                     candidate.ProviderId ?? "<unknown>",
                     candidate.ProviderDisplayName ?? "<unknown>",
-                    candidate.Status,
+                    effectiveStatus,
                     skipped ? "skipped_unavailable" : "failed",
                     error.Code ?? "<none>");
             }
@@ -606,5 +687,56 @@ public sealed class BankGlobalSyncService(
         }
 
         return result;
+    }
+
+    private async Task<int> RecoverStaleSyncPendingConnectionAsync(
+        Guid userId,
+        ConnectionSyncCandidate candidate,
+        string recoveredStatus,
+        DateTime requestedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await dbContext.OpenBankingConnections
+                .Where(x =>
+                    x.Id == candidate.Id
+                    && x.UserId == userId
+                    && x.Status == BankConnectionStatuses.SyncPending
+                    && x.LastSyncAttemptedUtc == candidate.LastSyncAttemptedUtc)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, recoveredStatus)
+                    .SetProperty(x => x.UpdatedUtc, requestedAtUtc),
+                    cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Set-based stale sync_pending recovery is not available; falling back to tracked recovery connectionId={ConnectionId}",
+                candidate.Id);
+        }
+
+        var tracked = await dbContext.OpenBankingConnections
+            .SingleOrDefaultAsync(
+                x => x.Id == candidate.Id
+                     && x.UserId == userId
+                     && x.Status == BankConnectionStatuses.SyncPending,
+                cancellationToken);
+
+        if (tracked is null)
+        {
+            return 0;
+        }
+
+        if (tracked.LastSyncAttemptedUtc != candidate.LastSyncAttemptedUtc)
+        {
+            return 0;
+        }
+
+        tracked.Status = recoveredStatus;
+        tracked.UpdatedUtc = requestedAtUtc;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return 1;
     }
 }

@@ -315,6 +315,8 @@ public sealed class BankSyncService(
             transactionSyncMode,
             connection.InitialBackfillCompletedUtc.HasValue);
 
+        try
+        {
         var accountsResult = await dataService.GetAccountsAsync(configuration, accessToken, cancellationToken);
         if (!accountsResult.Succeeded)
         {
@@ -522,9 +524,18 @@ public sealed class BankSyncService(
             }
 
             var fetchedTransactions = transactionsFetchResult.Value!;
+            var latestImportedCheckpointUtcBefore = connection.LatestImportedTransactionUtc;
+            var hasFetchedRowNewerThanCheckpoint =
+                fetchedTransactions.LatestReturnedUtc.HasValue
+                && (!latestImportedCheckpointUtcBefore.HasValue
+                    || fetchedTransactions.LatestReturnedUtc.Value > latestImportedCheckpointUtcBefore.Value);
+            var latestReturnedLagHours = fetchedTransactions.LatestReturnedUtc.HasValue
+                ? (now - fetchedTransactions.LatestReturnedUtc.Value).TotalHours
+                : (double?)null;
+            var staleReturnedSlice = latestReturnedLagHours.HasValue && latestReturnedLagHours.Value > 24;
 
             logger.LogInformation(
-                "Fetched bank transactions accountId={AccountId} connectionId={ConnectionId} settledFetched={SettledFetched} pendingFetched={PendingFetched} pendingOutcome={PendingOutcome} totalFetched={TotalFetched} requestWindows={RequestWindows} potentiallyCappedWindows={PotentiallyCappedWindows} repeatedWindowPayloads={RepeatedWindowPayloads} earliestReturnedUtc={EarliestReturnedUtc} latestReturnedUtc={LatestReturnedUtc}",
+                "Fetched bank transactions accountId={AccountId} connectionId={ConnectionId} settledFetched={SettledFetched} pendingFetched={PendingFetched} pendingOutcome={PendingOutcome} totalFetched={TotalFetched} requestWindows={RequestWindows} potentiallyCappedWindows={PotentiallyCappedWindows} repeatedWindowPayloads={RepeatedWindowPayloads} earliestReturnedUtc={EarliestReturnedUtc} latestReturnedUtc={LatestReturnedUtc} latestImportedCheckpointUtcBefore={LatestImportedCheckpointUtcBefore} hasFetchedRowNewerThanCheckpoint={HasFetchedRowNewerThanCheckpoint} latestReturnedLagHours={LatestReturnedLagHours} staleReturnedSlice={StaleReturnedSlice}",
                 providerAccount.AccountId,
                 connection.Id,
                 fetchedTransactions.SettledFetched,
@@ -535,7 +546,24 @@ public sealed class BankSyncService(
                 fetchedTransactions.PotentiallyCappedWindowCount,
                 fetchedTransactions.RepeatedWindowPayloadCount,
                 fetchedTransactions.EarliestReturnedUtc,
-                fetchedTransactions.LatestReturnedUtc);
+                fetchedTransactions.LatestReturnedUtc,
+                latestImportedCheckpointUtcBefore,
+                hasFetchedRowNewerThanCheckpoint,
+                latestReturnedLagHours,
+                staleReturnedSlice);
+
+            if (!hasFetchedRowNewerThanCheckpoint && fetchedTransactions.Transactions.Count > 0)
+            {
+                logger.LogWarning(
+                    "Fetched bank transaction payload did not include rows newer than checkpoint accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} latestImportedCheckpointUtcBefore={LatestImportedCheckpointUtcBefore} latestReturnedUtc={LatestReturnedUtc} latestReturnedLagHours={LatestReturnedLagHours}",
+                    providerAccount.AccountId,
+                    connection.Id,
+                    providerAccount.ProviderId ?? "<unknown>",
+                    providerAccount.ProviderDisplayName ?? "<unknown>",
+                    latestImportedCheckpointUtcBefore,
+                    fetchedTransactions.LatestReturnedUtc,
+                    latestReturnedLagHours);
+            }
 
             if (isInitialBackfill
                 && string.Equals(transactionWindow.PolicyName, "revolut_initial_6y", StringComparison.Ordinal)
@@ -972,6 +1000,29 @@ public sealed class BankSyncService(
                 BankConnectionStatuses.Synced,
                 DateTime.UtcNow,
                 dataChanged));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Bank sync crashed unexpectedly connectionId={ConnectionId} trigger={Trigger}",
+                connection.Id,
+                trigger);
+
+            return await HandleSyncFailureAsync(
+                connection,
+                new ServiceError(
+                    "Unexpected error during bank sync execution.",
+                    "bank_sync_unexpected_exception",
+                    StatusCodes.Status500InternalServerError),
+                trigger,
+                "unexpected_exception",
+                cancellationToken);
+        }
     }
 
     private async Task<ServiceResult> StoreRefreshedTokenAsync(

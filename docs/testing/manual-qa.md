@@ -144,3 +144,8 @@ Mobile freshness UX:
 10. Validate pending behavior:
    - rows fetched from pending endpoint remain unprojected (raw-only) until a booked counterpart arrives
    - when a pending row later arrives as booked, it is projected once without duplicate ledger creation
+11. Validate stuck-sync recovery behavior:
+   - force one connection into `sync_pending` with a recent `LastSyncAttemptedUtc` and run global manual sync
+   - verify that connection is skipped as `skipped_sync_in_progress`
+   - force one connection into stale `sync_pending` (older than threshold) and run global manual sync
+   - verify stale state is recovered and connection runs sync instead of being skipped indefinitely
