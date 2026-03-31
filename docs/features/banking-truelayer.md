@@ -120,6 +120,10 @@ NSFinance now treats imported banking data as a long-term ledger:
   - AIB: target up to 1 year on initial sync
   - fallback for others: target up to 6 years on initial sync
 - Ongoing syncs switch to incremental mode using the latest imported checkpoint with a guarded lookback window to catch late-posted items.
+- For capped providers (for example AIB at up to 100 transactions), incremental sync no longer relies on one broad window request:
+  - requests are split into smaller incremental sub-windows
+  - if a window still appears capped, sync adaptively splits again until a safe minimum window size
+  - results are merged idempotently before upsert so metadata/category continuity is preserved
 - Pending endpoints are queried where available and ingested as raw pending activity; pending rows are intentionally not projected as booked ledger entries.
 - Connection metadata tracks:
   - initial backfill started/completed

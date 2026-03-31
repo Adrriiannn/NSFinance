@@ -44,6 +44,8 @@ Happy path:
 8. Validate incremental behavior:
    - trigger another sync
    - verify follow-up transaction fetches use incremental windows (not full initial backfill again)
+   - for capped providers (for example AIB), verify incremental sync uses sub-window requests instead of one broad request
+   - verify logs include per-window `settledCount`, earliest/latest returned timestamps, and capped-window split diagnostics when applicable
 9. Validate global sync endpoint behavior:
    - call `POST /api/banking/sync` with `{ "trigger": "manual", "source": "qa_manual" }`
    - verify `outcome=completed` on first run

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -150,6 +151,48 @@ public class OpenBankingIntegrationTests
         var projected = await harness.DbContext.Transactions.ToListAsync();
         Assert.Single(projected);
         Assert.Equal(-42.00m, projected[0].Amount);
+    }
+
+    [Fact]
+    public async Task GlobalSync_AibCappedIncrementalWindow_RecoversRecentTransactions()
+    {
+        var handler = AibCappedOldestSliceFlowHandler(out var getTransactionsCallCount, out var referenceNowUtc);
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: handler);
+
+        var user = await harness.CreateUserAsync("bank.aib-capped-window@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-aib-capped-window", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var initialLatestRawUtc = await harness.DbContext.RawBankTransactions
+            .MaxAsync(x => x.BookedAtUtc);
+
+        Assert.True(initialLatestRawUtc < referenceNowUtc.AddDays(-20));
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var secondSync = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_aib_capped_incremental_window",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", secondSync.Outcome);
+        Assert.True(secondSync.ChangedConnectionCount >= 1);
+
+        var latestRawUtc = await harness.DbContext.RawBankTransactions
+            .MaxAsync(x => x.BookedAtUtc);
+
+        Assert.True(latestRawUtc >= referenceNowUtc.AddDays(-2));
+        Assert.True(await harness.DbContext.Transactions.AnyAsync(x => x.BookedAtUtc >= referenceNowUtc.AddDays(-2)));
+        Assert.True(getTransactionsCallCount() > 2);
     }
 
     [Fact]
@@ -1344,6 +1387,173 @@ public class OpenBankingIntegrationTests
         });
     }
 
+    private static HttpMessageHandler AibCappedOldestSliceFlowHandler(
+        out Func<int> getTransactionsCallCount,
+        out DateTime referenceNowUtc)
+    {
+        var transactionCallCount = 0;
+        referenceNowUtc = DateTime.UtcNow;
+        var referenceNow = referenceNowUtc;
+        var catalog = BuildAibCappedTransactionCatalog(referenceNowUtc);
+        getTransactionsCallCount = () => Volatile.Read(ref transactionCallCount);
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-aib-capped-window",
+                      "refresh_token":"refresh-token-aib-capped-window",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-capped-001",
+                          "display_name": "AIB Capped Feed",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "aib-ie-ob",
+                            "display_name": "Allied Irish Bank"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-capped-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1500.00,
+                          "current": 1500.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T08:15:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-capped-001/transactions", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref transactionCallCount);
+                var (fromUtc, toUtc) = ParseRequestedWindow(request.RequestUri, referenceNow);
+
+                var cappedSlice = catalog
+                    .Where(x => x.BookedAtUtc >= fromUtc && x.BookedAtUtc <= toUtc)
+                    .OrderBy(x => x.BookedAtUtc)
+                    .Take(100)
+                    .Select(x => new
+                    {
+                        transaction_id = x.TransactionId,
+                        normalised_provider_transaction_id = x.NormalizedProviderTransactionId,
+                        amount = x.Amount,
+                        currency = "EUR",
+                        timestamp = x.BookedAtUtc.ToString("O"),
+                        description = x.Description,
+                        transaction_type = "DEBIT",
+                        status = "booked"
+                    })
+                    .ToList();
+
+                return Json(HttpStatusCode.OK, JsonSerializer.Serialize(new { results = cappedSlice }));
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-capped-001/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static IReadOnlyList<CappedProviderTransactionSeed> BuildAibCappedTransactionCatalog(DateTime referenceNowUtc)
+    {
+        var catalog = new List<CappedProviderTransactionSeed>();
+        var cursor = referenceNowUtc.AddDays(-45);
+        var index = 0;
+
+        while (cursor < referenceNowUtc.AddMinutes(-15))
+        {
+            index++;
+            catalog.Add(new CappedProviderTransactionSeed(
+                TransactionId: $"tx-aib-capped-{index:D4}",
+                NormalizedProviderTransactionId: $"norm-aib-capped-{index:D4}",
+                Amount: -(10m + (index % 30)),
+                BookedAtUtc: cursor,
+                Description: $"AIB synthetic payment {index:D4}"));
+            cursor = cursor.AddHours(2);
+        }
+
+        return catalog;
+    }
+
+    private static (DateTime FromUtc, DateTime ToUtc) ParseRequestedWindow(Uri? requestUri, DateTime fallbackNowUtc)
+    {
+        var defaults = (FromUtc: fallbackNowUtc.AddYears(-5), ToUtc: fallbackNowUtc);
+        if (requestUri is null)
+        {
+            return defaults;
+        }
+
+        var fromRaw = GetQueryParameter(requestUri.Query, "from");
+        var toRaw = GetQueryParameter(requestUri.Query, "to");
+
+        var fromUtc = DateTimeOffset.TryParse(fromRaw, out var parsedFrom)
+            ? parsedFrom.UtcDateTime
+            : defaults.FromUtc;
+        var toUtc = DateTimeOffset.TryParse(toRaw, out var parsedTo)
+            ? parsedTo.UtcDateTime
+            : defaults.ToUtc;
+
+        return (fromUtc, toUtc);
+    }
+
+    private static string? GetQueryParameter(string query, string key)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return null;
+        }
+
+        foreach (var segment in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pair = segment.Split('=', 2, StringSplitOptions.None);
+            if (pair.Length == 0)
+            {
+                continue;
+            }
+
+            var decodedKey = Uri.UnescapeDataString(pair[0]);
+            if (!string.Equals(decodedKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return pair.Length > 1 ? Uri.UnescapeDataString(pair[1]) : null;
+        }
+
+        return null;
+    }
+
     private static HttpResponseMessage Json(HttpStatusCode statusCode, string json)
     {
         return new HttpResponseMessage(statusCode)
@@ -1540,6 +1750,13 @@ public class OpenBankingIntegrationTests
             return Encoding.UTF8.GetString(Convert.FromBase64String(ciphertext));
         }
     }
+
+    private sealed record CappedProviderTransactionSeed(
+        string TransactionId,
+        string NormalizedProviderTransactionId,
+        decimal Amount,
+        DateTime BookedAtUtc,
+        string Description);
 }
 
 

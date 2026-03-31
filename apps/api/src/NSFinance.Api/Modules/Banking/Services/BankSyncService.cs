@@ -22,6 +22,10 @@ public sealed class BankSyncService(
     private const int IncrementalLookbackDays = 35;
     private const int IncrementalFallbackDays = 120;
     private const int InitialBackfillDefaultDays = 365 * 6;
+    private const int AibTransactionResponseCap = 100;
+    private const int CappedProviderIncrementalChunkDays = 7;
+    private const int CappedProviderMaxAdaptiveSplitDepth = 6;
+    private static readonly TimeSpan CappedProviderMinAdaptiveWindow = TimeSpan.FromHours(6);
     private const int InternalTransferMatchLookbackDays = 21;
     private const int InternalTransferMatchMaxWindowHours = 72;
     private const int InternalTransferMatchMinimumScore = 5;
@@ -498,66 +502,34 @@ public sealed class BankSyncService(
                 transactionWindow.ToUtc,
                 transactionWindow.PolicyName ?? "<none>");
 
-            var transactionsResult = await dataService.GetTransactionsAsync(
+            var transactionsFetchResult = await FetchAccountTransactionsAsync(
                 configuration,
                 accessToken,
-                providerAccount.AccountId,
-                transactionWindow.FromUtc,
-                transactionWindow.ToUtc,
+                providerAccount,
+                transactionWindow,
+                isInitialBackfill,
                 cancellationToken);
 
-            if (!transactionsResult.Succeeded)
+            if (!transactionsFetchResult.Succeeded)
             {
-                return await HandleSyncFailureAsync(connection, transactionsResult.Error!, trigger, cancellationToken);
+                return await HandleSyncFailureAsync(connection, transactionsFetchResult.Error!, trigger, cancellationToken);
             }
 
-            var settledTransactions = transactionsResult.Value!;
-            var settledFetched = settledTransactions.Count;
-            var allAccountTransactions = settledTransactions.ToList();
-            var pendingFetched = 0;
-            var pendingOutcome = "not_requested";
-            var pendingTransactionsResult = await dataService.GetPendingTransactionsAsync(
-                configuration,
-                accessToken,
-                providerAccount.AccountId,
-                transactionWindow.FromUtc,
-                transactionWindow.ToUtc,
-                cancellationToken);
-
-            if (pendingTransactionsResult.Succeeded)
-            {
-                pendingFetched = pendingTransactionsResult.Value!.Count;
-                pendingOutcome = "succeeded";
-                allAccountTransactions.AddRange(pendingTransactionsResult.Value);
-            }
-            else if (IsOptionalDatasetUnsupported(pendingTransactionsResult.Error))
-            {
-                pendingOutcome = "unsupported";
-                logger.LogInformation(
-                    "Pending account transactions endpoint unavailable for accountId={AccountId} connectionId={ConnectionId} status={StatusCode}",
-                    providerAccount.AccountId,
-                    connection.Id,
-                    pendingTransactionsResult.Error?.StatusCode);
-            }
-            else
-            {
-                pendingOutcome = "failed";
-                logger.LogWarning(
-                    "Pending account transactions sync failed for accountId={AccountId} connectionId={ConnectionId} status={StatusCode} code={Code}",
-                    providerAccount.AccountId,
-                    connection.Id,
-                    pendingTransactionsResult.Error?.StatusCode,
-                    pendingTransactionsResult.Error?.Code);
-            }
+            var fetchedTransactions = transactionsFetchResult.Value!;
 
             logger.LogInformation(
-                "Fetched bank transactions accountId={AccountId} connectionId={ConnectionId} settledFetched={SettledFetched} pendingFetched={PendingFetched} pendingOutcome={PendingOutcome} totalFetched={TotalFetched}",
+                "Fetched bank transactions accountId={AccountId} connectionId={ConnectionId} settledFetched={SettledFetched} pendingFetched={PendingFetched} pendingOutcome={PendingOutcome} totalFetched={TotalFetched} requestWindows={RequestWindows} potentiallyCappedWindows={PotentiallyCappedWindows} repeatedWindowPayloads={RepeatedWindowPayloads} earliestReturnedUtc={EarliestReturnedUtc} latestReturnedUtc={LatestReturnedUtc}",
                 providerAccount.AccountId,
                 connection.Id,
-                settledFetched,
-                pendingFetched,
-                pendingOutcome,
-                allAccountTransactions.Count);
+                fetchedTransactions.SettledFetched,
+                fetchedTransactions.PendingFetched,
+                fetchedTransactions.PendingOutcome,
+                fetchedTransactions.Transactions.Count,
+                fetchedTransactions.RequestWindowCount,
+                fetchedTransactions.PotentiallyCappedWindowCount,
+                fetchedTransactions.RepeatedWindowPayloadCount,
+                fetchedTransactions.EarliestReturnedUtc,
+                fetchedTransactions.LatestReturnedUtc);
 
             if (isInitialBackfill
                 && string.Equals(transactionWindow.PolicyName, "revolut_initial_6y", StringComparison.Ordinal)
@@ -571,13 +543,13 @@ public sealed class BankSyncService(
 
             requestedBackfillWindowStartUtc = MinUtc(requestedBackfillWindowStartUtc, transactionWindow.FromUtc);
 
-            var observedForAccount = ExtractObservedTransactionBounds(allAccountTransactions);
+            var observedForAccount = ExtractObservedTransactionBounds(fetchedTransactions.Transactions);
             syncObservedEarliestBookedAtUtc = MinUtc(syncObservedEarliestBookedAtUtc, observedForAccount.EarliestBookedAtUtc);
             syncObservedLatestBookedAtUtc = MaxUtc(syncObservedLatestBookedAtUtc, observedForAccount.LatestBookedAtUtc);
 
             var transactionUpsert = await UpsertTransactionsAsync(
                 linkedAccount,
-                allAccountTransactions,
+                fetchedTransactions.Transactions,
                 now,
                 cancellationToken);
             transactionsImported += transactionUpsert.RawInserted + transactionUpsert.RawUpdated;
@@ -1737,6 +1709,35 @@ public sealed class BankSyncService(
         int ProjectedBackfilled,
         int ProjectedSkippedUnbooked);
 
+    private sealed record ProviderTransactionSyncPolicy(
+        string ProviderKey,
+        int? SettledResponseCap,
+        int IncrementalChunkDays,
+        int MaxAdaptiveSplitDepth,
+        TimeSpan MinAdaptiveWindow);
+
+    private sealed record AccountTransactionFetchResult(
+        IReadOnlyList<TrueLayerTransactionRecord> Transactions,
+        int SettledFetched,
+        int PendingFetched,
+        string PendingOutcome,
+        int RequestWindowCount,
+        int PotentiallyCappedWindowCount,
+        int RepeatedWindowPayloadCount,
+        DateTime? EarliestReturnedUtc,
+        DateTime? LatestReturnedUtc);
+
+    private sealed record AccountTransactionWindowFetchResult(
+        IReadOnlyList<TrueLayerTransactionRecord> Transactions,
+        int SettledFetched,
+        int PendingFetched,
+        int PendingSucceededWindowCount,
+        int PendingUnsupportedWindowCount,
+        int PendingFailedWindowCount,
+        int RequestWindowCount,
+        int PotentiallyCappedWindowCount,
+        string SettledFingerprint);
+
     private async Task<int> UpsertDirectDebitsAsync(
         LinkedBankAccount linkedAccount,
         IReadOnlyList<TrueLayerDirectDebitRecord> providerDirectDebits,
@@ -2645,6 +2646,519 @@ public sealed class BankSyncService(
         return connection.BrandingLastSyncedAtUtc.Value < now.AddDays(-30);
     }
 
+    private async Task<ServiceResult<AccountTransactionFetchResult>> FetchAccountTransactionsAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        TrueLayerAccountRecord providerAccount,
+        TrueLayerTransactionQueryWindow baseWindow,
+        bool isInitialBackfill,
+        CancellationToken cancellationToken)
+    {
+        var policy = ResolveProviderTransactionSyncPolicy(providerAccount);
+        var requestWindows = BuildTransactionRequestWindows(baseWindow, policy, isInitialBackfill);
+        var adaptiveSplitEnabled = !isInitialBackfill && policy.SettledResponseCap.HasValue;
+
+        logger.LogInformation(
+            "Transaction sync strategy accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} policy={PolicyName} requestWindows={RequestWindows} adaptiveSplitEnabled={AdaptiveSplitEnabled} settledResponseCap={SettledResponseCap}",
+            providerAccount.AccountId,
+            providerAccount.ProviderId ?? "<unknown>",
+            providerAccount.ProviderDisplayName ?? "<unknown>",
+            baseWindow.Mode,
+            baseWindow.PolicyName ?? "<none>",
+            requestWindows.Count,
+            adaptiveSplitEnabled,
+            policy.SettledResponseCap);
+
+        var mergedRecords = new List<TrueLayerTransactionRecord>();
+        var settledFetched = 0;
+        var pendingFetched = 0;
+        var pendingSucceededWindows = 0;
+        var pendingUnsupportedWindows = 0;
+        var pendingFailedWindows = 0;
+        var requestWindowCount = 0;
+        var potentiallyCappedWindowCount = 0;
+        var repeatedWindowPayloadCount = 0;
+        string? previousSettledFingerprint = null;
+
+        foreach (var requestWindow in requestWindows)
+        {
+            var windowFetchResult = await FetchAccountTransactionsWindowAsync(
+                configuration,
+                accessToken,
+                providerAccount,
+                requestWindow,
+                policy,
+                adaptiveSplitEnabled,
+                depth: 0,
+                cancellationToken);
+
+            if (!windowFetchResult.Succeeded)
+            {
+                return ServiceResult<AccountTransactionFetchResult>.Fail(
+                    windowFetchResult.Error!.Message,
+                    windowFetchResult.Error.Code,
+                    windowFetchResult.Error.StatusCode);
+            }
+
+            var segment = windowFetchResult.Value!;
+            mergedRecords.AddRange(segment.Transactions);
+            settledFetched += segment.SettledFetched;
+            pendingFetched += segment.PendingFetched;
+            pendingSucceededWindows += segment.PendingSucceededWindowCount;
+            pendingUnsupportedWindows += segment.PendingUnsupportedWindowCount;
+            pendingFailedWindows += segment.PendingFailedWindowCount;
+            requestWindowCount += segment.RequestWindowCount;
+            potentiallyCappedWindowCount += segment.PotentiallyCappedWindowCount;
+
+            if (!string.IsNullOrWhiteSpace(previousSettledFingerprint)
+                && string.Equals(previousSettledFingerprint, segment.SettledFingerprint, StringComparison.Ordinal))
+            {
+                repeatedWindowPayloadCount++;
+            }
+
+            if (!string.IsNullOrWhiteSpace(segment.SettledFingerprint))
+            {
+                previousSettledFingerprint = segment.SettledFingerprint;
+            }
+        }
+
+        var mergedUniqueTransactions = MergeFetchedTransactions(mergedRecords);
+        var mergedBounds = ExtractObservedTransactionBounds(mergedUniqueTransactions);
+
+        return ServiceResult<AccountTransactionFetchResult>.Ok(
+            new AccountTransactionFetchResult(
+                Transactions: mergedUniqueTransactions,
+                SettledFetched: settledFetched,
+                PendingFetched: pendingFetched,
+                PendingOutcome: ResolvePendingOutcome(
+                    pendingSucceededWindows,
+                    pendingUnsupportedWindows,
+                    pendingFailedWindows),
+                RequestWindowCount: requestWindowCount,
+                PotentiallyCappedWindowCount: potentiallyCappedWindowCount,
+                RepeatedWindowPayloadCount: repeatedWindowPayloadCount,
+                EarliestReturnedUtc: mergedBounds.EarliestBookedAtUtc,
+                LatestReturnedUtc: mergedBounds.LatestBookedAtUtc));
+    }
+
+    private async Task<ServiceResult<AccountTransactionWindowFetchResult>> FetchAccountTransactionsWindowAsync(
+        TrueLayerResolvedConfiguration configuration,
+        string accessToken,
+        TrueLayerAccountRecord providerAccount,
+        TrueLayerTransactionQueryWindow requestWindow,
+        ProviderTransactionSyncPolicy policy,
+        bool adaptiveSplitEnabled,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        var settledResult = await dataService.GetTransactionsAsync(
+            configuration,
+            accessToken,
+            providerAccount.AccountId,
+            requestWindow.FromUtc,
+            requestWindow.ToUtc,
+            cancellationToken);
+
+        if (!settledResult.Succeeded)
+        {
+            return ServiceResult<AccountTransactionWindowFetchResult>.Fail(
+                settledResult.Error!.Message,
+                settledResult.Error.Code,
+                settledResult.Error.StatusCode);
+        }
+
+        var settledTransactions = settledResult.Value!;
+        var settledBounds = ExtractObservedTransactionBounds(settledTransactions);
+        var possibleCappedResponse = policy.SettledResponseCap.HasValue
+            && settledTransactions.Count >= policy.SettledResponseCap.Value;
+        var lagFromWindowEndHours = requestWindow.ToUtc.HasValue && settledBounds.LatestBookedAtUtc.HasValue
+            ? (requestWindow.ToUtc.Value - settledBounds.LatestBookedAtUtc.Value).TotalHours
+            : (double?)null;
+        var looksStaleRelativeToWindowEnd = lagFromWindowEndHours.HasValue && lagFromWindowEndHours.Value > 24;
+
+        logger.LogInformation(
+            "Fetched settled bank transactions window accountId={AccountId} providerId={ProviderId} depth={Depth} fromUtc={FromUtc} toUtc={ToUtc} mode={Mode} policy={PolicyName} settledCount={SettledCount} earliestSettledUtc={EarliestSettledUtc} latestSettledUtc={LatestSettledUtc} possibleCapped={PossibleCapped} lagFromWindowEndHours={LagFromWindowEndHours} looksStaleRelativeToWindowEnd={LooksStale}",
+            providerAccount.AccountId,
+            providerAccount.ProviderId ?? "<unknown>",
+            depth,
+            requestWindow.FromUtc,
+            requestWindow.ToUtc,
+            requestWindow.Mode,
+            requestWindow.PolicyName ?? "<none>",
+            settledTransactions.Count,
+            settledBounds.EarliestBookedAtUtc,
+            settledBounds.LatestBookedAtUtc,
+            possibleCappedResponse,
+            lagFromWindowEndHours,
+            looksStaleRelativeToWindowEnd);
+
+        if (adaptiveSplitEnabled
+            && possibleCappedResponse
+            && TrySplitWindow(requestWindow, policy.MinAdaptiveWindow, out var leftWindow, out var rightWindow)
+            && depth < policy.MaxAdaptiveSplitDepth)
+        {
+            logger.LogInformation(
+                "Splitting potentially capped transaction window accountId={AccountId} providerId={ProviderId} depth={Depth} originalFromUtc={OriginalFromUtc} originalToUtc={OriginalToUtc} leftFromUtc={LeftFromUtc} leftToUtc={LeftToUtc} rightFromUtc={RightFromUtc} rightToUtc={RightToUtc}",
+                providerAccount.AccountId,
+                providerAccount.ProviderId ?? "<unknown>",
+                depth,
+                requestWindow.FromUtc,
+                requestWindow.ToUtc,
+                leftWindow.FromUtc,
+                leftWindow.ToUtc,
+                rightWindow.FromUtc,
+                rightWindow.ToUtc);
+
+            var leftResult = await FetchAccountTransactionsWindowAsync(
+                configuration,
+                accessToken,
+                providerAccount,
+                leftWindow,
+                policy,
+                adaptiveSplitEnabled,
+                depth + 1,
+                cancellationToken);
+
+            if (!leftResult.Succeeded)
+            {
+                return ServiceResult<AccountTransactionWindowFetchResult>.Fail(
+                    leftResult.Error!.Message,
+                    leftResult.Error.Code,
+                    leftResult.Error.StatusCode);
+            }
+
+            var rightResult = await FetchAccountTransactionsWindowAsync(
+                configuration,
+                accessToken,
+                providerAccount,
+                rightWindow,
+                policy,
+                adaptiveSplitEnabled,
+                depth + 1,
+                cancellationToken);
+
+            if (!rightResult.Succeeded)
+            {
+                return ServiceResult<AccountTransactionWindowFetchResult>.Fail(
+                    rightResult.Error!.Message,
+                    rightResult.Error.Code,
+                    rightResult.Error.StatusCode);
+            }
+
+            var mergedTransactions = new List<TrueLayerTransactionRecord>();
+            mergedTransactions.AddRange(leftResult.Value!.Transactions);
+            mergedTransactions.AddRange(rightResult.Value!.Transactions);
+
+            return ServiceResult<AccountTransactionWindowFetchResult>.Ok(
+                new AccountTransactionWindowFetchResult(
+                    Transactions: mergedTransactions,
+                    SettledFetched: settledTransactions.Count + leftResult.Value.SettledFetched + rightResult.Value.SettledFetched,
+                    PendingFetched: leftResult.Value.PendingFetched + rightResult.Value.PendingFetched,
+                    PendingSucceededWindowCount: leftResult.Value.PendingSucceededWindowCount + rightResult.Value.PendingSucceededWindowCount,
+                    PendingUnsupportedWindowCount: leftResult.Value.PendingUnsupportedWindowCount + rightResult.Value.PendingUnsupportedWindowCount,
+                    PendingFailedWindowCount: leftResult.Value.PendingFailedWindowCount + rightResult.Value.PendingFailedWindowCount,
+                    RequestWindowCount: 1 + leftResult.Value.RequestWindowCount + rightResult.Value.RequestWindowCount,
+                    PotentiallyCappedWindowCount: 1 + leftResult.Value.PotentiallyCappedWindowCount + rightResult.Value.PotentiallyCappedWindowCount,
+                    SettledFingerprint: ComputeSettledWindowFingerprint(settledTransactions)));
+        }
+
+        var pendingFetched = 0;
+        var pendingSucceededWindowCount = 0;
+        var pendingUnsupportedWindowCount = 0;
+        var pendingFailedWindowCount = 0;
+        var pendingTransactions = Array.Empty<TrueLayerTransactionRecord>();
+
+        var pendingResult = await dataService.GetPendingTransactionsAsync(
+            configuration,
+            accessToken,
+            providerAccount.AccountId,
+            requestWindow.FromUtc,
+            requestWindow.ToUtc,
+            cancellationToken);
+
+        if (pendingResult.Succeeded)
+        {
+            pendingTransactions = pendingResult.Value!.ToArray();
+            pendingFetched = pendingTransactions.Length;
+            pendingSucceededWindowCount = 1;
+        }
+        else if (IsOptionalDatasetUnsupported(pendingResult.Error))
+        {
+            pendingUnsupportedWindowCount = 1;
+            logger.LogInformation(
+                "Pending account transactions endpoint unavailable accountId={AccountId} providerId={ProviderId} depth={Depth} fromUtc={FromUtc} toUtc={ToUtc} status={StatusCode}",
+                providerAccount.AccountId,
+                providerAccount.ProviderId ?? "<unknown>",
+                depth,
+                requestWindow.FromUtc,
+                requestWindow.ToUtc,
+                pendingResult.Error?.StatusCode);
+        }
+        else
+        {
+            pendingFailedWindowCount = 1;
+            logger.LogWarning(
+                "Pending account transactions fetch failed accountId={AccountId} providerId={ProviderId} depth={Depth} fromUtc={FromUtc} toUtc={ToUtc} status={StatusCode} code={Code}",
+                providerAccount.AccountId,
+                providerAccount.ProviderId ?? "<unknown>",
+                depth,
+                requestWindow.FromUtc,
+                requestWindow.ToUtc,
+                pendingResult.Error?.StatusCode,
+                pendingResult.Error?.Code);
+        }
+
+        var transactions = new List<TrueLayerTransactionRecord>(settledTransactions.Count + pendingTransactions.Length);
+        transactions.AddRange(settledTransactions);
+        transactions.AddRange(pendingTransactions);
+
+        return ServiceResult<AccountTransactionWindowFetchResult>.Ok(
+            new AccountTransactionWindowFetchResult(
+                Transactions: transactions,
+                SettledFetched: settledTransactions.Count,
+                PendingFetched: pendingFetched,
+                PendingSucceededWindowCount: pendingSucceededWindowCount,
+                PendingUnsupportedWindowCount: pendingUnsupportedWindowCount,
+                PendingFailedWindowCount: pendingFailedWindowCount,
+                RequestWindowCount: 1,
+                PotentiallyCappedWindowCount: possibleCappedResponse ? 1 : 0,
+                SettledFingerprint: ComputeSettledWindowFingerprint(settledTransactions)));
+    }
+
+    private static ProviderTransactionSyncPolicy ResolveProviderTransactionSyncPolicy(TrueLayerAccountRecord account)
+    {
+        var providerId = (account.ProviderId ?? string.Empty).Trim().ToLowerInvariant();
+        var providerDisplayName = (account.ProviderDisplayName ?? string.Empty).Trim().ToLowerInvariant();
+        var providerComposite = $"{providerId} {providerDisplayName}";
+
+        if (providerComposite.Contains("allied irish bank", StringComparison.Ordinal)
+            || providerComposite.Contains(" aib", StringComparison.Ordinal)
+            || providerId.StartsWith("aib", StringComparison.Ordinal))
+        {
+            return new ProviderTransactionSyncPolicy(
+                ProviderKey: "aib",
+                SettledResponseCap: AibTransactionResponseCap,
+                IncrementalChunkDays: CappedProviderIncrementalChunkDays,
+                MaxAdaptiveSplitDepth: CappedProviderMaxAdaptiveSplitDepth,
+                MinAdaptiveWindow: CappedProviderMinAdaptiveWindow);
+        }
+
+        return new ProviderTransactionSyncPolicy(
+            ProviderKey: "default",
+            SettledResponseCap: null,
+            IncrementalChunkDays: CappedProviderIncrementalChunkDays,
+            MaxAdaptiveSplitDepth: 0,
+            MinAdaptiveWindow: TimeSpan.Zero);
+    }
+
+    private static IReadOnlyList<TrueLayerTransactionQueryWindow> BuildTransactionRequestWindows(
+        TrueLayerTransactionQueryWindow baseWindow,
+        ProviderTransactionSyncPolicy policy,
+        bool isInitialBackfill)
+    {
+        if (isInitialBackfill
+            || !policy.SettledResponseCap.HasValue
+            || !baseWindow.FromUtc.HasValue
+            || !baseWindow.ToUtc.HasValue)
+        {
+            return [baseWindow];
+        }
+
+        if (baseWindow.FromUtc.Value >= baseWindow.ToUtc.Value)
+        {
+            return [baseWindow];
+        }
+
+        var windows = new List<TrueLayerTransactionQueryWindow>();
+        var chunkSpan = TimeSpan.FromDays(Math.Max(1, policy.IncrementalChunkDays));
+        var cursor = baseWindow.FromUtc.Value;
+        var toUtc = baseWindow.ToUtc.Value;
+        var chunkPolicy = $"{baseWindow.PolicyName ?? "incremental"}|chunk_{policy.IncrementalChunkDays}d";
+
+        while (cursor < toUtc)
+        {
+            var next = cursor + chunkSpan;
+            if (next > toUtc)
+            {
+                next = toUtc;
+            }
+
+            windows.Add(new TrueLayerTransactionQueryWindow(
+                FromUtc: cursor,
+                ToUtc: next,
+                Mode: baseWindow.Mode,
+                PolicyName: chunkPolicy));
+
+            if (next <= cursor)
+            {
+                break;
+            }
+
+            cursor = next;
+        }
+
+        return windows.Count > 0 ? windows : [baseWindow];
+    }
+
+    private static IReadOnlyList<TrueLayerTransactionRecord> MergeFetchedTransactions(
+        IEnumerable<TrueLayerTransactionRecord> transactions)
+    {
+        var byKey = new Dictionary<string, TrueLayerTransactionRecord>(StringComparer.Ordinal);
+        foreach (var transaction in transactions.OrderBy(x => x.BookedAtUtc))
+        {
+            var key = BuildFetchedTransactionMergeKey(transaction);
+            if (!byKey.TryGetValue(key, out var existing))
+            {
+                byKey[key] = transaction;
+                continue;
+            }
+
+            byKey[key] = PreferFetchedTransactionRecord(existing, transaction);
+        }
+
+        return byKey.Values
+            .OrderBy(x => x.BookedAtUtc)
+            .ToList();
+    }
+
+    private static string BuildFetchedTransactionMergeKey(TrueLayerTransactionRecord transaction)
+    {
+        if (!string.IsNullOrWhiteSpace(transaction.ProviderTransactionId))
+        {
+            return $"provider:{transaction.ProviderTransactionId}";
+        }
+
+        return $"dedupe:{transaction.DedupeKey}";
+    }
+
+    private static TrueLayerTransactionRecord PreferFetchedTransactionRecord(
+        TrueLayerTransactionRecord existing,
+        TrueLayerTransactionRecord incoming)
+    {
+        var existingBooked = IsBookedProjectionStatus(existing.TransactionStatus);
+        var incomingBooked = IsBookedProjectionStatus(incoming.TransactionStatus);
+
+        if (!existingBooked && incomingBooked)
+        {
+            return incoming;
+        }
+
+        if (existingBooked && !incomingBooked)
+        {
+            return existing;
+        }
+
+        if (incoming.BookedAtUtc > existing.BookedAtUtc)
+        {
+            return incoming;
+        }
+
+        return existing;
+    }
+
+    private static bool TrySplitWindow(
+        TrueLayerTransactionQueryWindow window,
+        TimeSpan minWindowDuration,
+        out TrueLayerTransactionQueryWindow leftWindow,
+        out TrueLayerTransactionQueryWindow rightWindow)
+    {
+        leftWindow = window;
+        rightWindow = window;
+
+        if (!window.FromUtc.HasValue || !window.ToUtc.HasValue)
+        {
+            return false;
+        }
+
+        var fromUtc = window.FromUtc.Value;
+        var toUtc = window.ToUtc.Value;
+        if (toUtc <= fromUtc)
+        {
+            return false;
+        }
+
+        var duration = toUtc - fromUtc;
+        if (duration <= minWindowDuration)
+        {
+            return false;
+        }
+
+        var midpointUtc = fromUtc + TimeSpan.FromTicks(duration.Ticks / 2);
+        if (midpointUtc <= fromUtc || midpointUtc >= toUtc)
+        {
+            return false;
+        }
+
+        leftWindow = new TrueLayerTransactionQueryWindow(
+            FromUtc: fromUtc,
+            ToUtc: midpointUtc,
+            Mode: window.Mode,
+            PolicyName: $"{window.PolicyName ?? "window"}|split_left");
+
+        rightWindow = new TrueLayerTransactionQueryWindow(
+            FromUtc: midpointUtc,
+            ToUtc: toUtc,
+            Mode: window.Mode,
+            PolicyName: $"{window.PolicyName ?? "window"}|split_right");
+
+        return true;
+    }
+
+    private static string ResolvePendingOutcome(
+        int pendingSucceededWindows,
+        int pendingUnsupportedWindows,
+        int pendingFailedWindows)
+    {
+        if (pendingSucceededWindows == 0
+            && pendingUnsupportedWindows == 0
+            && pendingFailedWindows == 0)
+        {
+            return "not_requested";
+        }
+
+        if (pendingFailedWindows > 0 && pendingSucceededWindows == 0 && pendingUnsupportedWindows == 0)
+        {
+            return "failed";
+        }
+
+        if (pendingFailedWindows > 0)
+        {
+            return "partial_failed";
+        }
+
+        if (pendingUnsupportedWindows > 0 && pendingSucceededWindows > 0)
+        {
+            return "partial_supported";
+        }
+
+        if (pendingUnsupportedWindows > 0)
+        {
+            return "unsupported";
+        }
+
+        return "succeeded";
+    }
+
+    private static string ComputeSettledWindowFingerprint(IReadOnlyList<TrueLayerTransactionRecord> settledTransactions)
+    {
+        if (settledTransactions.Count == 0)
+        {
+            return "empty";
+        }
+
+        var hash = new HashCode();
+        foreach (var token in settledTransactions
+                     .Select(x =>
+                         $"{x.ProviderTransactionId ?? "_"}:{x.DedupeKey}:{x.TransactionStatus ?? "_"}:{x.BookedAtUtc:O}:{x.Amount:0.00}")
+                     .OrderBy(x => x, StringComparer.Ordinal))
+        {
+            hash.Add(token, StringComparer.Ordinal);
+        }
+
+        hash.Add(settledTransactions.Count);
+        return hash.ToHashCode().ToString();
+    }
+
     private async Task<bool> IsInitialBackfillPendingAsync(
         OpenBankingConnection connection,
         DateTime now,
@@ -2706,21 +3220,31 @@ public sealed class BankSyncService(
                 PolicyName: policyName);
         }
 
+        var providerPolicy = ResolveProviderTransactionSyncPolicy(account);
         var checkpointUtc = connection.LatestImportedTransactionUtc ?? connection.LastSuccessfulSyncUtc;
+        var fallbackDays = providerPolicy.SettledResponseCap.HasValue
+            ? Math.Max(IncrementalLookbackDays, providerPolicy.IncrementalChunkDays * 4)
+            : IncrementalFallbackDays;
         var fromUtc = checkpointUtc.HasValue
             ? checkpointUtc.Value.AddDays(-IncrementalLookbackDays)
-            : now.AddDays(-IncrementalFallbackDays);
+            : now.AddDays(-fallbackDays);
 
         if (fromUtc > now)
         {
             fromUtc = now.AddDays(-1);
         }
 
+        var incrementalPolicyName = checkpointUtc.HasValue
+            ? "latest_imported_checkpoint"
+            : providerPolicy.SettledResponseCap.HasValue
+                ? "capped_provider_incremental_fallback"
+                : "incremental_fallback";
+
         return new TrueLayerTransactionQueryWindow(
             fromUtc,
             now,
             Mode: "incremental_sync",
-            PolicyName: checkpointUtc.HasValue ? "latest_imported_checkpoint" : "incremental_fallback");
+            PolicyName: incrementalPolicyName);
     }
 
     private static TrueLayerTransactionQueryWindow BuildCardTransactionWindow(
