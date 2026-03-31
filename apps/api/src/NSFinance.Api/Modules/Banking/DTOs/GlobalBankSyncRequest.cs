@@ -2,4 +2,5 @@ namespace NSFinance.Api.Modules.Banking.DTOs;
 
 public sealed record GlobalBankSyncRequest(
     string? Trigger,
-    string? Source);
+    string? Source,
+    bool? Force);

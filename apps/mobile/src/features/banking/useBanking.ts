@@ -188,11 +188,14 @@ export function useGlobalBankSyncMutation() {
         outcome: result.outcome,
         dueNow: result.dueNow,
         cooldownRemainingSeconds: result.cooldownRemainingSeconds,
+        nextEligibleManualSyncUtc: result.nextEligibleManualSyncUtc,
         eligibleConnectionCount: result.eligibleConnectionCount,
         changedConnectionCount: result.changedConnectionCount,
         noChangeConnectionCount: result.noChangeConnectionCount,
         failedConnectionCount: result.failedConnectionCount,
-        skippedConnectionCount: result.skippedConnectionCount
+        skippedConnectionCount: result.skippedConnectionCount,
+        providerBackoffConnectionCount: result.providerBackoffConnectionCount,
+        noNewerRowsConnectionCount: result.noNewerRowsConnectionCount
       });
     }
   });

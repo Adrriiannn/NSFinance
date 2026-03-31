@@ -684,6 +684,7 @@ export type GlobalBankSyncTrigger = "manual" | "auto";
 export type GlobalBankSyncRequest = {
   trigger?: GlobalBankSyncTrigger | null;
   source?: string | null;
+  force?: boolean | null;
 };
 
 export type GlobalBankSyncConnectionResponse = {
@@ -694,13 +695,21 @@ export type GlobalBankSyncConnectionResponse = {
     | "completed_changed"
     | "completed_no_change"
     | "failed"
+    | "skipped_ineligible_status"
     | "skipped_unavailable"
-    | "skipped_sync_in_progress";
+    | "skipped_sync_in_progress"
+    | "skipped_provider_backoff";
   accountsSynced: number;
   balancesSynced: number;
   transactionsImported: number;
   syncedAtUtc: string | null;
   dataChanged: boolean;
+  lastSyncAttemptedUtc: string | null;
+  lastSuccessfulSyncUtc: string | null;
+  providerBackoffUntilUtc: string | null;
+  latestFetchedRowUtc: string | null;
+  hasFetchedRowNewerThanCheckpoint: boolean | null;
+  freshnessSummary: string | null;
   errorCode: string | null;
   errorMessage: string | null;
 };
@@ -711,6 +720,7 @@ export type GlobalBankSyncResponse = {
     | "completed"
     | "skipped_cooldown"
     | "skipped_not_due"
+    | "skipped_provider_backoff"
     | "skipped_no_eligible_connections"
     | "failed_unexpected";
   requestedAtUtc: string;
@@ -724,6 +734,10 @@ export type GlobalBankSyncResponse = {
   failedConnectionCount: number;
   skippedConnectionCount: number;
   lastSuccessfulSyncUtc: string | null;
+  lastManualSyncRequestUtc: string | null;
+  nextEligibleManualSyncUtc: string | null;
+  providerBackoffConnectionCount: number;
+  noNewerRowsConnectionCount: number;
   connections: GlobalBankSyncConnectionResponse[];
 };
 

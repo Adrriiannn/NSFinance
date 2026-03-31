@@ -400,6 +400,99 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_ManualCooldown_UsesConfiguredTenMinuteWindow()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.manual-cooldown-config@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-manual-cooldown-config", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var globalSyncService = harness.CreateGlobalSyncService(
+            ValidSandboxOptions(),
+            bankingSyncOptions: new BankingSyncOptions
+            {
+                ManualCooldownMinutes = 10,
+                AutoSyncIntervalMinutes = 10
+            });
+
+        var first = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_manual_cooldown_config_first",
+            cancellationToken: CancellationToken.None);
+        Assert.Equal("completed", first.Outcome);
+
+        var latestManualTriggerAudit = await harness.DbContext.AuditEvents
+            .Where(x => x.ActorId == user.Id && x.EventName == "global_manual_sync_triggered")
+            .OrderByDescending(x => x.EventTimestampUtc)
+            .FirstAsync();
+
+        latestManualTriggerAudit.EventTimestampUtc = DateTime.UtcNow.AddMinutes(-11);
+        await harness.DbContext.SaveChangesAsync();
+
+        var second = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_manual_cooldown_config_second",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", second.Outcome);
+    }
+
+    [Fact]
+    public async Task GlobalSync_ManualTrigger_ForceTrue_BypassesCooldown()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.manual-force-cooldown@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-manual-force-cooldown", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var globalSyncService = harness.CreateGlobalSyncService(
+            ValidSandboxOptions(),
+            bankingSyncOptions: new BankingSyncOptions
+            {
+                ManualCooldownMinutes = 10,
+                AutoSyncIntervalMinutes = 10
+            });
+
+        var first = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_manual_force_first",
+            cancellationToken: CancellationToken.None);
+        Assert.Equal("completed", first.Outcome);
+
+        var second = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_manual_force_second",
+            force: true,
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", second.Outcome);
+    }
+
+    [Fact]
     public async Task GlobalSync_RecoversStaleSyncPendingConnection_AndRunsSync()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -504,6 +597,51 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_AutoTrigger_SkipsWhenProviderBackoffActive()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.global-auto-provider-backoff@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-global-backoff", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.LastErrorCode = "provider_too_many_requests";
+        connection.LastSyncAttemptedUtc = DateTime.UtcNow.AddMinutes(-2);
+        connection.LastSuccessfulSyncUtc = DateTime.UtcNow.AddMinutes(-30);
+        connection.UpdatedUtc = DateTime.UtcNow.AddMinutes(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(
+            ValidSandboxOptions(),
+            bankingSyncOptions: new BankingSyncOptions
+            {
+                ManualCooldownMinutes = 10,
+                AutoSyncIntervalMinutes = 10,
+                ProviderRateLimitBackoffMinutes = 10
+            });
+
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "auto",
+            source: "test_auto_provider_backoff",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("skipped_provider_backoff", result.Outcome);
+        Assert.Equal(1, result.ProviderBackoffConnectionCount);
+        Assert.False(result.DueNow);
+    }
+
+    [Fact]
     public async Task GlobalSync_AutoTrigger_ExecutesWhenDue()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -531,6 +669,46 @@ public class OpenBankingIntegrationTests
             user.Id,
             trigger: "auto",
             source: "test_auto_due",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", result.Outcome);
+    }
+
+    [Fact]
+    public async Task GlobalSync_AutoTrigger_UsesConfiguredTenMinuteInterval()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.auto-interval-config@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-auto-interval-config", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.LastSuccessfulSyncUtc = DateTime.UtcNow.AddMinutes(-11);
+        connection.UpdatedUtc = DateTime.UtcNow;
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(
+            ValidSandboxOptions(),
+            bankingSyncOptions: new BankingSyncOptions
+            {
+                ManualCooldownMinutes = 10,
+                AutoSyncIntervalMinutes = 10
+            });
+
+        var result = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "auto",
+            source: "test_auto_due_with_10_min_interval",
             cancellationToken: CancellationToken.None);
 
         Assert.Equal("completed", result.Outcome);
@@ -2116,12 +2294,20 @@ public class OpenBankingIntegrationTests
                 NullLogger<TrueLayerAuthService>.Instance);
         }
 
-        public BankGlobalSyncService CreateGlobalSyncService(TrueLayerOptions options, IAuditService? auditService = null)
+        public BankGlobalSyncService CreateGlobalSyncService(
+            TrueLayerOptions options,
+            IAuditService? auditService = null,
+            BankingSyncOptions? bankingSyncOptions = null)
         {
             return new BankGlobalSyncService(
                 DbContext,
                 CreateSyncService(options),
                 auditService ?? _auditService,
+                Options.Create(bankingSyncOptions ?? new BankingSyncOptions
+                {
+                    ManualCooldownMinutes = 60,
+                    AutoSyncIntervalMinutes = 60
+                }),
                 NullLogger<BankGlobalSyncService>.Instance);
         }
 

@@ -1,9 +1,14 @@
+using Microsoft.Extensions.Logging;
 using System.Net.Http.Headers;
 using NSFinance.Api.Common.Contracts;
+using NSFinance.Api.Infrastructure.RequestContext;
 
 namespace NSFinance.Api.Modules.Banking.Services;
 
-public sealed class TrueLayerHttpClient(HttpClient httpClient)
+public sealed class TrueLayerHttpClient(
+    HttpClient httpClient,
+    IRequestContextAccessor? requestContextAccessor = null,
+    ILogger<TrueLayerHttpClient>? logger = null)
 {
     public async Task<ServiceResult<string>> PostFormAsync(
         string absoluteUrl,
@@ -14,6 +19,7 @@ public sealed class TrueLayerHttpClient(HttpClient httpClient)
         {
             Content = new FormUrlEncodedContent(formFields)
         };
+        ApplyPsuIpHeaderIfAvailable(request);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -32,6 +38,7 @@ public sealed class TrueLayerHttpClient(HttpClient httpClient)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, absoluteUrl);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        ApplyPsuIpHeaderIfAvailable(request);
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -41,5 +48,29 @@ public sealed class TrueLayerHttpClient(HttpClient httpClient)
         }
 
         return ServiceResult<string>.Ok(payload);
+    }
+
+    private void ApplyPsuIpHeaderIfAvailable(HttpRequestMessage request)
+    {
+        if (requestContextAccessor is null)
+        {
+            return;
+        }
+
+        var ip = requestContextAccessor.IpAddress?.Trim();
+        if (string.IsNullOrWhiteSpace(ip))
+        {
+            return;
+        }
+
+        if (request.Headers.Contains("X-PSU-IP"))
+        {
+            return;
+        }
+
+        if (!request.Headers.TryAddWithoutValidation("X-PSU-IP", ip))
+        {
+            logger?.LogDebug("Unable to add X-PSU-IP header to outbound TrueLayer request.");
+        }
     }
 }

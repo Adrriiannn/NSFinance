@@ -49,8 +49,10 @@ Happy path:
 9. Validate global sync endpoint behavior:
    - call `POST /api/banking/sync` with `{ "trigger": "manual", "source": "qa_manual" }`
    - verify `outcome=completed` on first run
-   - call again within one hour and verify `outcome=skipped_cooldown` with remaining cooldown seconds
+   - call again within 10 minutes and verify `outcome=skipped_cooldown` with remaining cooldown seconds
    - call with `{ "trigger": "auto", "source": "qa_auto" }` shortly after a successful run and verify `outcome=skipped_not_due`
+   - verify manual cooldown and auto due behavior re-open after about 10 minutes
+   - if provider rate limiting is simulated, verify `outcome=skipped_provider_backoff` and per-connection `providerBackoffUntilUtc`
 10. Validate stage durability:
    - simulate transaction endpoint failure after a successful balance fetch
    - verify balance snapshot persists in storage

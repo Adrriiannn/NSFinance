@@ -10,6 +10,12 @@ public sealed record BankGlobalSyncConnectionResult(
     int TransactionsImported,
     DateTime? SyncedAtUtc,
     bool DataChanged,
+    DateTime? LastSyncAttemptedUtc,
+    DateTime? LastSuccessfulSyncUtc,
+    DateTime? ProviderBackoffUntilUtc,
+    DateTime? LatestFetchedRowUtc,
+    bool? HasFetchedRowNewerThanCheckpoint,
+    string? FreshnessSummary,
     string? ErrorCode,
     string? ErrorMessage);
 
@@ -27,4 +33,8 @@ public sealed record BankGlobalSyncResult(
     int FailedConnectionCount,
     int SkippedConnectionCount,
     DateTime? LastSuccessfulSyncUtc,
+    DateTime? LastManualSyncRequestUtc,
+    DateTime? NextEligibleManualSyncUtc,
+    int ProviderBackoffConnectionCount,
+    int NoNewerRowsConnectionCount,
     IReadOnlyList<BankGlobalSyncConnectionResult> Connections);

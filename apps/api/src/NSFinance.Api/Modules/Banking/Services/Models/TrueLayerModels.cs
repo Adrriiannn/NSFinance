@@ -135,6 +135,11 @@ public sealed record BankSyncResult(
     int AccountsSynced,
     int BalancesSynced,
     int TransactionsImported,
+    int SettledFetched,
+    int PendingFetched,
+    DateTime? LatestFetchedRowUtc,
+    bool? HasFetchedRowNewerThanCheckpoint,
+    string FreshnessSummary,
     string Status,
     DateTime SyncedAtUtc,
     bool DataChanged);

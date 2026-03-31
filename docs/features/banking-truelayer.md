@@ -43,18 +43,29 @@ NSFinance now uses a global sync orchestration model:
 - Request body:
   - `trigger`: `manual` or `auto`
   - `source`: optional source tag (for diagnostics)
+  - `force`: optional debug override for manual cooldown (still respects in-progress/provider safety)
 - Response includes:
-  - `outcome` (`completed`, `skipped_cooldown`, `skipped_not_due`, `skipped_no_eligible_connections`)
+  - `outcome` (`completed`, `skipped_cooldown`, `skipped_not_due`, `skipped_provider_backoff`, `skipped_no_eligible_connections`, `failed_unexpected`)
   - per-connection sync results
-  - cooldown metadata
+  - cooldown + next-eligible metadata
+  - provider backoff metadata
+  - fetch-freshness metadata (`latestFetchedRowUtc`, `hasFetchedRowNewerThanCheckpoint`, `freshnessSummary`)
   - changed/no-change counts
+
+Timing is config-driven under `Banking:Sync`:
+
+- `ManualCooldownMinutes`
+- `AutoSyncIntervalMinutes`
+
+Current defaults are 10 minutes and remain environment-configurable via `Banking:Sync`.
 
 ### Manual sync
 
 - Manual sync is now available from global headers (Accounts + Activity), not the connect-bank screen.
-- Backend enforces one-hour cooldown for user-triggered manual sync requests.
+- Backend enforces a 10-minute cooldown for user-triggered manual sync requests.
 - Cooldown truth is API-side (not client-only throttling).
 - Global/manual sync execution is detached from request-abort cancellation so long-running provider syncs are not terminated just because the mobile request times out or disconnects.
+- Provider-aware backoff is also applied when a connection is rate-limited (for example `provider_too_many_requests` / `provider_request_limit_exceeded`), returning `skipped_provider_backoff` until the backoff window expires.
 
 ### Auto sync
 
@@ -63,7 +74,7 @@ NSFinance now uses a global sync orchestration model:
   - app resume/foreground
   - post-login session entry
 - Due/not-due decisions are made on backend connection freshness state, not guessed on-device.
-- Auto sync skips when not due (calm behavior, no API hammering).
+- Auto sync skips when not due (calm behavior, no API hammering), and also skips provider-rate-limited connections while backoff is active.
 - Connections in `sync_pending` are evaluated with stale-state recovery:
   - fresh `sync_pending` connections are skipped as `skipped_sync_in_progress`
   - stale `sync_pending` connections (older than recovery threshold) are reconciled back to a syncable state and retried in the same global run

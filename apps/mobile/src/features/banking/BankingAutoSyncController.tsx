@@ -3,8 +3,22 @@ import { AppState, type AppStateStatus } from "react-native";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { useConnectedBanksQuery, useGlobalBankSyncMutation } from "./useBanking";
 
-const FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MS = 12 * 60 * 1000;
+const DEFAULT_FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MINUTES = 10;
+const MIN_FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MINUTES = 1;
 const AUTO_SYNC_MIN_TRIGGER_GAP_MS = 30_000;
+
+const configuredAutoSyncCheckIntervalMinutes = Number(
+  process.env.EXPO_PUBLIC_BANKING_AUTO_SYNC_INTERVAL_MINUTES
+);
+
+const resolvedAutoSyncCheckIntervalMinutes = Number.isFinite(configuredAutoSyncCheckIntervalMinutes)
+  ? Math.max(
+      MIN_FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MINUTES,
+      Math.trunc(configuredAutoSyncCheckIntervalMinutes)
+    )
+  : DEFAULT_FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MINUTES;
+
+const FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MS = resolvedAutoSyncCheckIntervalMinutes * 60 * 1000;
 
 export function BankingAutoSyncController() {
   const { isAuthenticated, isBootstrapping, session } = useAuthSession();

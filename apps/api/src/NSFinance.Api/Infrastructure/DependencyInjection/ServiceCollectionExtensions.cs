@@ -95,6 +95,29 @@ public static class ServiceCollectionExtensions
             OverrideIfSet(value => options.AuthBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerAuthBaseUrl]);
             OverrideIfSet(value => options.ApiBaseUrl = value, configuration[EnvironmentVariableNames.TrueLayerApiBaseUrl]);
         });
+        services.Configure<BankingSyncOptions>(options =>
+        {
+            configuration.GetSection(BankingSyncOptions.SectionName).Bind(options);
+            if (options.ManualCooldownMinutes <= 0)
+            {
+                options.ManualCooldownMinutes = 10;
+            }
+
+            if (options.AutoSyncIntervalMinutes <= 0)
+            {
+                options.AutoSyncIntervalMinutes = 10;
+            }
+
+            if (options.StaleSyncPendingRecoveryMinutes <= 0)
+            {
+                options.StaleSyncPendingRecoveryMinutes = 10;
+            }
+
+            if (options.ProviderRateLimitBackoffMinutes <= 0)
+            {
+                options.ProviderRateLimitBackoffMinutes = 10;
+            }
+        });
         ValidateTrueLayerConfigurationForNonDevelopment(configuration, hostEnvironment);
 
         services.Configure<GoogleAuthOptions>(options =>

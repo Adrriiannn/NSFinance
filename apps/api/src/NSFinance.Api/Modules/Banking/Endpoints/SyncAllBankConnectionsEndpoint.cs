@@ -39,6 +39,7 @@ public static class SyncAllBankConnectionsEndpoint
                 userId,
                 trigger: request?.Trigger,
                 source: request?.Source,
+                force: request?.Force ?? false,
                 detachedSyncToken);
 
             logger.LogInformation(
@@ -62,6 +63,10 @@ public static class SyncAllBankConnectionsEndpoint
                 FailedConnectionCount: result.FailedConnectionCount,
                 SkippedConnectionCount: result.SkippedConnectionCount,
                 LastSuccessfulSyncUtc: result.LastSuccessfulSyncUtc,
+                LastManualSyncRequestUtc: result.LastManualSyncRequestUtc,
+                NextEligibleManualSyncUtc: result.NextEligibleManualSyncUtc,
+                ProviderBackoffConnectionCount: result.ProviderBackoffConnectionCount,
+                NoNewerRowsConnectionCount: result.NoNewerRowsConnectionCount,
                 Connections: result.Connections
                     .Select(connection => new GlobalBankSyncConnectionResponse(
                         ConnectionId: connection.ConnectionId,
@@ -73,6 +78,12 @@ public static class SyncAllBankConnectionsEndpoint
                         TransactionsImported: connection.TransactionsImported,
                         SyncedAtUtc: connection.SyncedAtUtc,
                         DataChanged: connection.DataChanged,
+                        LastSyncAttemptedUtc: connection.LastSyncAttemptedUtc,
+                        LastSuccessfulSyncUtc: connection.LastSuccessfulSyncUtc,
+                        ProviderBackoffUntilUtc: connection.ProviderBackoffUntilUtc,
+                        LatestFetchedRowUtc: connection.LatestFetchedRowUtc,
+                        HasFetchedRowNewerThanCheckpoint: connection.HasFetchedRowNewerThanCheckpoint,
+                        FreshnessSummary: connection.FreshnessSummary,
                         ErrorCode: connection.ErrorCode,
                         ErrorMessage: connection.ErrorMessage))
                     .ToList());
@@ -101,6 +112,10 @@ public static class SyncAllBankConnectionsEndpoint
                 FailedConnectionCount: 0,
                 SkippedConnectionCount: 0,
                 LastSuccessfulSyncUtc: null,
+                LastManualSyncRequestUtc: null,
+                NextEligibleManualSyncUtc: null,
+                ProviderBackoffConnectionCount: 0,
+                NoNewerRowsConnectionCount: 0,
                 Connections: []));
         }
     }

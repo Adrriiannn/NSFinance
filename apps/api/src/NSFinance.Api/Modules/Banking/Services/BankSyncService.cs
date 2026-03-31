@@ -328,6 +328,10 @@ public sealed class BankSyncService(
         var accountsSynced = 0;
         var balancesSynced = 0;
         var transactionsImported = 0;
+        var settledFetched = 0;
+        var pendingFetched = 0;
+        DateTime? latestFetchedRowUtc = null;
+        var hasFetchedRowNewerThanCheckpoint = false;
         var cardsSynced = 0;
         var cardBalancesSynced = 0;
         var cardTransactionsImported = 0;
@@ -541,7 +545,7 @@ public sealed class BankSyncService(
             var fetchedTransactions = transactionsFetchResult.Value!;
             var transactionFetchElapsedMs = transactionFetchStopwatch.ElapsedMilliseconds;
             var latestImportedCheckpointUtcBefore = connection.LatestImportedTransactionUtc;
-            var hasFetchedRowNewerThanCheckpoint =
+            var hasFetchedRowNewerThanCheckpointForAccount =
                 fetchedTransactions.LatestReturnedUtc.HasValue
                 && (!latestImportedCheckpointUtcBefore.HasValue
                     || fetchedTransactions.LatestReturnedUtc.Value > latestImportedCheckpointUtcBefore.Value);
@@ -564,11 +568,11 @@ public sealed class BankSyncService(
                 fetchedTransactions.EarliestReturnedUtc,
                 fetchedTransactions.LatestReturnedUtc,
                 latestImportedCheckpointUtcBefore,
-                hasFetchedRowNewerThanCheckpoint,
+                hasFetchedRowNewerThanCheckpointForAccount,
                 latestReturnedLagHours,
                 staleReturnedSlice);
 
-            if (!hasFetchedRowNewerThanCheckpoint && fetchedTransactions.Transactions.Count > 0)
+            if (!hasFetchedRowNewerThanCheckpointForAccount && fetchedTransactions.Transactions.Count > 0)
             {
                 logger.LogWarning(
                     "Fetched bank transaction payload did not include rows newer than checkpoint accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} latestImportedCheckpointUtcBefore={LatestImportedCheckpointUtcBefore} latestReturnedUtc={LatestReturnedUtc} latestReturnedLagHours={LatestReturnedLagHours}",
@@ -580,6 +584,11 @@ public sealed class BankSyncService(
                     fetchedTransactions.LatestReturnedUtc,
                     latestReturnedLagHours);
             }
+
+            settledFetched += fetchedTransactions.SettledFetched;
+            pendingFetched += fetchedTransactions.PendingFetched;
+            latestFetchedRowUtc = MaxUtc(latestFetchedRowUtc, fetchedTransactions.LatestReturnedUtc);
+            hasFetchedRowNewerThanCheckpoint = hasFetchedRowNewerThanCheckpoint || hasFetchedRowNewerThanCheckpointForAccount;
 
             if (isInitialBackfill
                 && string.Equals(transactionWindow.PolicyName, "revolut_initial_6y", StringComparison.Ordinal)
@@ -1033,12 +1042,26 @@ public sealed class BankSyncService(
             connection.EarliestImportedTransactionUtc,
             connection.LatestImportedTransactionUtc);
 
+        var freshnessSummary =
+            settledFetched + pendingFetched == 0
+                ? "no_rows_returned"
+                : hasFetchedRowNewerThanCheckpoint
+                    ? "newer_rows_returned"
+                    : settledFetched == 0 && pendingFetched > 0
+                        ? "pending_only_rows_returned"
+                        : "no_newer_rows_returned";
+
         return ServiceResult<BankSyncResult>.Ok(
             new BankSyncResult(
                 connection.Id,
                 accountsSynced,
                 balancesSynced,
                 transactionsImported,
+                settledFetched,
+                pendingFetched,
+                latestFetchedRowUtc,
+                hasFetchedRowNewerThanCheckpoint,
+                freshnessSummary,
                 BankConnectionStatuses.Synced,
                 DateTime.UtcNow,
                 dataChanged));
@@ -2938,11 +2961,14 @@ public sealed class BankSyncService(
         var nextStatus = error.StatusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden
             ? BankConnectionStatuses.ReauthRequired
             : BankConnectionStatuses.Failed;
+        var persistedErrorCode = error.StatusCode == StatusCodes.Status429TooManyRequests
+            ? "provider_too_many_requests"
+            : error.Code;
 
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
             nextStatus,
-            error.Code,
+            persistedErrorCode,
             error.Message,
             cancellationToken);
 
@@ -2955,7 +2981,7 @@ public sealed class BankSyncService(
             actorType: "user",
             metadata: new
             {
-                error.Code,
+                ErrorCode = persistedErrorCode,
                 status = nextStatus,
                 stage = stageName
             },
@@ -2966,9 +2992,9 @@ public sealed class BankSyncService(
             connection.Id,
             trigger,
             stageName,
-            error.Code);
+            persistedErrorCode);
 
-        return ServiceResult<BankSyncResult>.Fail(error.Message, error.Code, error.StatusCode);
+        return ServiceResult<BankSyncResult>.Fail(error.Message, persistedErrorCode, error.StatusCode);
     }
 
     private static string MapAccountType(string? providerAccountType)

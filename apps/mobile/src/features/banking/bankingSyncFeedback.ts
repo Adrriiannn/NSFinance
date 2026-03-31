@@ -33,6 +33,13 @@ export function getGlobalSyncFeedbackMessage(result: GlobalBankSyncResponse) {
     };
   }
 
+  if (result.outcome === "skipped_provider_backoff") {
+    return {
+      tone: "info" as const,
+      message: "Your bank asked us to slow down. Sync will retry after the provider cooldown."
+    };
+  }
+
   if (result.outcome === "skipped_not_due") {
     return {
       tone: "info" as const,
@@ -63,9 +70,31 @@ export function getGlobalSyncFeedbackMessage(result: GlobalBankSyncResponse) {
   }
 
   if (result.changedConnectionCount > 0) {
+    const onlyBalanceOrPendingChanges = result.connections.every((connection) =>
+      connection.dataChanged
+        ? connection.freshnessSummary === "no_newer_rows_returned"
+          || connection.freshnessSummary === "pending_only_rows_returned"
+          || connection.freshnessSummary === "no_rows_returned"
+        : true
+    );
+
+    if (onlyBalanceOrPendingChanges) {
+      return {
+        tone: "success" as const,
+        message: "Sync completed. Balances or pending activity updated."
+      };
+    }
+
     return {
       tone: "success" as const,
       message: "The accounts have been refreshed."
+    };
+  }
+
+  if (result.noNewerRowsConnectionCount > 0) {
+    return {
+      tone: "info" as const,
+      message: "Sync completed. No newer provider rows were available yet."
     };
   }
 

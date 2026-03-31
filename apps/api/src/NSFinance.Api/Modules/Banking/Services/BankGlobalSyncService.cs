@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.Services.Models;
@@ -10,12 +11,19 @@ public sealed class BankGlobalSyncService(
     AppDbContext dbContext,
     BankSyncService bankSyncService,
     IAuditService auditService,
+    IOptions<BankingSyncOptions> syncOptions,
     ILogger<BankGlobalSyncService> logger)
 {
     private const string TriggerManual = "manual";
     private const string TriggerAuto = "auto";
-    private static readonly TimeSpan ManualSyncCooldown = TimeSpan.FromHours(1);
-    private static readonly TimeSpan AutoSyncDueInterval = TimeSpan.FromHours(1);
+    private readonly int _manualCooldownMinutes = Math.Clamp(syncOptions.Value.ManualCooldownMinutes, 1, 24 * 60);
+    private readonly int _autoSyncIntervalMinutes = Math.Clamp(syncOptions.Value.AutoSyncIntervalMinutes, 1, 24 * 60);
+    private readonly int _staleSyncPendingRecoveryMinutes = Math.Clamp(syncOptions.Value.StaleSyncPendingRecoveryMinutes, 1, 24 * 60);
+    private readonly int _providerRateLimitBackoffMinutes = Math.Clamp(syncOptions.Value.ProviderRateLimitBackoffMinutes, 1, 24 * 60);
+    private readonly TimeSpan _manualSyncCooldown = TimeSpan.FromMinutes(Math.Clamp(syncOptions.Value.ManualCooldownMinutes, 1, 24 * 60));
+    private readonly TimeSpan _autoSyncDueInterval = TimeSpan.FromMinutes(Math.Clamp(syncOptions.Value.AutoSyncIntervalMinutes, 1, 24 * 60));
+    private readonly TimeSpan _syncPendingStaleAfter = TimeSpan.FromMinutes(Math.Clamp(syncOptions.Value.StaleSyncPendingRecoveryMinutes, 1, 24 * 60));
+    private readonly TimeSpan _providerRateLimitBackoff = TimeSpan.FromMinutes(Math.Clamp(syncOptions.Value.ProviderRateLimitBackoffMinutes, 1, 24 * 60));
 
     private static readonly HashSet<string> ManualEligibleStatuses =
     [
@@ -36,8 +44,6 @@ public sealed class BankGlobalSyncService(
         BankConnectionStatuses.SyncPending
     ];
 
-    private static readonly TimeSpan SyncPendingStaleAfter = TimeSpan.FromMinutes(10);
-
     private sealed record ConnectionSyncCandidate(
         Guid Id,
         string Status,
@@ -45,13 +51,20 @@ public sealed class BankGlobalSyncService(
         string? ProviderDisplayName,
         DateTime? LastSyncAttemptedUtc,
         DateTime? LastSuccessfulSyncUtc,
+        string? LastErrorCode,
         DateTime UpdatedUtc);
+
+    private readonly record struct ManualCooldownState(
+        int RemainingSeconds,
+        DateTime? CooldownUntilUtc,
+        DateTime? LastManualRequestUtc);
 
     public async Task<BankGlobalSyncResult> ExecuteAsync(
         Guid userId,
         string? trigger,
         string? source,
-        CancellationToken cancellationToken)
+        bool force = false,
+        CancellationToken cancellationToken = default)
     {
         var normalizedTrigger = NormalizeTrigger(trigger);
         var requestedAtUtc = DateTime.UtcNow;
@@ -70,6 +83,7 @@ public sealed class BankGlobalSyncService(
                     x.ProviderDisplayName,
                     x.LastSyncAttemptedUtc,
                     x.LastSuccessfulSyncUtc,
+                    x.LastErrorCode,
                     x.UpdatedUtc))
                 .ToListAsync(cancellationToken);
 
@@ -85,6 +99,27 @@ public sealed class BankGlobalSyncService(
                 .ToList();
             var dueNow = IsAnyConnectionDue(eligibleCandidates, requestedAtUtc);
             var lastSuccessfulSyncUtc = MaxUtc(eligibleCandidates.Select(x => x.LastSuccessfulSyncUtc));
+            var providerBackoffActiveCount = eligibleCandidates.Count(candidate => GetProviderBackoffUntilUtc(candidate, requestedAtUtc).HasValue);
+            ManualCooldownState cooldownState = new(0, null, null);
+            DateTime? nextEligibleManualSyncUtc = null;
+
+            if (normalizedTrigger == TriggerAuto)
+            {
+                foreach (var candidate in eligibleCandidates)
+                {
+                    var dueDecision = GetDueDecision(candidate, requestedAtUtc);
+                    logger.LogInformation(
+                        "Autosync evaluation connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} lastSyncUtc={LastSyncUtc} cooldownMinutes={CooldownMinutes} willRun={WillRun} reason={Reason}",
+                        candidate.Id,
+                        candidate.ProviderId ?? "<unknown>",
+                        candidate.ProviderDisplayName ?? "<unknown>",
+                        candidate.Status,
+                        candidate.LastSuccessfulSyncUtc,
+                        _autoSyncIntervalMinutes,
+                        dueDecision.IsDue,
+                        dueDecision.Reason);
+                }
+            }
 
             if (ineligibleCandidates.Count > 0)
             {
@@ -110,62 +145,117 @@ public sealed class BankGlobalSyncService(
                     cooldownRemainingSeconds: 0,
                     cooldownUntilUtc: null,
                     eligibleConnectionCount: 0,
-                    lastSuccessfulSyncUtc);
+                    lastSuccessfulSyncUtc,
+                    lastManualSyncRequestUtc: null,
+                    nextEligibleManualSyncUtc: null,
+                    providerBackoffConnectionCount: 0,
+                    noNewerRowsConnectionCount: 0);
             }
 
             if (normalizedTrigger == TriggerAuto && !dueNow)
             {
+                var autoSkipOutcome = providerBackoffActiveCount > 0
+                    ? "skipped_provider_backoff"
+                    : "skipped_not_due";
                 logger.LogInformation(
-                    "Global banking sync skipped as not due userId={UserId} trigger={Trigger} eligibleConnectionCount={EligibleConnectionCount}",
+                    "Global banking sync skipped userId={UserId} trigger={Trigger} outcome={Outcome} eligibleConnectionCount={EligibleConnectionCount} providerBackoffActiveCount={ProviderBackoffActiveCount}",
                     userId,
                     normalizedTrigger,
-                    eligibleCandidates.Count);
+                    autoSkipOutcome,
+                    eligibleCandidates.Count,
+                    providerBackoffActiveCount);
 
                 return CreateSkippedResult(
                     trigger: normalizedTrigger,
-                    outcome: "skipped_not_due",
+                    outcome: autoSkipOutcome,
                     requestedAtUtc,
                     dueNow,
                     cooldownRemainingSeconds: 0,
                     cooldownUntilUtc: null,
                     eligibleConnectionCount: eligibleCandidates.Count,
-                    lastSuccessfulSyncUtc);
+                    lastSuccessfulSyncUtc,
+                    lastManualSyncRequestUtc: null,
+                    nextEligibleManualSyncUtc: null,
+                    providerBackoffConnectionCount: providerBackoffActiveCount,
+                    noNewerRowsConnectionCount: 0);
             }
 
             if (normalizedTrigger == TriggerManual)
             {
-                var cooldownState = await GetManualCooldownStateSafeAsync(userId, requestedAtUtc, cancellationToken);
+                cooldownState = await GetManualCooldownStateSafeAsync(userId, requestedAtUtc, cancellationToken);
+                nextEligibleManualSyncUtc = cooldownState.RemainingSeconds > 0
+                    ? cooldownState.CooldownUntilUtc
+                    : requestedAtUtc.Add(_manualSyncCooldown);
+                var hasStaleSyncPendingConnection = eligibleCandidates.Any(candidate => IsStaleSyncPending(candidate, requestedAtUtc));
+                var manualCooldownAllowed = force || cooldownState.RemainingSeconds <= 0 || hasStaleSyncPendingConnection;
+                var manualCooldownReason = cooldownState.RemainingSeconds <= 0
+                    ? "cooldown_expired"
+                    : force
+                        ? "force_override"
+                    : hasStaleSyncPendingConnection
+                        ? "stale_connection_override"
+                        : "cooldown_active";
+
+                logger.LogInformation(
+                    "Manual sync cooldown check userId={UserId} lastSyncUtc={LastSyncUtc} cooldownMinutes={CooldownMinutes} allowed={Allowed} reason={Reason}",
+                    userId,
+                    cooldownState.LastManualRequestUtc,
+                    _manualCooldownMinutes,
+                    manualCooldownAllowed,
+                    manualCooldownReason);
+
                 if (cooldownState.RemainingSeconds > 0)
                 {
-                    logger.LogInformation(
-                        "Global banking sync skipped due to cooldown userId={UserId} remainingSeconds={RemainingSeconds}",
-                        userId,
-                        cooldownState.RemainingSeconds);
+                    if (force)
+                    {
+                        logger.LogWarning(
+                            "Manual sync cooldown override applied because force=true userId={UserId} remainingSeconds={RemainingSeconds}",
+                            userId,
+                            cooldownState.RemainingSeconds);
+                    }
+                    else if (hasStaleSyncPendingConnection)
+                    {
+                        logger.LogWarning(
+                            "Manual sync cooldown override applied because stale sync_pending connection exists userId={UserId} remainingSeconds={RemainingSeconds}",
+                            userId,
+                            cooldownState.RemainingSeconds);
+                    }
+                    else
+                    {
+                        logger.LogInformation(
+                            "Global banking sync skipped due to cooldown userId={UserId} remainingSeconds={RemainingSeconds}",
+                            userId,
+                            cooldownState.RemainingSeconds);
 
-                    await WriteAuditSafeAsync(
-                        category: "banking",
-                        eventName: "global_manual_sync_cooldown",
-                        targetEntityType: "user",
-                        targetEntityId: userId.ToString(),
-                        actorId: userId,
-                        actorType: "user",
-                        metadata: new
-                        {
-                            source = normalizedSource,
-                            cooldownRemainingSeconds = cooldownState.RemainingSeconds,
-                            cooldownUntilUtc = cooldownState.CooldownUntilUtc
-                        },
-                        cancellationToken);
+                        await WriteAuditSafeAsync(
+                            category: "banking",
+                            eventName: "global_manual_sync_cooldown",
+                            targetEntityType: "user",
+                            targetEntityId: userId.ToString(),
+                            actorId: userId,
+                            actorType: "user",
+                            metadata: new
+                            {
+                                source = normalizedSource,
+                                cooldownRemainingSeconds = cooldownState.RemainingSeconds,
+                                cooldownUntilUtc = cooldownState.CooldownUntilUtc
+                            },
+                            cancellationToken);
 
-                    return CreateSkippedResult(
-                        trigger: normalizedTrigger,
-                        outcome: "skipped_cooldown",
-                        requestedAtUtc,
-                        dueNow,
-                        cooldownRemainingSeconds: cooldownState.RemainingSeconds,
-                        cooldownUntilUtc: cooldownState.CooldownUntilUtc,
-                        eligibleConnectionCount: eligibleCandidates.Count,
-                        lastSuccessfulSyncUtc);
+                        return CreateSkippedResult(
+                            trigger: normalizedTrigger,
+                            outcome: "skipped_cooldown",
+                            requestedAtUtc,
+                            dueNow,
+                            cooldownRemainingSeconds: cooldownState.RemainingSeconds,
+                            cooldownUntilUtc: cooldownState.CooldownUntilUtc,
+                            eligibleConnectionCount: eligibleCandidates.Count,
+                            lastSuccessfulSyncUtc,
+                            lastManualSyncRequestUtc: cooldownState.LastManualRequestUtc,
+                            nextEligibleManualSyncUtc,
+                            providerBackoffConnectionCount: providerBackoffActiveCount,
+                            noNewerRowsConnectionCount: 0);
+                    }
                 }
             }
 
@@ -180,7 +270,8 @@ public sealed class BankGlobalSyncService(
                 {
                     source = normalizedSource,
                     dueNow,
-                    eligibleConnectionCount = eligibleCandidates.Count
+                    eligibleConnectionCount = eligibleCandidates.Count,
+                    force
                 },
                 cancellationToken);
 
@@ -195,6 +286,12 @@ public sealed class BankGlobalSyncService(
                     TransactionsImported: 0,
                     SyncedAtUtc: null,
                     DataChanged: false,
+                    LastSyncAttemptedUtc: candidate.LastSyncAttemptedUtc,
+                    LastSuccessfulSyncUtc: candidate.LastSuccessfulSyncUtc,
+                    ProviderBackoffUntilUtc: GetProviderBackoffUntilUtc(candidate, requestedAtUtc),
+                    LatestFetchedRowUtc: null,
+                    HasFetchedRowNewerThanCheckpoint: null,
+                    FreshnessSummary: null,
                     ErrorCode: "connection_status_not_syncable",
                     ErrorMessage: $"Connection status '{candidate.Status}' is not eligible for {normalizedTrigger} sync."))
                 .ToList();
@@ -202,6 +299,7 @@ public sealed class BankGlobalSyncService(
             var noChangeConnectionCount = 0;
             var failedConnectionCount = 0;
             var skippedConnectionCount = ineligibleCandidates.Count;
+            var noNewerRowsConnectionCount = 0;
 
             foreach (var candidate in eligibleCandidates)
             {
@@ -217,12 +315,46 @@ public sealed class BankGlobalSyncService(
 
                 var effectiveStatus = candidate.Status;
                 var staleSyncPendingRecovered = false;
+                var providerBackoffUntilUtc = GetProviderBackoffUntilUtc(candidate, requestedAtUtc);
+
+                if (providerBackoffUntilUtc.HasValue)
+                {
+                    skippedConnectionCount++;
+                    connectionResults.Add(new BankGlobalSyncConnectionResult(
+                        candidate.Id,
+                        candidate.ProviderDisplayName,
+                        effectiveStatus,
+                        Outcome: "skipped_provider_backoff",
+                        AccountsSynced: 0,
+                        BalancesSynced: 0,
+                        TransactionsImported: 0,
+                        SyncedAtUtc: null,
+                        DataChanged: false,
+                        LastSyncAttemptedUtc: candidate.LastSyncAttemptedUtc,
+                        LastSuccessfulSyncUtc: candidate.LastSuccessfulSyncUtc,
+                        ProviderBackoffUntilUtc: providerBackoffUntilUtc,
+                        LatestFetchedRowUtc: null,
+                        HasFetchedRowNewerThanCheckpoint: null,
+                        FreshnessSummary: null,
+                        ErrorCode: candidate.LastErrorCode,
+                        ErrorMessage: "Provider backoff is active for this connection."));
+
+                    logger.LogInformation(
+                        "Global sync connection skipped because provider backoff is active connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} backoffUntilUtc={BackoffUntilUtc} errorCode={ErrorCode}",
+                        candidate.Id,
+                        candidate.ProviderId ?? "<unknown>",
+                        candidate.ProviderDisplayName ?? "<unknown>",
+                        effectiveStatus,
+                        providerBackoffUntilUtc,
+                        candidate.LastErrorCode ?? "<none>");
+                    continue;
+                }
 
                 if (effectiveStatus == BankConnectionStatuses.SyncPending)
                 {
                     var pendingSinceUtc = candidate.LastSyncAttemptedUtc ?? candidate.UpdatedUtc;
                     var pendingAge = requestedAtUtc - pendingSinceUtc;
-                    var isStalePending = pendingAge >= SyncPendingStaleAfter;
+                    var isStalePending = pendingAge >= _syncPendingStaleAfter;
 
                     logger.LogInformation(
                         "Global sync evaluated sync_pending state connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} pendingSinceUtc={PendingSinceUtc} pendingAgeSeconds={PendingAgeSeconds} staleThresholdSeconds={StaleThresholdSeconds} isStale={IsStale}",
@@ -231,7 +363,7 @@ public sealed class BankGlobalSyncService(
                         candidate.ProviderDisplayName ?? "<unknown>",
                         pendingSinceUtc,
                         (int)Math.Max(0, pendingAge.TotalSeconds),
-                        (int)SyncPendingStaleAfter.TotalSeconds,
+                        (int)_syncPendingStaleAfter.TotalSeconds,
                         isStalePending);
 
                     if (!isStalePending)
@@ -247,6 +379,12 @@ public sealed class BankGlobalSyncService(
                             TransactionsImported: 0,
                             SyncedAtUtc: null,
                             DataChanged: false,
+                            LastSyncAttemptedUtc: candidate.LastSyncAttemptedUtc,
+                            LastSuccessfulSyncUtc: candidate.LastSuccessfulSyncUtc,
+                            ProviderBackoffUntilUtc: null,
+                            LatestFetchedRowUtc: null,
+                            HasFetchedRowNewerThanCheckpoint: null,
+                            FreshnessSummary: null,
                             ErrorCode: null,
                             ErrorMessage: "Sync already in progress for this connection."));
 
@@ -284,6 +422,12 @@ public sealed class BankGlobalSyncService(
                             TransactionsImported: 0,
                             SyncedAtUtc: null,
                             DataChanged: false,
+                            LastSyncAttemptedUtc: candidate.LastSyncAttemptedUtc,
+                            LastSuccessfulSyncUtc: candidate.LastSuccessfulSyncUtc,
+                            ProviderBackoffUntilUtc: null,
+                            LatestFetchedRowUtc: null,
+                            HasFetchedRowNewerThanCheckpoint: null,
+                            FreshnessSummary: null,
                             ErrorCode: "sync_pending_state_changed",
                             ErrorMessage: "Sync pending state changed during stale recovery check."));
 
@@ -331,6 +475,12 @@ public sealed class BankGlobalSyncService(
                         TransactionsImported: 0,
                         SyncedAtUtc: null,
                         DataChanged: false,
+                        LastSyncAttemptedUtc: candidate.LastSyncAttemptedUtc,
+                        LastSuccessfulSyncUtc: candidate.LastSuccessfulSyncUtc,
+                        ProviderBackoffUntilUtc: null,
+                        LatestFetchedRowUtc: null,
+                        HasFetchedRowNewerThanCheckpoint: null,
+                        FreshnessSummary: null,
                         ErrorCode: "sync_unexpected_exception",
                         ErrorMessage: "Unexpected sync error. Please retry."));
 
@@ -367,8 +517,20 @@ public sealed class BankGlobalSyncService(
                         value.TransactionsImported,
                         value.SyncedAtUtc,
                         value.DataChanged,
+                        LastSyncAttemptedUtc: value.SyncedAtUtc,
+                        LastSuccessfulSyncUtc: value.SyncedAtUtc,
+                        ProviderBackoffUntilUtc: null,
+                        LatestFetchedRowUtc: value.LatestFetchedRowUtc,
+                        HasFetchedRowNewerThanCheckpoint: value.HasFetchedRowNewerThanCheckpoint,
+                        FreshnessSummary: value.FreshnessSummary,
                         ErrorCode: null,
                         ErrorMessage: null));
+
+                    if (string.Equals(value.FreshnessSummary, "no_newer_rows_returned", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(value.FreshnessSummary, "no_rows_returned", StringComparison.OrdinalIgnoreCase))
+                    {
+                        noNewerRowsConnectionCount++;
+                    }
 
                     logger.LogInformation(
                         "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome} staleSyncPendingRecovered={StaleSyncPendingRecovered} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} dataChanged={DataChanged}",
@@ -406,6 +568,12 @@ public sealed class BankGlobalSyncService(
                     TransactionsImported: 0,
                     SyncedAtUtc: null,
                     DataChanged: false,
+                    LastSyncAttemptedUtc: candidate.LastSyncAttemptedUtc,
+                    LastSuccessfulSyncUtc: candidate.LastSuccessfulSyncUtc,
+                    ProviderBackoffUntilUtc: GetProviderBackoffUntilUtc(candidate, requestedAtUtc),
+                    LatestFetchedRowUtc: null,
+                    HasFetchedRowNewerThanCheckpoint: null,
+                    FreshnessSummary: null,
                     ErrorCode: error.Code,
                     ErrorMessage: error.Message));
 
@@ -455,9 +623,18 @@ public sealed class BankGlobalSyncService(
                 failedConnectionCount,
                 skippedConnectionCount);
 
+            var completedOutcome =
+                changedConnectionCount == 0
+                && noChangeConnectionCount == 0
+                && failedConnectionCount == 0
+                && connectionResults.Any(connection =>
+                    string.Equals(connection.Outcome, "skipped_provider_backoff", StringComparison.Ordinal))
+                    ? "skipped_provider_backoff"
+                    : "completed";
+
             return new BankGlobalSyncResult(
                 Trigger: normalizedTrigger,
-                Outcome: "completed",
+                Outcome: completedOutcome,
                 RequestedAtUtc: requestedAtUtc,
                 CompletedAtUtc: completedAtUtc,
                 DueNow: dueNow,
@@ -469,6 +646,10 @@ public sealed class BankGlobalSyncService(
                 FailedConnectionCount: failedConnectionCount,
                 SkippedConnectionCount: skippedConnectionCount,
                 LastSuccessfulSyncUtc: lastSuccessfulSyncUtc,
+                LastManualSyncRequestUtc: normalizedTrigger == TriggerManual ? requestedAtUtc : cooldownState.LastManualRequestUtc,
+                NextEligibleManualSyncUtc: normalizedTrigger == TriggerManual ? requestedAtUtc.Add(_manualSyncCooldown) : null,
+                ProviderBackoffConnectionCount: providerBackoffActiveCount,
+                NoNewerRowsConnectionCount: noNewerRowsConnectionCount,
                 Connections: connectionResults);
         }
         catch (Exception exception)
@@ -509,6 +690,10 @@ public sealed class BankGlobalSyncService(
                 FailedConnectionCount: 0,
                 SkippedConnectionCount: 0,
                 LastSuccessfulSyncUtc: null,
+                LastManualSyncRequestUtc: normalizedTrigger == TriggerManual ? requestedAtUtc : null,
+                NextEligibleManualSyncUtc: normalizedTrigger == TriggerManual ? requestedAtUtc.Add(_manualSyncCooldown) : null,
+                ProviderBackoffConnectionCount: 0,
+                NoNewerRowsConnectionCount: 0,
                 Connections: []);
         }
     }
@@ -521,7 +706,11 @@ public sealed class BankGlobalSyncService(
         int cooldownRemainingSeconds,
         DateTime? cooldownUntilUtc,
         int eligibleConnectionCount,
-        DateTime? lastSuccessfulSyncUtc)
+        DateTime? lastSuccessfulSyncUtc,
+        DateTime? lastManualSyncRequestUtc,
+        DateTime? nextEligibleManualSyncUtc,
+        int providerBackoffConnectionCount,
+        int noNewerRowsConnectionCount)
     {
         return new BankGlobalSyncResult(
             Trigger: trigger,
@@ -537,10 +726,14 @@ public sealed class BankGlobalSyncService(
             FailedConnectionCount: 0,
             SkippedConnectionCount: 0,
             LastSuccessfulSyncUtc: lastSuccessfulSyncUtc,
+            LastManualSyncRequestUtc: lastManualSyncRequestUtc,
+            NextEligibleManualSyncUtc: nextEligibleManualSyncUtc,
+            ProviderBackoffConnectionCount: providerBackoffConnectionCount,
+            NoNewerRowsConnectionCount: noNewerRowsConnectionCount,
             Connections: []);
     }
 
-    private async Task<(int RemainingSeconds, DateTime? CooldownUntilUtc)> GetManualCooldownStateAsync(
+    private async Task<ManualCooldownState> GetManualCooldownStateAsync(
         Guid userId,
         DateTime now,
         CancellationToken cancellationToken)
@@ -557,20 +750,20 @@ public sealed class BankGlobalSyncService(
 
         if (!lastManualRequestUtc.HasValue)
         {
-            return (0, null);
+            return new ManualCooldownState(0, null, null);
         }
 
-        var cooldownUntilUtc = lastManualRequestUtc.Value.Add(ManualSyncCooldown);
+        var cooldownUntilUtc = lastManualRequestUtc.Value.Add(_manualSyncCooldown);
         if (cooldownUntilUtc <= now)
         {
-            return (0, cooldownUntilUtc);
+            return new ManualCooldownState(0, cooldownUntilUtc, lastManualRequestUtc);
         }
 
         var remainingSeconds = (int)Math.Ceiling((cooldownUntilUtc - now).TotalSeconds);
-        return (Math.Max(1, remainingSeconds), cooldownUntilUtc);
+        return new ManualCooldownState(Math.Max(1, remainingSeconds), cooldownUntilUtc, lastManualRequestUtc);
     }
 
-    private async Task<(int RemainingSeconds, DateTime? CooldownUntilUtc)> GetManualCooldownStateSafeAsync(
+    private async Task<ManualCooldownState> GetManualCooldownStateSafeAsync(
         Guid userId,
         DateTime now,
         CancellationToken cancellationToken)
@@ -585,7 +778,7 @@ public sealed class BankGlobalSyncService(
                 exception,
                 "Failed to evaluate global sync cooldown userId={UserId}; proceeding without cooldown enforcement for this request.",
                 userId);
-            return (0, null);
+            return new ManualCooldownState(0, null, null);
         }
     }
 
@@ -642,32 +835,83 @@ public sealed class BankGlobalSyncService(
         return normalized.Length > 80 ? normalized[..80] : normalized;
     }
 
-    private static bool IsAnyConnectionDue(IEnumerable<ConnectionSyncCandidate> candidates, DateTime now)
+    private bool IsAnyConnectionDue(IEnumerable<ConnectionSyncCandidate> candidates, DateTime now)
     {
         foreach (var candidate in candidates)
         {
-            if (candidate.Status == BankConnectionStatuses.SyncPending)
-            {
-                continue;
-            }
-
-            if (candidate.Status == BankConnectionStatuses.ConnectedPendingSync)
-            {
-                return true;
-            }
-
-            if (!candidate.LastSuccessfulSyncUtc.HasValue)
-            {
-                return true;
-            }
-
-            if (now - candidate.LastSuccessfulSyncUtc.Value >= AutoSyncDueInterval)
+            var dueDecision = GetDueDecision(candidate, now);
+            if (dueDecision.IsDue)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private (bool IsDue, string Reason) GetDueDecision(ConnectionSyncCandidate candidate, DateTime now)
+    {
+        if (GetProviderBackoffUntilUtc(candidate, now).HasValue)
+        {
+            return (false, "provider_backoff");
+        }
+
+        if (candidate.Status == BankConnectionStatuses.SyncPending)
+        {
+            return (false, "in_progress");
+        }
+
+        if (candidate.Status == BankConnectionStatuses.ConnectedPendingSync)
+        {
+            return (true, "initial_sync_required");
+        }
+
+        if (!candidate.LastSuccessfulSyncUtc.HasValue)
+        {
+            return (true, "never_synced");
+        }
+
+        if (now - candidate.LastSuccessfulSyncUtc.Value >= _autoSyncDueInterval)
+        {
+            return (true, "eligible");
+        }
+
+        return (false, "recent_sync");
+    }
+
+    private bool IsStaleSyncPending(ConnectionSyncCandidate candidate, DateTime now)
+    {
+        if (!string.Equals(candidate.Status, BankConnectionStatuses.SyncPending, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var pendingSinceUtc = candidate.LastSyncAttemptedUtc ?? candidate.UpdatedUtc;
+        return now - pendingSinceUtc >= _syncPendingStaleAfter;
+    }
+
+    private DateTime? GetProviderBackoffUntilUtc(ConnectionSyncCandidate candidate, DateTime now)
+    {
+        if (!IsRateLimitErrorCode(candidate.LastErrorCode))
+        {
+            return null;
+        }
+
+        var backoffStartedAtUtc = candidate.LastSyncAttemptedUtc ?? candidate.UpdatedUtc;
+        var backoffUntilUtc = backoffStartedAtUtc.Add(_providerRateLimitBackoff);
+        return backoffUntilUtc > now ? backoffUntilUtc : null;
+    }
+
+    private static bool IsRateLimitErrorCode(string? errorCode)
+    {
+        if (string.IsNullOrWhiteSpace(errorCode))
+        {
+            return false;
+        }
+
+        return errorCode.Contains("too_many_requests", StringComparison.OrdinalIgnoreCase)
+            || errorCode.Contains("request_limit_exceeded", StringComparison.OrdinalIgnoreCase)
+            || errorCode.Contains("rate_limit", StringComparison.OrdinalIgnoreCase);
     }
 
     private static DateTime? MaxUtc(IEnumerable<DateTime?> values)

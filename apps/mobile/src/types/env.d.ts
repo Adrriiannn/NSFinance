@@ -5,6 +5,7 @@ declare namespace NodeJS {
     EXPO_PUBLIC_APP_ENV?: "development" | "preview" | "production";
     EXPO_PUBLIC_ALLOW_AZURE_IN_DEV?: "true" | "false";
     EXPO_PUBLIC_APP_VERSION?: string;
+    EXPO_PUBLIC_BANKING_AUTO_SYNC_INTERVAL_MINUTES?: string;
     EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?: string;
     EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_DEBUG?: string;
     EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD?: string;
