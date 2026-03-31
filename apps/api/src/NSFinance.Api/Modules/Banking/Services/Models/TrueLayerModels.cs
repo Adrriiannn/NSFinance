@@ -49,9 +49,11 @@ public sealed record TrueLayerBalanceRecord(
 
 public sealed record TrueLayerTransactionRecord(
     string? ProviderTransactionId,
+    string? NormalizedProviderTransactionId,
     decimal Amount,
     string Currency,
     DateTime BookedAtUtc,
+    DateTime? ValueAtUtc,
     string Description,
     string? TransactionType,
     string? TransactionStatus,

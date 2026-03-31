@@ -140,6 +140,7 @@ Mobile freshness UX:
 9. Validate status normalization/projection with logs for at least one provider account:
    - `settledFetched`, `pendingFetched`, `rawInserted/rawUpdated`, `projectedFromNewRaw/projectedFromStatusTransition`, and skip counters are present in lifecycle logs
    - for rows fetched from settled endpoint, normalization logs should show `sourceEndpoint=settled` and ledger projection should not be blocked by provider `status` noise
+   - when projection dedupe fires, logs should include the collided existing `Transaction.Id` and the exact fingerprint values used
 10. Validate pending behavior:
    - rows fetched from pending endpoint remain unprojected (raw-only) until a booked counterpart arrives
    - when a pending row later arrives as booked, it is projected once without duplicate ledger creation

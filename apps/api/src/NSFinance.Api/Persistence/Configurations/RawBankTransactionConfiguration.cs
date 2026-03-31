@@ -19,10 +19,12 @@ public class RawBankTransactionConfiguration : IEntityTypeConfiguration<RawBankT
         builder.Property(x => x.Description).HasMaxLength(512).IsRequired();
         builder.Property(x => x.TransactionType).HasMaxLength(80);
         builder.Property(x => x.TransactionStatus).HasMaxLength(80);
+        builder.Property(x => x.ProjectedTransactionId);
         builder.Property(x => x.RawPayloadJson).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.ImportedUtc).IsRequired();
 
         builder.HasIndex(x => x.LinkedBankAccountId);
+        builder.HasIndex(x => x.ProjectedTransactionId);
         builder.HasIndex(x => new { x.LinkedBankAccountId, x.ProviderTransactionId })
             .IsUnique()
             .HasFilter("\"ProviderTransactionId\" IS NOT NULL");
@@ -32,5 +34,10 @@ public class RawBankTransactionConfiguration : IEntityTypeConfiguration<RawBankT
             .WithMany(x => x.Transactions)
             .HasForeignKey(x => x.LinkedBankAccountId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.ProjectedTransaction)
+            .WithMany()
+            .HasForeignKey(x => x.ProjectedTransactionId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

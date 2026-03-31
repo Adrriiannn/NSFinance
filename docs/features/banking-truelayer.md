@@ -129,6 +129,11 @@ NSFinance now treats imported banking data as a long-term ledger:
   - rows from `/transactions` (settled/booked endpoint) are normalized as booked for ledger projection, even if provider payload status strings are noisy
   - rows from `/transactions/pending` are normalized as pending and remain raw-only until a booked version arrives
   - each fetched row carries normalization metadata (`sourceEndpoint`, provider status, normalization reason) for diagnostics
+- Raw-to-ledger projection now uses explicit linkage:
+  - each `RawBankTransaction` can store `ProjectedTransactionId`
+  - projection reconciliation first checks this durable link before any duplicate heuristics
+  - legacy unlinked raw rows are reconciled once against existing ledger rows; duplicate matches log the exact collided `Transaction.Id`
+  - this avoids repeated replay/backfill fingerprint collisions swallowing visibility of legitimate new rows
 - Connection metadata tracks:
   - initial backfill started/completed
   - requested initial backfill window start

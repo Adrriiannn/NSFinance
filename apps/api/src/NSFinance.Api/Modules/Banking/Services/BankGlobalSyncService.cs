@@ -39,6 +39,7 @@ public sealed class BankGlobalSyncService(
     private sealed record ConnectionSyncCandidate(
         Guid Id,
         string Status,
+        string? ProviderId,
         string? ProviderDisplayName,
         DateTime? LastSuccessfulSyncUtc,
         DateTime UpdatedUtc);
@@ -62,6 +63,7 @@ public sealed class BankGlobalSyncService(
                 .Select(x => new ConnectionSyncCandidate(
                     x.Id,
                     x.Status,
+                    x.ProviderId,
                     x.ProviderDisplayName,
                     x.LastSuccessfulSyncUtc,
                     x.UpdatedUtc))
@@ -214,6 +216,14 @@ public sealed class BankGlobalSyncService(
                         DataChanged: false,
                         ErrorCode: null,
                         ErrorMessage: "Sync already in progress for this connection."));
+
+                    logger.LogInformation(
+                        "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome}",
+                        candidate.Id,
+                        candidate.ProviderId ?? "<unknown>",
+                        candidate.ProviderDisplayName ?? "<unknown>",
+                        candidate.Status,
+                        "skipped_sync_in_progress");
                     continue;
                 }
 
@@ -243,6 +253,15 @@ public sealed class BankGlobalSyncService(
                         DataChanged: false,
                         ErrorCode: "sync_unexpected_exception",
                         ErrorMessage: "Unexpected sync error. Please retry."));
+
+                    logger.LogError(
+                        "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome} errorCode={ErrorCode}",
+                        candidate.Id,
+                        candidate.ProviderId ?? "<unknown>",
+                        candidate.ProviderDisplayName ?? "<unknown>",
+                        candidate.Status,
+                        "failed",
+                        "sync_unexpected_exception");
                     continue;
                 }
 
@@ -270,6 +289,18 @@ public sealed class BankGlobalSyncService(
                         value.DataChanged,
                         ErrorCode: null,
                         ErrorMessage: null));
+
+                    logger.LogInformation(
+                        "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} dataChanged={DataChanged}",
+                        value.ConnectionId,
+                        candidate.ProviderId ?? "<unknown>",
+                        candidate.ProviderDisplayName ?? "<unknown>",
+                        value.Status,
+                        value.DataChanged ? "completed_changed" : "completed_no_change",
+                        value.AccountsSynced,
+                        value.BalancesSynced,
+                        value.TransactionsImported,
+                        value.DataChanged);
                     continue;
                 }
 
@@ -296,6 +327,15 @@ public sealed class BankGlobalSyncService(
                     DataChanged: false,
                     ErrorCode: error.Code,
                     ErrorMessage: error.Message));
+
+                logger.LogWarning(
+                    "Global sync connection outcome connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} status={Status} outcome={Outcome} errorCode={ErrorCode}",
+                    candidate.Id,
+                    candidate.ProviderId ?? "<unknown>",
+                    candidate.ProviderDisplayName ?? "<unknown>",
+                    candidate.Status,
+                    skipped ? "skipped_unavailable" : "failed",
+                    error.Code ?? "<none>");
             }
 
             var completedAtUtc = DateTime.UtcNow;

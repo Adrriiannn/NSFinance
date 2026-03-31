@@ -12,8 +12,10 @@ public class RawBankTransaction
     public string Description { get; set; } = string.Empty;
     public string? TransactionType { get; set; }
     public string? TransactionStatus { get; set; }
+    public Guid? ProjectedTransactionId { get; set; }
     public string RawPayloadJson { get; set; } = "{}";
     public DateTime ImportedUtc { get; set; }
 
     public LinkedBankAccount? LinkedBankAccount { get; set; }
+    public Transaction? ProjectedTransaction { get; set; }
 }

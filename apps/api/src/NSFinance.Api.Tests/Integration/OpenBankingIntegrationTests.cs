@@ -161,6 +161,38 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_DoesNotCollapseDistinctTransactions_WithSameAmountTimestampAndDescription()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SameFingerprintDistinctTransactionsFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.same-fingerprint-distinct@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-same-fingerprint-distinct", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+        Assert.Equal(2, await harness.DbContext.RawBankTransactions.CountAsync());
+        Assert.Equal(2, await harness.DbContext.Transactions.CountAsync());
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var secondSync = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_same_fingerprint_replay",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", secondSync.Outcome);
+        Assert.Equal(2, await harness.DbContext.RawBankTransactions.CountAsync());
+        Assert.Equal(2, await harness.DbContext.Transactions.CountAsync());
+    }
+
+    [Fact]
     public async Task GlobalSync_PromotesPendingAccountTransactionToBooked_WhenProviderIdIsReused()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -1405,6 +1437,102 @@ public class OpenBankingIntegrationTests
             }
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-settled-status-001/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler SameFingerprintDistinctTransactionsFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-same-fingerprint",
+                      "refresh_token":"refresh-token-same-fingerprint",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-same-fingerprint-001",
+                          "display_name": "Same Fingerprint Account",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-aib",
+                            "display_name": "AIB"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-same-fingerprint-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 500.00,
+                          "current": 500.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T08:00:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-same-fingerprint-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-same-1",
+                          "normalised_provider_transaction_id":"norm-same-1",
+                          "amount":-15.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-30T09:00:00Z",
+                          "description":"Coffee Shop",
+                          "transaction_type":"DEBIT",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-same-2",
+                          "normalised_provider_transaction_id":"norm-same-2",
+                          "amount":-15.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-30T09:00:00Z",
+                          "description":"Coffee Shop",
+                          "transaction_type":"DEBIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-same-fingerprint-001/transactions/pending", StringComparison.Ordinal))
             {
                 return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }

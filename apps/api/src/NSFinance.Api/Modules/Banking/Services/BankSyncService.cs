@@ -1173,46 +1173,74 @@ public sealed class BankSyncService(
         var projectedSkippedUnbookedFetched = 0;
         var projectedSkippedUnbookedBackfill = 0;
         var projectedSkippedDuplicate = 0;
-        var projectionFingerprints = new HashSet<string>(StringComparer.Ordinal);
+        ProjectionReconciliationState? projectionState = null;
 
         if (linkedAccount.FinancialAccountId.HasValue)
         {
-            var projectedAccountId = linkedAccount.FinancialAccountId.Value;
-            projectionFingerprints = await dbContext.Transactions
-                .Where(x => x.FinancialAccountId == projectedAccountId)
-                .Select(x => CreateProjectionFingerprint(x.Amount, x.Currency, x.BookedAtUtc, x.Description))
-                .ToHashSetAsync(cancellationToken);
+            projectionState = await BuildProjectionReconciliationStateAsync(
+                linkedAccount.FinancialAccountId.Value,
+                existingRawRows,
+                cancellationToken);
 
             foreach (var row in existingRawRows)
             {
+                if (row.ProjectedTransactionId.HasValue
+                    && projectionState.KnownProjectedTransactionIds.Contains(row.ProjectedTransactionId.Value))
+                {
+                    continue;
+                }
+
+                if (row.ProjectedTransactionId.HasValue)
+                {
+                    // Stale pointer (projected row deleted/moved). Reconcile again.
+                    row.ProjectedTransactionId = null;
+                }
+
                 if (!IsBookedProjectionStatus(row.TransactionStatus))
                 {
                     projectedSkippedUnbookedBackfill++;
                     continue;
                 }
 
-                var projectionFingerprint = CreateProjectionFingerprint(
-                    row.Amount,
-                    row.Currency,
-                    row.BookedAtUtc,
-                    row.Description);
-
-                if (!projectionFingerprints.Add(projectionFingerprint))
+                if (TryLinkRawRowToExistingProjectedTransaction(
+                        row,
+                        providerAccount,
+                        linkedAccount,
+                        sourceStage: "backfill_reconcile",
+                        triggerRecord: null,
+                        projectionState,
+                        out var collidedTransactionId))
                 {
                     projectedSkippedDuplicate++;
+                    logger.LogDebug(
+                        "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
+                        providerAccount.ProviderId ?? "<unknown>",
+                        providerAccount.ProviderDisplayName ?? "<unknown>",
+                        linkedAccount.ConnectionId,
+                        providerAccount.AccountId,
+                        linkedAccount.Id,
+                        "backfill_reconcile",
+                        collidedTransactionId,
+                        row.ProviderTransactionId ?? "<none>",
+                        row.DedupeKey,
+                        row.Amount,
+                        row.Currency,
+                        row.BookedAtUtc,
+                        row.Description);
                     continue;
                 }
 
-                dbContext.Transactions.Add(new Transaction
-                {
-                    Id = Guid.NewGuid(),
-                    FinancialAccountId = projectedAccountId,
-                    Amount = row.Amount,
-                    Currency = row.Currency,
-                    Description = row.Description,
-                    BookedAtUtc = row.BookedAtUtc,
-                    CreatedUtc = now
-                });
+                var projected = CreateProjectedTransaction(
+                    linkedAccount.FinancialAccountId.Value,
+                    row.Amount,
+                    row.Currency,
+                    row.Description,
+                    row.BookedAtUtc,
+                    now);
+
+                dbContext.Transactions.Add(projected);
+                row.ProjectedTransactionId = projected.Id;
+                projectionState.KnownProjectedTransactionIds.Add(projected.Id);
                 projectedBackfilled++;
             }
         }
@@ -1220,17 +1248,20 @@ public sealed class BankSyncService(
         foreach (var providerTransaction in providerTransactions)
         {
             logger.LogDebug(
-                "Bank transaction normalization providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} sourceEndpoint={SourceEndpoint} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} providerStatus={ProviderStatus} normalizedStatus={NormalizedStatus} normalizationReason={NormalizationReason}",
+                "Bank transaction normalization providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceEndpoint={SourceEndpoint} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} valueAtUtc={ValueAtUtc} providerStatus={ProviderStatus} normalizedStatus={NormalizedStatus} normalizationReason={NormalizationReason}",
                 providerAccount.ProviderId ?? "<unknown>",
                 providerAccount.ProviderDisplayName ?? "<unknown>",
                 linkedAccount.ConnectionId,
                 providerAccount.AccountId,
+                linkedAccount.Id,
                 providerTransaction.SourceEndpoint,
                 providerTransaction.ProviderTransactionId ?? "<none>",
+                providerTransaction.NormalizedProviderTransactionId ?? "<none>",
                 providerTransaction.DedupeKey,
                 providerTransaction.Amount,
                 providerTransaction.Currency,
                 providerTransaction.BookedAtUtc,
+                providerTransaction.ValueAtUtc,
                 providerTransaction.ProviderStatus ?? "<none>",
                 providerTransaction.TransactionStatus ?? "<null>",
                 providerTransaction.StatusNormalizationReason);
@@ -1286,63 +1317,100 @@ public sealed class BankSyncService(
                 existingRawByDedupeKey[existingRaw.DedupeKey] = existingRaw;
 
                 var isNowBooked = IsBookedProjectionStatus(existingRaw.TransactionStatus);
-                if (!wasBooked
-                    && isNowBooked
-                    && linkedAccount.FinancialAccountId.HasValue)
+                if (projectionState is not null
+                    && linkedAccount.FinancialAccountId.HasValue
+                    && isNowBooked)
                 {
-                    var projectionFingerprint = CreateProjectionFingerprint(
-                        existingRaw.Amount,
-                        existingRaw.Currency,
-                        existingRaw.BookedAtUtc,
-                        existingRaw.Description);
-
-                    if (projectionFingerprints.Add(projectionFingerprint))
+                    if (existingRaw.ProjectedTransactionId.HasValue
+                        && projectionState.KnownProjectedTransactionIds.Contains(existingRaw.ProjectedTransactionId.Value))
                     {
-                        dbContext.Transactions.Add(new Transaction
-                        {
-                            Id = Guid.NewGuid(),
-                            FinancialAccountId = linkedAccount.FinancialAccountId.Value,
-                            Amount = existingRaw.Amount,
-                            Currency = existingRaw.Currency,
-                            Description = existingRaw.Description,
-                            BookedAtUtc = existingRaw.BookedAtUtc,
-                            CreatedUtc = now
-                        });
-                        projectedFromStatusTransition++;
                         logger.LogDebug(
-                            "Bank transaction projected after status transition providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} fromStatus={FromStatus} toStatus={ToStatus}",
+                            "Bank transaction already linked to projected ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} projectedTransactionId={ProjectedTransactionId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey}",
                             providerAccount.ProviderId ?? "<unknown>",
                             providerAccount.ProviderDisplayName ?? "<unknown>",
                             linkedAccount.ConnectionId,
                             providerAccount.AccountId,
+                            linkedAccount.Id,
+                            existingRaw.ProjectedTransactionId.Value,
                             existingRaw.ProviderTransactionId ?? "<none>",
-                            existingRaw.DedupeKey,
-                            wasBooked ? "booked" : "unbooked",
-                            isNowBooked ? "booked" : "unbooked");
+                            existingRaw.DedupeKey);
                     }
-                    else
+                    else if (TryLinkRawRowToExistingProjectedTransaction(
+                                 existingRaw,
+                                 providerAccount,
+                                 linkedAccount,
+                                 sourceStage: !wasBooked && isNowBooked ? "status_transition_reconcile" : "existing_booked_reconcile",
+                                 triggerRecord: providerTransaction,
+                                 projectionState,
+                                 out var collidedTransactionId))
                     {
                         projectedSkippedDuplicate++;
                         logger.LogDebug(
-                            "Bank transaction projection skipped due to duplicate fingerprint after status transition providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey}",
+                            "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
                             providerAccount.ProviderId ?? "<unknown>",
                             providerAccount.ProviderDisplayName ?? "<unknown>",
                             linkedAccount.ConnectionId,
                             providerAccount.AccountId,
-                            existingRaw.ProviderTransactionId ?? "<none>",
-                            existingRaw.DedupeKey);
+                            linkedAccount.Id,
+                            !wasBooked && isNowBooked ? "status_transition_reconcile" : "existing_booked_reconcile",
+                            collidedTransactionId,
+                            providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
+                            providerTransaction.NormalizedProviderTransactionId ?? "<none>",
+                            existingRaw.DedupeKey,
+                            existingRaw.Amount,
+                            existingRaw.Currency,
+                            existingRaw.BookedAtUtc,
+                            existingRaw.Description);
+                    }
+                    else
+                    {
+                        var projected = CreateProjectedTransaction(
+                            linkedAccount.FinancialAccountId.Value,
+                            existingRaw.Amount,
+                            existingRaw.Currency,
+                            existingRaw.Description,
+                            existingRaw.BookedAtUtc,
+                            now);
+
+                        dbContext.Transactions.Add(projected);
+                        existingRaw.ProjectedTransactionId = projected.Id;
+                        projectionState.KnownProjectedTransactionIds.Add(projected.Id);
+
+                        if (!wasBooked && isNowBooked)
+                        {
+                            projectedFromStatusTransition++;
+                        }
+                        else
+                        {
+                            projectedBackfilled++;
+                        }
+
+                        logger.LogDebug(
+                            "Bank transaction projected from existing raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} fromStatus={FromStatus} toStatus={ToStatus}",
+                            providerAccount.ProviderId ?? "<unknown>",
+                            providerAccount.ProviderDisplayName ?? "<unknown>",
+                            linkedAccount.ConnectionId,
+                            providerAccount.AccountId,
+                            linkedAccount.Id,
+                            providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
+                            providerTransaction.NormalizedProviderTransactionId ?? "<none>",
+                            existingRaw.DedupeKey,
+                            wasBooked ? "booked" : "unbooked",
+                            isNowBooked ? "booked" : "unbooked");
                     }
                 }
                 else if (!isNowBooked)
                 {
                     projectedSkippedUnbookedFetched++;
                     logger.LogDebug(
-                        "Bank transaction projection skipped because normalized status is unbooked providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} normalizedStatus={NormalizedStatus} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizationReason={NormalizationReason}",
+                        "Bank transaction projection skipped because normalized status is unbooked providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} normalizedStatus={NormalizedStatus} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizationReason={NormalizationReason}",
                         providerAccount.ProviderId ?? "<unknown>",
                         providerAccount.ProviderDisplayName ?? "<unknown>",
                         linkedAccount.ConnectionId,
                         providerAccount.AccountId,
+                        linkedAccount.Id,
                         providerTransaction.ProviderTransactionId ?? "<none>",
+                        providerTransaction.NormalizedProviderTransactionId ?? "<none>",
                         providerTransaction.DedupeKey,
                         providerTransaction.TransactionStatus ?? "<null>",
                         providerTransaction.SourceEndpoint,
@@ -1365,53 +1433,66 @@ public sealed class BankSyncService(
                 Description = providerTransaction.Description,
                 TransactionType = providerTransaction.TransactionType,
                 TransactionStatus = providerTransaction.TransactionStatus,
+                ProjectedTransactionId = null,
                 RawPayloadJson = providerTransaction.RawPayloadJson,
                 ImportedUtc = now
             };
             dbContext.RawBankTransactions.Add(rawTransaction);
 
-            if (linkedAccount.FinancialAccountId.HasValue)
+            if (projectionState is not null && linkedAccount.FinancialAccountId.HasValue)
             {
                 if (IsBookedProjectionStatus(providerTransaction.TransactionStatus))
                 {
-                    var projectionFingerprint = CreateProjectionFingerprint(
-                        providerTransaction.Amount,
-                        providerTransaction.Currency,
-                        providerTransaction.BookedAtUtc,
-                        providerTransaction.Description);
-
-                    if (projectionFingerprints.Add(projectionFingerprint))
-                    {
-                        dbContext.Transactions.Add(new Transaction
-                        {
-                            Id = Guid.NewGuid(),
-                            FinancialAccountId = linkedAccount.FinancialAccountId.Value,
-                            Amount = providerTransaction.Amount,
-                            Currency = providerTransaction.Currency,
-                            Description = providerTransaction.Description,
-                            BookedAtUtc = providerTransaction.BookedAtUtc,
-                            CreatedUtc = now
-                        });
-                        projectedFromNewRaw++;
-                        logger.LogDebug(
-                            "Bank transaction projected from new raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey}",
-                            providerAccount.ProviderId ?? "<unknown>",
-                            providerAccount.ProviderDisplayName ?? "<unknown>",
-                            linkedAccount.ConnectionId,
-                            providerAccount.AccountId,
-                            providerTransaction.ProviderTransactionId ?? "<none>",
-                            providerTransaction.DedupeKey);
-                    }
-                    else
+                    if (TryLinkRawRowToExistingProjectedTransaction(
+                            rawTransaction,
+                            providerAccount,
+                            linkedAccount,
+                            sourceStage: "new_raw_reconcile",
+                            triggerRecord: providerTransaction,
+                            projectionState,
+                            out var collidedTransactionId))
                     {
                         projectedSkippedDuplicate++;
                         logger.LogDebug(
-                            "Bank transaction projection skipped due to duplicate fingerprint providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey}",
+                            "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
                             providerAccount.ProviderId ?? "<unknown>",
                             providerAccount.ProviderDisplayName ?? "<unknown>",
                             linkedAccount.ConnectionId,
                             providerAccount.AccountId,
+                            linkedAccount.Id,
+                            "new_raw_reconcile",
+                            collidedTransactionId,
                             providerTransaction.ProviderTransactionId ?? "<none>",
+                            providerTransaction.NormalizedProviderTransactionId ?? "<none>",
+                            providerTransaction.DedupeKey,
+                            providerTransaction.Amount,
+                            providerTransaction.Currency,
+                            providerTransaction.BookedAtUtc,
+                            providerTransaction.Description);
+                    }
+                    else
+                    {
+                        var projected = CreateProjectedTransaction(
+                            linkedAccount.FinancialAccountId.Value,
+                            providerTransaction.Amount,
+                            providerTransaction.Currency,
+                            providerTransaction.Description,
+                            providerTransaction.BookedAtUtc,
+                            now);
+
+                        dbContext.Transactions.Add(projected);
+                        rawTransaction.ProjectedTransactionId = projected.Id;
+                        projectionState.KnownProjectedTransactionIds.Add(projected.Id);
+                        projectedFromNewRaw++;
+                        logger.LogDebug(
+                            "Bank transaction projected from new raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey}",
+                            providerAccount.ProviderId ?? "<unknown>",
+                            providerAccount.ProviderDisplayName ?? "<unknown>",
+                            linkedAccount.ConnectionId,
+                            providerAccount.AccountId,
+                            linkedAccount.Id,
+                            providerTransaction.ProviderTransactionId ?? "<none>",
+                            providerTransaction.NormalizedProviderTransactionId ?? "<none>",
                             providerTransaction.DedupeKey);
                     }
                 }
@@ -1419,12 +1500,14 @@ public sealed class BankSyncService(
                 {
                     projectedSkippedUnbookedFetched++;
                     logger.LogDebug(
-                        "Bank transaction projection skipped because normalized status is unbooked for new raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} normalizedStatus={NormalizedStatus} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizationReason={NormalizationReason}",
+                        "Bank transaction projection skipped because normalized status is unbooked for new raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} normalizedStatus={NormalizedStatus} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizationReason={NormalizationReason}",
                         providerAccount.ProviderId ?? "<unknown>",
                         providerAccount.ProviderDisplayName ?? "<unknown>",
                         linkedAccount.ConnectionId,
                         providerAccount.AccountId,
+                        linkedAccount.Id,
                         providerTransaction.ProviderTransactionId ?? "<none>",
+                        providerTransaction.NormalizedProviderTransactionId ?? "<none>",
                         providerTransaction.DedupeKey,
                         providerTransaction.TransactionStatus ?? "<null>",
                         providerTransaction.SourceEndpoint,
@@ -1454,6 +1537,135 @@ public sealed class BankSyncService(
             projectedSkippedUnbookedFetched,
             projectedSkippedUnbookedBackfill,
             projectedSkippedDuplicate);
+    }
+
+    private async Task<ProjectionReconciliationState> BuildProjectionReconciliationStateAsync(
+        Guid projectedAccountId,
+        IReadOnlyList<RawBankTransaction> existingRawRows,
+        CancellationToken cancellationToken)
+    {
+        var projectedRows = await dbContext.Transactions
+            .Where(x => x.FinancialAccountId == projectedAccountId)
+            .Select(x => new ProjectedTransactionSnapshot(
+                x.Id,
+                x.Amount,
+                x.Currency,
+                x.BookedAtUtc,
+                x.Description))
+            .ToListAsync(cancellationToken);
+
+        var knownProjectedTransactionIds = projectedRows
+            .Select(x => x.Id)
+            .ToHashSet();
+
+        var linkedProjectedTransactionIds = existingRawRows
+            .Where(x => x.ProjectedTransactionId.HasValue && knownProjectedTransactionIds.Contains(x.ProjectedTransactionId.Value))
+            .Select(x => x.ProjectedTransactionId!.Value)
+            .ToHashSet();
+
+        var fingerprintToProjectedIds = new Dictionary<string, Queue<Guid>>(StringComparer.Ordinal);
+        foreach (var row in projectedRows.OrderBy(x => x.BookedAtUtc).ThenBy(x => x.Id))
+        {
+            var fingerprint = CreateProjectionFingerprint(
+                row.Amount,
+                row.Currency,
+                row.BookedAtUtc,
+                row.Description);
+
+            if (!fingerprintToProjectedIds.TryGetValue(fingerprint, out var queue))
+            {
+                queue = new Queue<Guid>();
+                fingerprintToProjectedIds[fingerprint] = queue;
+            }
+
+            queue.Enqueue(row.Id);
+        }
+
+        return new ProjectionReconciliationState(
+            knownProjectedTransactionIds,
+            linkedProjectedTransactionIds,
+            fingerprintToProjectedIds);
+    }
+
+    private bool TryLinkRawRowToExistingProjectedTransaction(
+        RawBankTransaction rawRow,
+        TrueLayerAccountRecord providerAccount,
+        LinkedBankAccount linkedAccount,
+        string sourceStage,
+        TrueLayerTransactionRecord? triggerRecord,
+        ProjectionReconciliationState projectionState,
+        out Guid collidedTransactionId)
+    {
+        collidedTransactionId = Guid.Empty;
+        var projectionFingerprint = CreateProjectionFingerprint(
+            rawRow.Amount,
+            rawRow.Currency,
+            rawRow.BookedAtUtc,
+            rawRow.Description);
+
+        if (!projectionState.FingerprintToProjectedIds.TryGetValue(projectionFingerprint, out var queue))
+        {
+            return false;
+        }
+
+        while (queue.Count > 0)
+        {
+            var candidateId = queue.Peek();
+            if (projectionState.LinkedProjectedTransactionIds.Contains(candidateId))
+            {
+                queue.Dequeue();
+                continue;
+            }
+
+            collidedTransactionId = candidateId;
+            projectionState.LinkedProjectedTransactionIds.Add(candidateId);
+            rawRow.ProjectedTransactionId = candidateId;
+
+            logger.LogDebug(
+                "Bank transaction projection collision details providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} fingerprint={ProjectionFingerprint} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizedStatus={NormalizedStatus}",
+                providerAccount.ProviderId ?? "<unknown>",
+                providerAccount.ProviderDisplayName ?? "<unknown>",
+                linkedAccount.ConnectionId,
+                providerAccount.AccountId,
+                linkedAccount.Id,
+                sourceStage,
+                candidateId,
+                projectionFingerprint,
+                rawRow.Amount,
+                rawRow.Currency,
+                rawRow.BookedAtUtc,
+                rawRow.Description,
+                triggerRecord?.ProviderTransactionId ?? rawRow.ProviderTransactionId ?? "<none>",
+                triggerRecord?.NormalizedProviderTransactionId ?? "<none>",
+                rawRow.DedupeKey,
+                triggerRecord?.SourceEndpoint ?? "<backfill_raw>",
+                triggerRecord?.ProviderStatus ?? "<none>",
+                triggerRecord?.TransactionStatus ?? rawRow.TransactionStatus ?? "<null>");
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Transaction CreateProjectedTransaction(
+        Guid projectedAccountId,
+        decimal amount,
+        string currency,
+        string description,
+        DateTime bookedAtUtc,
+        DateTime createdUtc)
+    {
+        return new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = projectedAccountId,
+            Amount = amount,
+            Currency = currency,
+            Description = description,
+            BookedAtUtc = bookedAtUtc,
+            CreatedUtc = createdUtc
+        };
     }
 
     private static bool ApplyRawTransactionUpdate(
@@ -1838,6 +2050,18 @@ public sealed class BankSyncService(
         var normalized = transactionStatus.Trim().ToLowerInvariant();
         return normalized is "booked" or "posted" or "settled";
     }
+
+    private sealed record ProjectionReconciliationState(
+        HashSet<Guid> KnownProjectedTransactionIds,
+        HashSet<Guid> LinkedProjectedTransactionIds,
+        Dictionary<string, Queue<Guid>> FingerprintToProjectedIds);
+
+    private sealed record ProjectedTransactionSnapshot(
+        Guid Id,
+        decimal Amount,
+        string Currency,
+        DateTime BookedAtUtc,
+        string Description);
 
     private sealed record TransactionUpsertSummary(
         int Fetched,

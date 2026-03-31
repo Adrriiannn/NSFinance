@@ -444,20 +444,25 @@ public sealed class TrueLayerDataService(
                 var rawDescription = GetString(item, "description") ?? "Imported transaction";
                 var description = ResolveTransactionDisplayDescription(item, rawDescription, "Imported transaction");
                 var providerTransactionId = GetString(item, "transaction_id");
+                var normalizedProviderTransactionId = GetString(item, "normalised_provider_transaction_id");
                 var stableTransactionId =
-                    GetString(item, "normalised_provider_transaction_id")
+                    normalizedProviderTransactionId
                     ?? providerTransactionId
                     ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}";
                 var providerStatus = GetString(item, "status");
+                var valueAtUtc = ParseDateTime(GetString(item, "value_timestamp"))
+                    ?? ParseDateTime(GetString(item, "value_date"));
                 var normalizedStatus = NormalizeAccountTransactionStatus(
                     sourceEndpoint: SettledTransactionsSource,
                     providerStatus: providerStatus);
 
                 records.Add(new TrueLayerTransactionRecord(
                     ProviderTransactionId: providerTransactionId,
+                    NormalizedProviderTransactionId: normalizedProviderTransactionId,
                     Amount: amount.Value,
                     Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
                     BookedAtUtc: timestamp,
+                    ValueAtUtc: valueAtUtc,
                     Description: description,
                     TransactionType: GetString(item, "transaction_type"),
                     TransactionStatus: normalizedStatus.NormalizedStatus,
@@ -540,20 +545,25 @@ public sealed class TrueLayerDataService(
                 var rawDescription = GetString(item, "description") ?? "Pending transaction";
                 var description = ResolveTransactionDisplayDescription(item, rawDescription, "Pending transaction");
                 var providerTransactionId = GetString(item, "transaction_id");
+                var normalizedProviderTransactionId = GetString(item, "normalised_provider_transaction_id");
                 var stableTransactionId =
-                    GetString(item, "normalised_provider_transaction_id")
+                    normalizedProviderTransactionId
                     ?? providerTransactionId
                     ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}|pending";
                 var providerStatus = GetString(item, "status");
+                var valueAtUtc = ParseDateTime(GetString(item, "value_timestamp"))
+                    ?? ParseDateTime(GetString(item, "value_date"));
                 var normalizedStatus = NormalizeAccountTransactionStatus(
                     sourceEndpoint: PendingTransactionsSource,
                     providerStatus: providerStatus);
 
                 records.Add(new TrueLayerTransactionRecord(
                     ProviderTransactionId: providerTransactionId,
+                    NormalizedProviderTransactionId: normalizedProviderTransactionId,
                     Amount: amount.Value,
                     Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
                     BookedAtUtc: timestamp,
+                    ValueAtUtc: valueAtUtc,
                     Description: description,
                     TransactionType: GetString(item, "transaction_type"),
                     TransactionStatus: normalizedStatus.NormalizedStatus,
