@@ -137,6 +137,30 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task CallbackFlow_ProjectsSettledEndpointTransactions_WhenProviderStatusLooksPending()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SettledEndpointPendingStatusFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.settled-endpoint-pending-status@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-settled-pending-status", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Single(await harness.DbContext.RawBankTransactions.ToListAsync());
+        Assert.Single(await harness.DbContext.Transactions.ToListAsync());
+
+        var raw = await harness.DbContext.RawBankTransactions.SingleAsync();
+        Assert.Equal("booked", raw.TransactionStatus);
+    }
+
+    [Fact]
     public async Task GlobalSync_PromotesPendingAccountTransactionToBooked_WhenProviderIdIsReused()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -1275,6 +1299,11 @@ public class OpenBankingIntegrationTests
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-pending-001/transactions", StringComparison.Ordinal))
             {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-pending-001/transactions/pending", StringComparison.Ordinal))
+            {
                 return Json(HttpStatusCode.OK,
                     """
                     {
@@ -1292,6 +1321,92 @@ public class OpenBankingIntegrationTests
                       ]
                     }
                     """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler SettledEndpointPendingStatusFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-settled-status",
+                      "refresh_token":"refresh-token-settled-status",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-settled-status-001",
+                          "display_name": "Settled Endpoint Status Account",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "aib-ie-ob",
+                            "display_name": "Allied Irish Bank"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-settled-status-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1380.00,
+                          "current": 1400.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T15:00:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-settled-status-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-settled-pending-status-001",
+                          "normalised_provider_transaction_id":"norm-settled-pending-status-001",
+                          "amount":-20.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-30T15:04:00Z",
+                          "description":"Lunch charge",
+                          "transaction_type":"DEBIT",
+                          "status":"pending"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-settled-status-001/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }
 
             return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");

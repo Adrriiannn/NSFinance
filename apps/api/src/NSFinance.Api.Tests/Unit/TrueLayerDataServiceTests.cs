@@ -143,6 +143,116 @@ public class TrueLayerDataServiceTests
         Assert.Equal("YouTube", result.Value![0].Description);
     }
 
+    [Fact]
+    public async Task GetTransactionsAsync_NormalizesSettledEndpointStatusToBooked_WhenProviderStatusLooksPending()
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id": "tx-3",
+                          "normalised_provider_transaction_id": "norm-3",
+                          "amount": -20.00,
+                          "currency": "EUR",
+                          "timestamp": "2026-03-30T15:04:00Z",
+                          "description": "Lunch charge",
+                          "status": "pending"
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            }));
+
+        var service = new TrueLayerDataService(
+            new TrueLayerHttpClient(new HttpClient(handler)),
+            NullLogger<TrueLayerDataService>.Instance);
+
+        var result = await service.GetTransactionsAsync(
+            new TrueLayerResolvedConfiguration(
+                "client",
+                "secret",
+                "http://localhost:5080/api/banking/truelayer/callback",
+                "sandbox",
+                "https://auth.truelayer-sandbox.com",
+                "https://api.truelayer-sandbox.com"),
+            "access-token",
+            "acc-001",
+            null,
+            null,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var transaction = Assert.Single(result.Value!);
+        Assert.Equal("settled", transaction.SourceEndpoint);
+        Assert.Equal("pending", transaction.ProviderStatus);
+        Assert.Equal("booked", transaction.TransactionStatus);
+        Assert.Contains("settled_endpoint_overrides_provider_status", transaction.StatusNormalizationReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetPendingTransactionsAsync_NormalizesToPending_WhenProviderStatusIsMissing()
+    {
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.RequestUri?.AbsolutePath.EndsWith("/transactions/pending", StringComparison.Ordinal) == true)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {
+                          "results": [
+                            {
+                              "transaction_id": "tx-4",
+                              "normalised_provider_transaction_id": "norm-4",
+                              "amount": -8.00,
+                              "currency": "EUR",
+                              "timestamp": "2026-03-30T18:30:00Z",
+                              "description": "Card hold"
+                            }
+                          ]
+                        }
+                        """,
+                        Encoding.UTF8,
+                        "application/json")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        });
+
+        var service = new TrueLayerDataService(
+            new TrueLayerHttpClient(new HttpClient(handler)),
+            NullLogger<TrueLayerDataService>.Instance);
+
+        var result = await service.GetPendingTransactionsAsync(
+            new TrueLayerResolvedConfiguration(
+                "client",
+                "secret",
+                "http://localhost:5080/api/banking/truelayer/callback",
+                "sandbox",
+                "https://auth.truelayer-sandbox.com",
+                "https://api.truelayer-sandbox.com"),
+            "access-token",
+            "acc-001",
+            null,
+            null,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var transaction = Assert.Single(result.Value!);
+        Assert.Equal("pending", transaction.SourceEndpoint);
+        Assert.Null(transaction.ProviderStatus);
+        Assert.Equal("pending", transaction.TransactionStatus);
+        Assert.Equal("pending_endpoint_default", transaction.StatusNormalizationReason);
+    }
+
     private sealed class StubHttpMessageHandler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
         : HttpMessageHandler

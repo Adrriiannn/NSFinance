@@ -137,3 +137,9 @@ Mobile freshness UX:
 6. Background app and resume after >1 hour; verify auto-sync runs immediately on resume when due.
 7. Login after a long idle period; verify post-login session entry triggers due auto-sync without waiting for interval timer.
 8. Open connect-bank screen and verify no standalone `Sync now` button is shown there.
+9. Validate status normalization/projection with logs for at least one provider account:
+   - `settledFetched`, `pendingFetched`, `rawInserted/rawUpdated`, `projectedFromNewRaw/projectedFromStatusTransition`, and skip counters are present in lifecycle logs
+   - for rows fetched from settled endpoint, normalization logs should show `sourceEndpoint=settled` and ledger projection should not be blocked by provider `status` noise
+10. Validate pending behavior:
+   - rows fetched from pending endpoint remain unprojected (raw-only) until a booked counterpart arrives
+   - when a pending row later arrives as booked, it is projected once without duplicate ledger creation

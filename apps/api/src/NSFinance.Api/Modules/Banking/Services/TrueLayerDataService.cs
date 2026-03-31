@@ -12,6 +12,16 @@ public sealed class TrueLayerDataService(
     TrueLayerHttpClient httpClient,
     ILogger<TrueLayerDataService> logger)
 {
+    private const string SettledTransactionsSource = "settled";
+    private const string PendingTransactionsSource = "pending";
+
+    private static readonly HashSet<string> BookedLikeStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "booked",
+        "posted",
+        "settled"
+    };
+
     public async Task<ServiceResult<TrueLayerIdentityInfoRecord?>> GetInfoAsync(
         TrueLayerResolvedConfiguration configuration,
         string accessToken,
@@ -438,17 +448,24 @@ public sealed class TrueLayerDataService(
                     GetString(item, "normalised_provider_transaction_id")
                     ?? providerTransactionId
                     ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}";
+                var providerStatus = GetString(item, "status");
+                var normalizedStatus = NormalizeAccountTransactionStatus(
+                    sourceEndpoint: SettledTransactionsSource,
+                    providerStatus: providerStatus);
 
                 records.Add(new TrueLayerTransactionRecord(
-                    providerTransactionId,
-                    amount.Value,
-                    (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
-                    timestamp,
-                    description,
-                    GetString(item, "transaction_type"),
-                    GetString(item, "status"),
-                    ComputeDedupeKey(stableTransactionId),
-                    item.GetRawText()));
+                    ProviderTransactionId: providerTransactionId,
+                    Amount: amount.Value,
+                    Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    BookedAtUtc: timestamp,
+                    Description: description,
+                    TransactionType: GetString(item, "transaction_type"),
+                    TransactionStatus: normalizedStatus.NormalizedStatus,
+                    SourceEndpoint: SettledTransactionsSource,
+                    ProviderStatus: providerStatus,
+                    StatusNormalizationReason: normalizedStatus.Reason,
+                    DedupeKey: ComputeDedupeKey(stableTransactionId),
+                    RawPayloadJson: item.GetRawText()));
             }
 
             return ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>.Ok(records);
@@ -527,23 +544,24 @@ public sealed class TrueLayerDataService(
                     GetString(item, "normalised_provider_transaction_id")
                     ?? providerTransactionId
                     ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}|pending";
-
-                var pendingStatus = GetString(item, "status");
-                if (string.IsNullOrWhiteSpace(pendingStatus))
-                {
-                    pendingStatus = "pending";
-                }
+                var providerStatus = GetString(item, "status");
+                var normalizedStatus = NormalizeAccountTransactionStatus(
+                    sourceEndpoint: PendingTransactionsSource,
+                    providerStatus: providerStatus);
 
                 records.Add(new TrueLayerTransactionRecord(
-                    providerTransactionId,
-                    amount.Value,
-                    (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
-                    timestamp,
-                    description,
-                    GetString(item, "transaction_type"),
-                    pendingStatus,
-                    ComputeDedupeKey(stableTransactionId),
-                    item.GetRawText()));
+                    ProviderTransactionId: providerTransactionId,
+                    Amount: amount.Value,
+                    Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    BookedAtUtc: timestamp,
+                    Description: description,
+                    TransactionType: GetString(item, "transaction_type"),
+                    TransactionStatus: normalizedStatus.NormalizedStatus,
+                    SourceEndpoint: PendingTransactionsSource,
+                    ProviderStatus: providerStatus,
+                    StatusNormalizationReason: normalizedStatus.Reason,
+                    DedupeKey: ComputeDedupeKey(stableTransactionId),
+                    RawPayloadJson: item.GetRawText()));
             }
 
             return ServiceResult<IReadOnlyList<TrueLayerTransactionRecord>>.Ok(records);
@@ -940,6 +958,48 @@ public sealed class TrueLayerDataService(
         return Convert.ToHexString(bytes);
     }
 
+    private static NormalizedTransactionStatus NormalizeAccountTransactionStatus(
+        string sourceEndpoint,
+        string? providerStatus)
+    {
+        var normalizedProviderStatus = NormalizeStatusToken(providerStatus);
+        var endpoint = string.IsNullOrWhiteSpace(sourceEndpoint)
+            ? SettledTransactionsSource
+            : sourceEndpoint.Trim().ToLowerInvariant();
+
+        if (string.Equals(endpoint, PendingTransactionsSource, StringComparison.Ordinal))
+        {
+            return string.IsNullOrWhiteSpace(normalizedProviderStatus)
+                ? new NormalizedTransactionStatus("pending", "pending_endpoint_default")
+                : new NormalizedTransactionStatus("pending", $"pending_endpoint_overrides_provider_status_{normalizedProviderStatus}");
+        }
+
+        if (string.IsNullOrWhiteSpace(normalizedProviderStatus))
+        {
+            return new NormalizedTransactionStatus("booked", "settled_endpoint_default_missing_provider_status");
+        }
+
+        if (BookedLikeStatuses.Contains(normalizedProviderStatus))
+        {
+            return new NormalizedTransactionStatus(normalizedProviderStatus, "settled_endpoint_provider_status_booked_like");
+        }
+
+        return new NormalizedTransactionStatus("booked", $"settled_endpoint_overrides_provider_status_{normalizedProviderStatus}");
+    }
+
+    private static string? NormalizeStatusToken(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return null;
+        }
+
+        return string.Join(
+            "_",
+            status.Trim().ToLowerInvariant()
+                .Split([' ', '-', '/'], StringSplitOptions.RemoveEmptyEntries));
+    }
+
     private static string ResolveTransactionDisplayDescription(
         JsonElement item,
         string? rawDescription,
@@ -1114,4 +1174,8 @@ public sealed class TrueLayerDataService(
         var trimmed = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
     }
+
+    private readonly record struct NormalizedTransactionStatus(
+        string NormalizedStatus,
+        string Reason);
 }

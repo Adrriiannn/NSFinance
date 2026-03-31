@@ -125,6 +125,10 @@ NSFinance now treats imported banking data as a long-term ledger:
   - if a window still appears capped, sync adaptively splits again until a safe minimum window size
   - results are merged idempotently before upsert so metadata/category continuity is preserved
 - Pending endpoints are queried where available and ingested as raw pending activity; pending rows are intentionally not projected as booked ledger entries.
+- Transaction status normalization is endpoint-aware:
+  - rows from `/transactions` (settled/booked endpoint) are normalized as booked for ledger projection, even if provider payload status strings are noisy
+  - rows from `/transactions/pending` are normalized as pending and remain raw-only until a booked version arrives
+  - each fetched row carries normalization metadata (`sourceEndpoint`, provider status, normalization reason) for diagnostics
 - Connection metadata tracks:
   - initial backfill started/completed
   - requested initial backfill window start

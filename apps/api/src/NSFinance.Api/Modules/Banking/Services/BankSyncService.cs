@@ -327,8 +327,12 @@ public sealed class BankSyncService(
         var cardsSynced = 0;
         var cardBalancesSynced = 0;
         var cardTransactionsImported = 0;
+        var projectedTransactionsFromNewRaw = 0;
         var projectedTransactionsBackfilled = 0;
         var projectedTransactionsPromoted = 0;
+        var projectedTransactionsSkippedUnbookedFetched = 0;
+        var projectedTransactionsSkippedUnbookedBackfill = 0;
+        var projectedTransactionsSkippedDuplicate = 0;
         var directDebitsSynced = 0;
         var standingOrdersSynced = 0;
         var identityInfoSynced = false;
@@ -551,17 +555,24 @@ public sealed class BankSyncService(
 
             var transactionUpsert = await UpsertTransactionsAsync(
                 linkedAccount,
+                providerAccount,
                 fetchedTransactions.Transactions,
                 now,
                 cancellationToken);
             transactionsImported += transactionUpsert.RawInserted + transactionUpsert.RawUpdated;
+            projectedTransactionsFromNewRaw += transactionUpsert.ProjectedFromNewRaw;
             projectedTransactionsPromoted += transactionUpsert.ProjectedFromStatusTransition;
             projectedTransactionsBackfilled += transactionUpsert.ProjectedBackfilled;
+            projectedTransactionsSkippedUnbookedFetched += transactionUpsert.ProjectedSkippedUnbookedFetched;
+            projectedTransactionsSkippedUnbookedBackfill += transactionUpsert.ProjectedSkippedUnbookedBackfill;
+            projectedTransactionsSkippedDuplicate += transactionUpsert.ProjectedSkippedDuplicate;
 
             logger.LogInformation(
-                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} fetched={Fetched} rawInserted={RawInserted} rawUpdated={RawUpdated} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedFromStatusTransition={ProjectedFromStatusTransition} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
+                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} fetched={Fetched} rawInserted={RawInserted} rawUpdated={RawUpdated} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedFromStatusTransition={ProjectedFromStatusTransition} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbookedFetched={ProjectedSkippedUnbookedFetched} projectedSkippedUnbookedBackfill={ProjectedSkippedUnbookedBackfill} projectedSkippedDuplicate={ProjectedSkippedDuplicate}",
                 providerAccount.AccountId,
                 connection.Id,
+                providerAccount.ProviderId ?? "<unknown>",
+                providerAccount.ProviderDisplayName ?? "<unknown>",
                 transactionUpsert.Fetched,
                 transactionUpsert.RawInserted,
                 transactionUpsert.RawUpdated,
@@ -570,7 +581,9 @@ public sealed class BankSyncService(
                 transactionUpsert.ProjectedFromNewRaw,
                 transactionUpsert.ProjectedFromStatusTransition,
                 transactionUpsert.ProjectedBackfilled,
-                transactionUpsert.ProjectedSkippedUnbooked);
+                transactionUpsert.ProjectedSkippedUnbookedFetched,
+                transactionUpsert.ProjectedSkippedUnbookedBackfill,
+                transactionUpsert.ProjectedSkippedDuplicate);
 
             if (transactionUpsert.ProjectedBackfilled > 0)
             {
@@ -581,13 +594,14 @@ public sealed class BankSyncService(
                     transactionUpsert.ProjectedBackfilled);
             }
 
-            if (transactionUpsert.ProjectedSkippedUnbooked > 0)
+            if (transactionUpsert.ProjectedSkippedUnbookedFetched > 0 || transactionUpsert.ProjectedSkippedUnbookedBackfill > 0)
             {
                 logger.LogInformation(
-                    "Skipped projecting non-booked bank transactions into ledger accountId={AccountId} connectionId={ConnectionId} projectedSkippedUnbooked={ProjectedSkippedUnbooked}",
+                    "Skipped projecting non-booked bank transactions into ledger accountId={AccountId} connectionId={ConnectionId} projectedSkippedUnbookedFetched={ProjectedSkippedUnbookedFetched} projectedSkippedUnbookedBackfill={ProjectedSkippedUnbookedBackfill}",
                     providerAccount.AccountId,
                     connection.Id,
-                    transactionUpsert.ProjectedSkippedUnbooked);
+                    transactionUpsert.ProjectedSkippedUnbookedFetched,
+                    transactionUpsert.ProjectedSkippedUnbookedBackfill);
             }
 
             if (ShouldRequestScope(connection.GrantedScopesCsv, "direct_debits"))
@@ -901,7 +915,13 @@ public sealed class BankSyncService(
                 accountsSynced,
                 balancesSynced,
                 transactionsImported,
+                rawTransactionsChanged = transactionsImported,
+                projectedTransactionsFromNewRaw,
                 projectedTransactionsPromoted,
+                projectedTransactionsBackfilled,
+                projectedTransactionsSkippedUnbookedFetched,
+                projectedTransactionsSkippedUnbookedBackfill,
+                projectedTransactionsSkippedDuplicate,
                 cardsSynced,
                 cardBalancesSynced,
                 cardTransactionsImported,
@@ -919,11 +939,17 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} transactionsImported={TransactionsImported} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
+            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} projectedTransactionsFromNewRaw={ProjectedTransactionsFromNewRaw} projectedTransactionsPromoted={ProjectedTransactionsPromoted} projectedTransactionsBackfilled={ProjectedTransactionsBackfilled} projectedTransactionsSkippedUnbookedFetched={ProjectedTransactionsSkippedUnbookedFetched} projectedTransactionsSkippedUnbookedBackfill={ProjectedTransactionsSkippedUnbookedBackfill} projectedTransactionsSkippedDuplicate={ProjectedTransactionsSkippedDuplicate} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
             connection.Id,
             accountsSynced,
             balancesSynced,
             transactionsImported,
+            projectedTransactionsFromNewRaw,
+            projectedTransactionsPromoted,
+            projectedTransactionsBackfilled,
+            projectedTransactionsSkippedUnbookedFetched,
+            projectedTransactionsSkippedUnbookedBackfill,
+            projectedTransactionsSkippedDuplicate,
             cardsSynced,
             cardBalancesSynced,
             cardTransactionsImported,
@@ -1111,6 +1137,7 @@ public sealed class BankSyncService(
 
     private async Task<TransactionUpsertSummary> UpsertTransactionsAsync(
         LinkedBankAccount linkedAccount,
+        TrueLayerAccountRecord providerAccount,
         IReadOnlyList<TrueLayerTransactionRecord> providerTransactions,
         DateTime now,
         CancellationToken cancellationToken)
@@ -1143,7 +1170,9 @@ public sealed class BankSyncService(
         var projectedFromNewRaw = 0;
         var projectedFromStatusTransition = 0;
         var projectedBackfilled = 0;
-        var projectedSkippedUnbooked = 0;
+        var projectedSkippedUnbookedFetched = 0;
+        var projectedSkippedUnbookedBackfill = 0;
+        var projectedSkippedDuplicate = 0;
         var projectionFingerprints = new HashSet<string>(StringComparer.Ordinal);
 
         if (linkedAccount.FinancialAccountId.HasValue)
@@ -1158,7 +1187,7 @@ public sealed class BankSyncService(
             {
                 if (!IsBookedProjectionStatus(row.TransactionStatus))
                 {
-                    projectedSkippedUnbooked++;
+                    projectedSkippedUnbookedBackfill++;
                     continue;
                 }
 
@@ -1170,6 +1199,7 @@ public sealed class BankSyncService(
 
                 if (!projectionFingerprints.Add(projectionFingerprint))
                 {
+                    projectedSkippedDuplicate++;
                     continue;
                 }
 
@@ -1189,6 +1219,22 @@ public sealed class BankSyncService(
 
         foreach (var providerTransaction in providerTransactions)
         {
+            logger.LogDebug(
+                "Bank transaction normalization providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} sourceEndpoint={SourceEndpoint} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} providerStatus={ProviderStatus} normalizedStatus={NormalizedStatus} normalizationReason={NormalizationReason}",
+                providerAccount.ProviderId ?? "<unknown>",
+                providerAccount.ProviderDisplayName ?? "<unknown>",
+                linkedAccount.ConnectionId,
+                providerAccount.AccountId,
+                providerTransaction.SourceEndpoint,
+                providerTransaction.ProviderTransactionId ?? "<none>",
+                providerTransaction.DedupeKey,
+                providerTransaction.Amount,
+                providerTransaction.Currency,
+                providerTransaction.BookedAtUtc,
+                providerTransaction.ProviderStatus ?? "<none>",
+                providerTransaction.TransactionStatus ?? "<null>",
+                providerTransaction.StatusNormalizationReason);
+
             var matchedByProviderId = false;
             RawBankTransaction? existingRaw = null;
             if (!string.IsNullOrWhiteSpace(providerTransaction.ProviderTransactionId)
@@ -1263,7 +1309,45 @@ public sealed class BankSyncService(
                             CreatedUtc = now
                         });
                         projectedFromStatusTransition++;
+                        logger.LogDebug(
+                            "Bank transaction projected after status transition providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} fromStatus={FromStatus} toStatus={ToStatus}",
+                            providerAccount.ProviderId ?? "<unknown>",
+                            providerAccount.ProviderDisplayName ?? "<unknown>",
+                            linkedAccount.ConnectionId,
+                            providerAccount.AccountId,
+                            existingRaw.ProviderTransactionId ?? "<none>",
+                            existingRaw.DedupeKey,
+                            wasBooked ? "booked" : "unbooked",
+                            isNowBooked ? "booked" : "unbooked");
                     }
+                    else
+                    {
+                        projectedSkippedDuplicate++;
+                        logger.LogDebug(
+                            "Bank transaction projection skipped due to duplicate fingerprint after status transition providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey}",
+                            providerAccount.ProviderId ?? "<unknown>",
+                            providerAccount.ProviderDisplayName ?? "<unknown>",
+                            linkedAccount.ConnectionId,
+                            providerAccount.AccountId,
+                            existingRaw.ProviderTransactionId ?? "<none>",
+                            existingRaw.DedupeKey);
+                    }
+                }
+                else if (!isNowBooked)
+                {
+                    projectedSkippedUnbookedFetched++;
+                    logger.LogDebug(
+                        "Bank transaction projection skipped because normalized status is unbooked providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} normalizedStatus={NormalizedStatus} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizationReason={NormalizationReason}",
+                        providerAccount.ProviderId ?? "<unknown>",
+                        providerAccount.ProviderDisplayName ?? "<unknown>",
+                        linkedAccount.ConnectionId,
+                        providerAccount.AccountId,
+                        providerTransaction.ProviderTransactionId ?? "<none>",
+                        providerTransaction.DedupeKey,
+                        providerTransaction.TransactionStatus ?? "<null>",
+                        providerTransaction.SourceEndpoint,
+                        providerTransaction.ProviderStatus ?? "<none>",
+                        providerTransaction.StatusNormalizationReason);
                 }
 
                 continue;
@@ -1290,21 +1374,62 @@ public sealed class BankSyncService(
             {
                 if (IsBookedProjectionStatus(providerTransaction.TransactionStatus))
                 {
-                    dbContext.Transactions.Add(new Transaction
+                    var projectionFingerprint = CreateProjectionFingerprint(
+                        providerTransaction.Amount,
+                        providerTransaction.Currency,
+                        providerTransaction.BookedAtUtc,
+                        providerTransaction.Description);
+
+                    if (projectionFingerprints.Add(projectionFingerprint))
                     {
-                        Id = Guid.NewGuid(),
-                        FinancialAccountId = linkedAccount.FinancialAccountId.Value,
-                        Amount = providerTransaction.Amount,
-                        Currency = providerTransaction.Currency,
-                        Description = providerTransaction.Description,
-                        BookedAtUtc = providerTransaction.BookedAtUtc,
-                        CreatedUtc = now
-                    });
-                    projectedFromNewRaw++;
+                        dbContext.Transactions.Add(new Transaction
+                        {
+                            Id = Guid.NewGuid(),
+                            FinancialAccountId = linkedAccount.FinancialAccountId.Value,
+                            Amount = providerTransaction.Amount,
+                            Currency = providerTransaction.Currency,
+                            Description = providerTransaction.Description,
+                            BookedAtUtc = providerTransaction.BookedAtUtc,
+                            CreatedUtc = now
+                        });
+                        projectedFromNewRaw++;
+                        logger.LogDebug(
+                            "Bank transaction projected from new raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey}",
+                            providerAccount.ProviderId ?? "<unknown>",
+                            providerAccount.ProviderDisplayName ?? "<unknown>",
+                            linkedAccount.ConnectionId,
+                            providerAccount.AccountId,
+                            providerTransaction.ProviderTransactionId ?? "<none>",
+                            providerTransaction.DedupeKey);
+                    }
+                    else
+                    {
+                        projectedSkippedDuplicate++;
+                        logger.LogDebug(
+                            "Bank transaction projection skipped due to duplicate fingerprint providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey}",
+                            providerAccount.ProviderId ?? "<unknown>",
+                            providerAccount.ProviderDisplayName ?? "<unknown>",
+                            linkedAccount.ConnectionId,
+                            providerAccount.AccountId,
+                            providerTransaction.ProviderTransactionId ?? "<none>",
+                            providerTransaction.DedupeKey);
+                    }
                 }
                 else
                 {
-                    projectedSkippedUnbooked++;
+                    projectedSkippedUnbookedFetched++;
+                    logger.LogDebug(
+                        "Bank transaction projection skipped because normalized status is unbooked for new raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} normalizedStatus={NormalizedStatus} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizationReason={NormalizationReason}",
+                        providerAccount.ProviderId ?? "<unknown>",
+                        providerAccount.ProviderDisplayName ?? "<unknown>",
+                        linkedAccount.ConnectionId,
+                        providerAccount.AccountId,
+                        providerTransaction.ProviderTransactionId ?? "<none>",
+                        providerTransaction.DedupeKey,
+                        providerTransaction.TransactionStatus ?? "<null>",
+                        providerTransaction.SourceEndpoint,
+                        providerTransaction.ProviderStatus ?? "<none>",
+                        providerTransaction.StatusNormalizationReason);
                 }
             }
 
@@ -1326,7 +1451,9 @@ public sealed class BankSyncService(
             projectedFromNewRaw,
             projectedFromStatusTransition,
             projectedBackfilled,
-            projectedSkippedUnbooked);
+            projectedSkippedUnbookedFetched,
+            projectedSkippedUnbookedBackfill,
+            projectedSkippedDuplicate);
     }
 
     private static bool ApplyRawTransactionUpdate(
@@ -1721,7 +1848,9 @@ public sealed class BankSyncService(
         int ProjectedFromNewRaw,
         int ProjectedFromStatusTransition,
         int ProjectedBackfilled,
-        int ProjectedSkippedUnbooked);
+        int ProjectedSkippedUnbookedFetched,
+        int ProjectedSkippedUnbookedBackfill,
+        int ProjectedSkippedDuplicate);
 
     private sealed record AccountTransactionFetchResult(
         IReadOnlyList<TrueLayerTransactionRecord> Transactions,

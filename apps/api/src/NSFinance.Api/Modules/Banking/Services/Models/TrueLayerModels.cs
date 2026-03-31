@@ -55,6 +55,9 @@ public sealed record TrueLayerTransactionRecord(
     string Description,
     string? TransactionType,
     string? TransactionStatus,
+    string SourceEndpoint,
+    string? ProviderStatus,
+    string StatusNormalizationReason,
     string DedupeKey,
     string RawPayloadJson);
 
