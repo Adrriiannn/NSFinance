@@ -236,6 +236,89 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_BoundsLegacyProjectionBackfillPerRun_ToAvoidUnboundedReconcileCost()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.backfill-bounded@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-backfill-bounded", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts.SingleAsync();
+        Assert.True(linkedAccount.FinancialAccountId.HasValue);
+
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+        var seedBaseUtc = DateTime.UtcNow.AddDays(-3);
+        const int seededLegacyRows = 650;
+        const int expectedBackfillLimitPerRun = 500;
+
+        for (var i = 0; i < seededLegacyRows; i++)
+        {
+            var bookedAtUtc = seedBaseUtc.AddMinutes(i);
+            var description = $"Legacy bounded row {i:D4}";
+            var amount = -(1000 + i);
+
+            var projected = new Transaction
+            {
+                Id = Guid.NewGuid(),
+                FinancialAccountId = accountId,
+                Amount = amount,
+                Currency = "EUR",
+                Description = description,
+                BookedAtUtc = bookedAtUtc,
+                CreatedUtc = seedBaseUtc
+            };
+
+            harness.DbContext.Transactions.Add(projected);
+            harness.DbContext.RawBankTransactions.Add(new RawBankTransaction
+            {
+                Id = Guid.NewGuid(),
+                LinkedBankAccountId = linkedAccount.Id,
+                ProviderTransactionId = $"legacy-bounded-provider-{i:D4}",
+                DedupeKey = $"legacy-bounded-dedupe-{i:D4}",
+                Amount = amount,
+                Currency = "EUR",
+                BookedAtUtc = bookedAtUtc,
+                Description = description,
+                TransactionType = "transfer",
+                TransactionStatus = "booked",
+                ProjectedTransactionId = null,
+                RawPayloadJson = "{}",
+                ImportedUtc = seedBaseUtc
+            });
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var syncResult = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_bounded_backfill_cost",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("completed", syncResult.Outcome);
+
+        var linkedLegacyCount = await harness.DbContext.RawBankTransactions
+            .Where(x =>
+                x.LinkedBankAccountId == linkedAccount.Id
+                && x.DedupeKey.StartsWith("legacy-bounded-dedupe-")
+                && x.ProjectedTransactionId.HasValue)
+            .CountAsync();
+
+        Assert.Equal(expectedBackfillLimitPerRun, linkedLegacyCount);
+    }
+
+    [Fact]
     public async Task GlobalSync_AibCappedIncrementalWindow_RecoversRecentTransactions()
     {
         var handler = AibCappedOldestSliceFlowHandler(out var getTransactionsCallCount, out var referenceNowUtc);

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System;
 using System.Linq;
 using NSFinance.Api.Modules.Banking.DTOs;
@@ -20,14 +21,32 @@ public static class SyncAllBankConnectionsEndpoint
             return Results.Unauthorized();
         }
         var logger = loggerFactory.CreateLogger("Banking.SyncAllBankConnectionsEndpoint");
+        var endpointStopwatch = Stopwatch.StartNew();
+        var detachedSyncToken = CancellationToken.None;
 
         try
         {
+            logger.LogInformation(
+                "Starting global banking sync request userId={UserId} trigger={Trigger} source={Source} requestTokenCanBeCanceled={RequestTokenCanBeCanceled} requestTokenAlreadyCanceled={RequestTokenAlreadyCanceled} executionTokenDetached={ExecutionTokenDetached}",
+                userId,
+                request?.Trigger ?? "manual",
+                request?.Source ?? "unspecified",
+                cancellationToken.CanBeCanceled,
+                cancellationToken.IsCancellationRequested,
+                true);
+
             var result = await globalSyncService.ExecuteAsync(
                 userId,
                 trigger: request?.Trigger,
                 source: request?.Source,
-                cancellationToken);
+                detachedSyncToken);
+
+            logger.LogInformation(
+                "Completed global banking sync request userId={UserId} trigger={Trigger} outcome={Outcome} elapsedMs={ElapsedMs}",
+                userId,
+                result.Trigger,
+                result.Outcome,
+                endpointStopwatch.ElapsedMilliseconds);
 
             var response = new GlobalBankSyncResponse(
                 Trigger: result.Trigger,
@@ -64,8 +83,9 @@ public static class SyncAllBankConnectionsEndpoint
         {
             logger.LogError(
                 exception,
-                "Unexpected error while handling global banking sync endpoint userId={UserId}",
-                userId);
+                "Unexpected error while handling global banking sync endpoint userId={UserId} elapsedMs={ElapsedMs}",
+                userId,
+                endpointStopwatch.ElapsedMilliseconds);
 
             return Results.Ok(new GlobalBankSyncResponse(
                 Trigger: string.Equals(request?.Trigger, "auto", StringComparison.OrdinalIgnoreCase) ? "auto" : "manual",

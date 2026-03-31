@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
@@ -25,6 +26,7 @@ public sealed class BankSyncService(
     private const int InternalTransferMatchLookbackDays = 21;
     private const int InternalTransferMatchMaxWindowHours = 72;
     private const int InternalTransferMatchMinimumScore = 5;
+    private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
     private static readonly TimeSpan RevolutMaxHistoryWindow = TimeSpan.FromMinutes(5);
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
@@ -335,6 +337,10 @@ public sealed class BankSyncService(
         var projectedTransactionsSkippedUnbookedFetched = 0;
         var projectedTransactionsSkippedUnbookedBackfill = 0;
         var projectedTransactionsSkippedDuplicate = 0;
+        var projectedDuplicateCheckAttempts = 0;
+        var projectedBackfillRowsEvaluated = 0;
+        var projectedBackfillRowsDeferred = 0;
+        var projectedCandidatePoolSize = 0;
         var directDebitsSynced = 0;
         var standingOrdersSynced = 0;
         var identityInfoSynced = false;
@@ -420,6 +426,7 @@ public sealed class BankSyncService(
                 }
             }
 
+            var balanceStageStopwatch = Stopwatch.StartNew();
             var balanceResult = await dataService.GetBalanceAsync(
                 configuration,
                 accessToken,
@@ -493,6 +500,12 @@ public sealed class BankSyncService(
                 providerAccount.AccountId,
                 "account_balance_refresh",
                 cancellationToken);
+            logger.LogInformation(
+                "Bank sync phase duration connectionId={ConnectionId} accountId={AccountId} phase={Phase} elapsedMs={ElapsedMs}",
+                connection.Id,
+                providerAccount.AccountId,
+                "account_balance_refresh",
+                balanceStageStopwatch.ElapsedMilliseconds);
 
             var transactionWindow = BuildTransactionWindow(
                 connection,
@@ -510,6 +523,8 @@ public sealed class BankSyncService(
                 transactionWindow.ToUtc,
                 transactionWindow.PolicyName ?? "<none>");
 
+            var transactionStageStopwatch = Stopwatch.StartNew();
+            var transactionFetchStopwatch = Stopwatch.StartNew();
             var transactionsFetchResult = await FetchAccountTransactionsAsync(
                 configuration,
                 accessToken,
@@ -524,6 +539,7 @@ public sealed class BankSyncService(
             }
 
             var fetchedTransactions = transactionsFetchResult.Value!;
+            var transactionFetchElapsedMs = transactionFetchStopwatch.ElapsedMilliseconds;
             var latestImportedCheckpointUtcBefore = connection.LatestImportedTransactionUtc;
             var hasFetchedRowNewerThanCheckpoint =
                 fetchedTransactions.LatestReturnedUtc.HasValue
@@ -581,12 +597,14 @@ public sealed class BankSyncService(
             syncObservedEarliestBookedAtUtc = MinUtc(syncObservedEarliestBookedAtUtc, observedForAccount.EarliestBookedAtUtc);
             syncObservedLatestBookedAtUtc = MaxUtc(syncObservedLatestBookedAtUtc, observedForAccount.LatestBookedAtUtc);
 
+            var transactionUpsertStopwatch = Stopwatch.StartNew();
             var transactionUpsert = await UpsertTransactionsAsync(
                 linkedAccount,
                 providerAccount,
                 fetchedTransactions.Transactions,
                 now,
                 cancellationToken);
+            var transactionUpsertElapsedMs = transactionUpsertStopwatch.ElapsedMilliseconds;
             transactionsImported += transactionUpsert.RawInserted + transactionUpsert.RawUpdated;
             projectedTransactionsFromNewRaw += transactionUpsert.ProjectedFromNewRaw;
             projectedTransactionsPromoted += transactionUpsert.ProjectedFromStatusTransition;
@@ -594,9 +612,13 @@ public sealed class BankSyncService(
             projectedTransactionsSkippedUnbookedFetched += transactionUpsert.ProjectedSkippedUnbookedFetched;
             projectedTransactionsSkippedUnbookedBackfill += transactionUpsert.ProjectedSkippedUnbookedBackfill;
             projectedTransactionsSkippedDuplicate += transactionUpsert.ProjectedSkippedDuplicate;
+            projectedDuplicateCheckAttempts += transactionUpsert.ProjectedDuplicateCheckAttempts;
+            projectedBackfillRowsEvaluated += transactionUpsert.ProjectedBackfillRowsEvaluated;
+            projectedBackfillRowsDeferred += transactionUpsert.ProjectedBackfillRowsDeferred;
+            projectedCandidatePoolSize += transactionUpsert.ProjectedCandidatePoolSize;
 
             logger.LogInformation(
-                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} fetched={Fetched} rawInserted={RawInserted} rawUpdated={RawUpdated} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedFromStatusTransition={ProjectedFromStatusTransition} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbookedFetched={ProjectedSkippedUnbookedFetched} projectedSkippedUnbookedBackfill={ProjectedSkippedUnbookedBackfill} projectedSkippedDuplicate={ProjectedSkippedDuplicate}",
+                "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} fetched={Fetched} rawInserted={RawInserted} rawUpdated={RawUpdated} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedFromStatusTransition={ProjectedFromStatusTransition} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbookedFetched={ProjectedSkippedUnbookedFetched} projectedSkippedUnbookedBackfill={ProjectedSkippedUnbookedBackfill} projectedSkippedDuplicate={ProjectedSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} fetchElapsedMs={FetchElapsedMs} upsertElapsedMs={UpsertElapsedMs}",
                 providerAccount.AccountId,
                 connection.Id,
                 providerAccount.ProviderId ?? "<unknown>",
@@ -611,7 +633,13 @@ public sealed class BankSyncService(
                 transactionUpsert.ProjectedBackfilled,
                 transactionUpsert.ProjectedSkippedUnbookedFetched,
                 transactionUpsert.ProjectedSkippedUnbookedBackfill,
-                transactionUpsert.ProjectedSkippedDuplicate);
+                transactionUpsert.ProjectedSkippedDuplicate,
+                transactionUpsert.ProjectedDuplicateCheckAttempts,
+                transactionUpsert.ProjectedBackfillRowsEvaluated,
+                transactionUpsert.ProjectedBackfillRowsDeferred,
+                transactionUpsert.ProjectedCandidatePoolSize,
+                transactionFetchElapsedMs,
+                transactionUpsertElapsedMs);
 
             if (transactionUpsert.ProjectedBackfilled > 0)
             {
@@ -719,6 +747,12 @@ public sealed class BankSyncService(
                 providerAccount.AccountId,
                 "account_transactions_and_commitments",
                 cancellationToken);
+            logger.LogInformation(
+                "Bank sync phase duration connectionId={ConnectionId} accountId={AccountId} phase={Phase} elapsedMs={ElapsedMs}",
+                connection.Id,
+                providerAccount.AccountId,
+                "account_transactions_and_commitments",
+                transactionStageStopwatch.ElapsedMilliseconds);
         }
 
         if (ShouldRequestScope(connection.GrantedScopesCsv, "cards"))
@@ -950,6 +984,10 @@ public sealed class BankSyncService(
                 projectedTransactionsSkippedUnbookedFetched,
                 projectedTransactionsSkippedUnbookedBackfill,
                 projectedTransactionsSkippedDuplicate,
+                projectedDuplicateCheckAttempts,
+                projectedBackfillRowsEvaluated,
+                projectedBackfillRowsDeferred,
+                projectedCandidatePoolSize,
                 cardsSynced,
                 cardBalancesSynced,
                 cardTransactionsImported,
@@ -967,7 +1005,7 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} projectedTransactionsFromNewRaw={ProjectedTransactionsFromNewRaw} projectedTransactionsPromoted={ProjectedTransactionsPromoted} projectedTransactionsBackfilled={ProjectedTransactionsBackfilled} projectedTransactionsSkippedUnbookedFetched={ProjectedTransactionsSkippedUnbookedFetched} projectedTransactionsSkippedUnbookedBackfill={ProjectedTransactionsSkippedUnbookedBackfill} projectedTransactionsSkippedDuplicate={ProjectedTransactionsSkippedDuplicate} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
+            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} projectedTransactionsFromNewRaw={ProjectedTransactionsFromNewRaw} projectedTransactionsPromoted={ProjectedTransactionsPromoted} projectedTransactionsBackfilled={ProjectedTransactionsBackfilled} projectedTransactionsSkippedUnbookedFetched={ProjectedTransactionsSkippedUnbookedFetched} projectedTransactionsSkippedUnbookedBackfill={ProjectedTransactionsSkippedUnbookedBackfill} projectedTransactionsSkippedDuplicate={ProjectedTransactionsSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
             connection.Id,
             accountsSynced,
             balancesSynced,
@@ -978,6 +1016,10 @@ public sealed class BankSyncService(
             projectedTransactionsSkippedUnbookedFetched,
             projectedTransactionsSkippedUnbookedBackfill,
             projectedTransactionsSkippedDuplicate,
+            projectedDuplicateCheckAttempts,
+            projectedBackfillRowsEvaluated,
+            projectedBackfillRowsDeferred,
+            projectedCandidatePoolSize,
             cardsSynced,
             cardBalancesSynced,
             cardTransactionsImported,
@@ -1196,6 +1238,8 @@ public sealed class BankSyncService(
         var fetchedCount = providerTransactions.Count;
         var existingRawRows = await dbContext.RawBankTransactions
             .Where(x => x.LinkedBankAccountId == linkedAccount.Id)
+            .OrderByDescending(x => x.BookedAtUtc)
+            .ThenByDescending(x => x.ImportedUtc)
             .ToListAsync(cancellationToken);
 
         var existingRawByProviderId = new Dictionary<string, RawBankTransaction>(StringComparer.Ordinal);
@@ -1224,6 +1268,10 @@ public sealed class BankSyncService(
         var projectedSkippedUnbookedFetched = 0;
         var projectedSkippedUnbookedBackfill = 0;
         var projectedSkippedDuplicate = 0;
+        var projectedDuplicateCheckAttempts = 0;
+        var projectedBackfillRowsEvaluated = 0;
+        var projectedBackfillRowsDeferred = 0;
+        var projectedCandidatePoolSize = 0;
         ProjectionReconciliationState? projectionState = null;
 
         if (linkedAccount.FinancialAccountId.HasValue)
@@ -1232,6 +1280,7 @@ public sealed class BankSyncService(
                 linkedAccount.FinancialAccountId.Value,
                 existingRawRows,
                 cancellationToken);
+            projectedCandidatePoolSize = projectionState.ProjectedCandidateCount;
 
             foreach (var row in existingRawRows)
             {
@@ -1252,6 +1301,15 @@ public sealed class BankSyncService(
                     projectedSkippedUnbookedBackfill++;
                     continue;
                 }
+
+                if (projectedBackfillRowsEvaluated >= ProjectionBackfillReconcileMaxRowsPerSync)
+                {
+                    projectedBackfillRowsDeferred++;
+                    continue;
+                }
+
+                projectedBackfillRowsEvaluated++;
+                projectedDuplicateCheckAttempts++;
 
                 if (TryLinkRawRowToExistingProjectedTransaction(
                         row,
@@ -1293,6 +1351,19 @@ public sealed class BankSyncService(
                 row.ProjectedTransactionId = projected.Id;
                 projectionState.KnownProjectedTransactionIds.Add(projected.Id);
                 projectedBackfilled++;
+            }
+
+            if (projectedBackfillRowsDeferred > 0)
+            {
+                logger.LogInformation(
+                    "Deferred projection backfill reconciliation rows to keep sync bounded accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} backfillEvaluated={BackfillEvaluated} backfillDeferred={BackfillDeferred} maxRowsPerSync={MaxRowsPerSync}",
+                    providerAccount.AccountId,
+                    linkedAccount.ConnectionId,
+                    providerAccount.ProviderId ?? "<unknown>",
+                    providerAccount.ProviderDisplayName ?? "<unknown>",
+                    projectedBackfillRowsEvaluated,
+                    projectedBackfillRowsDeferred,
+                    ProjectionBackfillReconcileMaxRowsPerSync);
             }
         }
 
@@ -1386,7 +1457,11 @@ public sealed class BankSyncService(
                             existingRaw.ProviderTransactionId ?? "<none>",
                             existingRaw.DedupeKey);
                     }
-                    else if (TryLinkRawRowToExistingProjectedTransaction(
+                    else
+                    {
+                        projectedDuplicateCheckAttempts++;
+
+                        if (TryLinkRawRowToExistingProjectedTransaction(
                                  existingRaw,
                                  providerAccount,
                                  linkedAccount,
@@ -1394,60 +1469,61 @@ public sealed class BankSyncService(
                                  triggerRecord: providerTransaction,
                                  projectionState,
                                  out var collidedTransactionId))
-                    {
-                        projectedSkippedDuplicate++;
-                        logger.LogDebug(
-                            "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
-                            providerAccount.ProviderId ?? "<unknown>",
-                            providerAccount.ProviderDisplayName ?? "<unknown>",
-                            linkedAccount.ConnectionId,
-                            providerAccount.AccountId,
-                            linkedAccount.Id,
-                            !wasBooked && isNowBooked ? "status_transition_reconcile" : "existing_booked_reconcile",
-                            collidedTransactionId,
-                            providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
-                            providerTransaction.NormalizedProviderTransactionId ?? "<none>",
-                            existingRaw.DedupeKey,
-                            existingRaw.Amount,
-                            existingRaw.Currency,
-                            existingRaw.BookedAtUtc,
-                            existingRaw.Description);
-                    }
-                    else
-                    {
-                        var projected = CreateProjectedTransaction(
-                            linkedAccount.FinancialAccountId.Value,
-                            existingRaw.Amount,
-                            existingRaw.Currency,
-                            existingRaw.Description,
-                            existingRaw.BookedAtUtc,
-                            now);
-
-                        dbContext.Transactions.Add(projected);
-                        existingRaw.ProjectedTransactionId = projected.Id;
-                        projectionState.KnownProjectedTransactionIds.Add(projected.Id);
-
-                        if (!wasBooked && isNowBooked)
                         {
-                            projectedFromStatusTransition++;
+                            projectedSkippedDuplicate++;
+                            logger.LogDebug(
+                                "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
+                                providerAccount.ProviderId ?? "<unknown>",
+                                providerAccount.ProviderDisplayName ?? "<unknown>",
+                                linkedAccount.ConnectionId,
+                                providerAccount.AccountId,
+                                linkedAccount.Id,
+                                !wasBooked && isNowBooked ? "status_transition_reconcile" : "existing_booked_reconcile",
+                                collidedTransactionId,
+                                providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
+                                providerTransaction.NormalizedProviderTransactionId ?? "<none>",
+                                existingRaw.DedupeKey,
+                                existingRaw.Amount,
+                                existingRaw.Currency,
+                                existingRaw.BookedAtUtc,
+                                existingRaw.Description);
                         }
                         else
                         {
-                            projectedBackfilled++;
-                        }
+                            var projected = CreateProjectedTransaction(
+                                linkedAccount.FinancialAccountId.Value,
+                                existingRaw.Amount,
+                                existingRaw.Currency,
+                                existingRaw.Description,
+                                existingRaw.BookedAtUtc,
+                                now);
 
-                        logger.LogDebug(
-                            "Bank transaction projected from existing raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} fromStatus={FromStatus} toStatus={ToStatus}",
-                            providerAccount.ProviderId ?? "<unknown>",
-                            providerAccount.ProviderDisplayName ?? "<unknown>",
-                            linkedAccount.ConnectionId,
-                            providerAccount.AccountId,
-                            linkedAccount.Id,
-                            providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
-                            providerTransaction.NormalizedProviderTransactionId ?? "<none>",
-                            existingRaw.DedupeKey,
-                            wasBooked ? "booked" : "unbooked",
-                            isNowBooked ? "booked" : "unbooked");
+                            dbContext.Transactions.Add(projected);
+                            existingRaw.ProjectedTransactionId = projected.Id;
+                            projectionState.KnownProjectedTransactionIds.Add(projected.Id);
+
+                            if (!wasBooked && isNowBooked)
+                            {
+                                projectedFromStatusTransition++;
+                            }
+                            else
+                            {
+                                projectedBackfilled++;
+                            }
+
+                            logger.LogDebug(
+                                "Bank transaction projected from existing raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} fromStatus={FromStatus} toStatus={ToStatus}",
+                                providerAccount.ProviderId ?? "<unknown>",
+                                providerAccount.ProviderDisplayName ?? "<unknown>",
+                                linkedAccount.ConnectionId,
+                                providerAccount.AccountId,
+                                linkedAccount.Id,
+                                providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
+                                providerTransaction.NormalizedProviderTransactionId ?? "<none>",
+                                existingRaw.DedupeKey,
+                                wasBooked ? "booked" : "unbooked",
+                                isNowBooked ? "booked" : "unbooked");
+                        }
                     }
                 }
                 else if (!isNowBooked)
@@ -1494,6 +1570,7 @@ public sealed class BankSyncService(
             {
                 if (IsBookedProjectionStatus(providerTransaction.TransactionStatus))
                 {
+                    projectedDuplicateCheckAttempts++;
                     if (TryLinkRawRowToExistingProjectedTransaction(
                             rawTransaction,
                             providerAccount,
@@ -1587,7 +1664,11 @@ public sealed class BankSyncService(
             projectedBackfilled,
             projectedSkippedUnbookedFetched,
             projectedSkippedUnbookedBackfill,
-            projectedSkippedDuplicate);
+            projectedSkippedDuplicate,
+            projectedDuplicateCheckAttempts,
+            projectedBackfillRowsEvaluated,
+            projectedBackfillRowsDeferred,
+            projectedCandidatePoolSize);
     }
 
     private async Task<ProjectionReconciliationState> BuildProjectionReconciliationStateAsync(
@@ -1635,7 +1716,8 @@ public sealed class BankSyncService(
         return new ProjectionReconciliationState(
             knownProjectedTransactionIds,
             linkedProjectedTransactionIds,
-            fingerprintToProjectedIds);
+            fingerprintToProjectedIds,
+            projectedRows.Count);
     }
 
     private bool TryLinkRawRowToExistingProjectedTransaction(
@@ -2105,7 +2187,8 @@ public sealed class BankSyncService(
     private sealed record ProjectionReconciliationState(
         HashSet<Guid> KnownProjectedTransactionIds,
         HashSet<Guid> LinkedProjectedTransactionIds,
-        Dictionary<string, Queue<Guid>> FingerprintToProjectedIds);
+        Dictionary<string, Queue<Guid>> FingerprintToProjectedIds,
+        int ProjectedCandidateCount);
 
     private sealed record ProjectedTransactionSnapshot(
         Guid Id,
@@ -2125,7 +2208,11 @@ public sealed class BankSyncService(
         int ProjectedBackfilled,
         int ProjectedSkippedUnbookedFetched,
         int ProjectedSkippedUnbookedBackfill,
-        int ProjectedSkippedDuplicate);
+        int ProjectedSkippedDuplicate,
+        int ProjectedDuplicateCheckAttempts,
+        int ProjectedBackfillRowsEvaluated,
+        int ProjectedBackfillRowsDeferred,
+        int ProjectedCandidatePoolSize);
 
     private sealed record AccountTransactionFetchResult(
         IReadOnlyList<TrueLayerTransactionRecord> Transactions,
@@ -3071,12 +3158,34 @@ public sealed class BankSyncService(
             return;
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        logger.LogInformation(
-            "Persisted banking sync stage connectionId={ConnectionId} accountId={AccountId} stage={Stage}",
-            connectionId,
-            accountId ?? "<none>",
-            stageName);
+        var trackedEntryCount = dbContext.ChangeTracker.Entries().Count(entry =>
+            entry.State is not EntityState.Unchanged and not EntityState.Detached);
+        var stopwatch = Stopwatch.StartNew();
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogInformation(
+                "Persisted banking sync stage connectionId={ConnectionId} accountId={AccountId} stage={Stage} trackedEntries={TrackedEntries} elapsedMs={ElapsedMs}",
+                connectionId,
+                accountId ?? "<none>",
+                stageName,
+                trackedEntryCount,
+                stopwatch.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException exception)
+        {
+            logger.LogError(
+                exception,
+                "Persisting banking sync stage was canceled connectionId={ConnectionId} accountId={AccountId} stage={Stage} trackedEntries={TrackedEntries} elapsedMs={ElapsedMs} cancellationRequested={CancellationRequested}",
+                connectionId,
+                accountId ?? "<none>",
+                stageName,
+                trackedEntryCount,
+                stopwatch.ElapsedMilliseconds,
+                cancellationToken.IsCancellationRequested);
+            throw;
+        }
     }
 
     private async Task<ServiceResult<AccountTransactionFetchResult>> FetchAccountTransactionsAsync(

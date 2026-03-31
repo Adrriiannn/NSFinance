@@ -149,3 +149,11 @@ Mobile freshness UX:
    - verify that connection is skipped as `skipped_sync_in_progress`
    - force one connection into stale `sync_pending` (older than threshold) and run global manual sync
    - verify stale state is recovered and connection runs sync instead of being skipped indefinitely
+12. Validate long-running manual sync resiliency:
+   - trigger manual sync on a higher-volume connection and keep the app open
+   - confirm endpoint logs include request-cancellation metadata and still complete sync even if the client request is interrupted
+   - confirm connection-level result is returned as structured outcome rather than raw request-canceled crash
+13. Validate projection reconcile cost bounds:
+   - run sync on an account with many legacy raw rows lacking `ProjectedTransactionId`
+   - verify lifecycle logs include `projectedDuplicateCheckAttempts`, `projectedBackfillRowsEvaluated`, `projectedBackfillRowsDeferred`, and `projectedCandidatePoolSize`
+   - verify deferred backfill rows decrease across subsequent sync runs (bounded progress, no unbounded single-run spike)

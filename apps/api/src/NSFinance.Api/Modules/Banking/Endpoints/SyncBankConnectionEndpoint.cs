@@ -28,9 +28,9 @@ public static class SyncBankConnectionEndpoint
             actorId: userId,
             actorType: "user",
             metadata: null,
-            cancellationToken);
+            CancellationToken.None);
 
-        var result = await bankSyncService.SyncConnectionAsync(userId, connectionId, cancellationToken);
+        var result = await bankSyncService.SyncConnectionAsync(userId, connectionId, CancellationToken.None);
         if (!result.Succeeded)
         {
             return result.Error!.ToApiError();

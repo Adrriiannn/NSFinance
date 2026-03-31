@@ -54,6 +54,7 @@ NSFinance now uses a global sync orchestration model:
 - Manual sync is now available from global headers (Accounts + Activity), not the connect-bank screen.
 - Backend enforces one-hour cooldown for user-triggered manual sync requests.
 - Cooldown truth is API-side (not client-only throttling).
+- Global/manual sync execution is detached from request-abort cancellation so long-running provider syncs are not terminated just because the mobile request times out or disconnects.
 
 ### Auto sync
 
@@ -132,6 +133,12 @@ NSFinance now treats imported banking data as a long-term ledger:
 - Fetch-truth diagnostics now explicitly separate provider freshness from projection behavior:
   - fetched logs include `latestImportedCheckpointUtcBefore`, `hasFetchedRowNewerThanCheckpoint`, `latestReturnedLagHours`, and `staleReturnedSlice`
   - this makes it explicit whether missing activity was absent from provider payload vs fetched and filtered later in projection
+- Projection diagnostics now include reconciliation cost signals:
+  - `projectedDuplicateCheckAttempts`
+  - `projectedBackfillRowsEvaluated`
+  - `projectedBackfillRowsDeferred`
+  - `projectedCandidatePoolSize`
+- Legacy raw→projected backfill reconciliation is now bounded per sync run to avoid runaway duplicate-reconcile cost on high-volume accounts; deferred rows are reconciled progressively in later syncs.
 - Transaction status normalization is endpoint-aware:
   - rows from `/transactions` (settled/booked endpoint) are normalized as booked for ledger projection, even if provider payload status strings are noisy
   - rows from `/transactions/pending` are normalized as pending and remain raw-only until a booked version arrives
