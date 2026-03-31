@@ -18,6 +18,7 @@ This folder is organized by canonical topic. Each topic has one primary source o
 
 - API endpoint inventory: `features/api-endpoints.md`
 - Open Banking (TrueLayer): `features/banking-truelayer.md`
+- Banking sync provider audit: `features/banking-sync-provider-audit.md`
 - Expense plans and community publishing: `features/expense-plans.md`
 
 ## Testing

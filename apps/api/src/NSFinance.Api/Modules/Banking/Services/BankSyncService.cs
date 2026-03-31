@@ -22,10 +22,6 @@ public sealed class BankSyncService(
     private const int IncrementalLookbackDays = 35;
     private const int IncrementalFallbackDays = 120;
     private const int InitialBackfillDefaultDays = 365 * 6;
-    private const int AibTransactionResponseCap = 100;
-    private const int CappedProviderIncrementalChunkDays = 7;
-    private const int CappedProviderMaxAdaptiveSplitDepth = 6;
-    private static readonly TimeSpan CappedProviderMinAdaptiveWindow = TimeSpan.FromHours(6);
     private const int InternalTransferMatchLookbackDays = 21;
     private const int InternalTransferMatchMaxWindowHours = 72;
     private const int InternalTransferMatchMinimumScore = 5;
@@ -322,7 +318,7 @@ public sealed class BankSyncService(
         var accountsResult = await dataService.GetAccountsAsync(configuration, accessToken, cancellationToken);
         if (!accountsResult.Succeeded)
         {
-            return await HandleSyncFailureAsync(connection, accountsResult.Error!, trigger, cancellationToken);
+            return await HandleSyncFailureAsync(connection, accountsResult.Error!, trigger, "accounts_refresh", cancellationToken);
         }
 
         var accountsSynced = 0;
@@ -426,7 +422,7 @@ public sealed class BankSyncService(
 
             if (!balanceResult.Succeeded)
             {
-                return await HandleSyncFailureAsync(connection, balanceResult.Error!, trigger, cancellationToken);
+                return await HandleSyncFailureAsync(connection, balanceResult.Error!, trigger, "account_balance_refresh", cancellationToken);
             }
 
             if (balanceResult.Value is not null)
@@ -486,6 +482,12 @@ public sealed class BankSyncService(
                     linkedAccount.Id);
             }
 
+            await PersistSyncStageChangesAsync(
+                connection.Id,
+                providerAccount.AccountId,
+                "account_balance_refresh",
+                cancellationToken);
+
             var transactionWindow = BuildTransactionWindow(
                 connection,
                 providerAccount,
@@ -512,7 +514,7 @@ public sealed class BankSyncService(
 
             if (!transactionsFetchResult.Succeeded)
             {
-                return await HandleSyncFailureAsync(connection, transactionsFetchResult.Error!, trigger, cancellationToken);
+                return await HandleSyncFailureAsync(connection, transactionsFetchResult.Error!, trigger, "account_transactions_import", cancellationToken);
             }
 
             var fetchedTransactions = transactionsFetchResult.Value!;
@@ -669,6 +671,12 @@ public sealed class BankSyncService(
                         standingOrdersResult.Error?.Code);
                 }
             }
+
+            await PersistSyncStageChangesAsync(
+                connection.Id,
+                providerAccount.AccountId,
+                "account_transactions_and_commitments",
+                cancellationToken);
         }
 
         if (ShouldRequestScope(connection.GrantedScopesCsv, "cards"))
@@ -804,6 +812,12 @@ public sealed class BankSyncService(
                     cardsResult.Error?.Code);
             }
         }
+
+        await PersistSyncStageChangesAsync(
+            connection.Id,
+            accountId: null,
+            stageName: "cards_refresh",
+            cancellationToken);
 
         var statusBeforePersistingImportedData = await dbContext.OpenBankingConnections
             .AsNoTracking()
@@ -1709,13 +1723,6 @@ public sealed class BankSyncService(
         int ProjectedBackfilled,
         int ProjectedSkippedUnbooked);
 
-    private sealed record ProviderTransactionSyncPolicy(
-        string ProviderKey,
-        int? SettledResponseCap,
-        int IncrementalChunkDays,
-        int MaxAdaptiveSplitDepth,
-        TimeSpan MinAdaptiveWindow);
-
     private sealed record AccountTransactionFetchResult(
         IReadOnlyList<TrueLayerTransactionRecord> Transactions,
         int SettledFetched,
@@ -2434,6 +2441,7 @@ public sealed class BankSyncService(
         OpenBankingConnection connection,
         ServiceError error,
         string trigger,
+        string stageName,
         CancellationToken cancellationToken)
     {
         var nextStatus = error.StatusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden
@@ -2457,14 +2465,16 @@ public sealed class BankSyncService(
             metadata: new
             {
                 error.Code,
-                status = nextStatus
+                status = nextStatus,
+                stage = stageName
             },
             cancellationToken);
 
         logger.LogWarning(
-            "Bank sync failed for connectionId={ConnectionId} trigger={Trigger} code={Code}",
+            "Bank sync failed for connectionId={ConnectionId} trigger={Trigger} stage={Stage} code={Code}",
             connection.Id,
             trigger,
+            stageName,
             error.Code);
 
         return ServiceResult<BankSyncResult>.Fail(error.Message, error.Code, error.StatusCode);
@@ -2644,6 +2654,25 @@ public sealed class BankSyncService(
         }
 
         return connection.BrandingLastSyncedAtUtc.Value < now.AddDays(-30);
+    }
+
+    private async Task PersistSyncStageChangesAsync(
+        Guid connectionId,
+        string? accountId,
+        string stageName,
+        CancellationToken cancellationToken)
+    {
+        if (!dbContext.ChangeTracker.HasChanges())
+        {
+            return;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        logger.LogInformation(
+            "Persisted banking sync stage connectionId={ConnectionId} accountId={AccountId} stage={Stage}",
+            connectionId,
+            accountId ?? "<none>",
+            stageName);
     }
 
     private async Task<ServiceResult<AccountTransactionFetchResult>> FetchAccountTransactionsAsync(
@@ -2927,28 +2956,7 @@ public sealed class BankSyncService(
 
     private static ProviderTransactionSyncPolicy ResolveProviderTransactionSyncPolicy(TrueLayerAccountRecord account)
     {
-        var providerId = (account.ProviderId ?? string.Empty).Trim().ToLowerInvariant();
-        var providerDisplayName = (account.ProviderDisplayName ?? string.Empty).Trim().ToLowerInvariant();
-        var providerComposite = $"{providerId} {providerDisplayName}";
-
-        if (providerComposite.Contains("allied irish bank", StringComparison.Ordinal)
-            || providerComposite.Contains(" aib", StringComparison.Ordinal)
-            || providerId.StartsWith("aib", StringComparison.Ordinal))
-        {
-            return new ProviderTransactionSyncPolicy(
-                ProviderKey: "aib",
-                SettledResponseCap: AibTransactionResponseCap,
-                IncrementalChunkDays: CappedProviderIncrementalChunkDays,
-                MaxAdaptiveSplitDepth: CappedProviderMaxAdaptiveSplitDepth,
-                MinAdaptiveWindow: CappedProviderMinAdaptiveWindow);
-        }
-
-        return new ProviderTransactionSyncPolicy(
-            ProviderKey: "default",
-            SettledResponseCap: null,
-            IncrementalChunkDays: CappedProviderIncrementalChunkDays,
-            MaxAdaptiveSplitDepth: 0,
-            MinAdaptiveWindow: TimeSpan.Zero);
+        return ProviderSyncPolicyCatalog.ResolveForAccount(account);
     }
 
     private static IReadOnlyList<TrueLayerTransactionQueryWindow> BuildTransactionRequestWindows(
@@ -3209,25 +3217,22 @@ public sealed class BankSyncService(
         DateTime now,
         bool isInitialBackfill)
     {
+        var providerPolicy = ResolveProviderTransactionSyncPolicy(account);
+
         if (isInitialBackfill)
         {
-            var (historyDays, policyName) = ResolveInitialHistoryPolicy(account);
-            var windowStartUtc = now.AddDays(-historyDays);
+            var windowStartUtc = now.AddDays(-providerPolicy.InitialBackfillHistoryDays);
             return new TrueLayerTransactionQueryWindow(
                 windowStartUtc,
                 now,
                 Mode: "initial_backfill",
-                PolicyName: policyName);
+                PolicyName: providerPolicy.InitialBackfillPolicyName);
         }
 
-        var providerPolicy = ResolveProviderTransactionSyncPolicy(account);
         var checkpointUtc = connection.LatestImportedTransactionUtc ?? connection.LastSuccessfulSyncUtc;
-        var fallbackDays = providerPolicy.SettledResponseCap.HasValue
-            ? Math.Max(IncrementalLookbackDays, providerPolicy.IncrementalChunkDays * 4)
-            : IncrementalFallbackDays;
         var fromUtc = checkpointUtc.HasValue
-            ? checkpointUtc.Value.AddDays(-IncrementalLookbackDays)
-            : now.AddDays(-fallbackDays);
+            ? checkpointUtc.Value.AddDays(-providerPolicy.IncrementalLookbackDays)
+            : now.AddDays(-providerPolicy.IncrementalFallbackDays);
 
         if (fromUtc > now)
         {
@@ -3235,9 +3240,9 @@ public sealed class BankSyncService(
         }
 
         var incrementalPolicyName = checkpointUtc.HasValue
-            ? "latest_imported_checkpoint"
-            : providerPolicy.SettledResponseCap.HasValue
-                ? "capped_provider_incremental_fallback"
+            ? $"latest_imported_checkpoint_{providerPolicy.ProviderKey}"
+            : providerPolicy.ReScanVisibleSliceEachSync
+                ? $"provider_visible_slice_rescan_{providerPolicy.ProviderKey}"
                 : "incremental_fallback";
 
         return new TrueLayerTransactionQueryWindow(
@@ -3300,43 +3305,6 @@ public sealed class BankSyncService(
         }
 
         return InitialBackfillDefaultDays;
-    }
-
-    private static (int HistoryDays, string PolicyName) ResolveInitialHistoryPolicy(TrueLayerAccountRecord account)
-    {
-        var providerId = (account.ProviderId ?? string.Empty).Trim().ToLowerInvariant();
-        var providerDisplayName = (account.ProviderDisplayName ?? string.Empty).Trim().ToLowerInvariant();
-        var providerComposite = $"{providerId} {providerDisplayName}";
-
-        if (providerComposite.Contains("revolut", StringComparison.Ordinal))
-        {
-            return (365 * 6, "revolut_initial_6y");
-        }
-
-        if (providerComposite.Contains("ulster", StringComparison.Ordinal))
-        {
-            return (365 * 6, "ulster_initial_6y");
-        }
-
-        if (providerComposite.Contains("bank of ireland", StringComparison.Ordinal))
-        {
-            return (366, "boi_initial_1y");
-        }
-
-        if (providerComposite.Contains("permanent tsb", StringComparison.Ordinal)
-            || providerComposite.Contains("ptsb", StringComparison.Ordinal))
-        {
-            return (95, "ptsb_initial_90d");
-        }
-
-        if (providerComposite.Contains("allied irish bank", StringComparison.Ordinal)
-            || providerComposite.Contains(" aib", StringComparison.Ordinal)
-            || providerId.StartsWith("aib", StringComparison.Ordinal))
-        {
-            return (366, "aib_initial_1y");
-        }
-
-        return (InitialBackfillDefaultDays, "default_initial_6y");
     }
 
     private static (DateTime? EarliestBookedAtUtc, DateTime? LatestBookedAtUtc) ExtractObservedTransactionBounds(

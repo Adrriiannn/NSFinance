@@ -130,6 +130,17 @@ NSFinance now treats imported banking data as a long-term ledger:
   - requested initial backfill window start
   - earliest/latest imported transaction timestamps
 
+## Provider-aware sync policy and durability
+
+- Sync behavior is now selected through an explicit provider policy catalog (not ad hoc conditionals).
+- Policies model provider transaction visibility mode, count limits, initial backfill shape, and incremental re-scan strategy.
+- AIB is modeled as a capped visible-slice provider (`up to 100`), so incremental sync re-scans overlapping visible slices safely rather than assuming full historical replay access.
+- Sync persistence is stage-based:
+  - account/balance refresh stage is persisted durably
+  - transaction/commitments stage is persisted separately
+  - card stage is persisted separately
+- If a later stage fails, successfully persisted earlier stages (for example balance snapshots) are retained and logs include the failed stage name.
+
 Provider limits still apply. NSFinance requests the widest practical range, but provider/API caps may return less.
 
 ## Internal transfer semantics (linked accounts)

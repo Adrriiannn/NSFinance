@@ -51,6 +51,10 @@ Happy path:
    - verify `outcome=completed` on first run
    - call again within one hour and verify `outcome=skipped_cooldown` with remaining cooldown seconds
    - call with `{ "trigger": "auto", "source": "qa_auto" }` shortly after a successful run and verify `outcome=skipped_not_due`
+10. Validate stage durability:
+   - simulate transaction endpoint failure after a successful balance fetch
+   - verify balance snapshot persists in storage
+   - verify logs identify the failed stage name (`account_transactions_import`)
 
 Data checks (authenticated API):
 

@@ -52,6 +52,32 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task CallbackFlow_PersistsBalanceSnapshot_WhenTransactionStageFails()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: BalanceSuccessTransactionFailureFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.balance-durable@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-balance-durable", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+
+        Assert.Equal(BankConnectionStatuses.Failed, connection.Status);
+        Assert.Single(await harness.DbContext.BankBalanceSnapshots.ToListAsync());
+        Assert.Equal(0, await harness.DbContext.RawBankTransactions.CountAsync());
+    }
+
+    [Fact]
     public async Task CallbackFlow_MatchesLinkedInternalTransfers_ForAibLikeDateOnlyAndCounterpartyHints()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -1266,6 +1292,82 @@ public class OpenBankingIntegrationTests
                       ]
                     }
                     """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler BalanceSuccessTransactionFailureFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-balance-durable",
+                      "refresh_token":"refresh-token-balance-durable",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-balance-durable-001",
+                          "display_name": "AIB Balance Durable",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "aib-ie-ob",
+                            "display_name": "Allied Irish Bank"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-balance-durable-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 777.00,
+                          "current": 800.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-31T10:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-balance-durable-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.InternalServerError,
+                    """
+                    {
+                      "error": "provider_http_error",
+                      "error_description": "Synthetic transaction endpoint failure"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-balance-durable-001/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }
 
             return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
