@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NSFinance.Api.Common.Contracts;
@@ -1168,9 +1169,11 @@ public sealed class BankConnectionService(
                 latestBalances.TryGetValue(account.Id, out var latestBalance);
                 var resolvedDisplayName = ResolveLinkedAccountDisplayName(
                     account.DisplayName,
+                    account.ProviderDisplayName,
                     account.AccountType,
                     account.Currency,
-                    account.ConnectedFullName);
+                    account.ConnectedFullName,
+                    account.AccountNumberMetadataJson);
 
                 return new LinkedBankAccountDto(
                     account.Id,
@@ -1540,9 +1543,11 @@ public sealed class BankConnectionService(
 
     private static string ResolveLinkedAccountDisplayName(
         string? providerDisplayName,
+        string? providerInstitutionDisplayName,
         string? accountType,
         string currency,
-        string? connectedFullName)
+        string? connectedFullName,
+        string? accountNumberMetadataJson)
     {
         var normalizedDisplayName = NormalizeLabel(providerDisplayName);
         if (!string.IsNullOrWhiteSpace(normalizedDisplayName)
@@ -1551,9 +1556,25 @@ public sealed class BankConnectionService(
             return normalizedDisplayName;
         }
 
+        var providerLabel = NormalizeLabel(providerInstitutionDisplayName);
         var resolvedCurrency = string.IsNullOrWhiteSpace(currency) ? "EUR" : currency.Trim().ToUpperInvariant();
         var friendlyType = ResolveFriendlyAccountType(accountType);
-        return $"{resolvedCurrency} {friendlyType}";
+        var maskedHint = ExtractMaskedAccountHint(accountNumberMetadataJson);
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(providerLabel))
+        {
+            parts.Add(providerLabel);
+        }
+
+        parts.Add($"{resolvedCurrency} {friendlyType}");
+
+        if (!string.IsNullOrWhiteSpace(maskedHint))
+        {
+            parts.Add($"••{maskedHint}");
+        }
+
+        return string.Join(" • ", parts);
     }
 
     private static string? NormalizeLabel(string? value)
@@ -1610,6 +1631,107 @@ public sealed class BankConnectionService(
             "loan" => "loan account",
             _ => "account"
         };
+    }
+
+    private static string? ExtractMaskedAccountHint(string? accountNumberMetadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(accountNumberMetadataJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(accountNumberMetadataJson);
+            var root = document.RootElement;
+            string?[] directCandidates =
+            [
+                TryGetJsonString(root, "iban"),
+                TryGetJsonString(root, "number"),
+                TryGetJsonString(root, "pan"),
+                TryGetJsonString(root, "masked_pan")
+            ];
+
+            foreach (var candidate in directCandidates)
+            {
+                var normalized = ExtractMaskedHintFromValue(candidate);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    return normalized;
+                }
+            }
+
+            if (TryGetJsonProperty(root, "account_number", out var accountNumberNode))
+            {
+                var fromAccountNumber = ExtractMaskedHintFromValue(TryGetJsonString(accountNumberNode, "number"));
+                if (!string.IsNullOrWhiteSpace(fromAccountNumber))
+                {
+                    return fromAccountNumber;
+                }
+            }
+
+            if (TryGetJsonProperty(root, "sort_code_account_number", out var sortCodeNode))
+            {
+                var fromSortCode = ExtractMaskedHintFromValue(TryGetJsonString(sortCodeNode, "account_number"));
+                if (!string.IsNullOrWhiteSpace(fromSortCode))
+                {
+                    return fromSortCode;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static bool TryGetJsonProperty(JsonElement element, string propertyName, out JsonElement propertyValue)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(propertyName, out propertyValue))
+        {
+            return true;
+        }
+
+        propertyValue = default;
+        return false;
+    }
+
+    private static string? TryGetJsonString(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.String)
+        {
+            return property.GetString();
+        }
+
+        if (property.ValueKind == JsonValueKind.Number)
+        {
+            return property.ToString();
+        }
+
+        return null;
+    }
+
+    private static string? ExtractMaskedHintFromValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var alphanumeric = new string(value.Where(char.IsLetterOrDigit).ToArray());
+        if (alphanumeric.Length < 4)
+        {
+            return null;
+        }
+
+        return alphanumeric[^4..].ToUpperInvariant();
     }
 
     private static bool IsProviderBrandingSchemaMissing(Exception exception)

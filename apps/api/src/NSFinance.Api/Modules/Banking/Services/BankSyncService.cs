@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
@@ -22,7 +23,7 @@ public sealed class BankSyncService(
 {
     private const int InternalTransferMatchLookbackDays = 21;
     private const int InternalTransferMatchMaxWindowHours = 72;
-    private const int InternalTransferMatchMinimumScore = 5;
+    private const int InternalTransferMatchMinimumScore = 6;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
@@ -36,6 +37,32 @@ public sealed class BankSyncService(
         "transfer",
         "from",
         "into",
+        "the",
+        "and"
+    ];
+    private static readonly HashSet<string> InternalTransferGenericNoiseTokens =
+    [
+        "transfer",
+        "payment",
+        "bank",
+        "account",
+        "accounts",
+        "card",
+        "internal",
+        "funds",
+        "fund",
+        "cash",
+        "flexible",
+        "pocket",
+        "vault",
+        "saving",
+        "savings",
+        "round",
+        "roundup",
+        "up",
+        "to",
+        "from",
+        "for",
         "the",
         "and"
     ];
@@ -2471,25 +2498,33 @@ public sealed class BankSyncService(
             })
             .ToListAsync(cancellationToken);
 
-        var accountHintTokensByFinancialAccountId = new Dictionary<Guid, HashSet<string>>();
+        var accountProfilesByFinancialAccountId = new Dictionary<Guid, InternalTransferAccountMatchProfile>();
         foreach (var row in accountHintRows)
         {
             var tokens = BuildInternalTransferAccountHintTokens(
                 row.DisplayName,
                 row.ProviderDisplayName,
                 row.ProviderId);
-            if (tokens.Count == 0)
+            var policy = ProviderSyncPolicyCatalog.ResolveForConnection(row.ProviderId, row.ProviderDisplayName);
+            if (!accountProfilesByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var current))
             {
-                continue;
+                current = new InternalTransferAccountMatchProfile(
+                    new HashSet<string>(StringComparer.Ordinal),
+                    policy.TimestampPrecision,
+                    policy.ProviderKey,
+                    policy.ProviderFamily);
+                accountProfilesByFinancialAccountId[row.FinancialAccountId] = current;
             }
 
-            if (!accountHintTokensByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var current))
+            if (tokens.Count > 0)
             {
-                current = new HashSet<string>(StringComparer.Ordinal);
-                accountHintTokensByFinancialAccountId[row.FinancialAccountId] = current;
+                current.HintTokens.UnionWith(tokens);
             }
 
-            current.UnionWith(tokens);
+            if (policy.TimestampPrecision == ProviderTimestampPrecisionMode.DateOnlyOrMixed)
+            {
+                current.TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyOrMixed;
+            }
         }
 
         var windowStartUtc = now.AddDays(-InternalTransferMatchLookbackDays);
@@ -2562,6 +2597,9 @@ public sealed class BankSyncService(
         var unmatchedNoCandidatesAfterFilters = 0;
         var unmatchedNoTransferEvidence = 0;
         var unmatchedBelowThreshold = 0;
+        var unmatchedDeferredWeakTimestamp = 0;
+        var unmatchedDeferredSavingsPocket = 0;
+        var unmatchedMissingCounterpartyConfidence = 0;
 
         foreach (var debit in outgoing)
         {
@@ -2589,11 +2627,38 @@ public sealed class BankSyncService(
                 var scoreResult = ScoreInternalTransferPair(
                     debit,
                     credit,
-                    accountHintTokensByFinancialAccountId);
+                    accountProfilesByFinancialAccountId);
                 if (scoreResult.HasTransferEvidence)
                 {
                     hadTransferEvidenceCandidate = true;
                 }
+
+                if (scoreResult.DeferredByWeakTimestamp)
+                {
+                    unmatchedDeferredWeakTimestamp++;
+                }
+
+                if (scoreResult.DeferredBySavingsPocket)
+                {
+                    unmatchedDeferredSavingsPocket++;
+                }
+
+                if (scoreResult.MissingCounterpartyConfidence)
+                {
+                    unmatchedMissingCounterpartyConfidence++;
+                }
+
+                logger.LogDebug(
+                    "Linked transfer pair candidate evaluation debitId={DebitId} creditId={CreditId} score={Score} reason={Reason} distanceMinutes={DistanceMinutes} hasTransferEvidence={HasTransferEvidence} hasCounterpartyConfidence={HasCounterpartyConfidence} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket}",
+                    debit.Id,
+                    credit.Id,
+                    scoreResult.Score,
+                    scoreResult.DecisionReason,
+                    (int)Math.Round(scoreResult.Distance.TotalMinutes, MidpointRounding.AwayFromZero),
+                    scoreResult.HasTransferEvidence,
+                    scoreResult.HasCounterpartyConfidence,
+                    scoreResult.DeferredByWeakTimestamp,
+                    scoreResult.DeferredBySavingsPocket);
 
                 var score = scoreResult.Score;
                 var distance = scoreResult.Distance;
@@ -2627,6 +2692,14 @@ public sealed class BankSyncService(
                 continue;
             }
 
+            logger.LogInformation(
+                "Linked transfer pair selected debitId={DebitId} creditId={CreditId} score={Score} distanceMinutes={DistanceMinutes} debitDescription={DebitDescription} creditDescription={CreditDescription}",
+                debit.Id,
+                bestCredit.Id,
+                bestScore,
+                (int)Math.Round(bestTimeDistance.TotalMinutes, MidpointRounding.AwayFromZero),
+                debit.Description,
+                bestCredit.Description);
             ApplyLinkedInternalTransferPair(debit, bestCredit, now);
             usedIncomingIds.Add(bestCredit.Id);
             matchedPairs++;
@@ -2645,6 +2718,13 @@ public sealed class BankSyncService(
                 unmatchedNoCandidatesAfterFilters,
                 unmatchedNoTransferEvidence,
                 unmatchedBelowThreshold);
+            logger.LogInformation(
+                "Linked transfer matcher diagnostics userId={UserId} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket} missingCounterpartyConfidence={MissingCounterpartyConfidence} minimumScore={MinimumScore}",
+                userId,
+                unmatchedDeferredWeakTimestamp,
+                unmatchedDeferredSavingsPocket,
+                unmatchedMissingCounterpartyConfidence,
+                InternalTransferMatchMinimumScore);
         }
         else
         {
@@ -2658,6 +2738,13 @@ public sealed class BankSyncService(
                 unmatchedNoCandidatesAfterFilters,
                 unmatchedNoTransferEvidence,
                 unmatchedBelowThreshold);
+            logger.LogInformation(
+                "Linked transfer matcher diagnostics userId={UserId} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket} missingCounterpartyConfidence={MissingCounterpartyConfidence} minimumScore={MinimumScore}",
+                userId,
+                unmatchedDeferredWeakTimestamp,
+                unmatchedDeferredSavingsPocket,
+                unmatchedMissingCounterpartyConfidence,
+                InternalTransferMatchMinimumScore);
         }
 
         return matchedPairs;
@@ -2704,10 +2791,13 @@ public sealed class BankSyncService(
     private static InternalTransferPairScore ScoreInternalTransferPair(
         Transaction debit,
         Transaction credit,
-        IReadOnlyDictionary<Guid, HashSet<string>> accountHintTokensByFinancialAccountId)
+        IReadOnlyDictionary<Guid, InternalTransferAccountMatchProfile> accountProfilesByFinancialAccountId)
     {
         var debitLooksTransfer = LooksLikeInternalTransferDescription(debit.Description);
         var creditLooksTransfer = LooksLikeInternalTransferDescription(credit.Description);
+        var debitLooksSavingsPocket = LooksLikeSavingsPocketMovementDescription(debit.Description);
+        var creditLooksSavingsPocket = LooksLikeSavingsPocketMovementDescription(credit.Description);
+        var involvesSavingsPocketMovement = debitLooksSavingsPocket || creditLooksSavingsPocket;
         var hasTransferHint = debitLooksTransfer || creditLooksTransfer;
         var hasTransferTaxonomyHint =
             debit.TaxonomyDomainId == ExpenseTaxonomyService.TransferDomainId
@@ -2716,55 +2806,119 @@ public sealed class BankSyncService(
             DescriptionContainsCounterpartyAccountHint(
                 debit.Description,
                 credit.FinancialAccountId,
-                accountHintTokensByFinancialAccountId)
+                accountProfilesByFinancialAccountId)
             || DescriptionContainsCounterpartyAccountHint(
                 credit.Description,
                 debit.FinancialAccountId,
-                accountHintTokensByFinancialAccountId);
+                accountProfilesByFinancialAccountId);
         var hasSharedTransferToken = HasSharedTransferToken(debit.Description, credit.Description);
+        var hasCounterpartyNameHint = HasStrongCounterpartyNameHint(debit.Description, credit.Description);
+        var hasCounterpartyConfidence = hasCounterpartyAccountHint || hasCounterpartyNameHint;
+        var hasWeakTimestampPrecision =
+            IsWeakTimestampForMatching(debit, accountProfilesByFinancialAccountId)
+            || IsWeakTimestampForMatching(credit, accountProfilesByFinancialAccountId);
+
         var hasTransferEvidence =
             hasTransferHint
             || hasTransferTaxonomyHint
             || hasCounterpartyAccountHint
-            || (hasSharedTransferToken && (hasTransferHint || hasCounterpartyAccountHint));
+            || hasCounterpartyNameHint
+            || (hasSharedTransferToken && (hasTransferHint || hasCounterpartyConfidence));
 
         var distance = (debit.BookedAtUtc - credit.BookedAtUtc).Duration();
         if (distance.TotalHours > InternalTransferMatchMaxWindowHours)
         {
-            return new InternalTransferPairScore(int.MinValue, distance, hasTransferEvidence);
+            return new InternalTransferPairScore(
+                Score: int.MinValue,
+                Distance: distance,
+                HasTransferEvidence: hasTransferEvidence,
+                HasCounterpartyConfidence: hasCounterpartyConfidence,
+                DeferredByWeakTimestamp: false,
+                DeferredBySavingsPocket: false,
+                MissingCounterpartyConfidence: false,
+                DecisionReason: "outside_time_window");
         }
 
         if (!hasTransferEvidence)
         {
-            return new InternalTransferPairScore(int.MinValue, distance, HasTransferEvidence: false);
+            return new InternalTransferPairScore(
+                Score: int.MinValue,
+                Distance: distance,
+                HasTransferEvidence: false,
+                HasCounterpartyConfidence: hasCounterpartyConfidence,
+                DeferredByWeakTimestamp: false,
+                DeferredBySavingsPocket: false,
+                MissingCounterpartyConfidence: !hasCounterpartyConfidence,
+                DecisionReason: "no_transfer_evidence");
+        }
+
+        if (hasWeakTimestampPrecision
+            && distance.TotalHours > 2
+            && !hasCounterpartyConfidence)
+        {
+            return new InternalTransferPairScore(
+                Score: int.MinValue,
+                Distance: distance,
+                HasTransferEvidence: hasTransferEvidence,
+                HasCounterpartyConfidence: false,
+                DeferredByWeakTimestamp: true,
+                DeferredBySavingsPocket: false,
+                MissingCounterpartyConfidence: true,
+                DecisionReason: "deferred_weak_timestamp_low_counterparty_confidence");
+        }
+
+        if (involvesSavingsPocketMovement && !hasCounterpartyConfidence)
+        {
+            return new InternalTransferPairScore(
+                Score: int.MinValue,
+                Distance: distance,
+                HasTransferEvidence: hasTransferEvidence,
+                HasCounterpartyConfidence: false,
+                DeferredByWeakTimestamp: false,
+                DeferredBySavingsPocket: true,
+                MissingCounterpartyConfidence: true,
+                DecisionReason: "deferred_savings_pocket_low_counterparty_confidence");
         }
 
         var score = 0;
-        if (distance.TotalHours <= 2)
+        if (distance.TotalHours <= 1)
         {
             score += 5;
         }
-        else if (distance.TotalHours <= 12)
+        else if (distance.TotalHours <= 3)
         {
             score += 4;
         }
-        else if (distance.TotalHours <= 24)
+        else if (distance.TotalHours <= 8)
         {
             score += 3;
         }
-        else
+        else if (distance.TotalHours <= 18)
         {
             score += 2;
+        }
+        else if (distance.TotalHours <= 36)
+        {
+            score += 1;
+        }
+        else
+        {
+            score += 0;
         }
 
         if (hasTransferHint)
         {
-            score += 2;
+            score += 1;
         }
 
         if (hasCounterpartyAccountHint)
         {
-            score += 2;
+            score += 3;
+        }
+
+        if (hasCounterpartyNameHint)
+        {
+            score += 3;
         }
 
         if (hasSharedTransferToken)
@@ -2782,16 +2936,39 @@ public sealed class BankSyncService(
             score += 1;
         }
 
-        return new InternalTransferPairScore(score, distance, hasTransferEvidence);
+        if (hasWeakTimestampPrecision && !hasCounterpartyConfidence)
+        {
+            score -= 2;
+        }
+
+        if (involvesSavingsPocketMovement)
+        {
+            score -= 2;
+        }
+
+        if (!hasCounterpartyConfidence)
+        {
+            score -= 1;
+        }
+
+        return new InternalTransferPairScore(
+            Score: score,
+            Distance: distance,
+            HasTransferEvidence: hasTransferEvidence,
+            HasCounterpartyConfidence: hasCounterpartyConfidence,
+            DeferredByWeakTimestamp: false,
+            DeferredBySavingsPocket: false,
+            MissingCounterpartyConfidence: !hasCounterpartyConfidence,
+            DecisionReason: "scored");
     }
 
     private static bool DescriptionContainsCounterpartyAccountHint(
         string description,
         Guid counterpartyFinancialAccountId,
-        IReadOnlyDictionary<Guid, HashSet<string>> accountHintTokensByFinancialAccountId)
+        IReadOnlyDictionary<Guid, InternalTransferAccountMatchProfile> accountProfilesByFinancialAccountId)
     {
-        if (!accountHintTokensByFinancialAccountId.TryGetValue(counterpartyFinancialAccountId, out var hintTokens)
-            || hintTokens.Count == 0)
+        if (!accountProfilesByFinancialAccountId.TryGetValue(counterpartyFinancialAccountId, out var accountProfile)
+            || accountProfile.HintTokens.Count == 0)
         {
             return false;
         }
@@ -2804,7 +2981,7 @@ public sealed class BankSyncService(
 
         foreach (var token in descriptionTokens)
         {
-            if (hintTokens.Contains(token))
+            if (accountProfile.HintTokens.Contains(token))
             {
                 return true;
             }
@@ -2838,6 +3015,32 @@ public sealed class BankSyncService(
         return false;
     }
 
+    private static bool HasStrongCounterpartyNameHint(string? leftDescription, string? rightDescription)
+    {
+        var leftTokens = ExtractCounterpartyNameTokens(leftDescription);
+        if (leftTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var rightTokens = ExtractCounterpartyNameTokens(rightDescription);
+        if (rightTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var overlap = 0;
+        foreach (var token in leftTokens)
+        {
+            if (rightTokens.Contains(token))
+            {
+                overlap++;
+            }
+        }
+
+        return overlap >= 2;
+    }
+
     private static HashSet<string> TokenizeTransferDescription(string? description)
     {
         if (string.IsNullOrWhiteSpace(description))
@@ -2852,6 +3055,33 @@ public sealed class BankSyncService(
             .Where(token => token.Length >= 3)
             .Where(token => token is not "the" and not "and" and not "from" and not "into")
             .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ExtractCounterpartyNameTokens(string? description)
+    {
+        var tokens = TokenizeTransferDescription(description);
+        tokens.RemoveWhere(token =>
+            token.Length < 4
+            || InternalTransferGenericNoiseTokens.Contains(token)
+            || token.All(char.IsDigit));
+        return tokens;
+    }
+
+    private static bool IsWeakTimestampForMatching(
+        Transaction transaction,
+        IReadOnlyDictionary<Guid, InternalTransferAccountMatchProfile> accountProfilesByFinancialAccountId)
+    {
+        if (!accountProfilesByFinancialAccountId.TryGetValue(transaction.FinancialAccountId, out var profile))
+        {
+            return false;
+        }
+
+        if (profile.TimestampPrecision != ProviderTimestampPrecisionMode.DateOnlyOrMixed)
+        {
+            return false;
+        }
+
+        return transaction.BookedAtUtc.TimeOfDay == TimeSpan.Zero;
     }
 
     private static HashSet<string> BuildInternalTransferAccountHintTokens(
@@ -2894,18 +3124,50 @@ public sealed class BankSyncService(
             || normalized.Contains("top up", StringComparison.Ordinal)
             || normalized.Contains("top-up", StringComparison.Ordinal)
             || normalized.Contains("card payment", StringComparison.Ordinal)
-            || normalized.Contains("cash fund", StringComparison.Ordinal)
-            || normalized.Contains("vault", StringComparison.Ordinal)
-            || normalized.Contains("saving", StringComparison.Ordinal)
             || normalized.Contains("move money", StringComparison.Ordinal)
             || normalized.Contains("bank to bank", StringComparison.Ordinal)
             || normalized.Contains("internal", StringComparison.Ordinal);
     }
 
+    private static bool LooksLikeSavingsPocketMovementDescription(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return false;
+        }
+
+        var normalized = description.ToLowerInvariant();
+        return normalized.Contains("pocket", StringComparison.Ordinal)
+            || normalized.Contains("vault", StringComparison.Ordinal)
+            || normalized.Contains("cash fund", StringComparison.Ordinal)
+            || normalized.Contains("flexible cash", StringComparison.Ordinal)
+            || normalized.Contains("savings pot", StringComparison.Ordinal)
+            || normalized.Contains("spare change", StringComparison.Ordinal)
+            || normalized.Contains("round up", StringComparison.Ordinal)
+            || normalized.Contains("round-up", StringComparison.Ordinal);
+    }
+
     private readonly record struct InternalTransferPairScore(
         int Score,
         TimeSpan Distance,
-        bool HasTransferEvidence);
+        bool HasTransferEvidence,
+        bool HasCounterpartyConfidence,
+        bool DeferredByWeakTimestamp,
+        bool DeferredBySavingsPocket,
+        bool MissingCounterpartyConfidence,
+        string DecisionReason);
+
+    private sealed class InternalTransferAccountMatchProfile(
+        HashSet<string> hintTokens,
+        ProviderTimestampPrecisionMode timestampPrecision,
+        string providerKey,
+        string providerFamily)
+    {
+        public HashSet<string> HintTokens { get; } = hintTokens;
+        public ProviderTimestampPrecisionMode TimestampPrecision { get; set; } = timestampPrecision;
+        public string ProviderKey { get; } = providerKey;
+        public string ProviderFamily { get; } = providerFamily;
+    }
 
     private static void ApplyLinkedInternalTransferPair(Transaction debit, Transaction credit, DateTime now)
     {
@@ -3071,11 +3333,39 @@ public sealed class BankSyncService(
         OpenBankingConnection connection,
         TrueLayerAccountRecord providerAccount)
     {
+        var providerLabel = NormalizeLabel(providerAccount.ProviderDisplayName ?? connection.ProviderDisplayName);
         var candidate = NormalizeLabel(providerAccount.DisplayName);
         if (!string.IsNullOrWhiteSpace(candidate)
-            && !LooksLikeConnectedIdentity(candidate, connection.IdentityInfo?.FullName))
+            && LooksLikeConnectedIdentity(candidate, connection.IdentityInfo?.FullName))
         {
-            return candidate;
+            candidate = null;
+        }
+
+        var accountCore = !string.IsNullOrWhiteSpace(candidate)
+            ? candidate
+            : ResolveFriendlyAccountType(providerAccount.AccountSubType ?? providerAccount.AccountType);
+        var maskedHint = ExtractMaskedAccountHint(providerAccount.AccountNumberMetadataJson);
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(providerLabel))
+        {
+            parts.Add(providerLabel);
+        }
+
+        if (!string.IsNullOrWhiteSpace(accountCore)
+            && !EqualsNormalizedLabel(providerLabel, accountCore))
+        {
+            parts.Add(accountCore);
+        }
+
+        if (!string.IsNullOrWhiteSpace(maskedHint))
+        {
+            parts.Add($"••{maskedHint}");
+        }
+
+        if (parts.Count > 0)
+        {
+            return string.Join(" • ", parts);
         }
 
         return BuildAccountFallbackLabel(providerAccount.Currency, providerAccount.AccountType);
@@ -3088,6 +3378,15 @@ public sealed class BankSyncService(
             : currency.Trim().ToUpperInvariant();
         var friendlyType = ResolveFriendlyAccountType(accountType);
         return $"{resolvedCurrency} {friendlyType}";
+    }
+
+    private static bool EqualsNormalizedLabel(string? left, string? right)
+    {
+        var normalizedLeft = NormalizeLabel(left)?.ToLowerInvariant();
+        var normalizedRight = NormalizeLabel(right)?.ToLowerInvariant();
+        return !string.IsNullOrWhiteSpace(normalizedLeft)
+            && !string.IsNullOrWhiteSpace(normalizedRight)
+            && string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal);
     }
 
     private static string ResolveFriendlyAccountType(string? accountType)
@@ -3114,6 +3413,108 @@ public sealed class BankSyncService(
 
         var normalized = string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static string? ExtractMaskedAccountHint(string? accountNumberMetadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(accountNumberMetadataJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(accountNumberMetadataJson);
+            var root = document.RootElement;
+
+            string?[] directCandidates =
+            [
+                TryGetJsonString(root, "iban"),
+                TryGetJsonString(root, "number"),
+                TryGetJsonString(root, "pan"),
+                TryGetJsonString(root, "masked_pan")
+            ];
+
+            foreach (var candidate in directCandidates)
+            {
+                var normalized = ExtractMaskedHintFromValue(candidate);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    return normalized;
+                }
+            }
+
+            if (TryGetJsonProperty(root, "account_number", out var accountNumberNode))
+            {
+                var fromAccountNumber = ExtractMaskedHintFromValue(TryGetJsonString(accountNumberNode, "number"));
+                if (!string.IsNullOrWhiteSpace(fromAccountNumber))
+                {
+                    return fromAccountNumber;
+                }
+            }
+
+            if (TryGetJsonProperty(root, "sort_code_account_number", out var sortCodeNode))
+            {
+                var fromSortCode = ExtractMaskedHintFromValue(TryGetJsonString(sortCodeNode, "account_number"));
+                if (!string.IsNullOrWhiteSpace(fromSortCode))
+                {
+                    return fromSortCode;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static bool TryGetJsonProperty(JsonElement element, string propertyName, out JsonElement propertyValue)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(propertyName, out propertyValue))
+        {
+            return true;
+        }
+
+        propertyValue = default;
+        return false;
+    }
+
+    private static string? TryGetJsonString(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.String)
+        {
+            return property.GetString();
+        }
+
+        if (property.ValueKind == JsonValueKind.Number)
+        {
+            return property.ToString();
+        }
+
+        return null;
+    }
+
+    private static string? ExtractMaskedHintFromValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var alphanumeric = new string(value.Where(char.IsLetterOrDigit).ToArray());
+        if (alphanumeric.Length < 4)
+        {
+            return null;
+        }
+
+        return alphanumeric[^4..].ToUpperInvariant();
     }
 
     private static bool LooksLikeConnectedIdentity(string accountLabel, string? connectedFullName)

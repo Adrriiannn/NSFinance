@@ -20,6 +20,7 @@ This folder is organized by canonical topic. Each topic has one primary source o
 - Open Banking (TrueLayer): `features/banking-truelayer.md`
 - Banking sync provider audit: `features/banking-sync-provider-audit.md`
 - Banking sync architecture cleanup: `features/banking-sync-architecture-cleanup.md`
+- Banking scope productization: `features/banking-scope-productization.md`
 - Expense plans and community publishing: `features/expense-plans.md`
 
 ## Testing

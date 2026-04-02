@@ -113,6 +113,43 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task CallbackFlow_DoesNotMislinkSavingsPocketTransfer_WhenCrossBankCounterpartyMatchExists()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: CrossBankTransferWithSavingsPocketFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.transfer-pocket-guard@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-transfer-pocket-guard", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+
+        var transactions = await harness.DbContext.Transactions
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        Assert.Equal(3, transactions.Count);
+
+        var debitToMarius = transactions.Single(x => x.Description.Contains("To Marius Albu", StringComparison.OrdinalIgnoreCase));
+        var debitToPocket = transactions.Single(x => x.Description.Contains("Flexible Cash Funds", StringComparison.OrdinalIgnoreCase));
+        var aibIncoming = transactions.Single(x => x.Description.Contains("ALBU MARIUS", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(aibIncoming.Id, debitToMarius.LinkedTransferTransactionId);
+        Assert.Equal(debitToMarius.Id, aibIncoming.LinkedTransferTransactionId);
+        Assert.Equal(TransactionTransferKind.LinkedInternal, debitToMarius.TransferKind);
+        Assert.Equal(TransactionTransferKind.LinkedInternal, aibIncoming.TransferKind);
+
+        Assert.Null(debitToPocket.LinkedTransferTransactionId);
+        Assert.NotEqual(TransactionTransferKind.LinkedInternal, debitToPocket.TransferKind);
+    }
+
+    [Fact]
     public async Task CallbackFlow_PersistsPendingRawTransactionsWithoutProjectingIntoLedger()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -1626,6 +1663,145 @@ public class OpenBankingIntegrationTests
                           "timestamp":"2026-03-20T13:00:00Z",
                           "description":"AIB 85701",
                           "transaction_type":"CREDIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler CrossBankTransferWithSavingsPocketFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-transfer-pocket-guard",
+                      "refresh_token":"refresh-token-transfer-pocket-guard",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-pocket-001",
+                          "display_name": "AIB Current",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-aib",
+                            "display_name": "AIB"
+                          }
+                        },
+                        {
+                          "account_id": "acc-revolut-pocket-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-pocket-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 901.00,
+                          "current": 901.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-01T00:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-pocket-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1099.00,
+                          "current": 1099.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-01T09:10:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-pocket-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-aib-pocket-in-001",
+                          "normalised_provider_transaction_id":"norm-aib-pocket-in-001",
+                          "amount":1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-01",
+                          "description":"ALBU MARIUS IE260401",
+                          "transaction_type":"CREDIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-pocket-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-revolut-main-out-001",
+                          "normalised_provider_transaction_id":"norm-revolut-main-out-001",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-01T09:07:00Z",
+                          "description":"To Marius Albu",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-pocket-out-001",
+                          "normalised_provider_transaction_id":"norm-revolut-pocket-out-001",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-31T21:37:00Z",
+                          "description":"To Flexible Cash Funds",
+                          "transaction_type":"TRANSFER",
                           "status":"booked"
                         }
                       ]

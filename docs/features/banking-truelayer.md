@@ -190,6 +190,10 @@ NSFinance distinguishes true economic activity from money moved between a userâ€
 
 - `Transfer` remains a visible taxonomy domain/category that users can assign manually.
 - Sync applies linked-account internal transfer matching using same-user, opposite-sign, same amount/currency, timing tolerance, and transfer-hint signals.
+- Matching now uses provider-aware confidence weighting:
+  - weaker provider timestamp precision (`date-only`/midnight rows) is treated as lower-confidence for auto-linking
+  - savings-pocket descriptors (`round up`, `pocket`, `vault`, `cash fund`) are deferred unless strong counterparty confidence exists
+  - counterparty account hints and strong name-token overlap increase confidence
 - Matched pairs persist explicit linkage (`LinkedTransferTransactionId`) and transfer semantics (`TransferKind = linked_internal_transfer`) on both sides.
 - Editing transfer taxonomy on one side of a verified linked pair propagates transfer taxonomy to the counterpart so both sides stay transfer-coherent.
 - Manual transfer categorization sets `TransferKind = manual_transfer` without requiring a matched counterpart.
