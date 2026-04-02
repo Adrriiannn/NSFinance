@@ -46,6 +46,36 @@ public class SessionServiceTests
         Assert.True(new[] { "session_revoked", "refresh_token_reused" }.Contains(refreshed.Error?.Code));
     }
 
+    [Fact]
+    public async Task CreateSessionAsync_ReusesExistingSession_ForSameDevice()
+    {
+        await using var dbContext = CreateDbContext();
+        var user = SeedUser(dbContext);
+        var service = CreateSessionService(dbContext);
+        var deviceContext = new DeviceContextDto("device-a", "Test Device", "ios", "18", "1.0.0");
+
+        var first = await service.CreateSessionAsync(user, deviceContext, CancellationToken.None);
+        var second = await service.CreateSessionAsync(user, deviceContext, CancellationToken.None);
+
+        Assert.Equal(first.SessionId, second.SessionId);
+
+        var now = DateTime.UtcNow;
+        var activeSessions = await dbContext.Sessions
+            .Where(x => x.UserId == user.Id && x.RevokedUtc == null && x.ExpiresUtc > now)
+            .ToListAsync();
+        Assert.Single(activeSessions);
+
+        var tokens = await dbContext.SessionRefreshTokens
+            .Where(x => x.SessionId == first.SessionId)
+            .OrderBy(x => x.CreatedUtc)
+            .ToListAsync();
+
+        Assert.Equal(2, tokens.Count);
+        Assert.NotNull(tokens[0].RevokedUtc);
+        Assert.Equal("session_reissued", tokens[0].RevocationReason);
+        Assert.Null(tokens[1].RevokedUtc);
+    }
+
     private static SessionService CreateSessionService(AppDbContext dbContext)
     {
         var jwtOptions = Options.Create(new JwtOptions

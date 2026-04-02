@@ -1,5 +1,4 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, type AppStateStatus } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import {
   getCurrentUser,
@@ -16,7 +15,6 @@ import type { AuthTokenResponse, UserProfileDto } from "../types/api";
 import { queryClient } from "./QueryProvider";
 
 const SESSION_KEY = "nsfinance.auth.session";
-const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
 
 type StoredSession = {
   accessToken: string;
@@ -54,8 +52,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const accessTokenRef = useRef<string | null>(null);
   const sessionRef = useRef<StoredSession | null>(null);
   const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
-  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const backgroundedAtRef = useRef<number | null>(null);
   const logoutPromiseRef = useRef<Promise<void> | null>(null);
 
   const logAuthDebug = useCallback((event: string, details?: Record<string, unknown>) => {
@@ -69,13 +65,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     console.info(`[Auth] ${event}`, details);
-  }, []);
-
-  const stopInactivityTimer = useCallback(() => {
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
-      inactivityTimerRef.current = null;
-    }
   }, []);
 
   const clearSessionStorage = useCallback(async () => {
@@ -109,8 +98,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
           reason: reason ?? ""
         });
         resetGoogleOAuthFlowState("logout");
-
-        stopInactivityTimer();
         refreshPromiseRef.current = null;
 
         const hadSession = Boolean(accessTokenRef.current);
@@ -151,24 +138,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       await logoutPromiseRef.current;
     },
-    [clearSessionStorage, logAuthDebug, stopInactivityTimer]
+    [clearSessionStorage, logAuthDebug]
   );
 
-  const startInactivityTimer = useCallback(() => {
-    stopInactivityTimer();
-
-    inactivityTimerRef.current = setTimeout(() => {
-      void logout("Session expired due to inactivity.");
-    }, INACTIVITY_TIMEOUT_MS);
-  }, [logout, stopInactivityTimer]);
-
   const notifyUserInteraction = useCallback(() => {
-    if (!accessTokenRef.current) {
-      return;
-    }
-
-    startInactivityTimer();
-  }, [startInactivityTimer]);
+    // Device-bound sessions are persistent until manual logout/revocation.
+    // Keep this method as a no-op for UI hooks that still call it.
+  }, []);
 
   const applyAuthTokenResponse = useCallback(
     async (response: AuthTokenResponse) => {
@@ -187,9 +163,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setApiTokenResolver(() => accessTokenRef.current);
       setSessionMessage(null);
       await persistSession(nextSession);
-      startInactivityTimer();
     },
-    [persistSession, startInactivityTimer]
+    [persistSession]
   );
 
   const refreshSessionUser = useCallback(async () => {
@@ -309,7 +284,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         sessionRef.current = nextSession;
         setSession(nextSession);
         await persistSession(nextSession);
-        startInactivityTimer();
       } catch {
         await clearSessionStorage();
         accessTokenRef.current = null;
@@ -321,47 +295,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
 
     void bootstrap();
-  }, [clearSessionStorage, persistSession, refreshAccessToken, startInactivityTimer]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener(
-      "change",
-      (nextState: AppStateStatus) => {
-        if (!accessTokenRef.current) {
-          return;
-        }
-
-        if (nextState === "active") {
-          const backgroundedAt = backgroundedAtRef.current;
-          backgroundedAtRef.current = null;
-
-          if (backgroundedAt && Date.now() - backgroundedAt >= INACTIVITY_TIMEOUT_MS) {
-            void logout("Session expired due to inactivity.");
-            return;
-          }
-
-          startInactivityTimer();
-          return;
-        }
-
-        if (nextState === "background" || nextState === "inactive") {
-          backgroundedAtRef.current = Date.now();
-          stopInactivityTimer();
-        }
-      }
-    );
-
-    return () => subscription.remove();
-  }, [logout, startInactivityTimer, stopInactivityTimer]);
-
-  useEffect(() => {
-    if (!session) {
-      stopInactivityTimer();
-      return;
-    }
-
-    startInactivityTimer();
-  }, [session, startInactivityTimer, stopInactivityTimer]);
+  }, [clearSessionStorage, persistSession, refreshAccessToken]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

@@ -14,7 +14,10 @@ export function Snackbar({ message, tone = "info" }: SnackbarProps) {
 
   return (
     <View style={[feedbackPresets.snackbar, snackbarTonePresets[tone]]}>
-      <AppText preset="caption" style={{ color: palette.textPrimary, fontWeight: "500" }}>
+      <AppText
+        preset="caption"
+        style={{ color: palette.textPrimary, fontWeight: "500", textAlign: "center" }}
+      >
         {message}
       </AppText>
     </View>

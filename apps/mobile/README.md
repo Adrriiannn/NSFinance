@@ -13,7 +13,7 @@ Expo Router + TypeScript mobile client for NSFinance.
 - centralized API client (`src/lib/api/*`)
 - React Query data hooks + mutation invalidation + optimistic cache reconciliation
 - pull-to-refresh and reliable loading/error/empty states
-- inactivity logout after 10 minutes
+- persistent device-bound sessions (no idle auto-logout)
 - premium floating tab bar and polished fintech UI primitives
 - planner foundation:
   - month-over-month comparison

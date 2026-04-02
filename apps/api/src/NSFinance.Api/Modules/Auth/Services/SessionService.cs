@@ -25,23 +25,53 @@ public sealed class SessionService(
     {
         var now = DateTime.UtcNow;
         var device = await ResolveDeviceAsync(user.Id, deviceContext, now, cancellationToken);
+        var session = await ResolveReusableSessionAsync(user.Id, device?.Id, now, cancellationToken);
         var familyId = Guid.NewGuid();
 
-        var session = new Session
+        if (session is null)
         {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            DeviceId = device?.Id,
-            CreatedUtc = now,
-            LastSeenUtc = now,
-            ExpiresUtc = now.AddDays(_options.RefreshTokenDays),
-            DeviceLabel = BuildBestEffortDeviceLabel(device?.DeviceLabel, deviceContext, requestContext.Platform),
-            Platform = deviceContext?.Platform ?? requestContext.Platform,
-            OsVersion = deviceContext?.OsVersion,
-            AppVersion = deviceContext?.AppVersion ?? requestContext.AppVersion,
-            IpAddress = requestContext.IpAddress,
-            RefreshTokenFamilyId = familyId
-        };
+            session = new Session
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                DeviceId = device?.Id,
+                CreatedUtc = now,
+                LastSeenUtc = now,
+                ExpiresUtc = now.AddDays(_options.RefreshTokenDays),
+                DeviceLabel = BuildBestEffortDeviceLabel(device?.DeviceLabel, deviceContext, requestContext.Platform),
+                Platform = deviceContext?.Platform ?? requestContext.Platform,
+                OsVersion = deviceContext?.OsVersion,
+                AppVersion = deviceContext?.AppVersion ?? requestContext.AppVersion,
+                IpAddress = requestContext.IpAddress,
+                RefreshTokenFamilyId = familyId
+            };
+
+            dbContext.Sessions.Add(session);
+        }
+        else
+        {
+            session.LastSeenUtc = now;
+            session.ExpiresUtc = now.AddDays(_options.RefreshTokenDays);
+            session.DeviceId = device?.Id ?? session.DeviceId;
+            session.DeviceLabel = BuildBestEffortDeviceLabel(device?.DeviceLabel, deviceContext, session.Platform);
+            session.Platform = deviceContext?.Platform ?? session.Platform ?? requestContext.Platform;
+            session.OsVersion = deviceContext?.OsVersion ?? session.OsVersion;
+            session.AppVersion = deviceContext?.AppVersion ?? session.AppVersion ?? requestContext.AppVersion;
+            session.IpAddress = requestContext.IpAddress;
+            session.RevokedUtc = null;
+            session.RevocationReason = null;
+            session.RefreshTokenFamilyId = familyId;
+
+            var activeRefreshTokens = await dbContext.SessionRefreshTokens
+                .Where(x => x.SessionId == session.Id && x.RevokedUtc == null)
+                .ToListAsync(cancellationToken);
+
+            foreach (var existingToken in activeRefreshTokens)
+            {
+                existingToken.RevokedUtc = now;
+                existingToken.RevocationReason = "session_reissued";
+            }
+        }
 
         var refreshToken = tokenSecretService.CreateToken();
         var refreshEntity = new SessionRefreshToken
@@ -54,9 +84,7 @@ public sealed class SessionService(
             ExpiresUtc = now.AddDays(_options.RefreshTokenDays)
         };
 
-        session.RefreshTokens.Add(refreshEntity);
-
-        dbContext.Sessions.Add(session);
+        dbContext.SessionRefreshTokens.Add(refreshEntity);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var (accessToken, accessTokenExpiresAtUtc) = jwtTokenService.CreateAccessToken(user, session.Id);
@@ -211,6 +239,50 @@ public sealed class SessionService(
         return sessions.Count;
     }
 
+    private async Task<Session?> ResolveReusableSessionAsync(
+        Guid userId,
+        Guid? deviceId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (!deviceId.HasValue)
+        {
+            return null;
+        }
+
+        var activeDeviceSessions = await dbContext.Sessions
+            .Where(x =>
+                x.UserId == userId
+                && x.DeviceId == deviceId.Value
+                && x.RevokedUtc == null
+                && x.ExpiresUtc > now)
+            .OrderByDescending(x => x.LastSeenUtc)
+            .ToListAsync(cancellationToken);
+
+        if (activeDeviceSessions.Count <= 1)
+        {
+            return activeDeviceSessions.FirstOrDefault();
+        }
+
+        var primarySession = activeDeviceSessions[0];
+        foreach (var duplicateSession in activeDeviceSessions.Skip(1))
+        {
+            await RevokeSessionEntityAsync(
+                duplicateSession,
+                "superseded_by_device_session",
+                cancellationToken,
+                saveImmediately: false);
+        }
+
+        logger.LogInformation(
+            "Consolidated duplicate active sessions for user {UserId} and device {DeviceId}. Primary session {SessionId} kept.",
+            userId,
+            deviceId,
+            primarySession.Id);
+
+        return primarySession;
+    }
+
     public async Task RevokeAllSessionsForUserAsync(
         Guid userId,
         string reason,
@@ -294,7 +366,7 @@ public sealed class SessionService(
                 Id = Guid.NewGuid(),
                 UserId = userId,
                 DeviceFingerprint = fingerprint,
-            DeviceLabel = NormalizeDeviceLabel(deviceContext?.DeviceLabel),
+                DeviceLabel = NormalizeDeviceLabel(deviceContext?.DeviceLabel),
                 Platform = NormalizeNullable(deviceContext?.Platform),
                 OsVersion = NormalizeNullable(deviceContext?.OsVersion),
                 AppVersion = NormalizeNullable(deviceContext?.AppVersion),

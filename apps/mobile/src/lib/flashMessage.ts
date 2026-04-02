@@ -15,7 +15,7 @@ export type FlashMessageOptions = {
 };
 
 const listeners = new Set<FlashMessageListener>();
-let pendingPayload: FlashMessagePayload | null = null;
+const pendingPayloads: FlashMessagePayload[] = [];
 
 export function showFlashMessage(message: string, options?: number | FlashMessageOptions) {
   const normalizedOptions =
@@ -31,7 +31,7 @@ export function showFlashMessage(message: string, options?: number | FlashMessag
   };
 
   if (!listeners.size) {
-    pendingPayload = payload;
+    pendingPayloads.push(payload);
     return;
   }
 
@@ -41,9 +41,8 @@ export function showFlashMessage(message: string, options?: number | FlashMessag
 export function subscribeToFlashMessages(listener: FlashMessageListener) {
   listeners.add(listener);
 
-  if (pendingPayload) {
-    listener(pendingPayload);
-    pendingPayload = null;
+  if (pendingPayloads.length > 0) {
+    pendingPayloads.splice(0).forEach((payload) => listener(payload));
   }
 
   return () => {

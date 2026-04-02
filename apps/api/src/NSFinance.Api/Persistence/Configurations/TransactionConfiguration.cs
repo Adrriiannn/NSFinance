@@ -22,6 +22,8 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
         builder.Property(x => x.TransferMatchConfidenceScore);
         builder.Property(x => x.TransferMatchConfidenceTier).HasMaxLength(24);
         builder.Property(x => x.TransferMatchReason).HasMaxLength(240);
+        builder.Property(x => x.DeterministicEnrichmentVersion);
+        builder.Property(x => x.LastDeterministicEnrichedUtc);
         builder.Property(x => x.BookedAtUtc).IsRequired();
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.MetadataUpdatedUtc);
@@ -31,6 +33,7 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
         builder.HasIndex(x => x.TransferKind);
         builder.HasIndex(x => x.LinkedTransferTransactionId);
         builder.HasIndex(x => x.TransferMatchConfidenceTier);
+        builder.HasIndex(x => x.DeterministicEnrichmentVersion);
 
         builder.HasOne(x => x.FinancialAccount)
             .WithMany(x => x.Transactions)

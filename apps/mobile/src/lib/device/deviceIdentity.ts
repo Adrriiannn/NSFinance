@@ -59,11 +59,45 @@ function resolveDeviceLabel() {
   return "Unknown device";
 }
 
-export function buildDeviceContext(): DeviceContextDto {
-  return {
-    deviceLabel: resolveDeviceLabel(),
-    platform: Platform.OS,
-    osVersion: normalizeValue(Device.osVersion)
-  };
+function hashSeed(input: string) {
+  let hash = 5381;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) + hash) + input.charCodeAt(i);
+    hash |= 0;
+  }
+
+  return Math.abs(hash).toString(36);
 }
 
+function resolveDeviceFingerprint() {
+  const seedParts = [
+    normalizeValue(Device.osBuildId),
+    normalizeValue(Device.osInternalBuildId),
+    normalizeValue(Device.osBuildFingerprint),
+    normalizeValue(Device.modelId),
+    normalizeValue(Device.modelName),
+    normalizeValue(Device.manufacturer),
+    normalizeValue(Device.brand),
+    normalizeValue(Device.productName),
+    normalizeValue(Device.designName),
+    normalizeValue(Device.deviceName),
+    normalizeValue(Device.osVersion),
+    Platform.OS
+  ].filter((part): part is string => Boolean(part));
+
+  if (seedParts.length === 0) {
+    return `${Platform.OS}:unknown-device`;
+  }
+
+  return `${Platform.OS}:${hashSeed(seedParts.join("|"))}`;
+}
+
+export function buildDeviceContext(): DeviceContextDto {
+  return {
+    deviceFingerprint: resolveDeviceFingerprint(),
+    deviceLabel: resolveDeviceLabel(),
+    platform: Platform.OS,
+    osVersion: normalizeValue(Device.osVersion),
+    appVersion: process.env.EXPO_PUBLIC_APP_VERSION?.trim() || null
+  };
+}

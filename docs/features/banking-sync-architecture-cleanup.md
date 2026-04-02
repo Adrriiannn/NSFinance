@@ -96,6 +96,29 @@ The sync logs now expose both core and policy truth:
 
 This makes provider-side limitation vs app-side pipeline issue easier to distinguish.
 
+## Deterministic enrichment pipeline (initial vs incremental)
+
+Deterministic transfer/savings enrichment now runs as a dedicated staged pass after import/projection:
+
+- `incremental_recent` pass:
+  - re-evaluates a bounded recent window for newly imported or version-stale rows
+  - marks rows with `DeterministicEnrichmentVersion` + `LastDeterministicEnrichedUtc`
+- `historical_backfill_batch` pass:
+  - processes older history in bounded batches (row-count limited)
+  - advances a persisted checkpoint so progress is resumable across sync runs
+- `historical_caught_up` terminal state:
+  - marks historical deterministic enrichment complete for the current version
+
+Connection-level persisted state:
+
+- `HistoricalEnrichmentStartedUtc`
+- `HistoricalEnrichmentCompletedUtc`
+- `HistoricalEnrichmentCheckpointUtc`
+- `HistoricalEnrichmentVersion`
+- `NeedsHistoricalReclassification`
+
+This keeps manual/global sync responsive while still guaranteeing full imported history is eventually normalized under deterministic rules.
+
 ## Remaining provider-truth limits
 
 - provider-returned history remains upstream-constrained; NSFinance cannot synthesize inaccessible rows

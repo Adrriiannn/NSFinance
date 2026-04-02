@@ -34,7 +34,7 @@ export function TransactionRow({
   showTimestamp = false,
   rowStyle
 }: TransactionRowProps) {
-  const { palette } = useThemeTokens();
+  const { palette, surfaces } = useThemeTokens();
   const rowPresets = useRowPresets();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(10)).current;
@@ -76,10 +76,10 @@ export function TransactionRow({
         disabled={!onPress && !onLongPress}
         style={({ pressed }) => [
           rowPresets.container,
+          { backgroundColor: surfaces.field },
           isSavingsMovement
             ? {
-                borderColor: "rgba(90, 186, 226, 0.55)",
-                backgroundColor: "rgba(64, 118, 142, 0.18)"
+                borderColor: "rgba(90, 186, 226, 0.35)"
               }
             : null,
           rowStyle,
@@ -92,7 +92,7 @@ export function TransactionRow({
             {
               backgroundColor:
                 isSavingsMovement
-                  ? "rgba(90, 186, 226, 0.26)"
+                  ? "rgba(90, 186, 226, 0.18)"
                   : transaction.direction === "Expense"
                   ? "rgba(226, 90, 90, 0.26)"
                   : "rgba(29, 186, 114, 0.22)"
@@ -131,24 +131,19 @@ export function TransactionRow({
 
 function resolveRelationshipBadge(transaction: TransactionDto): string | null {
   if (
-    transaction.relationshipType === "savings_roundup"
-    || transaction.transferKind === "savings_roundup"
-  ) {
-    return "Savings round-up";
-  }
-
-  if (
     transaction.relationshipType === "savings_manual_deposit"
     || transaction.relationshipType === "savings_manual_withdrawal"
     || transaction.transferKind === "savings_manual_deposit"
     || transaction.transferKind === "savings_manual_withdrawal"
   ) {
-    const destination = transaction.relationshipVirtualDestinationLabel;
-    return destination ? `Savings move - ${destination}` : "Savings move";
+    return null;
   }
 
-  if (transaction.relationshipType === "internal_account_transfer") {
-    return "Linked internal transfer";
+  if (
+    transaction.relationshipType === "savings_roundup"
+    || transaction.transferKind === "savings_roundup"
+  ) {
+    return null;
   }
 
   return null;

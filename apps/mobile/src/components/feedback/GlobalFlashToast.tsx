@@ -5,6 +5,9 @@ import { subscribeToFlashMessages, type FlashMessagePayload } from "../../lib/fl
 import { spacing, zIndex, createRuntimeStyleSheet } from "../../theme/tokens";
 import { Snackbar } from "../ui/feedback/Snackbar";
 
+const DEFAULT_TOAST_DURATION_MS = 2400;
+const TOAST_QUEUE_GAP_MS = 500;
+
 export function GlobalFlashToast() {
   const insets = useSafeAreaInsets();
   const [payload, setPayload] = useState<FlashMessagePayload | null>(null);
@@ -12,67 +15,97 @@ export function GlobalFlashToast() {
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastShadowProgress = useRef(new Animated.Value(0)).current;
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueRef = useRef<FlashMessagePayload[]>([]);
+  const isRunningRef = useRef(false);
   const toastTopOffset = insets.top + 40;
+
+  const clearTimers = () => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+
+    if (gapTimerRef.current) {
+      clearTimeout(gapTimerRef.current);
+      gapTimerRef.current = null;
+    }
+  };
+
+  const runQueue = () => {
+    if (isRunningRef.current) {
+      return;
+    }
+
+    const nextPayload = queueRef.current.shift();
+    if (!nextPayload) {
+      setPayload(null);
+      return;
+    }
+
+    isRunningRef.current = true;
+    setPayload(nextPayload);
+    toastTranslateY.setValue(-60);
+    toastOpacity.setValue(0);
+    toastShadowProgress.setValue(0);
+
+    Animated.parallel([
+      Animated.timing(toastTranslateY, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: false
+      }),
+      Animated.timing(toastOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: false
+      }),
+      Animated.timing(toastShadowProgress, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: false
+      })
+    ]).start(() => {
+      hideTimerRef.current = setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(toastTranslateY, {
+            toValue: -60,
+            duration: 180,
+            useNativeDriver: false
+          }),
+          Animated.timing(toastOpacity, {
+            toValue: 0,
+            duration: 180,
+            useNativeDriver: false
+          }),
+          Animated.timing(toastShadowProgress, {
+            toValue: 0,
+            duration: 180,
+            useNativeDriver: false
+          })
+        ]).start(() => {
+          setPayload((current) => (current?.id === nextPayload.id ? null : current));
+          gapTimerRef.current = setTimeout(() => {
+            isRunningRef.current = false;
+            runQueue();
+          }, TOAST_QUEUE_GAP_MS);
+        });
+      }, nextPayload.durationMs ?? DEFAULT_TOAST_DURATION_MS);
+    });
+  };
 
   useEffect(() => {
     return subscribeToFlashMessages((nextPayload) => {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-
-      setPayload(nextPayload);
-      toastTranslateY.setValue(-60);
-      toastOpacity.setValue(0);
-      toastShadowProgress.setValue(0);
-
-      Animated.parallel([
-        Animated.timing(toastTranslateY, {
-          toValue: 0,
-          duration: 180,
-          useNativeDriver: false
-        }),
-        Animated.timing(toastOpacity, {
-          toValue: 1,
-          duration: 180,
-          useNativeDriver: false
-        }),
-        Animated.timing(toastShadowProgress, {
-          toValue: 1,
-          duration: 180,
-          useNativeDriver: false
-        })
-      ]).start(() => {
-        hideTimerRef.current = setTimeout(() => {
-          Animated.parallel([
-            Animated.timing(toastTranslateY, {
-              toValue: -60,
-              duration: 180,
-              useNativeDriver: false
-            }),
-            Animated.timing(toastOpacity, {
-              toValue: 0,
-              duration: 180,
-              useNativeDriver: false
-            }),
-            Animated.timing(toastShadowProgress, {
-              toValue: 0,
-              duration: 180,
-              useNativeDriver: false
-            })
-          ]).start(() => {
-            setPayload((current) => (current?.id === nextPayload.id ? null : current));
-          });
-        }, nextPayload.durationMs ?? 1800);
-      });
+      queueRef.current.push(nextPayload);
+      runQueue();
     });
   }, [toastOpacity, toastShadowProgress, toastTranslateY]);
 
   useEffect(() => {
     return () => {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-      }
+      clearTimers();
+      queueRef.current = [];
+      isRunningRef.current = false;
     };
   }, []);
 

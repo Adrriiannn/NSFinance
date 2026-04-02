@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useMemo } from "react";
 import { Image, Text, View } from "react-native";
 import type { AccountDto } from "../../types/api";
-import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
+import { palette, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../../theme/tokens";
 import { resolveProviderBadge } from "../../features/accounts/providerBranding";
 
 type AccountProviderBadgeProps = {
@@ -14,6 +14,7 @@ type AccountProviderBadgeProps = {
 };
 
 export function AccountProviderBadge({ account, compact = false }: AccountProviderBadgeProps) {
+  const { isDarkTheme } = useThemeTokens();
   const resolved = useMemo(
     () =>
       resolveProviderBadge({
@@ -29,6 +30,9 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
     ? `${resolved.displayName} logo`
     : "Connected bank logo";
   const hasRealArtwork = Boolean(resolved.logoSource);
+  const isRevolutDarkWordmark = Boolean(
+    hasRealArtwork && isDarkTheme && resolved.bankLogoKey === "revolut"
+  );
 
   return (
     <View
@@ -41,11 +45,17 @@ export function AccountProviderBadge({ account, compact = false }: AccountProvid
       ]}
     >
       {resolved.logoSource ? (
-        <Image
-          source={resolved.logoSource}
-          style={[styles.logo, compact ? styles.logoCompact : null]}
-          resizeMode="contain"
-        />
+        <View style={isRevolutDarkWordmark ? styles.revolutLogoGlowWrap : null}>
+          <Image
+            source={resolved.logoSource}
+            style={[
+              styles.logo,
+              compact ? styles.logoCompact : null,
+              isRevolutDarkWordmark ? styles.revolutLogoGlow : null
+            ]}
+            resizeMode="contain"
+          />
+        </View>
       ) : resolved.monogram ? (
         <Text style={[styles.monogram, compact ? styles.monogramCompact : null]}>{resolved.monogram}</Text>
       ) : (
@@ -89,6 +99,19 @@ const styles = createRuntimeStyleSheet(() => ({
   logoCompact: {
     width: 24,
     height: 18
+  },
+  revolutLogoGlowWrap: {
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    paddingHorizontal: 2,
+    paddingVertical: 1
+  },
+  revolutLogoGlow: {
+    shadowColor: "#FFFFFF",
+    shadowOpacity: 0.38,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 1
   },
   monogram: {
     color: palette.textPrimary,

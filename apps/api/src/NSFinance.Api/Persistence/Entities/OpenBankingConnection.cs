@@ -23,6 +23,11 @@ public class OpenBankingConnection
     public DateTime? InitialBackfillWindowStartUtc { get; set; }
     public DateTime? EarliestImportedTransactionUtc { get; set; }
     public DateTime? LatestImportedTransactionUtc { get; set; }
+    public DateTime? HistoricalEnrichmentStartedUtc { get; set; }
+    public DateTime? HistoricalEnrichmentCompletedUtc { get; set; }
+    public DateTime? HistoricalEnrichmentCheckpointUtc { get; set; }
+    public int? HistoricalEnrichmentVersion { get; set; }
+    public bool NeedsHistoricalReclassification { get; set; }
     public string? GrantedScopesCsv { get; set; }
     public bool? SupportsInfo { get; set; }
     public bool? SupportsCards { get; set; }

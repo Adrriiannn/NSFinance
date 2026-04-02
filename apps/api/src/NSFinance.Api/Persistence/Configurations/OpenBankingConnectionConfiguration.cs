@@ -28,6 +28,11 @@ public class OpenBankingConnectionConfiguration : IEntityTypeConfiguration<OpenB
         builder.Property(x => x.InitialBackfillWindowStartUtc);
         builder.Property(x => x.EarliestImportedTransactionUtc);
         builder.Property(x => x.LatestImportedTransactionUtc);
+        builder.Property(x => x.HistoricalEnrichmentStartedUtc);
+        builder.Property(x => x.HistoricalEnrichmentCompletedUtc);
+        builder.Property(x => x.HistoricalEnrichmentCheckpointUtc);
+        builder.Property(x => x.HistoricalEnrichmentVersion);
+        builder.Property(x => x.NeedsHistoricalReclassification).HasDefaultValue(false);
         builder.Property(x => x.GrantedScopesCsv).HasMaxLength(512);
         builder.Property(x => x.SupportsInfo);
         builder.Property(x => x.SupportsCards);
@@ -38,6 +43,7 @@ public class OpenBankingConnectionConfiguration : IEntityTypeConfiguration<OpenB
 
         builder.HasIndex(x => x.UserId);
         builder.HasIndex(x => new { x.UserId, x.ProviderName, x.ProviderEnvironment });
+        builder.HasIndex(x => new { x.UserId, x.NeedsHistoricalReclassification });
         builder.HasIndex(x => x.AuthStateNonce)
             .IsUnique()
             .HasFilter("\"AuthStateNonce\" IS NOT NULL");

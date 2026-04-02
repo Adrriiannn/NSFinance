@@ -161,6 +161,70 @@ function formatAccountFallback(accountType?: string | null, currency?: string | 
   return `${resolvedCurrency} ${friendlyType}`;
 }
 
+function extractMaskedAccountHint(accountNumberMetadataJson?: string | null) {
+  if (!accountNumberMetadataJson) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(accountNumberMetadataJson) as Record<string, unknown>;
+    const candidates = [
+      parsed.iban,
+      parsed.number,
+      parsed.pan,
+      parsed.masked_pan,
+      (parsed.account_number as Record<string, unknown> | undefined)?.number,
+      (parsed.sort_code_account_number as Record<string, unknown> | undefined)?.account_number
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string") {
+        continue;
+      }
+
+      const cleaned = candidate.replace(/[^a-z0-9]/gi, "");
+      if (cleaned.length >= 4) {
+        return cleaned.slice(-4).toUpperCase();
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function toTitleCase(value: string) {
+  return value
+    .split(" ")
+    .map((word) => (word.length === 0 ? word : `${word[0].toUpperCase()}${word.slice(1).toLowerCase()}`))
+    .join(" ");
+}
+
+function formatProviderName(value?: string | null) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "Bank";
+  }
+
+  const compact = normalized
+    .replace(/^ob[-\s_]+/i, "")
+    .replace(/[-_\s]+(ie|uk|gb|eu)$/i, "")
+    .trim();
+
+  const upper = compact.toUpperCase();
+  const knownAcronyms = new Set(["AIB", "BOI", "PTSB", "TSB", "HSBC", "MBNA", "RBS"]);
+  if (knownAcronyms.has(upper)) {
+    return upper;
+  }
+
+  if (upper === "REVOLUT") {
+    return "Revolut";
+  }
+
+  return toTitleCase(compact);
+}
+
 function looksLikeConnectedIdentity(candidate: string, connectedFullName?: string | null) {
   const normalizedConnected = normalizeText(connectedFullName);
   if (!normalizedConnected) {
@@ -185,12 +249,18 @@ function looksLikeConnectedIdentity(candidate: string, connectedFullName?: strin
 }
 
 function formatLinkedAccountName(account: LinkedBankAccountDto, connectedFullName?: string | null) {
-  const normalized = normalizeText(account.displayName);
-  if (normalized && !looksLikeConnectedIdentity(normalized, connectedFullName)) {
-    return normalized;
+  const providerLabel = formatProviderName(account.providerDisplayName ?? account.providerId);
+  const maskedHint = extractMaskedAccountHint(account.accountNumberMetadataJson);
+  if (maskedHint) {
+    return `${providerLabel} **${maskedHint}`;
   }
 
-  return formatAccountFallback(account.accountType, account.currency);
+  const normalized = normalizeText(account.displayName);
+  if (normalized && !looksLikeConnectedIdentity(normalized, connectedFullName)) {
+    return providerLabel;
+  }
+
+  return providerLabel || formatAccountFallback(account.accountType, account.currency);
 }
 
 function isLinkStillValid(link: PendingConsentLink | null, nowMs: number) {
@@ -820,6 +890,12 @@ export default function AddAccountModalScreen() {
     uiState === "awaiting_consent" ||
     uiState === "connected_pending_sync" ||
     uiState === "syncing_data";
+  const isSyncingInProgress = uiState === "connected_pending_sync" || uiState === "syncing_data";
+  const isCompletedSynced = activeConnection?.status === "synced";
+  const primaryActionLabel = isCompletedSynced
+    ? "Connect another bank account"
+    : connectBankCta.primaryLabel;
+  const secondaryActionLabel = isCompletedSynced ? "Done" : "Cancel";
 
   const statusHelperText =
     uiState === "opening_bank"
@@ -828,10 +904,8 @@ export default function AddAccountModalScreen() {
         ? "We still have not seen the completed bank connection. If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
         : uiState === "awaiting_consent"
           ? "Finish the bank consent flow in your browser. As soon as you return, we will start checking the saved connection."
-        : uiState === "connected_pending_sync"
-            ? "Connection confirmed. We are syncing the first account details now. Some providers may still return cached data briefly."
-              : uiState === "syncing_data"
-              ? "Connected to your bank. We are importing account details and recent transactions now. Pending card/bank payments may not appear until booked."
+        : uiState === "connected_pending_sync" || uiState === "syncing_data"
+          ? "We are currently syncing your data. Please wait as this may take a while."
               : uiState === "failed"
                 ? "The bank connection exists, but data sync failed. Retry from the Accounts or Activity sync icon without reconnecting."
                 : uiState === "reauth_required"
@@ -991,7 +1065,7 @@ export default function AddAccountModalScreen() {
 
         <View style={styles.primaryActions}>
           <PrimaryButton
-            label={connectBankCta.primaryLabel}
+            label={primaryActionLabel}
             onPress={() => {
               void handleConnectBank();
             }}
@@ -1000,8 +1074,12 @@ export default function AddAccountModalScreen() {
           />
 
           <SecondaryButton
-            label="Cancel"
+            label={secondaryActionLabel}
             onPress={() => {
+              if (isSyncingInProgress) {
+                return;
+              }
+
               logBankingEvent("modal_close", {
                 connectionId: pendingConnectionId,
                 uiState,
@@ -1022,6 +1100,7 @@ export default function AddAccountModalScreen() {
 
               router.replace("/(tabs)" as never);
             }}
+            disabled={isSyncingInProgress}
           />
         </View>
       </View>

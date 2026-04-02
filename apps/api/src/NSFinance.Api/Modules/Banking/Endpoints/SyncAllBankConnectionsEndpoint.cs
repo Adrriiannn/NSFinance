@@ -84,6 +84,10 @@ public static class SyncAllBankConnectionsEndpoint
                         LatestFetchedRowUtc: connection.LatestFetchedRowUtc,
                         HasFetchedRowNewerThanCheckpoint: connection.HasFetchedRowNewerThanCheckpoint,
                         FreshnessSummary: connection.FreshnessSummary,
+                        HistoricalEnrichmentInProgress: connection.HistoricalEnrichmentInProgress,
+                        HistoricalEnrichmentCompleted: connection.HistoricalEnrichmentCompleted,
+                        HistoricalEnrichmentProgressPercent: connection.HistoricalEnrichmentProgressPercent,
+                        HistoricalEnrichmentCheckpointUtc: connection.HistoricalEnrichmentCheckpointUtc,
                         ErrorCode: connection.ErrorCode,
                         ErrorMessage: connection.ErrorMessage))
                     .ToList());

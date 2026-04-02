@@ -20,6 +20,8 @@ public class Transaction
     public int? TransferMatchConfidenceScore { get; set; }
     public string? TransferMatchConfidenceTier { get; set; }
     public string? TransferMatchReason { get; set; }
+    public int? DeterministicEnrichmentVersion { get; set; }
+    public DateTime? LastDeterministicEnrichedUtc { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? MetadataUpdatedUtc { get; set; }
 

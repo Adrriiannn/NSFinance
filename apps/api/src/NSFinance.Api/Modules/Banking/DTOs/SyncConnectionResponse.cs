@@ -7,4 +7,8 @@ public sealed record SyncConnectionResponse(
     int TransactionsImported,
     string Status,
     DateTime SyncedAtUtc,
-    bool DataChanged);
+    bool DataChanged,
+    bool HistoricalEnrichmentInProgress,
+    bool HistoricalEnrichmentCompleted,
+    double? HistoricalEnrichmentProgressPercent,
+    DateTime? HistoricalEnrichmentCheckpointUtc);

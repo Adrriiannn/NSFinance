@@ -16,6 +16,10 @@ public sealed record BankGlobalSyncConnectionResult(
     DateTime? LatestFetchedRowUtc,
     bool? HasFetchedRowNewerThanCheckpoint,
     string? FreshnessSummary,
+    bool? HistoricalEnrichmentInProgress,
+    bool? HistoricalEnrichmentCompleted,
+    double? HistoricalEnrichmentProgressPercent,
+    DateTime? HistoricalEnrichmentCheckpointUtc,
     string? ErrorCode,
     string? ErrorMessage);
 

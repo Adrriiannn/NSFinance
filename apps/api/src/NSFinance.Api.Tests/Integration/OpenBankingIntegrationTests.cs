@@ -491,6 +491,108 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_HistoricalDeterministicEnrichment_ProcessesInBatchesUntilCompleted()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.historical-enrichment-batch@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-historical-enrichment-batch", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id);
+        Assert.True(linkedAccount.FinancialAccountId.HasValue);
+
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+        var seedBaseUtc = DateTime.UtcNow.AddDays(-130);
+        var seededTransactionIds = new List<Guid>();
+        const int seededRows = 620;
+
+        for (var i = 0; i < seededRows; i++)
+        {
+            var transactionId = Guid.NewGuid();
+            seededTransactionIds.Add(transactionId);
+
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = transactionId,
+                FinancialAccountId = accountId,
+                Amount = -(20 + i),
+                Currency = "EUR",
+                Description = $"Historical enrichment row {i:D4}",
+                BookedAtUtc = seedBaseUtc.AddMinutes(i),
+                CreatedUtc = seedBaseUtc,
+                DeterministicEnrichmentVersion = null,
+                LastDeterministicEnrichedUtc = null
+            });
+        }
+
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentCheckpointUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSuccessfulSyncUtc = DateTime.UtcNow.AddHours(-2);
+        connection.LastSyncAttemptedUtc = DateTime.UtcNow.AddHours(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+
+        var firstRun = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_historical_enrichment_batch_run_1",
+            force: true,
+            cancellationToken: CancellationToken.None);
+        Assert.Equal("completed", firstRun.Outcome);
+
+        var staleAfterFirstRun = await harness.DbContext.Transactions
+            .CountAsync(x =>
+                seededTransactionIds.Contains(x.Id)
+                && (!x.DeterministicEnrichmentVersion.HasValue || x.DeterministicEnrichmentVersion.Value < 1));
+
+        Assert.Equal(20, staleAfterFirstRun);
+
+        connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        Assert.True(connection.NeedsHistoricalReclassification);
+        Assert.Null(connection.HistoricalEnrichmentCompletedUtc);
+        Assert.Null(connection.HistoricalEnrichmentVersion);
+
+        var secondRun = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_historical_enrichment_batch_run_2",
+            force: true,
+            cancellationToken: CancellationToken.None);
+        Assert.Equal("completed", secondRun.Outcome);
+
+        var staleAfterSecondRun = await harness.DbContext.Transactions
+            .CountAsync(x =>
+                seededTransactionIds.Contains(x.Id)
+                && (!x.DeterministicEnrichmentVersion.HasValue || x.DeterministicEnrichmentVersion.Value < 1));
+
+        Assert.Equal(0, staleAfterSecondRun);
+
+        connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        Assert.False(connection.NeedsHistoricalReclassification);
+        Assert.NotNull(connection.HistoricalEnrichmentCompletedUtc);
+        Assert.Equal(1, connection.HistoricalEnrichmentVersion);
+    }
+
+    [Fact]
     public async Task GlobalSync_AibCappedIncrementalWindow_RecoversRecentTransactions()
     {
         var handler = AibCappedOldestSliceFlowHandler(out var getTransactionsCallCount, out var referenceNowUtc);

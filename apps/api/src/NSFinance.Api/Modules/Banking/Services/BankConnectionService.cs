@@ -1560,30 +1560,101 @@ public sealed class BankConnectionService(
     {
         var normalizedDisplayName = NormalizeLabel(providerDisplayName);
         if (!string.IsNullOrWhiteSpace(normalizedDisplayName)
-            && !LooksLikeConnectedIdentity(normalizedDisplayName, connectedFullName))
+            && LooksLikeConnectedIdentity(normalizedDisplayName, connectedFullName))
+        {
+            normalizedDisplayName = null;
+        }
+
+        var providerLabel = ResolveProviderDisplayLabel(providerInstitutionDisplayName)
+            ?? ResolveProviderDisplayLabel(normalizedDisplayName);
+        var maskedHint = ExtractMaskedAccountHint(accountNumberMetadataJson);
+
+        if (!string.IsNullOrWhiteSpace(providerLabel))
+        {
+            if (!string.IsNullOrWhiteSpace(maskedHint))
+            {
+                return $"{providerLabel} **{maskedHint}";
+            }
+
+            return providerLabel;
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedDisplayName))
         {
             return normalizedDisplayName;
         }
 
-        var providerLabel = NormalizeLabel(providerInstitutionDisplayName);
         var resolvedCurrency = string.IsNullOrWhiteSpace(currency) ? "EUR" : currency.Trim().ToUpperInvariant();
         var friendlyType = ResolveFriendlyAccountType(accountType);
-        var maskedHint = ExtractMaskedAccountHint(accountNumberMetadataJson);
-
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(providerLabel))
-        {
-            parts.Add(providerLabel);
-        }
-
-        parts.Add($"{resolvedCurrency} {friendlyType}");
-
         if (!string.IsNullOrWhiteSpace(maskedHint))
         {
-            parts.Add($"••{maskedHint}");
+            return $"{resolvedCurrency} {friendlyType} **{maskedHint}";
         }
 
-        return string.Join(" • ", parts);
+        return $"{resolvedCurrency} {friendlyType}";
+    }
+
+    private static string? ResolveProviderDisplayLabel(string? providerDisplayName)
+    {
+        var normalized = NormalizeLabel(providerDisplayName);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
+
+        var compact = normalized;
+        if (compact.StartsWith("ob-", StringComparison.OrdinalIgnoreCase)
+            || compact.StartsWith("ob_", StringComparison.OrdinalIgnoreCase)
+            || compact.StartsWith("ob ", StringComparison.OrdinalIgnoreCase))
+        {
+            compact = compact[3..];
+        }
+
+        var tokens = compact
+            .Replace('-', ' ')
+            .Replace('_', ' ')
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        if (tokens.Count > 1)
+        {
+            var lastToken = tokens[^1];
+            if (lastToken.Equals("ie", StringComparison.OrdinalIgnoreCase)
+                || lastToken.Equals("uk", StringComparison.OrdinalIgnoreCase)
+                || lastToken.Equals("gb", StringComparison.OrdinalIgnoreCase)
+                || lastToken.Equals("eu", StringComparison.OrdinalIgnoreCase))
+            {
+                tokens.RemoveAt(tokens.Count - 1);
+            }
+        }
+
+        if (tokens.Count == 0)
+        {
+            return normalized;
+        }
+
+        var joinedSingle = string.Join("", tokens).ToUpperInvariant();
+        if (joinedSingle is "AIB" or "BOI" or "PTSB" or "TSB" or "HSBC" or "MBNA" or "RBS")
+        {
+            return joinedSingle;
+        }
+
+        return string.Join(" ", tokens.Select(ToProviderTitleCase));
+    }
+
+    private static string ToProviderTitleCase(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return token;
+        }
+
+        if (token.Length == 1)
+        {
+            return token.ToUpperInvariant();
+        }
+
+        return char.ToUpperInvariant(token[0]) + token[1..].ToLowerInvariant();
     }
 
     private static string? NormalizeLabel(string? value)

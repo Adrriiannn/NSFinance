@@ -43,7 +43,11 @@ public static class SyncBankConnectionEndpoint
             result.Value.TransactionsImported,
             result.Value.Status,
             result.Value.SyncedAtUtc,
-            result.Value.DataChanged);
+            result.Value.DataChanged,
+            result.Value.HistoricalEnrichmentInProgress,
+            result.Value.HistoricalEnrichmentCompleted,
+            result.Value.HistoricalEnrichmentProgressPercent,
+            result.Value.HistoricalEnrichmentCheckpointUtc);
 
         return Results.Ok(response);
     }

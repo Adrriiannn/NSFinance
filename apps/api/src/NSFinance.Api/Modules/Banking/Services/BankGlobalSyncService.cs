@@ -292,6 +292,10 @@ public sealed class BankGlobalSyncService(
                     LatestFetchedRowUtc: null,
                     HasFetchedRowNewerThanCheckpoint: null,
                     FreshnessSummary: null,
+                    HistoricalEnrichmentInProgress: null,
+                    HistoricalEnrichmentCompleted: null,
+                    HistoricalEnrichmentProgressPercent: null,
+                    HistoricalEnrichmentCheckpointUtc: null,
                     ErrorCode: "connection_status_not_syncable",
                     ErrorMessage: $"Connection status '{candidate.Status}' is not eligible for {normalizedTrigger} sync."))
                 .ToList();
@@ -336,6 +340,10 @@ public sealed class BankGlobalSyncService(
                         LatestFetchedRowUtc: null,
                         HasFetchedRowNewerThanCheckpoint: null,
                         FreshnessSummary: null,
+                        HistoricalEnrichmentInProgress: null,
+                        HistoricalEnrichmentCompleted: null,
+                        HistoricalEnrichmentProgressPercent: null,
+                        HistoricalEnrichmentCheckpointUtc: null,
                         ErrorCode: candidate.LastErrorCode,
                         ErrorMessage: "Provider backoff is active for this connection."));
 
@@ -385,6 +393,10 @@ public sealed class BankGlobalSyncService(
                             LatestFetchedRowUtc: null,
                             HasFetchedRowNewerThanCheckpoint: null,
                             FreshnessSummary: null,
+                            HistoricalEnrichmentInProgress: null,
+                            HistoricalEnrichmentCompleted: null,
+                            HistoricalEnrichmentProgressPercent: null,
+                            HistoricalEnrichmentCheckpointUtc: null,
                             ErrorCode: null,
                             ErrorMessage: "Sync already in progress for this connection."));
 
@@ -428,6 +440,10 @@ public sealed class BankGlobalSyncService(
                             LatestFetchedRowUtc: null,
                             HasFetchedRowNewerThanCheckpoint: null,
                             FreshnessSummary: null,
+                            HistoricalEnrichmentInProgress: null,
+                            HistoricalEnrichmentCompleted: null,
+                            HistoricalEnrichmentProgressPercent: null,
+                            HistoricalEnrichmentCheckpointUtc: null,
                             ErrorCode: "sync_pending_state_changed",
                             ErrorMessage: "Sync pending state changed during stale recovery check."));
 
@@ -481,6 +497,10 @@ public sealed class BankGlobalSyncService(
                         LatestFetchedRowUtc: null,
                         HasFetchedRowNewerThanCheckpoint: null,
                         FreshnessSummary: null,
+                        HistoricalEnrichmentInProgress: null,
+                        HistoricalEnrichmentCompleted: null,
+                        HistoricalEnrichmentProgressPercent: null,
+                        HistoricalEnrichmentCheckpointUtc: null,
                         ErrorCode: "sync_unexpected_exception",
                         ErrorMessage: "Unexpected sync error. Please retry."));
 
@@ -523,6 +543,10 @@ public sealed class BankGlobalSyncService(
                         LatestFetchedRowUtc: value.LatestFetchedRowUtc,
                         HasFetchedRowNewerThanCheckpoint: value.HasFetchedRowNewerThanCheckpoint,
                         FreshnessSummary: value.FreshnessSummary,
+                        HistoricalEnrichmentInProgress: value.HistoricalEnrichmentInProgress,
+                        HistoricalEnrichmentCompleted: value.HistoricalEnrichmentCompleted,
+                        HistoricalEnrichmentProgressPercent: value.HistoricalEnrichmentProgressPercent,
+                        HistoricalEnrichmentCheckpointUtc: value.HistoricalEnrichmentCheckpointUtc,
                         ErrorCode: null,
                         ErrorMessage: null));
 
@@ -574,6 +598,10 @@ public sealed class BankGlobalSyncService(
                     LatestFetchedRowUtc: null,
                     HasFetchedRowNewerThanCheckpoint: null,
                     FreshnessSummary: null,
+                    HistoricalEnrichmentInProgress: null,
+                    HistoricalEnrichmentCompleted: null,
+                    HistoricalEnrichmentProgressPercent: null,
+                    HistoricalEnrichmentCheckpointUtc: null,
                     ErrorCode: error.Code,
                     ErrorMessage: error.Message));
 

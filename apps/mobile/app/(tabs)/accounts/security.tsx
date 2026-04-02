@@ -1,4 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert, Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
@@ -108,6 +111,8 @@ function formatBankConnectionStatus(status: BankConnectionStatus) {
 }
 
 export default function SecuritySettingsScreen() {
+  const router = useRouter();
+  const navigation = useNavigation();
   const queryClient = useQueryClient();
   const profileQuery = useUserProfileQuery();
   const updateProfileMutation = useUpdateUserProfileMutation();
@@ -383,10 +388,15 @@ export default function SecuritySettingsScreen() {
   const attentionBankConnections = connectedBanksQuery.data?.attentionConnections ?? [];
 
   const handleDisconnectBank = async (connectionId: string) => {
+    showFlashMessage("Disconnection in progress.\nRemoving all the account data.", {
+      tone: "info",
+      durationMs: 3000
+    });
+
     setDisconnectingConnectionId(connectionId);
     try {
       await disconnectMutation.mutateAsync(connectionId);
-      showFlashMessage("Disconnect requested. Cleanup is now running in the background.", {
+      showFlashMessage("Disconnected successfully.", {
         tone: "success"
       });
     } catch (error) {
@@ -398,7 +408,39 @@ export default function SecuritySettingsScreen() {
 
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset scrollable={false}>
-      <HeaderShell preset="secondaryDetail" title="Security" />
+      <HeaderShell
+        preset="secondaryDetail"
+        title="Security"
+        leadingAction={(
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            onPress={() => {
+              const state = navigation.getState?.();
+              const routeCount = state?.routes?.length ?? 0;
+              const previousRoute = routeCount > 1 ? state?.routes?.[routeCount - 2] : undefined;
+              const previousName = typeof previousRoute?.name === "string"
+                ? previousRoute.name
+                : "";
+
+              if (previousName.includes("connect-bank")) {
+                router.replace("/(tabs)/accounts" as never);
+                return;
+              }
+
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+                return;
+              }
+
+              router.replace("/(tabs)/accounts" as never);
+            }}
+            style={({ pressed }) => [styles.backButton, pressed ? styles.backButtonPressed : null]}
+          >
+            <Ionicons name="arrow-back" size={20} color={palette.textPrimary} />
+          </Pressable>
+        )}
+      />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -778,6 +820,19 @@ export default function SecuritySettingsScreen() {
 const styles = createRuntimeStyleSheet(() => ({
   content: {
     paddingTop: 0
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: surfaces.field,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  backButtonPressed: {
+    opacity: 0.82
   },
   headerRow: {
     flexDirection: "row",

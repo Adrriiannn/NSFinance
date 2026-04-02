@@ -26,6 +26,10 @@ public sealed class BankSyncService(
     private const int InternalTransferMatchMinimumScore = 6;
     private const int SavingsRelationshipLookbackDays = 35;
     private const int SavingsTransferSubcategoryId = 920102;
+    private const int DeterministicEnrichmentCurrentVersion = 1;
+    private const int DeterministicEnrichmentIncrementalLookbackDays = 35;
+    private const int DeterministicEnrichmentHistoricalBatchSize = 600;
+    private const int DeterministicEnrichmentHistoricalContextPaddingDays = 4;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
@@ -375,6 +379,14 @@ public sealed class BankSyncService(
         var identityInfoSynced = false;
         var linkedTransfersMatched = 0;
         var relationshipRowsUpserted = 0;
+        var historicalEnrichmentInProgress = false;
+        var historicalEnrichmentCompleted = false;
+        double? historicalEnrichmentProgressPercent = null;
+        DateTime? historicalEnrichmentCheckpointUtc = null;
+        var deterministicEnrichmentRowsEvaluated = 0;
+        var deterministicEnrichmentRowsRemaining = 0;
+        var deterministicEnrichmentBatchesProcessed = 0;
+        var deterministicEnrichmentMode = "incremental";
         var providerBrandingRefreshAttempted = false;
         DateTime? requestedBackfillWindowStartUtc = null;
         DateTime? syncObservedEarliestBookedAtUtc = null;
@@ -1001,9 +1013,23 @@ public sealed class BankSyncService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        linkedTransfersMatched = await MatchLinkedInternalTransfersAsync(connection.UserId, now, cancellationToken);
-        relationshipRowsUpserted = await ApplyTransactionRelationshipLayerAsync(connection.UserId, now, cancellationToken);
-        if (linkedTransfersMatched > 0 || relationshipRowsUpserted > 0)
+        var deterministicEnrichmentSummary = await RunDeterministicEnrichmentPassAsync(
+            connection,
+            now,
+            isInitialBackfill,
+            cancellationToken);
+        linkedTransfersMatched = deterministicEnrichmentSummary.LinkedTransfersMatched;
+        relationshipRowsUpserted = deterministicEnrichmentSummary.RelationshipRowsUpserted;
+        historicalEnrichmentInProgress = deterministicEnrichmentSummary.HistoricalEnrichmentInProgress;
+        historicalEnrichmentCompleted = deterministicEnrichmentSummary.HistoricalEnrichmentCompleted;
+        historicalEnrichmentProgressPercent = deterministicEnrichmentSummary.HistoricalEnrichmentProgressPercent;
+        historicalEnrichmentCheckpointUtc = deterministicEnrichmentSummary.HistoricalEnrichmentCheckpointUtc;
+        deterministicEnrichmentRowsEvaluated = deterministicEnrichmentSummary.RowsEvaluated;
+        deterministicEnrichmentRowsRemaining = deterministicEnrichmentSummary.RowsRemaining;
+        deterministicEnrichmentBatchesProcessed = deterministicEnrichmentSummary.BatchesProcessed;
+        deterministicEnrichmentMode = deterministicEnrichmentSummary.Mode;
+
+        if (deterministicEnrichmentSummary.HasChanges || dbContext.ChangeTracker.HasChanges())
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -1016,7 +1042,8 @@ public sealed class BankSyncService(
             || balancesSynced > 0
             || cardBalancesSynced > 0
             || linkedTransfersMatched > 0
-            || relationshipRowsUpserted > 0;
+            || relationshipRowsUpserted > 0
+            || deterministicEnrichmentSummary.HasChanges;
 
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
@@ -1056,6 +1083,14 @@ public sealed class BankSyncService(
                 identityInfoSynced,
                 linkedTransfersMatched,
                 relationshipRowsUpserted,
+                deterministicEnrichmentMode,
+                deterministicEnrichmentBatchesProcessed,
+                deterministicEnrichmentRowsEvaluated,
+                deterministicEnrichmentRowsRemaining,
+                historicalEnrichmentInProgress,
+                historicalEnrichmentCompleted,
+                historicalEnrichmentProgressPercent,
+                historicalEnrichmentCheckpointUtc,
                 dataChanged,
                 transactionMode = transactionSyncMode,
                 requestedBackfillWindowStartUtc,
@@ -1066,7 +1101,7 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} projectedTransactionsFromNewRaw={ProjectedTransactionsFromNewRaw} projectedTransactionsPromoted={ProjectedTransactionsPromoted} projectedTransactionsBackfilled={ProjectedTransactionsBackfilled} projectedTransactionsSkippedUnbookedFetched={ProjectedTransactionsSkippedUnbookedFetched} projectedTransactionsSkippedUnbookedBackfill={ProjectedTransactionsSkippedUnbookedBackfill} projectedTransactionsSkippedDuplicate={ProjectedTransactionsSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
+            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} projectedTransactionsFromNewRaw={ProjectedTransactionsFromNewRaw} projectedTransactionsPromoted={ProjectedTransactionsPromoted} projectedTransactionsBackfilled={ProjectedTransactionsBackfilled} projectedTransactionsSkippedUnbookedFetched={ProjectedTransactionsSkippedUnbookedFetched} projectedTransactionsSkippedUnbookedBackfill={ProjectedTransactionsSkippedUnbookedBackfill} projectedTransactionsSkippedDuplicate={ProjectedTransactionsSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} deterministicEnrichmentMode={DeterministicEnrichmentMode} deterministicEnrichmentBatchesProcessed={DeterministicEnrichmentBatchesProcessed} deterministicEnrichmentRowsEvaluated={DeterministicEnrichmentRowsEvaluated} deterministicEnrichmentRowsRemaining={DeterministicEnrichmentRowsRemaining} historicalEnrichmentInProgress={HistoricalEnrichmentInProgress} historicalEnrichmentCompleted={HistoricalEnrichmentCompleted} historicalEnrichmentProgressPercent={HistoricalEnrichmentProgressPercent} historicalEnrichmentCheckpointUtc={HistoricalEnrichmentCheckpointUtc} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
             connection.Id,
             accountsSynced,
             balancesSynced,
@@ -1089,6 +1124,14 @@ public sealed class BankSyncService(
             identityInfoSynced,
             linkedTransfersMatched,
             relationshipRowsUpserted,
+            deterministicEnrichmentMode,
+            deterministicEnrichmentBatchesProcessed,
+            deterministicEnrichmentRowsEvaluated,
+            deterministicEnrichmentRowsRemaining,
+            historicalEnrichmentInProgress,
+            historicalEnrichmentCompleted,
+            historicalEnrichmentProgressPercent,
+            historicalEnrichmentCheckpointUtc,
             dataChanged,
             transactionSyncMode,
             connection.InitialBackfillCompletedUtc,
@@ -1117,7 +1160,11 @@ public sealed class BankSyncService(
                 freshnessSummary,
                 BankConnectionStatuses.Synced,
                 DateTime.UtcNow,
-                dataChanged));
+                dataChanged,
+                historicalEnrichmentInProgress,
+                historicalEnrichmentCompleted,
+                historicalEnrichmentProgressPercent,
+                historicalEnrichmentCheckpointUtc));
         }
         catch (OperationCanceledException)
         {
@@ -2652,9 +2699,379 @@ public sealed class BankSyncService(
         return Math.Max(0, providerStandingOrders.Count - removedCount);
     }
 
+    private async Task<DeterministicEnrichmentPassSummary> RunDeterministicEnrichmentPassAsync(
+        OpenBankingConnection connection,
+        DateTime now,
+        bool isInitialBackfill,
+        CancellationToken cancellationToken)
+    {
+        EnsureDeterministicEnrichmentState(connection);
+
+        var modeParts = new List<string>();
+        var linkedTransfersMatched = 0;
+        var relationshipRowsUpserted = 0;
+        var rowsEvaluated = 0;
+        var rowsRemaining = 0;
+        var batchesProcessed = 0;
+        var hasChanges = false;
+
+        var incrementalWindowStartUtc = now.AddDays(-DeterministicEnrichmentIncrementalLookbackDays);
+        var hasStaleIncrementalRows = await HasStaleDeterministicRowsInWindowAsync(
+            connection.UserId,
+            incrementalWindowStartUtc,
+            now,
+            cancellationToken);
+
+        if (hasStaleIncrementalRows)
+        {
+            var incrementalContextStartUtc = incrementalWindowStartUtc.AddHours(-InternalTransferMatchMaxWindowHours);
+            var incrementalContextEndUtc = now.AddHours(InternalTransferMatchMaxWindowHours);
+
+            var incrementalMatched = await MatchLinkedInternalTransfersAsync(
+                connection.UserId,
+                now,
+                incrementalContextStartUtc,
+                incrementalContextEndUtc,
+                cancellationToken);
+            var incrementalRelationships = await ApplyTransactionRelationshipLayerAsync(
+                connection.UserId,
+                now,
+                incrementalContextStartUtc,
+                incrementalContextEndUtc,
+                cancellationToken);
+            var incrementalRowsMarkedCurrent = await MarkDeterministicEnrichmentVersionAsync(
+                connection.UserId,
+                incrementalWindowStartUtc,
+                now,
+                now,
+                cancellationToken);
+
+            linkedTransfersMatched += incrementalMatched;
+            relationshipRowsUpserted += incrementalRelationships;
+            rowsEvaluated += incrementalRowsMarkedCurrent;
+            batchesProcessed++;
+            modeParts.Add("incremental_recent");
+            hasChanges = hasChanges
+                || incrementalMatched > 0
+                || incrementalRelationships > 0
+                || incrementalRowsMarkedCurrent > 0;
+
+            logger.LogInformation(
+                "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsMarkedCurrent={RowsMarkedCurrent}",
+                connection.Id,
+                connection.UserId,
+                "incremental_recent",
+                incrementalWindowStartUtc,
+                now,
+                incrementalContextStartUtc,
+                incrementalContextEndUtc,
+                incrementalMatched,
+                incrementalRelationships,
+                incrementalRowsMarkedCurrent);
+        }
+
+        var historicalEligible = connection.InitialBackfillCompletedUtc.HasValue || isInitialBackfill;
+        var historicalRequired = historicalEligible
+            && (connection.NeedsHistoricalReclassification
+                || !connection.HistoricalEnrichmentCompletedUtc.HasValue
+                || (connection.HistoricalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion);
+
+        var historicalInProgress = false;
+        var historicalCompleted = connection.HistoricalEnrichmentCompletedUtc.HasValue
+            && (connection.HistoricalEnrichmentVersion ?? 0) >= DeterministicEnrichmentCurrentVersion
+            && !connection.NeedsHistoricalReclassification;
+
+        if (historicalRequired)
+        {
+            connection.HistoricalEnrichmentStartedUtc ??= now;
+            connection.HistoricalEnrichmentCompletedUtc = null;
+            connection.NeedsHistoricalReclassification = true;
+
+            var checkpointUtc = connection.HistoricalEnrichmentCheckpointUtc ?? incrementalWindowStartUtc;
+            var historicalBatchBookedAtUtc = await GetStaleDeterministicBookedAtBatchAsync(
+                connection.UserId,
+                checkpointUtc,
+                DeterministicEnrichmentHistoricalBatchSize,
+                cancellationToken);
+
+            if (historicalBatchBookedAtUtc.Count == 0)
+            {
+                connection.HistoricalEnrichmentCheckpointUtc = connection.EarliestImportedTransactionUtc ?? checkpointUtc;
+                connection.HistoricalEnrichmentCompletedUtc = now;
+                connection.HistoricalEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
+                connection.NeedsHistoricalReclassification = false;
+                historicalInProgress = false;
+                historicalCompleted = true;
+                rowsRemaining = 0;
+                modeParts.Add("historical_caught_up");
+            }
+            else
+            {
+                var historicalWindowStartUtc = historicalBatchBookedAtUtc.Min();
+                var historicalWindowEndUtc = historicalBatchBookedAtUtc.Max();
+                var historicalContextStartUtc = historicalWindowStartUtc.AddDays(-DeterministicEnrichmentHistoricalContextPaddingDays);
+                var historicalContextEndUtc = historicalWindowEndUtc.AddDays(DeterministicEnrichmentHistoricalContextPaddingDays);
+
+                var historicalMatched = await MatchLinkedInternalTransfersAsync(
+                    connection.UserId,
+                    now,
+                    historicalContextStartUtc,
+                    historicalContextEndUtc,
+                    cancellationToken);
+                var historicalRelationships = await ApplyTransactionRelationshipLayerAsync(
+                    connection.UserId,
+                    now,
+                    historicalContextStartUtc,
+                    historicalContextEndUtc,
+                    cancellationToken);
+                var historicalRowsMarkedCurrent = await MarkDeterministicEnrichmentVersionAsync(
+                    connection.UserId,
+                    historicalWindowStartUtc,
+                    historicalWindowEndUtc,
+                    now,
+                    cancellationToken);
+
+                linkedTransfersMatched += historicalMatched;
+                relationshipRowsUpserted += historicalRelationships;
+                rowsEvaluated += historicalRowsMarkedCurrent;
+                batchesProcessed++;
+                modeParts.Add("historical_backfill_batch");
+                hasChanges = hasChanges
+                    || historicalMatched > 0
+                    || historicalRelationships > 0
+                    || historicalRowsMarkedCurrent > 0;
+
+                connection.HistoricalEnrichmentCheckpointUtc = historicalWindowStartUtc;
+                rowsRemaining = await CountStaleDeterministicRowsBeforeUtcAsync(
+                    connection.UserId,
+                    historicalWindowStartUtc,
+                    cancellationToken);
+
+                historicalInProgress = rowsRemaining > 0;
+                historicalCompleted = rowsRemaining == 0;
+
+                if (historicalCompleted)
+                {
+                    connection.HistoricalEnrichmentCompletedUtc = now;
+                    connection.HistoricalEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
+                    connection.NeedsHistoricalReclassification = false;
+                }
+
+                logger.LogInformation(
+                    "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsMarkedCurrent={RowsMarkedCurrent} rowsRemaining={RowsRemaining}",
+                    connection.Id,
+                    connection.UserId,
+                    "historical_backfill_batch",
+                    historicalWindowStartUtc,
+                    historicalWindowEndUtc,
+                    historicalContextStartUtc,
+                    historicalContextEndUtc,
+                    historicalMatched,
+                    historicalRelationships,
+                    historicalRowsMarkedCurrent,
+                    rowsRemaining);
+            }
+        }
+
+        var progressPercent = ComputeHistoricalEnrichmentProgressPercent(connection, historicalCompleted);
+
+        logger.LogInformation(
+            "Deterministic enrichment summary connectionId={ConnectionId} userId={UserId} mode={Mode} batchesProcessed={BatchesProcessed} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} checkpointUtc={CheckpointUtc} progressPercent={ProgressPercent}",
+            connection.Id,
+            connection.UserId,
+            modeParts.Count == 0 ? "none" : string.Join("+", modeParts),
+            batchesProcessed,
+            rowsEvaluated,
+            rowsRemaining,
+            historicalInProgress,
+            historicalCompleted,
+            connection.HistoricalEnrichmentCheckpointUtc,
+            progressPercent);
+
+        return new DeterministicEnrichmentPassSummary(
+            LinkedTransfersMatched: linkedTransfersMatched,
+            RelationshipRowsUpserted: relationshipRowsUpserted,
+            RowsEvaluated: rowsEvaluated,
+            RowsRemaining: rowsRemaining,
+            BatchesProcessed: batchesProcessed,
+            Mode: modeParts.Count == 0 ? "none" : string.Join("+", modeParts),
+            HistoricalEnrichmentInProgress: historicalInProgress,
+            HistoricalEnrichmentCompleted: historicalCompleted,
+            HistoricalEnrichmentProgressPercent: progressPercent,
+            HistoricalEnrichmentCheckpointUtc: connection.HistoricalEnrichmentCheckpointUtc,
+            HasChanges: hasChanges);
+    }
+
+    private static void EnsureDeterministicEnrichmentState(OpenBankingConnection connection)
+    {
+        if ((connection.HistoricalEnrichmentVersion ?? 0) >= DeterministicEnrichmentCurrentVersion
+            && !connection.NeedsHistoricalReclassification)
+        {
+            return;
+        }
+
+        if (connection.HistoricalEnrichmentVersion.HasValue
+            && connection.HistoricalEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion)
+        {
+            connection.HistoricalEnrichmentStartedUtc = null;
+            connection.HistoricalEnrichmentCompletedUtc = null;
+            connection.HistoricalEnrichmentCheckpointUtc = null;
+        }
+
+        connection.NeedsHistoricalReclassification = true;
+    }
+
+    private async Task<bool> HasStaleDeterministicRowsInWindowAsync(
+        Guid userId,
+        DateTime windowStartUtc,
+        DateTime windowEndUtc,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return false;
+        }
+
+        return await dbContext.Transactions
+            .AsNoTracking()
+            .AnyAsync(
+                x =>
+                    linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                    && x.BookedAtUtc >= windowStartUtc
+                    && x.BookedAtUtc <= windowEndUtc
+                    && (!x.DeterministicEnrichmentVersion.HasValue
+                        || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion),
+                cancellationToken);
+    }
+
+    private async Task<List<DateTime>> GetStaleDeterministicBookedAtBatchAsync(
+        Guid userId,
+        DateTime beforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                && x.BookedAtUtc < beforeUtc
+                && (!x.DeterministicEnrichmentVersion.HasValue
+                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+            .OrderByDescending(x => x.BookedAtUtc)
+            .Select(x => x.BookedAtUtc)
+            .Take(batchSize)
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<int> CountStaleDeterministicRowsBeforeUtcAsync(
+        Guid userId,
+        DateTime beforeUtc,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return 0;
+        }
+
+        return await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                && x.BookedAtUtc < beforeUtc
+                && (!x.DeterministicEnrichmentVersion.HasValue
+                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+            .CountAsync(cancellationToken);
+    }
+
+    private async Task<int> MarkDeterministicEnrichmentVersionAsync(
+        Guid userId,
+        DateTime windowStartUtc,
+        DateTime windowEndUtc,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var candidates = await dbContext.Transactions
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                && x.BookedAtUtc >= windowStartUtc
+                && x.BookedAtUtc <= windowEndUtc
+                && (!x.DeterministicEnrichmentVersion.HasValue
+                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+            .ToListAsync(cancellationToken);
+
+        if (candidates.Count == 0)
+        {
+            return 0;
+        }
+
+        foreach (var transaction in candidates)
+        {
+            transaction.DeterministicEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
+            transaction.LastDeterministicEnrichedUtc = now;
+        }
+
+        return candidates.Count;
+    }
+
+    private async Task<List<Guid>> LoadLinkedFinancialAccountIdsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        return await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.FinancialAccountId.HasValue
+                && x.Connection != null
+                && x.Connection.UserId == userId)
+            .Select(x => x.FinancialAccountId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+    }
+
+    private static double? ComputeHistoricalEnrichmentProgressPercent(
+        OpenBankingConnection connection,
+        bool completed)
+    {
+        if (completed)
+        {
+            return 100d;
+        }
+
+        if (!connection.HistoricalEnrichmentCheckpointUtc.HasValue
+            || !connection.EarliestImportedTransactionUtc.HasValue
+            || !connection.LatestImportedTransactionUtc.HasValue)
+        {
+            return null;
+        }
+
+        var earliest = connection.EarliestImportedTransactionUtc.Value;
+        var latest = connection.LatestImportedTransactionUtc.Value;
+        var checkpoint = connection.HistoricalEnrichmentCheckpointUtc.Value;
+
+        var totalRangeSeconds = Math.Max(1d, (latest - earliest).TotalSeconds);
+        var processedRangeSeconds = Math.Max(0d, (latest - checkpoint).TotalSeconds);
+        var percent = Math.Clamp((processedRangeSeconds / totalRangeSeconds) * 100d, 0d, 99.5d);
+
+        return Math.Round(percent, 2, MidpointRounding.AwayFromZero);
+    }
+
     private async Task<int> MatchLinkedInternalTransfersAsync(
         Guid userId,
         DateTime now,
+        DateTime windowStartUtc,
+        DateTime windowEndUtc,
         CancellationToken cancellationToken)
     {
         var linkedFinancialAccountIds = await dbContext.LinkedBankAccounts
@@ -2716,12 +3133,11 @@ public sealed class BankSyncService(
             }
         }
 
-        var windowStartUtc = now.AddDays(-InternalTransferMatchLookbackDays);
-
         var candidates = await dbContext.Transactions
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
                 && x.BookedAtUtc >= windowStartUtc
+                && x.BookedAtUtc <= windowEndUtc
                 && x.Amount != 0m)
             .ToListAsync(cancellationToken);
 
@@ -2915,10 +3331,11 @@ public sealed class BankSyncService(
         if (matchedPairs > 0)
         {
             logger.LogInformation(
-                "Matched linked internal transfers userId={UserId} matchedPairs={MatchedPairs} lookbackDays={LookbackDays} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
+                "Matched linked internal transfers userId={UserId} matchedPairs={MatchedPairs} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
                 userId,
                 matchedPairs,
-                InternalTransferMatchLookbackDays,
+                windowStartUtc,
+                windowEndUtc,
                 outgoing.Count,
                 incoming.Count,
                 unmatchedNoAmountCurrencyKey,
@@ -2936,9 +3353,10 @@ public sealed class BankSyncService(
         else
         {
             logger.LogInformation(
-                "No linked internal transfer pairs matched userId={UserId} lookbackDays={LookbackDays} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
+                "No linked internal transfer pairs matched userId={UserId} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
                 userId,
-                InternalTransferMatchLookbackDays,
+                windowStartUtc,
+                windowEndUtc,
                 outgoing.Count,
                 incoming.Count,
                 unmatchedNoAmountCurrencyKey,
@@ -2960,10 +3378,22 @@ public sealed class BankSyncService(
     private async Task<int> ApplyTransactionRelationshipLayerAsync(
         Guid userId,
         DateTime now,
+        DateTime windowStartUtc,
+        DateTime windowEndUtc,
         CancellationToken cancellationToken)
     {
-        var linkedTransferRelationships = await UpsertLinkedInternalTransferRelationshipsAsync(userId, now, cancellationToken);
-        var savingsMovementRelationships = await UpsertSavingsMovementRelationshipsAsync(userId, now, cancellationToken);
+        var linkedTransferRelationships = await UpsertLinkedInternalTransferRelationshipsAsync(
+            userId,
+            now,
+            windowStartUtc,
+            windowEndUtc,
+            cancellationToken);
+        var savingsMovementRelationships = await UpsertSavingsMovementRelationshipsAsync(
+            userId,
+            now,
+            windowStartUtc,
+            windowEndUtc,
+            cancellationToken);
         var total = linkedTransferRelationships + savingsMovementRelationships;
 
         if (total > 0)
@@ -2982,9 +3412,10 @@ public sealed class BankSyncService(
     private async Task<int> UpsertLinkedInternalTransferRelationshipsAsync(
         Guid userId,
         DateTime now,
+        DateTime windowStartUtc,
+        DateTime windowEndUtc,
         CancellationToken cancellationToken)
     {
-        var windowStartUtc = now.AddDays(-InternalTransferMatchLookbackDays);
         var linkedRows = await dbContext.Transactions
             .AsNoTracking()
             .Where(x =>
@@ -2993,7 +3424,8 @@ public sealed class BankSyncService(
                 && x.TransferKind == TransactionTransferKind.LinkedInternal
                 && x.LinkedTransferTransactionId.HasValue
                 && x.Amount < 0m
-                && x.BookedAtUtc >= windowStartUtc)
+                && x.BookedAtUtc >= windowStartUtc
+                && x.BookedAtUtc <= windowEndUtc)
             .Select(x => new
             {
                 x.Id,
@@ -3107,14 +3539,16 @@ public sealed class BankSyncService(
     private async Task<int> UpsertSavingsMovementRelationshipsAsync(
         Guid userId,
         DateTime now,
+        DateTime windowStartUtc,
+        DateTime windowEndUtc,
         CancellationToken cancellationToken)
     {
-        var windowStartUtc = now.AddDays(-SavingsRelationshipLookbackDays);
         var transactions = await dbContext.Transactions
             .Where(x =>
                 x.FinancialAccount != null
                 && x.FinancialAccount.UserId == userId
                 && x.BookedAtUtc >= windowStartUtc
+                && x.BookedAtUtc <= windowEndUtc
                 && x.Amount != 0m)
             .OrderBy(x => x.BookedAtUtc)
             .ThenBy(x => x.CreatedUtc)
@@ -4164,6 +4598,19 @@ public sealed class BankSyncService(
         decimal RoundupBase,
         int Multiplier);
 
+    private readonly record struct DeterministicEnrichmentPassSummary(
+        int LinkedTransfersMatched,
+        int RelationshipRowsUpserted,
+        int RowsEvaluated,
+        int RowsRemaining,
+        int BatchesProcessed,
+        string Mode,
+        bool HistoricalEnrichmentInProgress,
+        bool HistoricalEnrichmentCompleted,
+        double? HistoricalEnrichmentProgressPercent,
+        DateTime? HistoricalEnrichmentCheckpointUtc,
+        bool HasChanges);
+
     private sealed class InternalTransferAccountMatchProfile(
         HashSet<string> hintTokens,
         ProviderTimestampPrecisionMode timestampPrecision,
@@ -4365,7 +4812,7 @@ public sealed class BankSyncService(
         OpenBankingConnection connection,
         TrueLayerAccountRecord providerAccount)
     {
-        var providerLabel = NormalizeLabel(providerAccount.ProviderDisplayName ?? connection.ProviderDisplayName);
+        var providerLabel = ResolveProviderDisplayLabel(providerAccount.ProviderDisplayName ?? connection.ProviderDisplayName);
         var candidate = NormalizeLabel(providerAccount.DisplayName);
         if (!string.IsNullOrWhiteSpace(candidate)
             && LooksLikeConnectedIdentity(candidate, connection.IdentityInfo?.FullName))
@@ -4378,29 +4825,100 @@ public sealed class BankSyncService(
             : ResolveFriendlyAccountType(providerAccount.AccountSubType ?? providerAccount.AccountType);
         var maskedHint = ExtractMaskedAccountHint(providerAccount.AccountNumberMetadataJson);
 
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(providerLabel))
+        if (!string.IsNullOrWhiteSpace(providerLabel) && !string.IsNullOrWhiteSpace(maskedHint))
         {
-            parts.Add(providerLabel);
+            return $"{providerLabel} **{maskedHint}";
         }
 
-        if (!string.IsNullOrWhiteSpace(accountCore)
-            && !EqualsNormalizedLabel(providerLabel, accountCore))
+        if (!string.IsNullOrWhiteSpace(providerLabel))
         {
-            parts.Add(accountCore);
+            return providerLabel;
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate))
+        {
+            return candidate;
+        }
+
+        if (!string.IsNullOrWhiteSpace(accountCore) && !string.IsNullOrWhiteSpace(maskedHint))
+        {
+            return $"{accountCore} **{maskedHint}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(accountCore))
+        {
+            return accountCore;
         }
 
         if (!string.IsNullOrWhiteSpace(maskedHint))
         {
-            parts.Add($"••{maskedHint}");
-        }
-
-        if (parts.Count > 0)
-        {
-            return string.Join(" • ", parts);
+            return $"Account **{maskedHint}";
         }
 
         return BuildAccountFallbackLabel(providerAccount.Currency, providerAccount.AccountType);
+    }
+
+    private static string? ResolveProviderDisplayLabel(string? providerDisplayName)
+    {
+        var normalized = NormalizeLabel(providerDisplayName);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
+
+        var compact = normalized;
+        if (compact.StartsWith("ob-", StringComparison.OrdinalIgnoreCase)
+            || compact.StartsWith("ob_", StringComparison.OrdinalIgnoreCase)
+            || compact.StartsWith("ob ", StringComparison.OrdinalIgnoreCase))
+        {
+            compact = compact[3..];
+        }
+
+        var tokens = compact
+            .Replace('-', ' ')
+            .Replace('_', ' ')
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+
+        if (tokens.Count > 1)
+        {
+            var lastToken = tokens[^1];
+            if (lastToken.Equals("ie", StringComparison.OrdinalIgnoreCase)
+                || lastToken.Equals("uk", StringComparison.OrdinalIgnoreCase)
+                || lastToken.Equals("gb", StringComparison.OrdinalIgnoreCase)
+                || lastToken.Equals("eu", StringComparison.OrdinalIgnoreCase))
+            {
+                tokens.RemoveAt(tokens.Count - 1);
+            }
+        }
+
+        if (tokens.Count == 0)
+        {
+            return normalized;
+        }
+
+        var joinedSingle = string.Join("", tokens).ToUpperInvariant();
+        if (joinedSingle is "AIB" or "BOI" or "PTSB" or "TSB" or "HSBC" or "MBNA" or "RBS")
+        {
+            return joinedSingle;
+        }
+
+        return string.Join(" ", tokens.Select(ToProviderTitleCase));
+    }
+
+    private static string ToProviderTitleCase(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return token;
+        }
+
+        if (token.Length == 1)
+        {
+            return token.ToUpperInvariant();
+        }
+
+        return char.ToUpperInvariant(token[0]) + token[1..].ToLowerInvariant();
     }
 
     private static string BuildAccountFallbackLabel(string currency, string? accountType)
