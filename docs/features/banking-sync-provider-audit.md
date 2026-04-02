@@ -30,6 +30,8 @@ This note captures the sync-pipeline audit outcomes that motivated the provider-
    - AIB capped-window incremental recovery,
    - balance persistence despite downstream transaction-stage failure,
    - provider policy resolution behavior.
+5. Consolidated remaining provider-specific transaction/card window rules into the policy catalog so `BankSyncService` no longer contains hardcoded provider string branches for those behaviors.
+6. Added provider-family metadata (`ProviderFamily`) plus pending/timestamp capability expectations to improve cross-provider diagnostics.
 
 ## Remaining provider-truth limitation
 

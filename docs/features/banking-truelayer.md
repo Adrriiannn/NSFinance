@@ -171,13 +171,16 @@ NSFinance now treats imported banking data as a long-term ledger:
 ## Provider-aware sync policy and durability
 
 - Sync behavior is now selected through an explicit provider policy catalog (not ad hoc conditionals).
-- Policies model provider transaction visibility mode, count limits, initial backfill shape, and incremental re-scan strategy.
+- Policies model provider transaction visibility mode, count limits, initial backfill shape, card backfill shape, incremental re-scan strategy, pending-support expectations, timestamp precision, and consent-window sensitivity hints.
+- Provider profiles are grouped into provider families (for example Irish capped-slice, NatWest family, Lloyds family, fintech families) so new provider variants can be onboarded without scattering service-layer conditionals.
+- The provider policy catalog is grounded in the TrueLayer Supported Providers table exported from Console (`Supported Providers.xlsx`) and kept explicit in code.
 - AIB is modeled as a capped visible-slice provider (`up to 100`), so incremental sync re-scans overlapping visible slices safely rather than assuming full historical replay access.
 - Sync persistence is stage-based:
   - account/balance refresh stage is persisted durably
   - transaction/commitments stage is persisted separately
   - card stage is persisted separately
 - If a later stage fails, successfully persisted earlier stages (for example balance snapshots) are retained and logs include the failed stage name.
+- Known unsupported optional endpoints (for example pending for providers where pending is explicitly unsupported) are policy-skipped up front to reduce noisy failures and unnecessary calls.
 
 Provider limits still apply. NSFinance requests the widest practical range, but provider/API caps may return less.
 

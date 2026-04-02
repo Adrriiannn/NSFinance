@@ -20,14 +20,10 @@ public sealed class BankSyncService(
     IAuditService auditService,
     ILogger<BankSyncService> logger)
 {
-    private const int IncrementalLookbackDays = 35;
-    private const int IncrementalFallbackDays = 120;
-    private const int InitialBackfillDefaultDays = 365 * 6;
     private const int InternalTransferMatchLookbackDays = 21;
     private const int InternalTransferMatchMaxWindowHours = 72;
     private const int InternalTransferMatchMinimumScore = 5;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
-    private static readonly TimeSpan RevolutMaxHistoryWindow = TimeSpan.FromMinutes(5);
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
         "account",
@@ -511,21 +507,26 @@ public sealed class BankSyncService(
                 "account_balance_refresh",
                 balanceStageStopwatch.ElapsedMilliseconds);
 
+            var providerPolicy = ResolveProviderTransactionSyncPolicy(providerAccount);
             var transactionWindow = BuildTransactionWindow(
                 connection,
-                providerAccount,
+                providerPolicy,
                 now,
                 isInitialBackfill);
 
             logger.LogInformation(
-                "Fetching transactions accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} fromUtc={FromUtc} toUtc={ToUtc} policy={PolicyName}",
+                "Fetching transactions accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} fromUtc={FromUtc} toUtc={ToUtc} policy={PolicyName} policyKey={PolicyKey} policyFamily={PolicyFamily} pendingSupport={PendingSupport} timestampPrecision={TimestampPrecision}",
                 providerAccount.AccountId,
                 providerAccount.ProviderId ?? "<unknown>",
                 providerAccount.ProviderDisplayName ?? "<unknown>",
                 transactionWindow.Mode,
                 transactionWindow.FromUtc,
                 transactionWindow.ToUtc,
-                transactionWindow.PolicyName ?? "<none>");
+                transactionWindow.PolicyName ?? "<none>",
+                providerPolicy.ProviderKey,
+                providerPolicy.ProviderFamily,
+                providerPolicy.PendingSupport,
+                providerPolicy.TimestampPrecision);
 
             var transactionStageStopwatch = Stopwatch.StartNew();
             var transactionFetchStopwatch = Stopwatch.StartNew();
@@ -533,6 +534,7 @@ public sealed class BankSyncService(
                 configuration,
                 accessToken,
                 providerAccount,
+                providerPolicy,
                 transactionWindow,
                 isInitialBackfill,
                 cancellationToken);
@@ -591,12 +593,15 @@ public sealed class BankSyncService(
             hasFetchedRowNewerThanCheckpoint = hasFetchedRowNewerThanCheckpoint || hasFetchedRowNewerThanCheckpointForAccount;
 
             if (isInitialBackfill
-                && string.Equals(transactionWindow.PolicyName, "revolut_initial_6y", StringComparison.Ordinal)
-                && now - connection.CreatedUtc > RevolutMaxHistoryWindow)
+                && providerPolicy.InitialLongHistoryGraceMinutes.HasValue
+                && now - connection.CreatedUtc > TimeSpan.FromMinutes(providerPolicy.InitialLongHistoryGraceMinutes.Value))
             {
                 logger.LogWarning(
-                    "Revolut initial backfill window may be reduced because sync began after the first 5 minutes connectionId={ConnectionId} elapsedSeconds={ElapsedSeconds}",
+                    "Initial backfill long-history grace window elapsed for provider policy connectionId={ConnectionId} policyKey={PolicyKey} policyFamily={PolicyFamily} graceMinutes={GraceMinutes} elapsedSeconds={ElapsedSeconds}",
                     connection.Id,
+                    providerPolicy.ProviderKey,
+                    providerPolicy.ProviderFamily,
+                    providerPolicy.InitialLongHistoryGraceMinutes.Value,
                     (now - connection.CreatedUtc).TotalSeconds);
             }
 
@@ -770,6 +775,7 @@ public sealed class BankSyncService(
             if (cardsResult.Succeeded)
             {
                 cardsSupported = true;
+                var cardProviderPolicy = ResolveProviderTransactionSyncPolicy(connection);
                 foreach (var providerCard in cardsResult.Value!)
                 {
                     var linkedCard = await UpsertLinkedCardAsync(connection, providerCard, now, cancellationToken);
@@ -820,7 +826,7 @@ public sealed class BankSyncService(
 
                     if (ShouldRequestScope(connection.GrantedScopesCsv, "transactions"))
                     {
-                        var cardTransactionWindow = BuildCardTransactionWindow(connection, now, isInitialBackfill);
+                        var cardTransactionWindow = BuildCardTransactionWindow(connection, cardProviderPolicy, now, isInitialBackfill);
                         var cardTransactionsResult = await dataService.GetCardTransactionsAsync(
                             configuration,
                             accessToken,
@@ -832,34 +838,46 @@ public sealed class BankSyncService(
                         if (cardTransactionsResult.Succeeded)
                         {
                             var allCardTransactions = cardTransactionsResult.Value!.ToList();
-                            var pendingCardTransactionsResult = await dataService.GetPendingCardTransactionsAsync(
-                                configuration,
-                                accessToken,
-                                providerCard.CardId,
-                                cardTransactionWindow.FromUtc,
-                                cardTransactionWindow.ToUtc,
-                                cancellationToken);
-
-                            if (pendingCardTransactionsResult.Succeeded)
-                            {
-                                allCardTransactions.AddRange(pendingCardTransactionsResult.Value!);
-                            }
-                            else if (IsOptionalDatasetUnsupported(pendingCardTransactionsResult.Error))
+                            if (cardProviderPolicy.PendingSupport == ProviderPendingSupportMode.Unsupported)
                             {
                                 logger.LogInformation(
-                                    "Pending card transactions endpoint unavailable for cardId={CardId} connectionId={ConnectionId} status={StatusCode}",
+                                    "Pending card transactions fetch skipped by provider policy cardId={CardId} connectionId={ConnectionId} policyKey={PolicyKey} policyFamily={PolicyFamily}",
                                     providerCard.CardId,
                                     connection.Id,
-                                    pendingCardTransactionsResult.Error?.StatusCode);
+                                    cardProviderPolicy.ProviderKey,
+                                    cardProviderPolicy.ProviderFamily);
                             }
                             else
                             {
-                                logger.LogWarning(
-                                    "Pending card transactions sync failed for cardId={CardId} connectionId={ConnectionId} status={StatusCode} code={Code}",
+                                var pendingCardTransactionsResult = await dataService.GetPendingCardTransactionsAsync(
+                                    configuration,
+                                    accessToken,
                                     providerCard.CardId,
-                                    connection.Id,
-                                    pendingCardTransactionsResult.Error?.StatusCode,
-                                    pendingCardTransactionsResult.Error?.Code);
+                                    cardTransactionWindow.FromUtc,
+                                    cardTransactionWindow.ToUtc,
+                                    cancellationToken);
+
+                                if (pendingCardTransactionsResult.Succeeded)
+                                {
+                                    allCardTransactions.AddRange(pendingCardTransactionsResult.Value!);
+                                }
+                                else if (IsOptionalDatasetUnsupported(pendingCardTransactionsResult.Error))
+                                {
+                                    logger.LogInformation(
+                                        "Pending card transactions endpoint unavailable for cardId={CardId} connectionId={ConnectionId} status={StatusCode}",
+                                        providerCard.CardId,
+                                        connection.Id,
+                                        pendingCardTransactionsResult.Error?.StatusCode);
+                                }
+                                else
+                                {
+                                    logger.LogWarning(
+                                        "Pending card transactions sync failed for cardId={CardId} connectionId={ConnectionId} status={StatusCode} code={Code}",
+                                        providerCard.CardId,
+                                        connection.Id,
+                                        pendingCardTransactionsResult.Error?.StatusCode,
+                                        pendingCardTransactionsResult.Error?.Code);
+                                }
                             }
 
                             cardTransactionsImported += await UpsertCardTransactionsAsync(
@@ -3257,21 +3275,25 @@ public sealed class BankSyncService(
         TrueLayerResolvedConfiguration configuration,
         string accessToken,
         TrueLayerAccountRecord providerAccount,
+        ProviderTransactionSyncPolicy policy,
         TrueLayerTransactionQueryWindow baseWindow,
         bool isInitialBackfill,
         CancellationToken cancellationToken)
     {
-        var policy = ResolveProviderTransactionSyncPolicy(providerAccount);
         var requestWindows = BuildTransactionRequestWindows(baseWindow, policy, isInitialBackfill);
         var adaptiveSplitEnabled = !isInitialBackfill && policy.SettledResponseCap.HasValue;
 
         logger.LogInformation(
-            "Transaction sync strategy accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} policy={PolicyName} requestWindows={RequestWindows} adaptiveSplitEnabled={AdaptiveSplitEnabled} settledResponseCap={SettledResponseCap}",
+            "Transaction sync strategy accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} policy={PolicyName} policyKey={PolicyKey} policyFamily={PolicyFamily} pendingSupport={PendingSupport} timestampPrecision={TimestampPrecision} requestWindows={RequestWindows} adaptiveSplitEnabled={AdaptiveSplitEnabled} settledResponseCap={SettledResponseCap}",
             providerAccount.AccountId,
             providerAccount.ProviderId ?? "<unknown>",
             providerAccount.ProviderDisplayName ?? "<unknown>",
             baseWindow.Mode,
             baseWindow.PolicyName ?? "<none>",
+            policy.ProviderKey,
+            policy.ProviderFamily,
+            policy.PendingSupport,
+            policy.TimestampPrecision,
             requestWindows.Count,
             adaptiveSplitEnabled,
             policy.SettledResponseCap);
@@ -3475,44 +3497,59 @@ public sealed class BankSyncService(
         var pendingFailedWindowCount = 0;
         var pendingTransactions = Array.Empty<TrueLayerTransactionRecord>();
 
-        var pendingResult = await dataService.GetPendingTransactionsAsync(
-            configuration,
-            accessToken,
-            providerAccount.AccountId,
-            requestWindow.FromUtc,
-            requestWindow.ToUtc,
-            cancellationToken);
-
-        if (pendingResult.Succeeded)
-        {
-            pendingTransactions = pendingResult.Value!.ToArray();
-            pendingFetched = pendingTransactions.Length;
-            pendingSucceededWindowCount = 1;
-        }
-        else if (IsOptionalDatasetUnsupported(pendingResult.Error))
+        if (policy.PendingSupport == ProviderPendingSupportMode.Unsupported)
         {
             pendingUnsupportedWindowCount = 1;
             logger.LogInformation(
-                "Pending account transactions endpoint unavailable accountId={AccountId} providerId={ProviderId} depth={Depth} fromUtc={FromUtc} toUtc={ToUtc} status={StatusCode}",
+                "Pending account transactions fetch skipped by provider policy accountId={AccountId} providerId={ProviderId} policyKey={PolicyKey} policyFamily={PolicyFamily} fromUtc={FromUtc} toUtc={ToUtc}",
                 providerAccount.AccountId,
                 providerAccount.ProviderId ?? "<unknown>",
-                depth,
+                policy.ProviderKey,
+                policy.ProviderFamily,
                 requestWindow.FromUtc,
-                requestWindow.ToUtc,
-                pendingResult.Error?.StatusCode);
+                requestWindow.ToUtc);
         }
         else
         {
-            pendingFailedWindowCount = 1;
-            logger.LogWarning(
-                "Pending account transactions fetch failed accountId={AccountId} providerId={ProviderId} depth={Depth} fromUtc={FromUtc} toUtc={ToUtc} status={StatusCode} code={Code}",
+            var pendingResult = await dataService.GetPendingTransactionsAsync(
+                configuration,
+                accessToken,
                 providerAccount.AccountId,
-                providerAccount.ProviderId ?? "<unknown>",
-                depth,
                 requestWindow.FromUtc,
                 requestWindow.ToUtc,
-                pendingResult.Error?.StatusCode,
-                pendingResult.Error?.Code);
+                cancellationToken);
+
+            if (pendingResult.Succeeded)
+            {
+                pendingTransactions = pendingResult.Value!.ToArray();
+                pendingFetched = pendingTransactions.Length;
+                pendingSucceededWindowCount = 1;
+            }
+            else if (IsOptionalDatasetUnsupported(pendingResult.Error))
+            {
+                pendingUnsupportedWindowCount = 1;
+                logger.LogInformation(
+                    "Pending account transactions endpoint unavailable accountId={AccountId} providerId={ProviderId} depth={Depth} fromUtc={FromUtc} toUtc={ToUtc} status={StatusCode}",
+                    providerAccount.AccountId,
+                    providerAccount.ProviderId ?? "<unknown>",
+                    depth,
+                    requestWindow.FromUtc,
+                    requestWindow.ToUtc,
+                    pendingResult.Error?.StatusCode);
+            }
+            else
+            {
+                pendingFailedWindowCount = 1;
+                logger.LogWarning(
+                    "Pending account transactions fetch failed accountId={AccountId} providerId={ProviderId} depth={Depth} fromUtc={FromUtc} toUtc={ToUtc} status={StatusCode} code={Code}",
+                    providerAccount.AccountId,
+                    providerAccount.ProviderId ?? "<unknown>",
+                    depth,
+                    requestWindow.FromUtc,
+                    requestWindow.ToUtc,
+                    pendingResult.Error?.StatusCode,
+                    pendingResult.Error?.Code);
+            }
         }
 
         var transactions = new List<TrueLayerTransactionRecord>(settledTransactions.Count + pendingTransactions.Length);
@@ -3535,6 +3572,11 @@ public sealed class BankSyncService(
     private static ProviderTransactionSyncPolicy ResolveProviderTransactionSyncPolicy(TrueLayerAccountRecord account)
     {
         return ProviderSyncPolicyCatalog.ResolveForAccount(account);
+    }
+
+    private static ProviderTransactionSyncPolicy ResolveProviderTransactionSyncPolicy(OpenBankingConnection connection)
+    {
+        return ProviderSyncPolicyCatalog.ResolveForConnection(connection.ProviderId, connection.ProviderDisplayName);
     }
 
     private static IReadOnlyList<TrueLayerTransactionQueryWindow> BuildTransactionRequestWindows(
@@ -3791,12 +3833,10 @@ public sealed class BankSyncService(
 
     private static TrueLayerTransactionQueryWindow BuildTransactionWindow(
         OpenBankingConnection connection,
-        TrueLayerAccountRecord account,
+        ProviderTransactionSyncPolicy providerPolicy,
         DateTime now,
         bool isInitialBackfill)
     {
-        var providerPolicy = ResolveProviderTransactionSyncPolicy(account);
-
         if (isInitialBackfill)
         {
             var windowStartUtc = now.AddDays(-providerPolicy.InitialBackfillHistoryDays);
@@ -3832,23 +3872,23 @@ public sealed class BankSyncService(
 
     private static TrueLayerTransactionQueryWindow BuildCardTransactionWindow(
         OpenBankingConnection connection,
+        ProviderTransactionSyncPolicy providerPolicy,
         DateTime now,
         bool isInitialBackfill)
     {
         if (isInitialBackfill)
         {
-            var historyDays = ResolveCardInitialHistoryDays(connection);
             return new TrueLayerTransactionQueryWindow(
-                now.AddDays(-historyDays),
+                now.AddDays(-providerPolicy.CardInitialBackfillHistoryDays),
                 now,
                 Mode: "initial_backfill",
-                PolicyName: "card_initial_backfill");
+                PolicyName: $"{providerPolicy.InitialBackfillPolicyName}|card");
         }
 
         var checkpointUtc = connection.LatestImportedTransactionUtc ?? connection.LastSuccessfulSyncUtc;
         var fromUtc = checkpointUtc.HasValue
-            ? checkpointUtc.Value.AddDays(-IncrementalLookbackDays)
-            : now.AddDays(-IncrementalFallbackDays);
+            ? checkpointUtc.Value.AddDays(-providerPolicy.IncrementalLookbackDays)
+            : now.AddDays(-providerPolicy.IncrementalFallbackDays);
 
         if (fromUtc > now)
         {
@@ -3859,30 +3899,9 @@ public sealed class BankSyncService(
             fromUtc,
             now,
             Mode: "incremental_sync",
-            PolicyName: checkpointUtc.HasValue ? "card_latest_imported_checkpoint" : "card_incremental_fallback");
-    }
-
-    private static int ResolveCardInitialHistoryDays(OpenBankingConnection connection)
-    {
-        var provider = $"{connection.ProviderId} {connection.ProviderDisplayName}".ToLowerInvariant();
-        if (provider.Contains("revolut", StringComparison.Ordinal)
-            || provider.Contains("ulster", StringComparison.Ordinal))
-        {
-            return 365 * 6;
-        }
-
-        if (provider.Contains("bank of ireland", StringComparison.Ordinal))
-        {
-            return 366;
-        }
-
-        if (provider.Contains("ptsb", StringComparison.Ordinal)
-            || provider.Contains("permanent tsb", StringComparison.Ordinal))
-        {
-            return 95;
-        }
-
-        return InitialBackfillDefaultDays;
+            PolicyName: checkpointUtc.HasValue
+                ? $"card_latest_imported_checkpoint_{providerPolicy.ProviderKey}"
+                : $"card_incremental_fallback_{providerPolicy.ProviderKey}");
     }
 
     private static (DateTime? EarliestBookedAtUtc, DateTime? LatestBookedAtUtc) ExtractObservedTransactionBounds(
