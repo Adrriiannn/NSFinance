@@ -159,6 +159,10 @@ NSFinance now treats imported banking data as a long-term ledger:
   - projection reconciliation first checks this durable link before any duplicate heuristics
   - legacy unlinked raw rows are reconciled once against existing ledger rows; duplicate matches log the exact collided `Transaction.Id`
   - this avoids repeated replay/backfill fingerprint collisions swallowing visibility of legitimate new rows
+- Distinct same-time transactions are preserved:
+  - dedupe identity no longer relies on `normalised_provider_transaction_id` alone
+  - when normalized IDs are reused for related provider events (for example merchant + round-up/pocket movement), identity now includes extra signature components so both rows stay distinct
+  - this prevents legitimate same-time rows being collapsed into one visible ledger entry
 - Connection metadata tracks:
   - initial backfill started/completed
   - requested initial backfill window start

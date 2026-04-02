@@ -1443,6 +1443,28 @@ public sealed class BankSyncService(
                     rawSkippedDedupe++;
                 }
 
+                logger.LogDebug(
+                    "Bank raw transaction upsert decision providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} matchStrategy={MatchStrategy} rawOutcome={RawOutcome} existingRawId={ExistingRawId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
+                    providerAccount.ProviderId ?? "<unknown>",
+                    providerAccount.ProviderDisplayName ?? "<unknown>",
+                    linkedAccount.ConnectionId,
+                    providerAccount.AccountId,
+                    linkedAccount.Id,
+                    matchedByProviderId ? "provider_transaction_id" : "dedupe_key",
+                    changed
+                        ? "raw_updated_existing"
+                        : matchedByProviderId
+                            ? "raw_skipped_provider_id_unchanged"
+                            : "raw_skipped_dedupe_unchanged",
+                    existingRaw.Id,
+                    providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
+                    providerTransaction.NormalizedProviderTransactionId ?? "<none>",
+                    providerTransaction.DedupeKey,
+                    providerTransaction.Amount,
+                    providerTransaction.Currency,
+                    providerTransaction.BookedAtUtc,
+                    providerTransaction.Description);
+
                 if (!string.Equals(previousProviderTransactionId, existingRaw.ProviderTransactionId, StringComparison.Ordinal)
                     && !string.IsNullOrWhiteSpace(previousProviderTransactionId))
                 {
@@ -1588,6 +1610,23 @@ public sealed class BankSyncService(
                 ImportedUtc = now
             };
             dbContext.RawBankTransactions.Add(rawTransaction);
+            logger.LogDebug(
+                "Bank raw transaction upsert decision providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} matchStrategy={MatchStrategy} rawOutcome={RawOutcome} existingRawId={ExistingRawId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
+                providerAccount.ProviderId ?? "<unknown>",
+                providerAccount.ProviderDisplayName ?? "<unknown>",
+                linkedAccount.ConnectionId,
+                providerAccount.AccountId,
+                linkedAccount.Id,
+                "none",
+                "raw_inserted",
+                null,
+                providerTransaction.ProviderTransactionId ?? "<none>",
+                providerTransaction.NormalizedProviderTransactionId ?? "<none>",
+                providerTransaction.DedupeKey,
+                providerTransaction.Amount,
+                providerTransaction.Currency,
+                providerTransaction.BookedAtUtc,
+                providerTransaction.Description);
 
             if (projectionState is not null && linkedAccount.FinancialAccountId.HasValue)
             {

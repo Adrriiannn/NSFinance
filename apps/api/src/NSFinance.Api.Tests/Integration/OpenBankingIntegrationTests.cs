@@ -193,6 +193,34 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_DoesNotCollapseDistinctTransactions_WhenNormalizedProviderIdIsShared()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SharedNormalizedIdDistinctTransactionsFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.shared-normalized-id-distinct@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-shared-normalized-id-distinct", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+        Assert.Equal(2, await harness.DbContext.RawBankTransactions.CountAsync());
+        Assert.Equal(2, await harness.DbContext.Transactions.CountAsync());
+
+        var projectedRows = await harness.DbContext.Transactions
+            .OrderBy(x => x.Amount)
+            .ToListAsync();
+
+        Assert.Contains(projectedRows, x => x.Description.Contains("Tesco", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(projectedRows, x => x.Description.Contains("Round up", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task GlobalSync_PromotesPendingAccountTransactionToBooked_WhenProviderIdIsReused()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -2061,6 +2089,103 @@ public class OpenBankingIntegrationTests
                         """);
                 }
 
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler SharedNormalizedIdDistinctTransactionsFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-shared-normalized-distinct",
+                      "refresh_token":"refresh-token-shared-normalized-distinct",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-revolut-shared-normalized-001",
+                          "display_name": "Revolut Current",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-shared-normalized-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1200.00,
+                          "current": 1200.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-31T10:00:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-shared-normalized-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-revolut-merchant-001",
+                          "normalised_provider_transaction_id":"norm-revolut-shared-001",
+                          "amount":-15.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-31T02:19:34Z",
+                          "description":"Tesco Stores",
+                          "merchant_name":"Tesco",
+                          "transaction_type":"DEBIT",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-roundup-001",
+                          "normalised_provider_transaction_id":"norm-revolut-shared-001",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-31T02:19:34Z",
+                          "description":"Round up to Pocket",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-shared-normalized-001/transactions/pending", StringComparison.Ordinal))
+            {
                 return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }
 

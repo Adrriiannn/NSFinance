@@ -143,19 +143,24 @@ Mobile freshness UX:
    - `settledFetched`, `pendingFetched`, `rawInserted/rawUpdated`, `projectedFromNewRaw/projectedFromStatusTransition`, and skip counters are present in lifecycle logs
    - for rows fetched from settled endpoint, normalization logs should show `sourceEndpoint=settled` and ledger projection should not be blocked by provider `status` noise
    - when projection dedupe fires, logs should include the collided existing `Transaction.Id` and the exact fingerprint values used
-10. Validate pending behavior:
+   - verify per-row raw upsert diagnostics show explicit outcomes (`raw_inserted`, `raw_updated_existing`, `raw_skipped_provider_id_unchanged`, `raw_skipped_dedupe_unchanged`)
+10. Validate same-time distinct transaction inclusion (Revolut-like):
+   - use a scenario with a merchant payment and a spare-change/round-up transfer at the same timestamp
+   - confirm both rows are fetched, stored as separate raw rows, and projected as separate ledger rows
+   - confirm merchant row is not hidden by the round-up/pocket row
+11. Validate pending behavior:
    - rows fetched from pending endpoint remain unprojected (raw-only) until a booked counterpart arrives
    - when a pending row later arrives as booked, it is projected once without duplicate ledger creation
-11. Validate stuck-sync recovery behavior:
+12. Validate stuck-sync recovery behavior:
    - force one connection into `sync_pending` with a recent `LastSyncAttemptedUtc` and run global manual sync
    - verify that connection is skipped as `skipped_sync_in_progress`
    - force one connection into stale `sync_pending` (older than threshold) and run global manual sync
    - verify stale state is recovered and connection runs sync instead of being skipped indefinitely
-12. Validate long-running manual sync resiliency:
+13. Validate long-running manual sync resiliency:
    - trigger manual sync on a higher-volume connection and keep the app open
    - confirm endpoint logs include request-cancellation metadata and still complete sync even if the client request is interrupted
    - confirm connection-level result is returned as structured outcome rather than raw request-canceled crash
-13. Validate projection reconcile cost bounds:
+14. Validate projection reconcile cost bounds:
    - run sync on an account with many legacy raw rows lacking `ProjectedTransactionId`
    - verify lifecycle logs include `projectedDuplicateCheckAttempts`, `projectedBackfillRowsEvaluated`, `projectedBackfillRowsDeferred`, and `projectedCandidatePoolSize`
    - verify deferred backfill rows decrease across subsequent sync runs (bounded progress, no unbounded single-run spike)

@@ -445,10 +445,13 @@ public sealed class TrueLayerDataService(
                 var description = ResolveTransactionDisplayDescription(item, rawDescription, "Imported transaction");
                 var providerTransactionId = GetString(item, "transaction_id");
                 var normalizedProviderTransactionId = GetString(item, "normalised_provider_transaction_id");
-                var stableTransactionId =
-                    normalizedProviderTransactionId
-                    ?? providerTransactionId
-                    ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}";
+                var stableTransactionId = BuildStableAccountTransactionId(
+                    normalizedProviderTransactionId,
+                    providerTransactionId,
+                    amount.Value,
+                    (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    timestamp,
+                    SettledTransactionsSource);
                 var providerStatus = GetString(item, "status");
                 var valueAtUtc = ParseDateTime(GetString(item, "value_timestamp"))
                     ?? ParseDateTime(GetString(item, "value_date"));
@@ -546,10 +549,13 @@ public sealed class TrueLayerDataService(
                 var description = ResolveTransactionDisplayDescription(item, rawDescription, "Pending transaction");
                 var providerTransactionId = GetString(item, "transaction_id");
                 var normalizedProviderTransactionId = GetString(item, "normalised_provider_transaction_id");
-                var stableTransactionId =
-                    normalizedProviderTransactionId
-                    ?? providerTransactionId
-                    ?? $"{timestamp:O}|{amount.Value:0.00}|{rawDescription}|pending";
+                var stableTransactionId = BuildStableAccountTransactionId(
+                    normalizedProviderTransactionId,
+                    providerTransactionId,
+                    amount.Value,
+                    (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
+                    timestamp,
+                    PendingTransactionsSource);
                 var providerStatus = GetString(item, "status");
                 var valueAtUtc = ParseDateTime(GetString(item, "value_timestamp"))
                     ?? ParseDateTime(GetString(item, "value_date"));
@@ -966,6 +972,51 @@ public sealed class TrueLayerDataService(
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(stableTransactionId));
         return Convert.ToHexString(bytes);
+    }
+
+    private static string BuildStableAccountTransactionId(
+        string? normalizedProviderTransactionId,
+        string? providerTransactionId,
+        decimal amount,
+        string currency,
+        DateTime bookedAtUtc,
+        string sourceEndpoint)
+    {
+        var normalizedId = NormalizeIdentityComponent(normalizedProviderTransactionId);
+        var providerId = NormalizeIdentityComponent(providerTransactionId);
+        var normalizedCurrency = string.IsNullOrWhiteSpace(currency)
+            ? "EUR"
+            : currency.Trim().ToUpperInvariant();
+
+        if (!string.IsNullOrWhiteSpace(normalizedId) && !string.IsNullOrWhiteSpace(providerId))
+        {
+            return $"normalized_plus_provider:{normalizedId}|{providerId}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedId))
+        {
+            return $"normalized_plus_signature:{normalizedId}|{normalizedCurrency}|{amount:0.00}|{bookedAtUtc:O}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(providerId))
+        {
+            return $"provider:{providerId}";
+        }
+
+        var endpointTag = string.Equals(sourceEndpoint, PendingTransactionsSource, StringComparison.OrdinalIgnoreCase)
+            ? "pending"
+            : "settled";
+        return $"{endpointTag}|{bookedAtUtc:O}|{amount:0.00}|{normalizedCurrency}";
+    }
+
+    private static string? NormalizeIdentityComponent(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim().ToLowerInvariant();
     }
 
     private static NormalizedTransactionStatus NormalizeAccountTransactionStatus(
