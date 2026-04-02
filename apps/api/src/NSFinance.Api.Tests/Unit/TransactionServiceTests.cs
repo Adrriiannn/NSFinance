@@ -83,6 +83,111 @@ public class TransactionServiceTests
         Assert.Null(credit.LinkedTransferTransactionId);
     }
 
+    [Fact]
+    public async Task GetTransactionsAsync_SavingsRoundupRelationship_RemainsSourceSideOnly()
+    {
+        await using var dbContext = CreateDbContext();
+        var now = DateTime.UtcNow;
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var merchantTransactionId = Guid.NewGuid();
+        var roundupTransactionId = Guid.NewGuid();
+
+        dbContext.Users.Add(new User
+        {
+            Id = userId,
+            PrimaryEmail = "relationship-tests@local",
+            NormalizedEmail = "relationship-tests@local",
+            DisplayName = "Relationship Tester",
+            Status = "active",
+            OnboardingStatus = "profile_created",
+            Role = "user",
+            CreatedUtc = now,
+            UpdatedUtc = now,
+            EmailVerified = true,
+            Timezone = "UTC",
+            Locale = "en-IE",
+            PreferredCurrency = "EUR",
+            PlanTier = "standard"
+        });
+
+        dbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = accountId,
+            UserId = userId,
+            Name = "Revolut Main",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now
+        });
+
+        dbContext.Transactions.AddRange(
+            new Transaction
+            {
+                Id = merchantTransactionId,
+                FinancialAccountId = accountId,
+                Amount = -14.47m,
+                Currency = "EUR",
+                Description = "Tesco Stores",
+                BookedAtUtc = now.AddMinutes(-2),
+                CreatedUtc = now.AddMinutes(-2)
+            },
+            new Transaction
+            {
+                Id = roundupTransactionId,
+                FinancialAccountId = accountId,
+                Amount = -0.53m,
+                Currency = "EUR",
+                Description = "Spare change to Pocket",
+                BookedAtUtc = now.AddMinutes(-1),
+                CreatedUtc = now.AddMinutes(-1),
+                TransferKind = TransactionTransferKind.SavingsRoundup,
+                TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId,
+                TaxonomyCategoryId = 92010,
+                TaxonomySubcategoryId = 920102
+            });
+
+        dbContext.TransactionRelationships.Add(new TransactionRelationship
+        {
+            Id = Guid.NewGuid(),
+            RelationshipKey = $"SavingsRoundup:{roundupTransactionId:N}:{merchantTransactionId:N}",
+            RelationshipType = TransactionRelationshipType.SavingsRoundup,
+            RelationshipStatus = TransactionRelationshipStatus.Active,
+            RelationshipDirection = TransactionRelationshipDirection.OutflowToSavings,
+            SourceTransactionId = roundupTransactionId,
+            TargetTransactionId = merchantTransactionId,
+            SourceFinancialAccountId = accountId,
+            TargetFinancialAccountId = accountId,
+            ConfidenceScore = 12,
+            ConfidenceTier = "high",
+            MatchReasonsJson = """{"reason":"roundup_pattern_match"}""",
+            AnalyticsTreatment = "exclude_income_expense_include_savings_roundup",
+            VirtualDestinationLabel = "Pocket",
+            CreatedUtc = now,
+            UpdatedUtc = now
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new TransactionService(
+            dbContext,
+            new TestCurrentUserProvider(userId),
+            new ExpenseTaxonomyService());
+
+        var rows = await service.GetTransactionsAsync(accountId, CancellationToken.None);
+        var merchant = rows.Single(x => x.Id == merchantTransactionId);
+        var roundup = rows.Single(x => x.Id == roundupTransactionId);
+
+        Assert.Equal("real_transaction", merchant.DisplaySemantic);
+        Assert.Null(merchant.RelationshipType);
+        Assert.False(merchant.IsGloballyNeutralized);
+
+        Assert.Equal("savings_roundup", roundup.DisplaySemantic);
+        Assert.Equal("savings_roundup", roundup.RelationshipType);
+        Assert.True(roundup.IsGloballyNeutralized);
+        Assert.Equal("savingsallocation", roundup.ReportingBucket);
+    }
+
     private static AppDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

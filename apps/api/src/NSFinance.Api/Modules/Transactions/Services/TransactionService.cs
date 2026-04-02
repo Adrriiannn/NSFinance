@@ -31,7 +31,16 @@ public sealed class TransactionService(
             .Select(ToReadModelProjection())
             .ToListAsync(cancellationToken);
 
-        return transactions.Select(MapToDto).ToList();
+        var relationshipsByTransactionId = await GetRelationshipSummariesByTransactionIdAsync(
+            transactions.Select(x => x.Id).ToArray(),
+            cancellationToken);
+
+        return transactions
+            .Select(transaction =>
+                MapToDto(
+                    transaction,
+                    relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null))
+            .ToList();
     }
 
     public async Task<TransactionDto?> GetTransactionByIdAsync(Guid transactionId, CancellationToken cancellationToken)
@@ -42,7 +51,18 @@ public sealed class TransactionService(
             .Select(ToReadModelProjection())
             .SingleOrDefaultAsync(cancellationToken);
 
-        return transaction is null ? null : MapToDto(transaction);
+        if (transaction is null)
+        {
+            return null;
+        }
+
+        var relationshipsByTransactionId = await GetRelationshipSummariesByTransactionIdAsync(
+            [transaction.Id],
+            cancellationToken);
+
+        return MapToDto(
+            transaction,
+            relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null);
     }
 
     public async Task<(TransactionDto? Transaction, string? Error)> CreateTransactionAsync(
@@ -104,34 +124,43 @@ public sealed class TransactionService(
 
         return (
             new TransactionDto(
-                transaction.Id,
-                account.Id,
-                account.Name,
-                transaction.Description,
-                transaction.Amount,
-                transaction.Currency,
-                transaction.CategoryId,
-                categoryName,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                transaction.Amount < 0 ? "spending" : "income",
-                false,
-                null,
-                null,
-                transaction.BookedAtUtc,
-                transaction.CreatedUtc,
-                null,
-                transaction.Amount < 0 ? "Expense" : "Income"),
+                Id: transaction.Id,
+                AccountId: account.Id,
+                AccountName: account.Name,
+                Description: transaction.Description,
+                Amount: transaction.Amount,
+                Currency: transaction.Currency,
+                CategoryId: transaction.CategoryId,
+                CategoryName: categoryName,
+                TaxonomyDomainId: null,
+                TaxonomyDomainName: null,
+                TaxonomyCategoryId: null,
+                TaxonomyCategoryName: null,
+                TaxonomySubcategoryId: null,
+                TaxonomySubcategoryName: null,
+                TransferKind: null,
+                LinkedTransferTransactionId: null,
+                TransferMatchConfidenceScore: null,
+                TransferMatchConfidenceTier: null,
+                TransferMatchReason: null,
+                RelationshipType: null,
+                RelationshipStatus: null,
+                RelationshipDirection: null,
+                RelationshipConfidenceScore: null,
+                RelationshipConfidenceTier: null,
+                RelationshipAnalyticsTreatment: null,
+                RelationshipVirtualDestinationLabel: null,
+                RelationshipCounterpartyTransactionId: null,
+                DisplaySemantic: "real_transaction",
+                TransferPolicyKind: null,
+                ReportingBucket: transaction.Amount < 0 ? "spending" : "income",
+                IsGloballyNeutralized: false,
+                Reason: null,
+                Notes: null,
+                BookedAtUtc: transaction.BookedAtUtc,
+                CreatedUtc: transaction.CreatedUtc,
+                MetadataUpdatedUtc: null,
+                Direction: transaction.Amount < 0 ? "Expense" : "Income"),
             null);
     }
 
@@ -338,6 +367,45 @@ public sealed class TransactionService(
         {
             TransactionTransferKind.Manual => "manual_transfer",
             TransactionTransferKind.LinkedInternal => "linked_internal_transfer",
+            TransactionTransferKind.SavingsRoundup => "savings_roundup",
+            TransactionTransferKind.SavingsManualDeposit => "savings_manual_deposit",
+            TransactionTransferKind.SavingsManualWithdrawal => "savings_manual_withdrawal",
+            _ => null
+        };
+    }
+
+    private static string MapRelationshipType(TransactionRelationshipType relationshipType)
+    {
+        return relationshipType switch
+        {
+            TransactionRelationshipType.InternalAccountTransfer => "internal_account_transfer",
+            TransactionRelationshipType.SavingsRoundup => "savings_roundup",
+            TransactionRelationshipType.SavingsManualDeposit => "savings_manual_deposit",
+            TransactionRelationshipType.SavingsManualWithdrawal => "savings_manual_withdrawal",
+            TransactionRelationshipType.PossibleTransferSuggestion => "possible_transfer_suggestion",
+            TransactionRelationshipType.PossibleSavingsSuggestion => "possible_savings_suggestion",
+            _ => "possible_transfer_suggestion"
+        };
+    }
+
+    private static string MapRelationshipStatus(TransactionRelationshipStatus relationshipStatus)
+    {
+        return relationshipStatus switch
+        {
+            TransactionRelationshipStatus.Active => "active",
+            TransactionRelationshipStatus.Suggested => "suggested",
+            TransactionRelationshipStatus.Dismissed => "dismissed",
+            _ => "suggested"
+        };
+    }
+
+    private static string? MapRelationshipDirection(TransactionRelationshipDirection relationshipDirection)
+    {
+        return relationshipDirection switch
+        {
+            TransactionRelationshipDirection.OutflowToInflow => "outflow_to_inflow",
+            TransactionRelationshipDirection.OutflowToSavings => "outflow_to_savings",
+            TransactionRelationshipDirection.InflowFromSavings => "inflow_from_savings",
             _ => null
         };
     }
@@ -368,7 +436,7 @@ public sealed class TransactionService(
         };
     }
 
-    private TransactionDto MapToDto(TransactionReadModel transaction)
+    private TransactionDto MapToDto(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
     {
         var taxonomyDomainName = expenseTaxonomyService.GetDomainName(transaction.TaxonomyDomainId);
         var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(transaction.TaxonomyCategoryId);
@@ -402,6 +470,15 @@ public sealed class TransactionService(
             transaction.TransferMatchConfidenceScore,
             transaction.TransferMatchConfidenceTier,
             transaction.TransferMatchReason,
+            relationshipSummary is null ? null : MapRelationshipType(relationshipSummary.RelationshipType),
+            relationshipSummary is null ? null : MapRelationshipStatus(relationshipSummary.RelationshipStatus),
+            relationshipSummary is null ? null : MapRelationshipDirection(relationshipSummary.RelationshipDirection),
+            relationshipSummary?.ConfidenceScore,
+            relationshipSummary?.ConfidenceTier,
+            relationshipSummary?.AnalyticsTreatment,
+            relationshipSummary?.VirtualDestinationLabel,
+            relationshipSummary?.CounterpartyTransactionId,
+            ResolveDisplaySemantic(transaction, relationshipSummary),
             MapTransferPolicyKind(transferPolicy.PolicyKind),
             transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
             transferPolicy.IsGloballyNeutralized,
@@ -411,6 +488,102 @@ public sealed class TransactionService(
             transaction.CreatedUtc,
             transaction.MetadataUpdatedUtc,
             transaction.Amount < 0 ? "Expense" : "Income");
+    }
+
+    private static string ResolveDisplaySemantic(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
+    {
+        if (relationshipSummary is not null)
+        {
+            return relationshipSummary.RelationshipType switch
+            {
+                TransactionRelationshipType.SavingsRoundup => "savings_roundup",
+                TransactionRelationshipType.SavingsManualDeposit => "savings_manual_move",
+                TransactionRelationshipType.SavingsManualWithdrawal => "savings_manual_move",
+                TransactionRelationshipType.InternalAccountTransfer => "internal_transfer",
+                _ => "real_transaction"
+            };
+        }
+
+        return transaction.TransferKind switch
+        {
+            TransactionTransferKind.LinkedInternal => "internal_transfer",
+            TransactionTransferKind.Manual => "internal_transfer",
+            TransactionTransferKind.SavingsRoundup => "savings_roundup",
+            TransactionTransferKind.SavingsManualDeposit => "savings_manual_move",
+            TransactionTransferKind.SavingsManualWithdrawal => "savings_manual_move",
+            _ => "real_transaction"
+        };
+    }
+
+    private async Task<Dictionary<Guid, RelationshipSummary>> GetRelationshipSummariesByTransactionIdAsync(
+        IReadOnlyCollection<Guid> transactionIds,
+        CancellationToken cancellationToken)
+    {
+        if (transactionIds.Count == 0)
+        {
+            return [];
+        }
+
+        var relationships = await dbContext.TransactionRelationships
+            .AsNoTracking()
+            .Where(x =>
+                x.RelationshipStatus != TransactionRelationshipStatus.Dismissed
+                && (transactionIds.Contains(x.SourceTransactionId)
+                    || (x.TargetTransactionId.HasValue && transactionIds.Contains(x.TargetTransactionId.Value))))
+            .OrderByDescending(x => x.ConfidenceScore)
+            .ThenByDescending(x => x.UpdatedUtc)
+            .ToListAsync(cancellationToken);
+
+        var summaries = new Dictionary<Guid, RelationshipSummary>();
+        foreach (var relationship in relationships)
+        {
+            TryApplyRelationshipSummary(
+                summaries,
+                relationship,
+                relationship.SourceTransactionId,
+                relationship.TargetTransactionId);
+
+            if (relationship.TargetTransactionId.HasValue
+                && ShouldApplyRelationshipSummaryToTarget(relationship.RelationshipType))
+            {
+                TryApplyRelationshipSummary(
+                    summaries,
+                    relationship,
+                    relationship.TargetTransactionId.Value,
+                    relationship.SourceTransactionId);
+            }
+        }
+
+        return summaries;
+    }
+
+    private static bool ShouldApplyRelationshipSummaryToTarget(TransactionRelationshipType relationshipType)
+    {
+        return relationshipType is
+            TransactionRelationshipType.InternalAccountTransfer
+            or TransactionRelationshipType.PossibleTransferSuggestion;
+    }
+
+    private static void TryApplyRelationshipSummary(
+        IDictionary<Guid, RelationshipSummary> summaries,
+        TransactionRelationship relationship,
+        Guid transactionId,
+        Guid? counterpartyTransactionId)
+    {
+        if (summaries.TryGetValue(transactionId, out var current) && current.ConfidenceScore >= relationship.ConfidenceScore)
+        {
+            return;
+        }
+
+        summaries[transactionId] = new RelationshipSummary(
+            relationship.RelationshipType,
+            relationship.RelationshipStatus,
+            relationship.RelationshipDirection,
+            relationship.ConfidenceScore,
+            relationship.ConfidenceTier,
+            relationship.AnalyticsTreatment,
+            relationship.VirtualDestinationLabel,
+            counterpartyTransactionId);
     }
 
     private static Expression<Func<Transaction, TransactionReadModel>> ToReadModelProjection()
@@ -461,4 +634,14 @@ public sealed class TransactionService(
         DateTime BookedAtUtc,
         DateTime CreatedUtc,
         DateTime? MetadataUpdatedUtc);
+
+    private sealed record RelationshipSummary(
+        TransactionRelationshipType RelationshipType,
+        TransactionRelationshipStatus RelationshipStatus,
+        TransactionRelationshipDirection RelationshipDirection,
+        int ConfidenceScore,
+        string ConfidenceTier,
+        string? AnalyticsTreatment,
+        string? VirtualDestinationLabel,
+        Guid? CounterpartyTransactionId);
 }

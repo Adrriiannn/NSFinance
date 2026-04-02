@@ -79,6 +79,21 @@ The internal-transfer linker now prioritizes confidence and reversibility:
 
 Result: same-amount nearby events (for example spare-change/pocket vs real cross-bank transfer) are less likely to be mislinked.
 
+## Transaction relationship and savings movement semantics
+
+- NSFinance now stores explicit `TransactionRelationships` records instead of relying only on inline transfer flags.
+- Relationship types currently include:
+  - `internal_account_transfer`
+  - `savings_roundup`
+  - `savings_manual_deposit`
+  - `savings_manual_withdrawal`
+  - medium/low confidence `possible_*` suggestions
+- High-confidence savings relationships are non-destructive:
+  - rows stay visible in activity
+  - rows are excluded from spending/income math
+  - rows are included in savings allocation flow
+- If a provider does not expose a first-class savings account object (for example pocket/fund products), NSFinance uses relationship semantics with explicit provenance instead of inventing a fake bank account.
+
 ## Provider matrix inputs
 
 Provider capabilities and history behavior are modeled using:

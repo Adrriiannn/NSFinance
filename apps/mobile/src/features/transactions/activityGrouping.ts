@@ -131,6 +131,22 @@ export function buildTransactionMetaLine(
   transaction: TransactionDto,
   categoryOverride?: string | null
 ): string {
+  if (
+    transaction.relationshipType === "savings_roundup"
+    || transaction.transferKind === "savings_roundup"
+  ) {
+    return "Savings round-up";
+  }
+
+  if (
+    transaction.relationshipType === "savings_manual_deposit"
+    || transaction.relationshipType === "savings_manual_withdrawal"
+    || transaction.transferKind === "savings_manual_deposit"
+    || transaction.transferKind === "savings_manual_withdrawal"
+  ) {
+    return "Internal savings move";
+  }
+
   const category =
     categoryOverride ??
     transaction.taxonomySubcategoryName ??

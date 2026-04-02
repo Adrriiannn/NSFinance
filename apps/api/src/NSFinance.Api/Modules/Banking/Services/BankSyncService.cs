@@ -24,6 +24,8 @@ public sealed class BankSyncService(
     private const int InternalTransferMatchLookbackDays = 21;
     private const int InternalTransferMatchMaxWindowHours = 72;
     private const int InternalTransferMatchMinimumScore = 6;
+    private const int SavingsRelationshipLookbackDays = 35;
+    private const int SavingsTransferSubcategoryId = 920102;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
@@ -372,6 +374,7 @@ public sealed class BankSyncService(
         var standingOrdersSynced = 0;
         var identityInfoSynced = false;
         var linkedTransfersMatched = 0;
+        var relationshipRowsUpserted = 0;
         var providerBrandingRefreshAttempted = false;
         DateTime? requestedBackfillWindowStartUtc = null;
         DateTime? syncObservedEarliestBookedAtUtc = null;
@@ -999,7 +1002,8 @@ public sealed class BankSyncService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         linkedTransfersMatched = await MatchLinkedInternalTransfersAsync(connection.UserId, now, cancellationToken);
-        if (linkedTransfersMatched > 0)
+        relationshipRowsUpserted = await ApplyTransactionRelationshipLayerAsync(connection.UserId, now, cancellationToken);
+        if (linkedTransfersMatched > 0 || relationshipRowsUpserted > 0)
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -1011,7 +1015,8 @@ public sealed class BankSyncService(
             || projectedTransactionsBackfilled > 0
             || balancesSynced > 0
             || cardBalancesSynced > 0
-            || linkedTransfersMatched > 0;
+            || linkedTransfersMatched > 0
+            || relationshipRowsUpserted > 0;
 
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
@@ -1050,6 +1055,7 @@ public sealed class BankSyncService(
                 standingOrdersSynced,
                 identityInfoSynced,
                 linkedTransfersMatched,
+                relationshipRowsUpserted,
                 dataChanged,
                 transactionMode = transactionSyncMode,
                 requestedBackfillWindowStartUtc,
@@ -1060,7 +1066,7 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} projectedTransactionsFromNewRaw={ProjectedTransactionsFromNewRaw} projectedTransactionsPromoted={ProjectedTransactionsPromoted} projectedTransactionsBackfilled={ProjectedTransactionsBackfilled} projectedTransactionsSkippedUnbookedFetched={ProjectedTransactionsSkippedUnbookedFetched} projectedTransactionsSkippedUnbookedBackfill={ProjectedTransactionsSkippedUnbookedBackfill} projectedTransactionsSkippedDuplicate={ProjectedTransactionsSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
+            "Bank sync completed for connectionId={ConnectionId} accountsSynced={AccountsSynced} balancesSynced={BalancesSynced} rawTransactionsChanged={RawTransactionsChanged} projectedTransactionsFromNewRaw={ProjectedTransactionsFromNewRaw} projectedTransactionsPromoted={ProjectedTransactionsPromoted} projectedTransactionsBackfilled={ProjectedTransactionsBackfilled} projectedTransactionsSkippedUnbookedFetched={ProjectedTransactionsSkippedUnbookedFetched} projectedTransactionsSkippedUnbookedBackfill={ProjectedTransactionsSkippedUnbookedBackfill} projectedTransactionsSkippedDuplicate={ProjectedTransactionsSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} cardsSynced={CardsSynced} cardBalancesSynced={CardBalancesSynced} cardTransactionsImported={CardTransactionsImported} directDebitsSynced={DirectDebitsSynced} standingOrdersSynced={StandingOrdersSynced} infoSynced={InfoSynced} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} dataChanged={DataChanged} transactionMode={TransactionMode} initialBackfillCompletedUtc={InitialBackfillCompletedUtc} earliestImportedUtc={EarliestImportedUtc} latestImportedUtc={LatestImportedUtc}",
             connection.Id,
             accountsSynced,
             balancesSynced,
@@ -1082,6 +1088,7 @@ public sealed class BankSyncService(
             standingOrdersSynced,
             identityInfoSynced,
             linkedTransfersMatched,
+            relationshipRowsUpserted,
             dataChanged,
             transactionSyncMode,
             connection.InitialBackfillCompletedUtc,
@@ -2950,9 +2957,750 @@ public sealed class BankSyncService(
         return matchedPairs;
     }
 
+    private async Task<int> ApplyTransactionRelationshipLayerAsync(
+        Guid userId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var linkedTransferRelationships = await UpsertLinkedInternalTransferRelationshipsAsync(userId, now, cancellationToken);
+        var savingsMovementRelationships = await UpsertSavingsMovementRelationshipsAsync(userId, now, cancellationToken);
+        var total = linkedTransferRelationships + savingsMovementRelationships;
+
+        if (total > 0)
+        {
+            logger.LogInformation(
+                "Transaction relationship layer updated userId={UserId} linkedTransferRelationships={LinkedTransferRelationships} savingsMovementRelationships={SavingsMovementRelationships} totalRelationshipsTouched={TotalRelationshipsTouched}",
+                userId,
+                linkedTransferRelationships,
+                savingsMovementRelationships,
+                total);
+        }
+
+        return total;
+    }
+
+    private async Task<int> UpsertLinkedInternalTransferRelationshipsAsync(
+        Guid userId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var windowStartUtc = now.AddDays(-InternalTransferMatchLookbackDays);
+        var linkedRows = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x =>
+                x.FinancialAccount != null
+                && x.FinancialAccount.UserId == userId
+                && x.TransferKind == TransactionTransferKind.LinkedInternal
+                && x.LinkedTransferTransactionId.HasValue
+                && x.Amount < 0m
+                && x.BookedAtUtc >= windowStartUtc)
+            .Select(x => new
+            {
+                x.Id,
+                CounterpartId = x.LinkedTransferTransactionId!.Value,
+                x.FinancialAccountId,
+                x.TransferMatchConfidenceScore,
+                x.TransferMatchConfidenceTier,
+                x.TransferMatchReason
+            })
+            .ToListAsync(cancellationToken);
+
+        if (linkedRows.Count == 0)
+        {
+            return 0;
+        }
+
+        var counterpartIds = linkedRows
+            .Select(x => x.CounterpartId)
+            .Distinct()
+            .ToArray();
+
+        var counterpartRows = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x => counterpartIds.Contains(x.Id))
+            .Select(x => new
+            {
+                x.Id,
+                x.LinkedTransferTransactionId,
+                x.FinancialAccountId,
+                x.TransferMatchConfidenceScore,
+                x.TransferMatchConfidenceTier,
+                x.TransferMatchReason
+            })
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+
+        var allTransactionIds = linkedRows
+            .Select(x => x.Id)
+            .Concat(linkedRows.Select(x => x.CounterpartId))
+            .Distinct()
+            .ToArray();
+
+        var normalizedRefsByTransactionId = await LoadProjectedRawReferencesAsync(allTransactionIds, cancellationToken);
+
+        var relationshipKeys = linkedRows
+            .Select(x => BuildRelationshipKey(TransactionRelationshipType.InternalAccountTransfer, x.Id, x.CounterpartId))
+            .Distinct()
+            .ToArray();
+
+        var existingByKey = await dbContext.TransactionRelationships
+            .Where(x => relationshipKeys.Contains(x.RelationshipKey))
+            .ToDictionaryAsync(x => x.RelationshipKey, StringComparer.Ordinal, cancellationToken);
+
+        var touched = 0;
+        foreach (var linked in linkedRows)
+        {
+            if (!counterpartRows.TryGetValue(linked.CounterpartId, out var counterpart))
+            {
+                continue;
+            }
+
+            if (counterpart.LinkedTransferTransactionId != linked.Id)
+            {
+                continue;
+            }
+
+            normalizedRefsByTransactionId.TryGetValue(linked.Id, out var sourceRef);
+            normalizedRefsByTransactionId.TryGetValue(linked.CounterpartId, out var targetRef);
+            var confidenceScore = linked.TransferMatchConfidenceScore
+                ?? counterpart.TransferMatchConfidenceScore
+                ?? InternalTransferMatchMinimumScore;
+            var confidenceTier = NormalizeRelationshipConfidenceTier(
+                linked.TransferMatchConfidenceTier ?? counterpart.TransferMatchConfidenceTier,
+                confidenceScore);
+            var reason = linked.TransferMatchReason
+                ?? counterpart.TransferMatchReason
+                ?? "linked_internal_pair";
+
+            var changed = UpsertTransactionRelationship(
+                existingByKey,
+                now,
+                relationshipKey: BuildRelationshipKey(TransactionRelationshipType.InternalAccountTransfer, linked.Id, linked.CounterpartId),
+                relationshipType: TransactionRelationshipType.InternalAccountTransfer,
+                relationshipStatus: TransactionRelationshipStatus.Active,
+                relationshipDirection: TransactionRelationshipDirection.OutflowToInflow,
+                sourceTransactionId: linked.Id,
+                targetTransactionId: linked.CounterpartId,
+                sourceRawBankTransactionId: sourceRef.RawBankTransactionId,
+                targetRawBankTransactionId: targetRef.RawBankTransactionId,
+                sourceFinancialAccountId: linked.FinancialAccountId,
+                targetFinancialAccountId: counterpart.FinancialAccountId,
+                confidenceScore: confidenceScore,
+                confidenceTier: confidenceTier,
+                matchReasonsJson: JsonSerializer.Serialize(new
+                {
+                    reason,
+                    source = "linked_internal_transfer"
+                }),
+                providerPolicyKey: sourceRef.PolicyKey ?? targetRef.PolicyKey,
+                analyticsTreatment: "exclude_income_expense_internal_transfer",
+                virtualDestinationLabel: null);
+
+            if (changed)
+            {
+                touched++;
+            }
+        }
+
+        return touched;
+    }
+
+    private async Task<int> UpsertSavingsMovementRelationshipsAsync(
+        Guid userId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var windowStartUtc = now.AddDays(-SavingsRelationshipLookbackDays);
+        var transactions = await dbContext.Transactions
+            .Where(x =>
+                x.FinancialAccount != null
+                && x.FinancialAccount.UserId == userId
+                && x.BookedAtUtc >= windowStartUtc
+                && x.Amount != 0m)
+            .OrderBy(x => x.BookedAtUtc)
+            .ThenBy(x => x.CreatedUtc)
+            .ToListAsync(cancellationToken);
+
+        if (transactions.Count == 0)
+        {
+            return 0;
+        }
+
+        var transactionIds = transactions.Select(x => x.Id).ToArray();
+        var normalizedRefsByTransactionId = await LoadProjectedRawReferencesAsync(transactionIds, cancellationToken);
+
+        var relevantExisting = await dbContext.TransactionRelationships
+            .Where(x =>
+                transactionIds.Contains(x.SourceTransactionId)
+                && (x.RelationshipType == TransactionRelationshipType.SavingsRoundup
+                    || x.RelationshipType == TransactionRelationshipType.SavingsManualDeposit
+                    || x.RelationshipType == TransactionRelationshipType.SavingsManualWithdrawal
+                    || x.RelationshipType == TransactionRelationshipType.PossibleSavingsSuggestion))
+            .ToListAsync(cancellationToken);
+        var existingByKey = relevantExisting.ToDictionary(x => x.RelationshipKey, StringComparer.Ordinal);
+        var selectedRelationshipKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        var touched = 0;
+        var outflowsByAccountId = transactions
+            .Where(x => x.Amount < 0m)
+            .GroupBy(x => x.FinancialAccountId)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(y => y.BookedAtUtc).ToList());
+
+        foreach (var transaction in transactions)
+        {
+            if (transaction.TransferKind == TransactionTransferKind.LinkedInternal)
+            {
+                continue;
+            }
+
+            if (!LooksLikeSavingsPocketMovementDescription(transaction.Description))
+            {
+                continue;
+            }
+
+            normalizedRefsByTransactionId.TryGetValue(transaction.Id, out var sourceRef);
+            var providerPolicyKey = sourceRef.PolicyKey;
+
+            if (transaction.Amount < 0m)
+            {
+                var roundUpCandidate = TryFindRoundupMerchantCounterpart(transaction, outflowsByAccountId);
+                if (roundUpCandidate is not null)
+                {
+                    var roundUpScore = 11
+                        + (roundUpCandidate.Value.Multiplier > 1 ? 1 : 0)
+                        + (LooksLikeRoundUpDescription(transaction.Description) ? 2 : 0);
+                    var roundUpTier = NormalizeRelationshipConfidenceTier(null, roundUpScore);
+                    var relationshipStatus = roundUpTier == "high"
+                        ? TransactionRelationshipStatus.Active
+                        : TransactionRelationshipStatus.Suggested;
+
+                    normalizedRefsByTransactionId.TryGetValue(roundUpCandidate.Value.MerchantTransaction.Id, out var targetRef);
+                    var relationshipKey = BuildRelationshipKey(
+                        roundUpTier == "high"
+                            ? TransactionRelationshipType.SavingsRoundup
+                            : TransactionRelationshipType.PossibleSavingsSuggestion,
+                        transaction.Id,
+                        roundUpCandidate.Value.MerchantTransaction.Id);
+                    selectedRelationshipKeys.Add(relationshipKey);
+
+                    var changed = UpsertTransactionRelationship(
+                        existingByKey,
+                        now,
+                        relationshipKey,
+                        roundUpTier == "high"
+                            ? TransactionRelationshipType.SavingsRoundup
+                            : TransactionRelationshipType.PossibleSavingsSuggestion,
+                        relationshipStatus,
+                        TransactionRelationshipDirection.OutflowToSavings,
+                        sourceTransactionId: transaction.Id,
+                        targetTransactionId: roundUpCandidate.Value.MerchantTransaction.Id,
+                        sourceRawBankTransactionId: sourceRef.RawBankTransactionId,
+                        targetRawBankTransactionId: targetRef.RawBankTransactionId,
+                        sourceFinancialAccountId: transaction.FinancialAccountId,
+                        targetFinancialAccountId: roundUpCandidate.Value.MerchantTransaction.FinancialAccountId,
+                        confidenceScore: roundUpScore,
+                        confidenceTier: roundUpTier,
+                        matchReasonsJson: JsonSerializer.Serialize(new
+                        {
+                            reason = "roundup_pattern_match",
+                            roundUpBase = roundUpCandidate.Value.RoundupBase,
+                            multiplier = roundUpCandidate.Value.Multiplier,
+                            merchantTransactionId = roundUpCandidate.Value.MerchantTransaction.Id
+                        }),
+                        providerPolicyKey: providerPolicyKey,
+                        analyticsTreatment: roundUpTier == "high"
+                            ? "exclude_income_expense_include_savings_roundup"
+                            : "suggestion_only",
+                        virtualDestinationLabel: ResolveSavingsDestinationLabel(transaction.Description, providerPolicyKey));
+
+                    if (changed)
+                    {
+                        touched++;
+                    }
+
+                    if (roundUpTier == "high")
+                    {
+                        ApplySavingsMovementClassification(
+                            transaction,
+                            TransactionTransferKind.SavingsRoundup,
+                            roundUpScore,
+                            roundUpTier,
+                            "roundup_pattern_match");
+                    }
+
+                    continue;
+                }
+
+                var manualDepositScore = HasStrongSavingsPocketSignal(transaction.Description)
+                    ? 10
+                    : LooksLikeRoundUpDescription(transaction.Description) ? 8 : 9;
+                var manualDepositTier = NormalizeRelationshipConfidenceTier(null, manualDepositScore);
+                var manualDepositStatus = manualDepositTier == "high"
+                    ? TransactionRelationshipStatus.Active
+                    : TransactionRelationshipStatus.Suggested;
+                var manualDepositType = manualDepositTier == "high"
+                    ? TransactionRelationshipType.SavingsManualDeposit
+                    : TransactionRelationshipType.PossibleSavingsSuggestion;
+                var manualDepositKey = BuildRelationshipKey(manualDepositType, transaction.Id, null);
+                selectedRelationshipKeys.Add(manualDepositKey);
+
+                if (UpsertTransactionRelationship(
+                        existingByKey,
+                        now,
+                        manualDepositKey,
+                        manualDepositType,
+                        manualDepositStatus,
+                        TransactionRelationshipDirection.OutflowToSavings,
+                        sourceTransactionId: transaction.Id,
+                        targetTransactionId: null,
+                        sourceRawBankTransactionId: sourceRef.RawBankTransactionId,
+                        targetRawBankTransactionId: null,
+                        sourceFinancialAccountId: transaction.FinancialAccountId,
+                        targetFinancialAccountId: null,
+                        confidenceScore: manualDepositScore,
+                        confidenceTier: manualDepositTier,
+                        matchReasonsJson: JsonSerializer.Serialize(new
+                        {
+                            reason = "savings_keyword_outflow",
+                            description = transaction.Description
+                        }),
+                        providerPolicyKey: providerPolicyKey,
+                        analyticsTreatment: manualDepositTier == "high"
+                            ? "exclude_income_expense_include_savings_flow"
+                            : "suggestion_only",
+                        virtualDestinationLabel: ResolveSavingsDestinationLabel(transaction.Description, providerPolicyKey)))
+                {
+                    touched++;
+                }
+
+                if (manualDepositTier == "high")
+                {
+                    ApplySavingsMovementClassification(
+                        transaction,
+                        TransactionTransferKind.SavingsManualDeposit,
+                        manualDepositScore,
+                        manualDepositTier,
+                        "savings_keyword_outflow");
+                }
+
+                continue;
+            }
+
+            var withdrawalScore = HasStrongSavingsPocketSignal(transaction.Description) ? 10 : 9;
+            var withdrawalTier = NormalizeRelationshipConfidenceTier(null, withdrawalScore);
+            var withdrawalStatus = withdrawalTier == "high"
+                ? TransactionRelationshipStatus.Active
+                : TransactionRelationshipStatus.Suggested;
+            var withdrawalType = withdrawalTier == "high"
+                ? TransactionRelationshipType.SavingsManualWithdrawal
+                : TransactionRelationshipType.PossibleSavingsSuggestion;
+            var withdrawalKey = BuildRelationshipKey(withdrawalType, transaction.Id, null);
+            selectedRelationshipKeys.Add(withdrawalKey);
+
+            if (UpsertTransactionRelationship(
+                    existingByKey,
+                    now,
+                    withdrawalKey,
+                    withdrawalType,
+                    withdrawalStatus,
+                    TransactionRelationshipDirection.InflowFromSavings,
+                    sourceTransactionId: transaction.Id,
+                    targetTransactionId: null,
+                    sourceRawBankTransactionId: sourceRef.RawBankTransactionId,
+                    targetRawBankTransactionId: null,
+                    sourceFinancialAccountId: transaction.FinancialAccountId,
+                    targetFinancialAccountId: null,
+                    confidenceScore: withdrawalScore,
+                    confidenceTier: withdrawalTier,
+                    matchReasonsJson: JsonSerializer.Serialize(new
+                    {
+                        reason = "savings_keyword_inflow",
+                        description = transaction.Description
+                    }),
+                    providerPolicyKey: providerPolicyKey,
+                    analyticsTreatment: withdrawalTier == "high"
+                        ? "exclude_income_expense_include_savings_flow"
+                        : "suggestion_only",
+                    virtualDestinationLabel: ResolveSavingsDestinationLabel(transaction.Description, providerPolicyKey)))
+            {
+                touched++;
+            }
+
+            if (withdrawalTier == "high")
+            {
+                ApplySavingsMovementClassification(
+                    transaction,
+                    TransactionTransferKind.SavingsManualWithdrawal,
+                    withdrawalScore,
+                    withdrawalTier,
+                    "savings_keyword_inflow");
+            }
+        }
+
+        foreach (var existing in relevantExisting)
+        {
+            if (!selectedRelationshipKeys.Contains(existing.RelationshipKey)
+                && existing.RelationshipStatus != TransactionRelationshipStatus.Dismissed)
+            {
+                existing.RelationshipStatus = TransactionRelationshipStatus.Dismissed;
+                existing.UpdatedUtc = now;
+                touched++;
+            }
+        }
+
+        return touched;
+    }
+
+    private static void ApplySavingsMovementClassification(
+        Transaction transaction,
+        TransactionTransferKind transferKind,
+        int confidenceScore,
+        string confidenceTier,
+        string reason)
+    {
+        transaction.TransferKind = transferKind;
+        transaction.LinkedTransferTransactionId = null;
+        transaction.LinkedTransferMatchedUtc = null;
+        transaction.TransferMatchConfidenceScore = confidenceScore;
+        transaction.TransferMatchConfidenceTier = confidenceTier;
+        transaction.TransferMatchReason = reason;
+        ApplyAutoSavingsTransferTaxonomy(transaction);
+    }
+
+    private async Task<Dictionary<Guid, ProjectedRawReference>> LoadProjectedRawReferencesAsync(
+        IReadOnlyCollection<Guid> transactionIds,
+        CancellationToken cancellationToken)
+    {
+        if (transactionIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.NormalizedBankTransactions
+            .AsNoTracking()
+            .Where(x => x.ProjectedTransactionId.HasValue && transactionIds.Contains(x.ProjectedTransactionId.Value))
+            .Select(x => new
+            {
+                TransactionId = x.ProjectedTransactionId!.Value,
+                x.RawBankTransactionId,
+                x.NormalizationPolicyKey
+            })
+            .ToDictionaryAsync(
+                x => x.TransactionId,
+                x => new ProjectedRawReference(x.RawBankTransactionId, x.NormalizationPolicyKey),
+                cancellationToken);
+    }
+
+    private bool UpsertTransactionRelationship(
+        IDictionary<string, TransactionRelationship> existingByKey,
+        DateTime now,
+        string relationshipKey,
+        TransactionRelationshipType relationshipType,
+        TransactionRelationshipStatus relationshipStatus,
+        TransactionRelationshipDirection relationshipDirection,
+        Guid sourceTransactionId,
+        Guid? targetTransactionId,
+        Guid? sourceRawBankTransactionId,
+        Guid? targetRawBankTransactionId,
+        Guid sourceFinancialAccountId,
+        Guid? targetFinancialAccountId,
+        int confidenceScore,
+        string confidenceTier,
+        string? matchReasonsJson,
+        string? providerPolicyKey,
+        string? analyticsTreatment,
+        string? virtualDestinationLabel)
+    {
+        if (!existingByKey.TryGetValue(relationshipKey, out var existing))
+        {
+            existing = new TransactionRelationship
+            {
+                Id = Guid.NewGuid(),
+                RelationshipKey = relationshipKey,
+                CreatedUtc = now
+            };
+            dbContext.TransactionRelationships.Add(existing);
+            existingByKey[relationshipKey] = existing;
+            UpdateRelationshipFields(
+                existing,
+                now,
+                relationshipType,
+                relationshipStatus,
+                relationshipDirection,
+                sourceTransactionId,
+                targetTransactionId,
+                sourceRawBankTransactionId,
+                targetRawBankTransactionId,
+                sourceFinancialAccountId,
+                targetFinancialAccountId,
+                confidenceScore,
+                confidenceTier,
+                matchReasonsJson,
+                providerPolicyKey,
+                analyticsTreatment,
+                virtualDestinationLabel);
+            return true;
+        }
+
+        return UpdateRelationshipFields(
+            existing,
+            now,
+            relationshipType,
+            relationshipStatus,
+            relationshipDirection,
+            sourceTransactionId,
+            targetTransactionId,
+            sourceRawBankTransactionId,
+            targetRawBankTransactionId,
+            sourceFinancialAccountId,
+            targetFinancialAccountId,
+            confidenceScore,
+            confidenceTier,
+            matchReasonsJson,
+            providerPolicyKey,
+            analyticsTreatment,
+            virtualDestinationLabel);
+    }
+
+    private static bool UpdateRelationshipFields(
+        TransactionRelationship relationship,
+        DateTime now,
+        TransactionRelationshipType relationshipType,
+        TransactionRelationshipStatus relationshipStatus,
+        TransactionRelationshipDirection relationshipDirection,
+        Guid sourceTransactionId,
+        Guid? targetTransactionId,
+        Guid? sourceRawBankTransactionId,
+        Guid? targetRawBankTransactionId,
+        Guid sourceFinancialAccountId,
+        Guid? targetFinancialAccountId,
+        int confidenceScore,
+        string confidenceTier,
+        string? matchReasonsJson,
+        string? providerPolicyKey,
+        string? analyticsTreatment,
+        string? virtualDestinationLabel)
+    {
+        var changed = false;
+
+        if (relationship.RelationshipType != relationshipType)
+        {
+            relationship.RelationshipType = relationshipType;
+            changed = true;
+        }
+
+        if (relationship.RelationshipStatus != relationshipStatus)
+        {
+            relationship.RelationshipStatus = relationshipStatus;
+            changed = true;
+        }
+
+        if (relationship.RelationshipDirection != relationshipDirection)
+        {
+            relationship.RelationshipDirection = relationshipDirection;
+            changed = true;
+        }
+
+        if (relationship.SourceTransactionId != sourceTransactionId)
+        {
+            relationship.SourceTransactionId = sourceTransactionId;
+            changed = true;
+        }
+
+        if (relationship.TargetTransactionId != targetTransactionId)
+        {
+            relationship.TargetTransactionId = targetTransactionId;
+            changed = true;
+        }
+
+        if (relationship.SourceRawBankTransactionId != sourceRawBankTransactionId)
+        {
+            relationship.SourceRawBankTransactionId = sourceRawBankTransactionId;
+            changed = true;
+        }
+
+        if (relationship.TargetRawBankTransactionId != targetRawBankTransactionId)
+        {
+            relationship.TargetRawBankTransactionId = targetRawBankTransactionId;
+            changed = true;
+        }
+
+        if (relationship.SourceFinancialAccountId != sourceFinancialAccountId)
+        {
+            relationship.SourceFinancialAccountId = sourceFinancialAccountId;
+            changed = true;
+        }
+
+        if (relationship.TargetFinancialAccountId != targetFinancialAccountId)
+        {
+            relationship.TargetFinancialAccountId = targetFinancialAccountId;
+            changed = true;
+        }
+
+        if (relationship.ConfidenceScore != confidenceScore)
+        {
+            relationship.ConfidenceScore = confidenceScore;
+            changed = true;
+        }
+
+        if (!string.Equals(relationship.ConfidenceTier, confidenceTier, StringComparison.Ordinal))
+        {
+            relationship.ConfidenceTier = confidenceTier;
+            changed = true;
+        }
+
+        if (!string.Equals(relationship.MatchReasonsJson, matchReasonsJson, StringComparison.Ordinal))
+        {
+            relationship.MatchReasonsJson = matchReasonsJson;
+            changed = true;
+        }
+
+        if (!string.Equals(relationship.ProviderPolicyKey, providerPolicyKey, StringComparison.Ordinal))
+        {
+            relationship.ProviderPolicyKey = providerPolicyKey;
+            changed = true;
+        }
+
+        if (!string.Equals(relationship.AnalyticsTreatment, analyticsTreatment, StringComparison.Ordinal))
+        {
+            relationship.AnalyticsTreatment = analyticsTreatment;
+            changed = true;
+        }
+
+        if (!string.Equals(relationship.VirtualDestinationLabel, virtualDestinationLabel, StringComparison.Ordinal))
+        {
+            relationship.VirtualDestinationLabel = virtualDestinationLabel;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            relationship.UpdatedUtc = now;
+        }
+
+        return changed;
+    }
+
+    private static string BuildRelationshipKey(
+        TransactionRelationshipType relationshipType,
+        Guid sourceTransactionId,
+        Guid? targetTransactionId)
+    {
+        return $"{relationshipType}:{sourceTransactionId:N}:{(targetTransactionId.HasValue ? targetTransactionId.Value.ToString("N") : "none")}";
+    }
+
+    private static RoundupCounterpartMatch? TryFindRoundupMerchantCounterpart(
+        Transaction savingsTransaction,
+        IReadOnlyDictionary<Guid, List<Transaction>> outflowsByAccountId)
+    {
+        if (!outflowsByAccountId.TryGetValue(savingsTransaction.FinancialAccountId, out var accountOutflows))
+        {
+            return null;
+        }
+
+        var savingsAmount = decimal.Round(Math.Abs(savingsTransaction.Amount), 2, MidpointRounding.AwayFromZero);
+        var candidates = accountOutflows
+            .Where(x =>
+                x.Id != savingsTransaction.Id
+                && x.Amount < 0m
+                && x.BookedAtUtc <= savingsTransaction.BookedAtUtc
+                && (savingsTransaction.BookedAtUtc - x.BookedAtUtc).TotalHours <= 6
+                && !LooksLikeSavingsPocketMovementDescription(x.Description))
+            .OrderByDescending(x => x.BookedAtUtc)
+            .ToList();
+
+        foreach (var candidate in candidates)
+        {
+            var merchantAmount = decimal.Round(Math.Abs(candidate.Amount), 2, MidpointRounding.AwayFromZero);
+            var roundUpBase = decimal.Round(Math.Ceiling(merchantAmount) - merchantAmount, 2, MidpointRounding.AwayFromZero);
+            if (roundUpBase <= 0m)
+            {
+                continue;
+            }
+
+            for (var multiplier = 1; multiplier <= 10; multiplier++)
+            {
+                var expected = decimal.Round(roundUpBase * multiplier, 2, MidpointRounding.AwayFromZero);
+                if (Math.Abs(expected - savingsAmount) <= 0.01m)
+                {
+                    return new RoundupCounterpartMatch(candidate, roundUpBase, multiplier);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeRoundUpDescription(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return false;
+        }
+
+        var normalized = description.ToLowerInvariant();
+        return normalized.Contains("round up", StringComparison.Ordinal)
+            || normalized.Contains("round-up", StringComparison.Ordinal)
+            || normalized.Contains("spare change", StringComparison.Ordinal);
+    }
+
+    private static string ResolveSavingsDestinationLabel(string description, string? providerPolicyKey)
+    {
+        var normalized = description.ToLowerInvariant();
+        if (normalized.Contains("flexible cash", StringComparison.Ordinal))
+        {
+            return "Flexible Cash Funds";
+        }
+
+        if (normalized.Contains("pocket", StringComparison.Ordinal))
+        {
+            return "Pocket";
+        }
+
+        if (normalized.Contains("vault", StringComparison.Ordinal))
+        {
+            return "Vault";
+        }
+
+        if (!string.IsNullOrWhiteSpace(providerPolicyKey)
+            && providerPolicyKey.Contains("revolut", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Revolut Savings";
+        }
+
+        return "Internal savings destination";
+    }
+
+    private static string NormalizeRelationshipConfidenceTier(string? existingTier, int confidenceScore)
+    {
+        if (!string.IsNullOrWhiteSpace(existingTier))
+        {
+            var normalized = existingTier.Trim().ToLowerInvariant();
+            if (normalized is "low" or "medium" or "high")
+            {
+                return normalized;
+            }
+        }
+
+        if (confidenceScore >= 10)
+        {
+            return "high";
+        }
+
+        if (confidenceScore >= 7)
+        {
+            return "medium";
+        }
+
+        return "low";
+    }
+
     private static bool IsAutoMatchEligible(Transaction transaction)
     {
-        if (transaction.TransferKind == TransactionTransferKind.Manual)
+        if (transaction.TransferKind is
+            TransactionTransferKind.Manual
+            or TransactionTransferKind.SavingsRoundup
+            or TransactionTransferKind.SavingsManualDeposit
+            or TransactionTransferKind.SavingsManualWithdrawal)
         {
             return false;
         }
@@ -3371,6 +4119,24 @@ public sealed class BankSyncService(
             || normalized.Contains("round-up", StringComparison.Ordinal);
     }
 
+    private static bool HasStrongSavingsPocketSignal(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return false;
+        }
+
+        var normalized = description.ToLowerInvariant();
+        return normalized.Contains("flexible cash", StringComparison.Ordinal)
+            || normalized.Contains("pocket", StringComparison.Ordinal)
+            || normalized.Contains("vault", StringComparison.Ordinal)
+            || normalized.Contains("cash fund", StringComparison.Ordinal)
+            || normalized.Contains("savings pot", StringComparison.Ordinal)
+            || normalized.Contains("spare change", StringComparison.Ordinal)
+            || normalized.Contains("round up", StringComparison.Ordinal)
+            || normalized.Contains("round-up", StringComparison.Ordinal);
+    }
+
     private enum TransferMatchConfidenceTier
     {
         Low,
@@ -3388,6 +4154,15 @@ public sealed class BankSyncService(
         bool DeferredBySavingsPocket,
         bool MissingCounterpartyConfidence,
         string DecisionReason);
+
+    private readonly record struct ProjectedRawReference(
+        Guid RawBankTransactionId,
+        string? PolicyKey);
+
+    private readonly record struct RoundupCounterpartMatch(
+        Transaction MerchantTransaction,
+        decimal RoundupBase,
+        int Multiplier);
 
     private sealed class InternalTransferAccountMatchProfile(
         HashSet<string> hintTokens,
@@ -3458,6 +4233,18 @@ public sealed class BankSyncService(
         transaction.TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId;
         transaction.TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId;
         transaction.TaxonomySubcategoryId = ExpenseTaxonomyService.TransferDefaultSubcategoryId;
+    }
+
+    private static void ApplyAutoSavingsTransferTaxonomy(Transaction transaction)
+    {
+        if (transaction.MetadataUpdatedUtc.HasValue)
+        {
+            return;
+        }
+
+        transaction.TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId;
+        transaction.TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId;
+        transaction.TaxonomySubcategoryId = SavingsTransferSubcategoryId;
     }
 
     private static bool IsOptionalDatasetUnsupported(ServiceError? error)

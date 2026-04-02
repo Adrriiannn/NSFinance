@@ -58,6 +58,13 @@ export function TransactionRow({
 
   const metadata = metadataOverride ?? buildTransactionMetaLine(transaction);
   const timestamp = buildTransactionDetailDate(transaction);
+  const isSavingsMovement =
+    transaction.displaySemantic === "savings_roundup"
+    || transaction.displaySemantic === "savings_manual_move"
+    || transaction.relationshipType === "savings_roundup"
+    || transaction.relationshipType === "savings_manual_deposit"
+    || transaction.relationshipType === "savings_manual_withdrawal";
+  const relationshipBadge = resolveRelationshipBadge(transaction);
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
@@ -69,6 +76,12 @@ export function TransactionRow({
         disabled={!onPress && !onLongPress}
         style={({ pressed }) => [
           rowPresets.container,
+          isSavingsMovement
+            ? {
+                borderColor: "rgba(90, 186, 226, 0.55)",
+                backgroundColor: "rgba(64, 118, 142, 0.18)"
+              }
+            : null,
           rowStyle,
           pressed ? { opacity: 0.93, transform: [{ scale: 0.995 }] } : null
         ]}
@@ -78,7 +91,9 @@ export function TransactionRow({
             rowPresets.leadingIcon,
             {
               backgroundColor:
-                transaction.direction === "Expense"
+                isSavingsMovement
+                  ? "rgba(90, 186, 226, 0.26)"
+                  : transaction.direction === "Expense"
                   ? "rgba(226, 90, 90, 0.26)"
                   : "rgba(29, 186, 114, 0.22)"
             }
@@ -98,6 +113,11 @@ export function TransactionRow({
           <Text numberOfLines={1} style={rowPresets.subtitle}>
             {metadata}
           </Text>
+          {relationshipBadge ? (
+            <Text numberOfLines={1} style={[rowPresets.trailing, { marginTop: 2 }]}>
+              {relationshipBadge}
+            </Text>
+          ) : null}
         </View>
 
         <View style={{ alignItems: "flex-end", minWidth: 88 }}>
@@ -107,4 +127,29 @@ export function TransactionRow({
       </Pressable>
     </Animated.View>
   );
+}
+
+function resolveRelationshipBadge(transaction: TransactionDto): string | null {
+  if (
+    transaction.relationshipType === "savings_roundup"
+    || transaction.transferKind === "savings_roundup"
+  ) {
+    return "Savings round-up";
+  }
+
+  if (
+    transaction.relationshipType === "savings_manual_deposit"
+    || transaction.relationshipType === "savings_manual_withdrawal"
+    || transaction.transferKind === "savings_manual_deposit"
+    || transaction.transferKind === "savings_manual_withdrawal"
+  ) {
+    const destination = transaction.relationshipVirtualDestinationLabel;
+    return destination ? `Savings move - ${destination}` : "Savings move";
+  }
+
+  if (transaction.relationshipType === "internal_account_transfer") {
+    return "Linked internal transfer";
+  }
+
+  return null;
 }

@@ -90,6 +90,10 @@ export function getTransferPolicyEvaluation(input: TransferPolicyInput): Transfe
     input.transferKind ?? null
   );
   const isTransferTransaction = policyKind !== "none";
+  const isDerivedSavingsMovement =
+    input.transferKind === "savings_roundup"
+    || input.transferKind === "savings_manual_deposit"
+    || input.transferKind === "savings_manual_withdrawal";
   const isManualUnverifiedTransfer = input.transferKind === "manual_transfer";
   const isVerifiedLinkedTransfer =
     input.transferKind === "linked_internal_transfer" && Boolean(input.linkedTransferTransactionId);
@@ -114,7 +118,8 @@ export function getTransferPolicyEvaluation(input: TransferPolicyInput): Transfe
   const allowsVerifiedLinkedNeutralization = allowsVerifiedLinkedNeutralizationForKind(policyKind);
   const requiresLinkedProofForNeutralization = !allowsManualNeutralization && allowsVerifiedLinkedNeutralization;
 
-  let isGloballyNeutralized = allowsVerifiedLinkedNeutralization && isVerifiedLinkedTransfer;
+  let isGloballyNeutralized =
+    isDerivedSavingsMovement || (allowsVerifiedLinkedNeutralization && isVerifiedLinkedTransfer);
   if (!isGloballyNeutralized && allowsManualNeutralization && isManualUnverifiedTransfer) {
     isGloballyNeutralized = true;
   }
@@ -176,6 +181,10 @@ export function getTransferPolicyWarning(evaluation: TransferPolicyEvaluation): 
   }
 
   if (evaluation.isGloballyNeutralized) {
+    if (evaluation.reportingBucket === "savings_allocation") {
+      return "Savings movement: visible in activity, excluded from overall income and expense totals.";
+    }
+
     if (evaluation.isVerifiedLinkedTransfer) {
       return "Verified internal transfer: excluded from overall income and expense totals.";
     }
@@ -212,6 +221,14 @@ function resolvePolicyKind(
   taxonomySubcategoryId: number | null,
   transferKind: TransactionDto["transferKind"] | null
 ): TransferPolicyKind {
+  if (
+    transferKind === "savings_roundup"
+    || transferKind === "savings_manual_deposit"
+    || transferKind === "savings_manual_withdrawal"
+  ) {
+    return "savings_transfer";
+  }
+
   if (taxonomySubcategoryId !== null) {
     switch (taxonomySubcategoryId) {
       case BANK_ACCOUNT_TRANSFER_SUBCATEGORY_ID:

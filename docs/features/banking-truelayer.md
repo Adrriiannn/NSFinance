@@ -227,6 +227,31 @@ NSFinance distinguishes true economic activity from money moved between a userâ€
 - Per-account ledgers still show the actual debit/credit movement for account-level truth.
 - Transaction Details renders a linked transaction preview section only when a linked counterpart exists, and tapping it navigates to the counterpart details page.
 
+## Transaction relationship layer (savings and pockets)
+
+NSFinance now persists a first-class `TransactionRelationships` layer so inferred movement semantics are explicit and auditable instead of hidden in ad-hoc projection logic.
+
+- Relationship records store:
+  - relationship type/status/direction
+  - source/target projected transaction ids
+  - source/target raw-bank transaction ids (when available)
+  - confidence score/tier and reason payload
+  - analytics treatment and optional virtual destination labels
+- Supported relationship types include:
+  - `internal_account_transfer`
+  - `savings_roundup`
+  - `savings_manual_deposit`
+  - `savings_manual_withdrawal`
+  - `possible_*_suggestion` (medium/low-confidence suggestions)
+- Savings movement detection is currently Revolut-first but provider-extensible:
+  - pocket/vault/flexible-cash/spare-change descriptors are detected
+  - round-up patterns are linked to nearby merchant outflows when confidence is high
+  - manual moves to/from savings destinations are marked as savings flow
+- Visibility remains non-destructive:
+  - savings rows stay visible in Activity
+  - high-confidence savings movements are globally neutralized for income/expense math
+  - savings movement rows route to savings allocation reporting (`SavingsAllocation`) instead of spending/income
+
 ## Consent expiry and reconfirmation continuity
 
 - Consent expiry (`reauth_required` / `expired`) is treated as an access problem, not a history deletion event.

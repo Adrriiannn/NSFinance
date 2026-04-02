@@ -23,6 +23,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ExportRequest> ExportRequests => Set<ExportRequest>();
     public DbSet<FinancialAccount> FinancialAccounts => Set<FinancialAccount>();
     public DbSet<Transaction> Transactions => Set<Transaction>();
+    public DbSet<TransactionRelationship> TransactionRelationships => Set<TransactionRelationship>();
     public DbSet<TransactionCategory> TransactionCategories => Set<TransactionCategory>();
     public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();

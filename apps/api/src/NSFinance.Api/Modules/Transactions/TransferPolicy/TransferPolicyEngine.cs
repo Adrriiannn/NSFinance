@@ -39,6 +39,10 @@ public static class TransferPolicyEngine
     {
         var policyKind = ResolvePolicyKind(taxonomyDomainId, taxonomyCategoryId, taxonomySubcategoryId, transferKind);
         var isTransferLike = policyKind != TransferPolicyKind.None;
+        var isDerivedSavingsMovement = transferKind is
+            TransactionTransferKind.SavingsRoundup
+            or TransactionTransferKind.SavingsManualDeposit
+            or TransactionTransferKind.SavingsManualWithdrawal;
         var isManualUnverifiedTransfer = transferKind == TransactionTransferKind.Manual;
         var isVerifiedLinkedTransfer = transferKind == TransactionTransferKind.LinkedInternal
             && linkedTransferTransactionId.HasValue;
@@ -64,7 +68,8 @@ public static class TransferPolicyEngine
         var allowsVerifiedLinkedNeutralization = AllowsVerifiedLinkedNeutralization(policyKind);
         var requiresLinkedProofForNeutralization = !allowsManualNeutralization && allowsVerifiedLinkedNeutralization;
 
-        var isGloballyNeutralized = allowsVerifiedLinkedNeutralization && isVerifiedLinkedTransfer;
+        var isGloballyNeutralized = isDerivedSavingsMovement
+            || (allowsVerifiedLinkedNeutralization && isVerifiedLinkedTransfer);
         if (!isGloballyNeutralized && allowsManualNeutralization && isManualUnverifiedTransfer)
         {
             isGloballyNeutralized = true;
@@ -253,6 +258,14 @@ public static class TransferPolicyEngine
                 OtherTransfersCategoryId => TransferPolicyKind.OtherTransferGeneric,
                 _ => TransferPolicyKind.None
             };
+        }
+
+        if (transferKind is
+            TransactionTransferKind.SavingsRoundup
+            or TransactionTransferKind.SavingsManualDeposit
+            or TransactionTransferKind.SavingsManualWithdrawal)
+        {
+            return TransferPolicyKind.SavingsTransfer;
         }
 
         if (taxonomyDomainId == TransferDomainId || transferKind is TransactionTransferKind.Manual or TransactionTransferKind.LinkedInternal)

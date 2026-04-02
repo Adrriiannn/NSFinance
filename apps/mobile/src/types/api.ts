@@ -44,8 +44,30 @@ export type TransactionDto = {
   taxonomyCategoryName: string | null;
   taxonomySubcategoryId: number | null;
   taxonomySubcategoryName: string | null;
-  transferKind?: "manual_transfer" | "linked_internal_transfer" | null;
+  transferKind?:
+    | "manual_transfer"
+    | "linked_internal_transfer"
+    | "savings_roundup"
+    | "savings_manual_deposit"
+    | "savings_manual_withdrawal"
+    | null;
   linkedTransferTransactionId?: string | null;
+  relationshipType?:
+    | "internal_account_transfer"
+    | "savings_roundup"
+    | "savings_manual_deposit"
+    | "savings_manual_withdrawal"
+    | "possible_transfer_suggestion"
+    | "possible_savings_suggestion"
+    | null;
+  relationshipStatus?: "active" | "suggested" | "dismissed" | null;
+  relationshipDirection?: "outflow_to_inflow" | "outflow_to_savings" | "inflow_from_savings" | null;
+  relationshipConfidenceScore?: number | null;
+  relationshipConfidenceTier?: "low" | "medium" | "high" | null;
+  relationshipAnalyticsTreatment?: string | null;
+  relationshipVirtualDestinationLabel?: string | null;
+  relationshipCounterpartyTransactionId?: string | null;
+  displaySemantic?: "real_transaction" | "internal_transfer" | "savings_roundup" | "savings_manual_move" | null;
   transferPolicyKind?: string | null;
   reportingBucket?: string | null;
   isGloballyNeutralized?: boolean | null;

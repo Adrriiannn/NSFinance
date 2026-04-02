@@ -110,4 +110,27 @@ public class TransferPolicyEngineTests
         Assert.True(evaluation.CountsTowardExpense);
         Assert.False(evaluation.AllowsManualNeutralization);
     }
+
+    [Theory]
+    [InlineData(TransactionTransferKind.SavingsRoundup, -1.00)]
+    [InlineData(TransactionTransferKind.SavingsManualDeposit, -5.00)]
+    [InlineData(TransactionTransferKind.SavingsManualWithdrawal, 7.00)]
+    public void SavingsMovements_AreGloballyNeutralizedAndReportedAsSavingsTransfers(
+        TransactionTransferKind transferKind,
+        double amount)
+    {
+        var evaluation = TransferPolicyEngine.Evaluate(
+            taxonomyDomainId: 920,
+            taxonomyCategoryId: 92010,
+            taxonomySubcategoryId: 920102,
+            transferKind: transferKind,
+            linkedTransferTransactionId: null,
+            amount: Convert.ToDecimal(amount));
+
+        Assert.True(evaluation.IsGloballyNeutralized);
+        Assert.False(evaluation.CountsTowardExpense);
+        Assert.False(evaluation.CountsTowardIncome);
+        Assert.Equal(TransferPolicyKind.SavingsTransfer, evaluation.PolicyKind);
+        Assert.Equal(TransferReportingBucket.SavingsAllocation, evaluation.ReportingBucket);
+    }
 }

@@ -11,6 +11,7 @@ using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
+using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 
@@ -146,7 +147,113 @@ public class OpenBankingIntegrationTests
         Assert.Equal(TransactionTransferKind.LinkedInternal, aibIncoming.TransferKind);
 
         Assert.Null(debitToPocket.LinkedTransferTransactionId);
-        Assert.NotEqual(TransactionTransferKind.LinkedInternal, debitToPocket.TransferKind);
+        Assert.Equal(TransactionTransferKind.SavingsManualDeposit, debitToPocket.TransferKind);
+        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, debitToPocket.TaxonomyDomainId);
+        Assert.Equal(920102, debitToPocket.TaxonomySubcategoryId);
+
+        var savingsRelationship = await harness.DbContext.TransactionRelationships
+            .SingleAsync(x =>
+                x.SourceTransactionId == debitToPocket.Id
+                && x.RelationshipType == TransactionRelationshipType.SavingsManualDeposit
+                && x.RelationshipStatus == TransactionRelationshipStatus.Active);
+        Assert.Equal("exclude_income_expense_include_savings_flow", savingsRelationship.AnalyticsTreatment);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_DetectsRoundupSavingsRelationship_AndKeepsMerchantExpenseVisible()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: RevolutRoundupSavingsFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.roundup-savings@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-roundup-savings", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+
+        var transactions = await harness.DbContext.Transactions
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+        Assert.Equal(2, transactions.Count);
+
+        var merchant = transactions.Single(x => x.Description.Contains("Tesco", StringComparison.OrdinalIgnoreCase));
+        var roundup = transactions.Single(x => x.Description.Contains("spare change", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Null(merchant.LinkedTransferTransactionId);
+        Assert.Equal(TransactionTransferKind.SavingsRoundup, roundup.TransferKind);
+        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, roundup.TaxonomyDomainId);
+        Assert.Equal(920102, roundup.TaxonomySubcategoryId);
+
+        var relationship = await harness.DbContext.TransactionRelationships
+            .SingleAsync(x =>
+                x.SourceTransactionId == roundup.Id
+                && x.TargetTransactionId == merchant.Id
+                && x.RelationshipType == TransactionRelationshipType.SavingsRoundup);
+        Assert.Equal(TransactionRelationshipStatus.Active, relationship.RelationshipStatus);
+
+        var merchantPolicy = TransferPolicyEngine.Evaluate(
+            merchant.TaxonomyDomainId,
+            merchant.TaxonomyCategoryId,
+            merchant.TaxonomySubcategoryId,
+            merchant.TransferKind,
+            merchant.LinkedTransferTransactionId,
+            merchant.Amount);
+        var roundupPolicy = TransferPolicyEngine.Evaluate(
+            roundup.TaxonomyDomainId,
+            roundup.TaxonomyCategoryId,
+            roundup.TaxonomySubcategoryId,
+            roundup.TransferKind,
+            roundup.LinkedTransferTransactionId,
+            roundup.Amount);
+
+        Assert.True(merchantPolicy.CountsTowardExpense);
+        Assert.False(roundupPolicy.CountsTowardExpense);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_DetectsSavingsWithdrawal_AndKeepsItAnalyticsNeutral()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: RevolutSavingsWithdrawalFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.savings-withdrawal@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-savings-withdrawal", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+
+        var withdrawal = await harness.DbContext.Transactions.SingleAsync(
+            x => x.Description.Contains("Flexible Cash Funds", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(TransactionTransferKind.SavingsManualWithdrawal, withdrawal.TransferKind);
+
+        var relationship = await harness.DbContext.TransactionRelationships
+            .SingleAsync(x =>
+                x.SourceTransactionId == withdrawal.Id
+                && x.RelationshipType == TransactionRelationshipType.SavingsManualWithdrawal);
+        Assert.Equal(TransactionRelationshipDirection.InflowFromSavings, relationship.RelationshipDirection);
+
+        var policy = TransferPolicyEngine.Evaluate(
+            withdrawal.TaxonomyDomainId,
+            withdrawal.TaxonomyCategoryId,
+            withdrawal.TaxonomySubcategoryId,
+            withdrawal.TransferKind,
+            withdrawal.LinkedTransferTransactionId,
+            withdrawal.Amount);
+
+        Assert.False(policy.CountsTowardIncome);
     }
 
     [Fact]
@@ -1807,6 +1914,189 @@ public class OpenBankingIntegrationTests
                       ]
                     }
                     """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler RevolutRoundupSavingsFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-roundup-savings",
+                      "refresh_token":"refresh-token-roundup-savings",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-revolut-roundup-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-roundup-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 980.10,
+                          "current": 980.10,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-01T09:12:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-roundup-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-revolut-roundup-merchant-001",
+                          "normalised_provider_transaction_id":"norm-revolut-roundup-merchant-001",
+                          "amount":-14.47,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-01T09:07:00Z",
+                          "description":"Tesco Stores",
+                          "merchant_name":"Tesco",
+                          "transaction_type":"DEBIT",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-roundup-savings-001",
+                          "normalised_provider_transaction_id":"norm-revolut-roundup-savings-001",
+                          "amount":-0.53,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-01T09:08:00Z",
+                          "description":"Spare change to Pocket",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-roundup-001/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler RevolutSavingsWithdrawalFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-savings-withdrawal",
+                      "refresh_token":"refresh-token-savings-withdrawal",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-revolut-withdrawal-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-withdrawal-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1200.00,
+                          "current": 1200.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-01T11:12:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-withdrawal-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-revolut-pocket-withdraw-001",
+                          "normalised_provider_transaction_id":"norm-revolut-pocket-withdraw-001",
+                          "amount":1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-01T11:10:00Z",
+                          "description":"From Flexible Cash Funds",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-withdrawal-001/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }
 
             return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
