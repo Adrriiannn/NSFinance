@@ -434,7 +434,8 @@ public sealed class TrueLayerDataService(
             var records = new List<TrueLayerTransactionRecord>();
             foreach (var item in resultsNode.EnumerateArray())
             {
-                var timestamp = ParseDateTime(GetString(item, "timestamp")) ?? DateTime.UtcNow;
+                var bookedTimestamp = ExtractBookedTimestamp(item);
+                var timestamp = bookedTimestamp.Utc ?? DateTime.UtcNow;
                 var amount = GetDecimal(item, "amount");
                 if (!amount.HasValue)
                 {
@@ -453,8 +454,7 @@ public sealed class TrueLayerDataService(
                     timestamp,
                     SettledTransactionsSource);
                 var providerStatus = GetString(item, "status");
-                var valueAtUtc = ParseDateTime(GetString(item, "value_timestamp"))
-                    ?? ParseDateTime(GetString(item, "value_date"));
+                var valueTimestamp = ExtractValueTimestamp(item);
                 var normalizedStatus = NormalizeAccountTransactionStatus(
                     sourceEndpoint: SettledTransactionsSource,
                     providerStatus: providerStatus);
@@ -465,7 +465,11 @@ public sealed class TrueLayerDataService(
                     Amount: amount.Value,
                     Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
                     BookedAtUtc: timestamp,
-                    ValueAtUtc: valueAtUtc,
+                    ValueAtUtc: valueTimestamp.Utc,
+                    ProviderTimestampRaw: bookedTimestamp.Raw,
+                    ValueTimestampRaw: valueTimestamp.Raw,
+                    TimestampSource: bookedTimestamp.Source,
+                    TimestampPrecision: bookedTimestamp.Precision,
                     Description: description,
                     TransactionType: GetString(item, "transaction_type"),
                     TransactionStatus: normalizedStatus.NormalizedStatus,
@@ -538,7 +542,8 @@ public sealed class TrueLayerDataService(
             var records = new List<TrueLayerTransactionRecord>();
             foreach (var item in resultsNode.EnumerateArray())
             {
-                var timestamp = ParseDateTime(GetString(item, "timestamp")) ?? DateTime.UtcNow;
+                var bookedTimestamp = ExtractBookedTimestamp(item);
+                var timestamp = bookedTimestamp.Utc ?? DateTime.UtcNow;
                 var amount = GetDecimal(item, "amount");
                 if (!amount.HasValue)
                 {
@@ -557,8 +562,7 @@ public sealed class TrueLayerDataService(
                     timestamp,
                     PendingTransactionsSource);
                 var providerStatus = GetString(item, "status");
-                var valueAtUtc = ParseDateTime(GetString(item, "value_timestamp"))
-                    ?? ParseDateTime(GetString(item, "value_date"));
+                var valueTimestamp = ExtractValueTimestamp(item);
                 var normalizedStatus = NormalizeAccountTransactionStatus(
                     sourceEndpoint: PendingTransactionsSource,
                     providerStatus: providerStatus);
@@ -569,7 +573,11 @@ public sealed class TrueLayerDataService(
                     Amount: amount.Value,
                     Currency: (GetString(item, "currency") ?? "EUR").ToUpperInvariant(),
                     BookedAtUtc: timestamp,
-                    ValueAtUtc: valueAtUtc,
+                    ValueAtUtc: valueTimestamp.Utc,
+                    ProviderTimestampRaw: bookedTimestamp.Raw,
+                    ValueTimestampRaw: valueTimestamp.Raw,
+                    TimestampSource: bookedTimestamp.Source,
+                    TimestampPrecision: bookedTimestamp.Precision,
                     Description: description,
                     TransactionType: GetString(item, "transaction_type"),
                     TransactionStatus: normalizedStatus.NormalizedStatus,
@@ -940,6 +948,81 @@ public sealed class TrueLayerDataService(
         return null;
     }
 
+    private static ExtractedTimestamp ExtractBookedTimestamp(JsonElement transaction)
+    {
+        return ExtractTimestampFromCandidates(
+            transaction,
+            [
+                "timestamp",
+                "booked_timestamp",
+                "booking_timestamp",
+                "booked_date",
+                "booking_date",
+                "date"
+            ],
+            fallbackSource: "inferred_now");
+    }
+
+    private static ExtractedTimestamp ExtractValueTimestamp(JsonElement transaction)
+    {
+        return ExtractTimestampFromCandidates(
+            transaction,
+            [
+                "value_timestamp",
+                "value_date",
+                "effective_date"
+            ],
+            fallbackSource: "missing");
+    }
+
+    private static ExtractedTimestamp ExtractTimestampFromCandidates(
+        JsonElement source,
+        IReadOnlyList<string> candidateFieldNames,
+        string fallbackSource)
+    {
+        foreach (var fieldName in candidateFieldNames)
+        {
+            var raw = GetString(source, fieldName);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var parsed = ParseDateTime(raw);
+            if (parsed.HasValue)
+            {
+                return new ExtractedTimestamp(
+                    parsed.Value,
+                    raw,
+                    fieldName,
+                    ClassifyTimestampPrecision(raw));
+            }
+        }
+
+        return new ExtractedTimestamp(
+            Utc: null,
+            Raw: null,
+            Source: fallbackSource,
+            Precision: "unknown_needs_verification");
+    }
+
+    private static string ClassifyTimestampPrecision(string rawTimestamp)
+    {
+        if (string.IsNullOrWhiteSpace(rawTimestamp))
+        {
+            return "unknown_needs_verification";
+        }
+
+        var trimmed = rawTimestamp.Trim();
+        var hasExplicitTime =
+            trimmed.Contains('T', StringComparison.Ordinal)
+            || trimmed.Contains(':', StringComparison.Ordinal);
+
+        return hasExplicitTime
+            ? "precise_datetime"
+            : "date_only_midnight";
+    }
+
     private static DateTime? ParseDateTime(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -967,6 +1050,12 @@ public sealed class TrueLayerDataService(
 
         return null;
     }
+
+    private readonly record struct ExtractedTimestamp(
+        DateTime? Utc,
+        string? Raw,
+        string Source,
+        string Precision);
 
     private static string ComputeDedupeKey(string stableTransactionId)
     {

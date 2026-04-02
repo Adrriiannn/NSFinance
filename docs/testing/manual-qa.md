@@ -151,16 +151,20 @@ Mobile freshness UX:
 11. Validate pending behavior:
    - rows fetched from pending endpoint remain unprojected (raw-only) until a booked counterpart arrives
    - when a pending row later arrives as booked, it is projected once without duplicate ledger creation
-12. Validate stuck-sync recovery behavior:
+12. Validate timestamp provenance + normalized layer:
+   - for newly fetched account transactions, confirm `RawBankTransactions` stores:
+     - `ProviderTimestampRaw`, `TimestampSource`, `TimestampPrecision`
+   - confirm corresponding `NormalizedBankTransactions` rows are created/updated with matching provenance and policy metadata
+13. Validate stuck-sync recovery behavior:
    - force one connection into `sync_pending` with a recent `LastSyncAttemptedUtc` and run global manual sync
    - verify that connection is skipped as `skipped_sync_in_progress`
    - force one connection into stale `sync_pending` (older than threshold) and run global manual sync
    - verify stale state is recovered and connection runs sync instead of being skipped indefinitely
-13. Validate long-running manual sync resiliency:
+14. Validate long-running manual sync resiliency:
    - trigger manual sync on a higher-volume connection and keep the app open
    - confirm endpoint logs include request-cancellation metadata and still complete sync even if the client request is interrupted
    - confirm connection-level result is returned as structured outcome rather than raw request-canceled crash
-14. Validate projection reconcile cost bounds:
+15. Validate projection reconcile cost bounds:
    - run sync on an account with many legacy raw rows lacking `ProjectedTransactionId`
    - verify lifecycle logs include `projectedDuplicateCheckAttempts`, `projectedBackfillRowsEvaluated`, `projectedBackfillRowsDeferred`, and `projectedCandidatePoolSize`
    - verify deferred backfill rows decrease across subsequent sync runs (bounded progress, no unbounded single-run spike)

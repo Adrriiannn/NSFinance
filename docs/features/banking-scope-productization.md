@@ -55,9 +55,11 @@
 ### `transactions` (highest-priority truth layer)
 
 - Keep raw fetched events distinct unless identity proves same event.
+- Use explicit normalized banking layer (`NormalizedBankTransactions`) between raw ingest and user-visible projection.
 - Use durable raw-to-projected linkage (`ProjectedTransactionId`) for reconciliation.
 - Keep pending/booked endpoint semantics explicit.
 - Keep projection inclusive: rows remain visible even when linked/interpreted.
+- Persist timestamp provenance (`raw`, `source`, `precision`, policy key) for diagnostics and provider-aware matching.
 
 ## Transaction linking hardening
 
@@ -71,6 +73,9 @@ The internal-transfer linker now prioritizes confidence and reversibility:
   - account-hint match and strong name-token overlap improve confidence materially
   - weak timestamp + low counterparty confidence causes deferral (no auto-link)
 - Higher auto-link threshold to reduce false positives
+- Confidence tiers are explicit:
+  - `high`: eligible for auto-linking
+  - `medium` / `low`: not auto-linked into analytics-impacting transfer classification
 
 Result: same-amount nearby events (for example spare-change/pocket vs real cross-bank transfer) are less likely to be mislinked.
 

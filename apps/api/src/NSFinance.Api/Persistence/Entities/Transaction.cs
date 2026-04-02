@@ -17,6 +17,9 @@ public class Transaction
     public TransactionTransferKind? TransferKind { get; set; }
     public Guid? LinkedTransferTransactionId { get; set; }
     public DateTime? LinkedTransferMatchedUtc { get; set; }
+    public int? TransferMatchConfidenceScore { get; set; }
+    public string? TransferMatchConfidenceTier { get; set; }
+    public string? TransferMatchReason { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? MetadataUpdatedUtc { get; set; }
 

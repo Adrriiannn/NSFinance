@@ -642,6 +642,7 @@ public sealed class BankSyncService(
             var transactionUpsert = await UpsertTransactionsAsync(
                 linkedAccount,
                 providerAccount,
+                providerPolicy,
                 fetchedTransactions.Transactions,
                 now,
                 cancellationToken);
@@ -1299,6 +1300,7 @@ public sealed class BankSyncService(
     private async Task<TransactionUpsertSummary> UpsertTransactionsAsync(
         LinkedBankAccount linkedAccount,
         TrueLayerAccountRecord providerAccount,
+        ProviderTransactionSyncPolicy providerPolicy,
         IReadOnlyList<TrueLayerTransactionRecord> providerTransactions,
         DateTime now,
         CancellationToken cancellationToken)
@@ -1325,6 +1327,10 @@ public sealed class BankSyncService(
                 existingRawByDedupeKey[row.DedupeKey] = row;
             }
         }
+
+        var normalizedRowsByRawId = await dbContext.NormalizedBankTransactions
+            .Where(x => x.LinkedBankAccountId == linkedAccount.Id)
+            .ToDictionaryAsync(x => x.RawBankTransactionId, cancellationToken);
 
         var rawInserted = 0;
         var rawUpdated = 0;
@@ -1438,7 +1444,7 @@ public sealed class BankSyncService(
         foreach (var providerTransaction in providerTransactions)
         {
             logger.LogDebug(
-                "Bank transaction normalization providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceEndpoint={SourceEndpoint} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} valueAtUtc={ValueAtUtc} providerStatus={ProviderStatus} normalizedStatus={NormalizedStatus} normalizationReason={NormalizationReason}",
+                "Bank transaction normalization providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceEndpoint={SourceEndpoint} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} valueAtUtc={ValueAtUtc} providerTimestampRaw={ProviderTimestampRaw} valueTimestampRaw={ValueTimestampRaw} timestampSource={TimestampSource} timestampPrecision={TimestampPrecision} providerStatus={ProviderStatus} normalizedStatus={NormalizedStatus} normalizationReason={NormalizationReason}",
                 providerAccount.ProviderId ?? "<unknown>",
                 providerAccount.ProviderDisplayName ?? "<unknown>",
                 linkedAccount.ConnectionId,
@@ -1452,6 +1458,10 @@ public sealed class BankSyncService(
                 providerTransaction.Currency,
                 providerTransaction.BookedAtUtc,
                 providerTransaction.ValueAtUtc,
+                providerTransaction.ProviderTimestampRaw ?? "<none>",
+                providerTransaction.ValueTimestampRaw ?? "<none>",
+                providerTransaction.TimestampSource,
+                providerTransaction.TimestampPrecision,
                 providerTransaction.ProviderStatus ?? "<none>",
                 providerTransaction.TransactionStatus ?? "<null>",
                 providerTransaction.StatusNormalizationReason);
@@ -1474,7 +1484,11 @@ public sealed class BankSyncService(
                 var wasBooked = IsBookedProjectionStatus(existingRaw.TransactionStatus);
                 var previousProviderTransactionId = existingRaw.ProviderTransactionId;
                 var previousDedupeKey = existingRaw.DedupeKey;
-                var changed = ApplyRawTransactionUpdate(existingRaw, providerTransaction, now);
+                var changed = ApplyRawTransactionUpdate(
+                    existingRaw,
+                    providerTransaction,
+                    providerPolicy.ProviderKey,
+                    now);
                 if (changed)
                 {
                     rawUpdated++;
@@ -1635,6 +1649,14 @@ public sealed class BankSyncService(
                         providerTransaction.StatusNormalizationReason);
                 }
 
+                UpsertNormalizedBankTransaction(
+                    normalizedRowsByRawId,
+                    existingRaw,
+                    linkedAccount,
+                    providerPolicy,
+                    providerTransaction,
+                    now);
+
                 continue;
             }
 
@@ -1643,13 +1665,23 @@ public sealed class BankSyncService(
                 Id = Guid.NewGuid(),
                 LinkedBankAccountId = linkedAccount.Id,
                 ProviderTransactionId = providerTransaction.ProviderTransactionId,
+                NormalizedProviderTransactionId = providerTransaction.NormalizedProviderTransactionId,
                 DedupeKey = providerTransaction.DedupeKey,
                 Amount = providerTransaction.Amount,
                 Currency = providerTransaction.Currency,
                 BookedAtUtc = providerTransaction.BookedAtUtc,
+                ValueAtUtc = providerTransaction.ValueAtUtc,
                 Description = providerTransaction.Description,
                 TransactionType = providerTransaction.TransactionType,
                 TransactionStatus = providerTransaction.TransactionStatus,
+                SourceEndpoint = providerTransaction.SourceEndpoint,
+                ProviderStatus = providerTransaction.ProviderStatus,
+                StatusNormalizationReason = providerTransaction.StatusNormalizationReason,
+                ProviderTimestampRaw = providerTransaction.ProviderTimestampRaw,
+                ValueTimestampRaw = providerTransaction.ValueTimestampRaw,
+                TimestampSource = providerTransaction.TimestampSource,
+                TimestampPrecision = providerTransaction.TimestampPrecision,
+                TimestampNormalizationPolicyKey = providerPolicy.ProviderKey,
                 ProjectedTransactionId = null,
                 RawPayloadJson = providerTransaction.RawPayloadJson,
                 ImportedUtc = now
@@ -1757,6 +1789,13 @@ public sealed class BankSyncService(
             }
 
             existingRawByDedupeKey[providerTransaction.DedupeKey] = rawTransaction;
+            UpsertNormalizedBankTransaction(
+                normalizedRowsByRawId,
+                rawTransaction,
+                linkedAccount,
+                providerPolicy,
+                providerTransaction,
+                now);
             rawInserted++;
         }
 
@@ -1911,6 +1950,7 @@ public sealed class BankSyncService(
     private static bool ApplyRawTransactionUpdate(
         RawBankTransaction existing,
         TrueLayerTransactionRecord incoming,
+        string timestampNormalizationPolicyKey,
         DateTime importedUtc)
     {
         var changed = false;
@@ -1919,6 +1959,13 @@ public sealed class BankSyncService(
             && !string.Equals(existing.ProviderTransactionId, incoming.ProviderTransactionId, StringComparison.Ordinal))
         {
             existing.ProviderTransactionId = incoming.ProviderTransactionId;
+            changed = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(incoming.NormalizedProviderTransactionId)
+            && !string.Equals(existing.NormalizedProviderTransactionId, incoming.NormalizedProviderTransactionId, StringComparison.Ordinal))
+        {
+            existing.NormalizedProviderTransactionId = incoming.NormalizedProviderTransactionId;
             changed = true;
         }
 
@@ -1946,6 +1993,12 @@ public sealed class BankSyncService(
             changed = true;
         }
 
+        if (existing.ValueAtUtc != incoming.ValueAtUtc)
+        {
+            existing.ValueAtUtc = incoming.ValueAtUtc;
+            changed = true;
+        }
+
         if (!string.Equals(existing.Description, incoming.Description, StringComparison.Ordinal))
         {
             existing.Description = incoming.Description;
@@ -1964,6 +2017,54 @@ public sealed class BankSyncService(
             changed = true;
         }
 
+        if (!string.Equals(existing.SourceEndpoint, incoming.SourceEndpoint, StringComparison.OrdinalIgnoreCase))
+        {
+            existing.SourceEndpoint = incoming.SourceEndpoint;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.ProviderStatus, incoming.ProviderStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            existing.ProviderStatus = incoming.ProviderStatus;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.StatusNormalizationReason, incoming.StatusNormalizationReason, StringComparison.Ordinal))
+        {
+            existing.StatusNormalizationReason = incoming.StatusNormalizationReason;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.ProviderTimestampRaw, incoming.ProviderTimestampRaw, StringComparison.Ordinal))
+        {
+            existing.ProviderTimestampRaw = incoming.ProviderTimestampRaw;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.ValueTimestampRaw, incoming.ValueTimestampRaw, StringComparison.Ordinal))
+        {
+            existing.ValueTimestampRaw = incoming.ValueTimestampRaw;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.TimestampSource, incoming.TimestampSource, StringComparison.Ordinal))
+        {
+            existing.TimestampSource = incoming.TimestampSource;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.TimestampPrecision, incoming.TimestampPrecision, StringComparison.Ordinal))
+        {
+            existing.TimestampPrecision = incoming.TimestampPrecision;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.TimestampNormalizationPolicyKey, timestampNormalizationPolicyKey, StringComparison.Ordinal))
+        {
+            existing.TimestampNormalizationPolicyKey = timestampNormalizationPolicyKey;
+            changed = true;
+        }
+
         if (!string.Equals(existing.RawPayloadJson, incoming.RawPayloadJson, StringComparison.Ordinal))
         {
             existing.RawPayloadJson = incoming.RawPayloadJson;
@@ -1976,6 +2077,52 @@ public sealed class BankSyncService(
         }
 
         return changed;
+    }
+
+    private void UpsertNormalizedBankTransaction(
+        IDictionary<Guid, NormalizedBankTransaction> normalizedRowsByRawId,
+        RawBankTransaction rawTransaction,
+        LinkedBankAccount linkedAccount,
+        ProviderTransactionSyncPolicy providerPolicy,
+        TrueLayerTransactionRecord providerTransaction,
+        DateTime now)
+    {
+        if (!normalizedRowsByRawId.TryGetValue(rawTransaction.Id, out var normalized))
+        {
+            normalized = new NormalizedBankTransaction
+            {
+                Id = Guid.NewGuid(),
+                RawBankTransactionId = rawTransaction.Id,
+                LinkedBankAccountId = linkedAccount.Id,
+                FinancialAccountId = linkedAccount.FinancialAccountId,
+                ImportedUtc = now
+            };
+            dbContext.NormalizedBankTransactions.Add(normalized);
+            normalizedRowsByRawId[rawTransaction.Id] = normalized;
+        }
+
+        normalized.ProjectedTransactionId = rawTransaction.ProjectedTransactionId;
+        normalized.ProviderTransactionId = rawTransaction.ProviderTransactionId;
+        normalized.NormalizedProviderTransactionId = providerTransaction.NormalizedProviderTransactionId ?? rawTransaction.NormalizedProviderTransactionId;
+        normalized.DedupeKey = rawTransaction.DedupeKey;
+        normalized.Amount = rawTransaction.Amount;
+        normalized.Currency = rawTransaction.Currency;
+        normalized.BookedAtUtc = rawTransaction.BookedAtUtc;
+        normalized.ValueAtUtc = providerTransaction.ValueAtUtc ?? rawTransaction.ValueAtUtc;
+        normalized.Description = rawTransaction.Description;
+        normalized.TransactionType = rawTransaction.TransactionType;
+        normalized.TransactionStatus = rawTransaction.TransactionStatus;
+        normalized.SourceEndpoint = rawTransaction.SourceEndpoint;
+        normalized.ProviderStatus = rawTransaction.ProviderStatus;
+        normalized.StatusNormalizationReason = rawTransaction.StatusNormalizationReason;
+        normalized.ProviderTimestampRaw = providerTransaction.ProviderTimestampRaw ?? rawTransaction.ProviderTimestampRaw;
+        normalized.ValueTimestampRaw = providerTransaction.ValueTimestampRaw ?? rawTransaction.ValueTimestampRaw;
+        normalized.TimestampSource = providerTransaction.TimestampSource ?? rawTransaction.TimestampSource;
+        normalized.TimestampPrecision = providerTransaction.TimestampPrecision ?? rawTransaction.TimestampPrecision;
+        normalized.TimestampNormalizedByPolicy = providerPolicy.TimestampPrecision.ToString();
+        normalized.NormalizationPolicyKey = providerPolicy.ProviderKey;
+        normalized.NormalizationPolicyFamily = providerPolicy.ProviderFamily;
+        normalized.LastNormalizedUtc = now;
     }
 
     private async Task UpsertIdentityInfoAsync(
@@ -2521,9 +2668,9 @@ public sealed class BankSyncService(
                 current.HintTokens.UnionWith(tokens);
             }
 
-            if (policy.TimestampPrecision == ProviderTimestampPrecisionMode.DateOnlyOrMixed)
+            if (policy.TimestampPrecision == ProviderTimestampPrecisionMode.DateOnlyMidnight)
             {
-                current.TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyOrMixed;
+                current.TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight;
             }
         }
 
@@ -2613,6 +2760,7 @@ public sealed class BankSyncService(
             Transaction? bestCredit = null;
             var bestScore = int.MinValue;
             var bestTimeDistance = TimeSpan.MaxValue;
+            InternalTransferPairScore? bestScoreResult = null;
             var hadEligibleCounterpartyCandidate = false;
             var hadTransferEvidenceCandidate = false;
 
@@ -2649,10 +2797,11 @@ public sealed class BankSyncService(
                 }
 
                 logger.LogDebug(
-                    "Linked transfer pair candidate evaluation debitId={DebitId} creditId={CreditId} score={Score} reason={Reason} distanceMinutes={DistanceMinutes} hasTransferEvidence={HasTransferEvidence} hasCounterpartyConfidence={HasCounterpartyConfidence} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket}",
+                    "Linked transfer pair candidate evaluation debitId={DebitId} creditId={CreditId} score={Score} confidenceTier={ConfidenceTier} reason={Reason} distanceMinutes={DistanceMinutes} hasTransferEvidence={HasTransferEvidence} hasCounterpartyConfidence={HasCounterpartyConfidence} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket}",
                     debit.Id,
                     credit.Id,
                     scoreResult.Score,
+                    scoreResult.ConfidenceTier,
                     scoreResult.DecisionReason,
                     (int)Math.Round(scoreResult.Distance.TotalMinutes, MidpointRounding.AwayFromZero),
                     scoreResult.HasTransferEvidence,
@@ -2662,7 +2811,8 @@ public sealed class BankSyncService(
 
                 var score = scoreResult.Score;
                 var distance = scoreResult.Distance;
-                if (score < InternalTransferMatchMinimumScore)
+                if (score < InternalTransferMatchMinimumScore
+                    || scoreResult.ConfidenceTier != TransferMatchConfidenceTier.High)
                 {
                     continue;
                 }
@@ -2672,6 +2822,7 @@ public sealed class BankSyncService(
                     bestCredit = credit;
                     bestScore = score;
                     bestTimeDistance = distance;
+                    bestScoreResult = scoreResult;
                 }
             }
 
@@ -2693,14 +2844,28 @@ public sealed class BankSyncService(
             }
 
             logger.LogInformation(
-                "Linked transfer pair selected debitId={DebitId} creditId={CreditId} score={Score} distanceMinutes={DistanceMinutes} debitDescription={DebitDescription} creditDescription={CreditDescription}",
+                "Linked transfer pair selected debitId={DebitId} creditId={CreditId} score={Score} confidenceTier={ConfidenceTier} distanceMinutes={DistanceMinutes} debitDescription={DebitDescription} creditDescription={CreditDescription}",
                 debit.Id,
                 bestCredit.Id,
                 bestScore,
+                bestScoreResult?.ConfidenceTier ?? TransferMatchConfidenceTier.High,
                 (int)Math.Round(bestTimeDistance.TotalMinutes, MidpointRounding.AwayFromZero),
                 debit.Description,
                 bestCredit.Description);
-            ApplyLinkedInternalTransferPair(debit, bestCredit, now);
+            ApplyLinkedInternalTransferPair(
+                debit,
+                bestCredit,
+                bestScoreResult ?? new InternalTransferPairScore(
+                    bestScore,
+                    bestTimeDistance,
+                    TransferMatchConfidenceTier.High,
+                    HasTransferEvidence: true,
+                    HasCounterpartyConfidence: true,
+                    DeferredByWeakTimestamp: false,
+                    DeferredBySavingsPocket: false,
+                    MissingCounterpartyConfidence: false,
+                    DecisionReason: "high_confidence_default"),
+                now);
             usedIncomingIds.Add(bestCredit.Id);
             matchedPairs++;
         }
@@ -2831,6 +2996,7 @@ public sealed class BankSyncService(
             return new InternalTransferPairScore(
                 Score: int.MinValue,
                 Distance: distance,
+                ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: hasTransferEvidence,
                 HasCounterpartyConfidence: hasCounterpartyConfidence,
                 DeferredByWeakTimestamp: false,
@@ -2844,6 +3010,7 @@ public sealed class BankSyncService(
             return new InternalTransferPairScore(
                 Score: int.MinValue,
                 Distance: distance,
+                ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: false,
                 HasCounterpartyConfidence: hasCounterpartyConfidence,
                 DeferredByWeakTimestamp: false,
@@ -2859,6 +3026,7 @@ public sealed class BankSyncService(
             return new InternalTransferPairScore(
                 Score: int.MinValue,
                 Distance: distance,
+                ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: hasTransferEvidence,
                 HasCounterpartyConfidence: false,
                 DeferredByWeakTimestamp: true,
@@ -2872,6 +3040,7 @@ public sealed class BankSyncService(
             return new InternalTransferPairScore(
                 Score: int.MinValue,
                 Distance: distance,
+                ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: hasTransferEvidence,
                 HasCounterpartyConfidence: false,
                 DeferredByWeakTimestamp: false,
@@ -2951,15 +3120,35 @@ public sealed class BankSyncService(
             score -= 1;
         }
 
+        var confidenceTier = DetermineTransferConfidenceTier(score, hasCounterpartyConfidence);
+
         return new InternalTransferPairScore(
             Score: score,
             Distance: distance,
+            ConfidenceTier: confidenceTier,
             HasTransferEvidence: hasTransferEvidence,
             HasCounterpartyConfidence: hasCounterpartyConfidence,
             DeferredByWeakTimestamp: false,
             DeferredBySavingsPocket: false,
             MissingCounterpartyConfidence: !hasCounterpartyConfidence,
             DecisionReason: "scored");
+    }
+
+    private static TransferMatchConfidenceTier DetermineTransferConfidenceTier(
+        int score,
+        bool hasCounterpartyConfidence)
+    {
+        if (score >= InternalTransferMatchMinimumScore && hasCounterpartyConfidence)
+        {
+            return TransferMatchConfidenceTier.High;
+        }
+
+        if (score >= InternalTransferMatchMinimumScore)
+        {
+            return TransferMatchConfidenceTier.Medium;
+        }
+
+        return TransferMatchConfidenceTier.Low;
     }
 
     private static bool DescriptionContainsCounterpartyAccountHint(
@@ -3076,7 +3265,7 @@ public sealed class BankSyncService(
             return false;
         }
 
-        if (profile.TimestampPrecision != ProviderTimestampPrecisionMode.DateOnlyOrMixed)
+        if (profile.TimestampPrecision != ProviderTimestampPrecisionMode.DateOnlyMidnight)
         {
             return false;
         }
@@ -3147,9 +3336,17 @@ public sealed class BankSyncService(
             || normalized.Contains("round-up", StringComparison.Ordinal);
     }
 
+    private enum TransferMatchConfidenceTier
+    {
+        Low,
+        Medium,
+        High
+    }
+
     private readonly record struct InternalTransferPairScore(
         int Score,
         TimeSpan Distance,
+        TransferMatchConfidenceTier ConfidenceTier,
         bool HasTransferEvidence,
         bool HasCounterpartyConfidence,
         bool DeferredByWeakTimestamp,
@@ -3169,16 +3366,26 @@ public sealed class BankSyncService(
         public string ProviderFamily { get; } = providerFamily;
     }
 
-    private static void ApplyLinkedInternalTransferPair(Transaction debit, Transaction credit, DateTime now)
+    private static void ApplyLinkedInternalTransferPair(
+        Transaction debit,
+        Transaction credit,
+        InternalTransferPairScore score,
+        DateTime now)
     {
         debit.TransferKind = TransactionTransferKind.LinkedInternal;
         debit.LinkedTransferTransactionId = credit.Id;
         debit.LinkedTransferMatchedUtc = now;
+        debit.TransferMatchConfidenceScore = score.Score;
+        debit.TransferMatchConfidenceTier = score.ConfidenceTier.ToString().ToLowerInvariant();
+        debit.TransferMatchReason = score.DecisionReason;
         ApplyAutoTransferTaxonomy(debit);
 
         credit.TransferKind = TransactionTransferKind.LinkedInternal;
         credit.LinkedTransferTransactionId = debit.Id;
         credit.LinkedTransferMatchedUtc = now;
+        credit.TransferMatchConfidenceScore = score.Score;
+        credit.TransferMatchConfidenceTier = score.ConfidenceTier.ToString().ToLowerInvariant();
+        credit.TransferMatchReason = score.DecisionReason;
         ApplyAutoTransferTaxonomy(credit);
     }
 
@@ -3186,6 +3393,9 @@ public sealed class BankSyncService(
     {
         transaction.LinkedTransferTransactionId = null;
         transaction.LinkedTransferMatchedUtc = null;
+        transaction.TransferMatchConfidenceScore = null;
+        transaction.TransferMatchConfidenceTier = null;
+        transaction.TransferMatchReason = null;
 
         if (transaction.TransferKind == TransactionTransferKind.LinkedInternal)
         {

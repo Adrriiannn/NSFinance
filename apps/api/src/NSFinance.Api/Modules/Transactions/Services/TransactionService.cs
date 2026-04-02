@@ -121,6 +121,9 @@ public sealed class TransactionService(
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
                 transaction.Amount < 0 ? "spending" : "income",
                 false,
                 null,
@@ -208,6 +211,9 @@ public sealed class TransactionService(
             transaction.TransferKind = isTransferCategory ? TransactionTransferKind.Manual : null;
             transaction.LinkedTransferTransactionId = null;
             transaction.LinkedTransferMatchedUtc = null;
+            transaction.TransferMatchConfidenceScore = null;
+            transaction.TransferMatchConfidenceTier = null;
+            transaction.TransferMatchReason = null;
         }
         transaction.MetadataUpdatedUtc = DateTime.UtcNow;
 
@@ -251,6 +257,9 @@ public sealed class TransactionService(
 
         counterpart.LinkedTransferTransactionId = null;
         counterpart.LinkedTransferMatchedUtc = null;
+        counterpart.TransferMatchConfidenceScore = null;
+        counterpart.TransferMatchConfidenceTier = null;
+        counterpart.TransferMatchReason = null;
 
         if (counterpart.TransferKind == TransactionTransferKind.LinkedInternal)
         {
@@ -296,10 +305,16 @@ public sealed class TransactionService(
         var now = DateTime.UtcNow;
         transaction.TransferKind = TransactionTransferKind.LinkedInternal;
         transaction.LinkedTransferMatchedUtc ??= now;
+        transaction.TransferMatchConfidenceScore ??= 0;
+        transaction.TransferMatchConfidenceTier ??= "manual_verified";
+        transaction.TransferMatchReason ??= "manual_linked_pair";
 
         counterpart.TransferKind = TransactionTransferKind.LinkedInternal;
         counterpart.LinkedTransferTransactionId = transaction.Id;
         counterpart.LinkedTransferMatchedUtc = now;
+        counterpart.TransferMatchConfidenceScore ??= 0;
+        counterpart.TransferMatchConfidenceTier ??= "manual_verified";
+        counterpart.TransferMatchReason ??= "manual_linked_pair";
 
         var counterpartTaxonomyChanged =
             counterpart.TaxonomyDomainId != selectedDomainId
@@ -384,6 +399,9 @@ public sealed class TransactionService(
             taxonomySubcategoryName,
             MapTransferKind(transaction.TransferKind),
             transaction.LinkedTransferTransactionId,
+            transaction.TransferMatchConfidenceScore,
+            transaction.TransferMatchConfidenceTier,
+            transaction.TransferMatchReason,
             MapTransferPolicyKind(transferPolicy.PolicyKind),
             transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
             transferPolicy.IsGloballyNeutralized,
@@ -411,6 +429,9 @@ public sealed class TransactionService(
             x.TaxonomySubcategoryId,
             x.TransferKind,
             x.LinkedTransferTransactionId,
+            x.TransferMatchConfidenceScore,
+            x.TransferMatchConfidenceTier,
+            x.TransferMatchReason,
             x.Reason,
             x.Notes,
             x.BookedAtUtc,
@@ -432,6 +453,9 @@ public sealed class TransactionService(
         int? TaxonomySubcategoryId,
         TransactionTransferKind? TransferKind,
         Guid? LinkedTransferTransactionId,
+        int? TransferMatchConfidenceScore,
+        string? TransferMatchConfidenceTier,
+        string? TransferMatchReason,
         string? Reason,
         string? Notes,
         DateTime BookedAtUtc,

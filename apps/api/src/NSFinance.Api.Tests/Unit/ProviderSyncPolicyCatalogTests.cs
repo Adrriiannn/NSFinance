@@ -6,33 +6,37 @@ namespace NSFinance.Api.Tests.Unit;
 public class ProviderSyncPolicyCatalogTests
 {
     [Theory]
-    [InlineData("ob-aib", "AIB", "aib", "irish_capped_slice", ProviderTransactionVisibilityMode.CappedVisibleSlice)]
-    [InlineData("ob-boi-ie", "Bank of Ireland", "boi", "irish_retail_standard", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-ptsb", "PTSB", "ptsb", "irish_mixed_history", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-revolut-ie", "REVOLUT-IE", "revolut", "fintech_revolut", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-monzo", "Monzo", "monzo", "fintech_monzo", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-starling", "Starling", "starling", "fintech_starling", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-santander", "Santander", "santander", "uk_retail_santander", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-rbs", "The Royal Bank of Scotland", "natwest_family", "uk_natwest_rbs_ulster_family", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-ulster", "Ulster Bank", "natwest_family", "uk_natwest_rbs_ulster_family", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-halifax", "Halifax", "lloyds_family", "uk_lloyds_halifax_bos_mbna_family", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-hsbc", "HSBC", "hsbc_family", "uk_hsbc_firstdirect_ms_family", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-barclays", "Barclays", "barclays_family", "uk_barclays_barclaycard_family", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-transferwise", "Wise", "wise", "fintech_wise", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-tide", "Tide", "tide", "fintech_tide_business", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-mettle", "Mettle Bank", "mettle_zempler", "fintech_business_banking", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-cashplus", "Zempler (formerly Cashplus)", "mettle_zempler", "fintech_business_banking", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-chelsea-building-society", "Chelsea Building Society", "building_society", "uk_building_society", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-yorkshire-building-society", "Yorkshire Building Society", "building_society", "uk_building_society", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-tsb", "TSB", "building_society", "uk_building_society", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-danske", "Danske Bank", "danske", "uk_danske", ProviderTransactionVisibilityMode.DateHistory)]
-    [InlineData("ob-nationwide", "Nationwide", "nationwide", "uk_nationwide", ProviderTransactionVisibilityMode.DateHistory)]
+    [InlineData("ob-aib", "AIB", "aib", "irish_capped_slice", ProviderTransactionVisibilityMode.CappedVisibleSlice, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-aib-business", "AIB Business", "aib_business", "irish_capped_slice_business", ProviderTransactionVisibilityMode.CappedVisibleSlice, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-boi-ie", "Bank of Ireland", "boi", "irish_retail_standard", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-ptsb", "PTSB", "ptsb", "irish_mixed_history", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-revolut-ie", "REVOLUT-IE", "revolut", "fintech_revolut", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.PreciseDateTime)]
+    [InlineData("ob-monzo", "Monzo", "monzo", "fintech_monzo", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.PreciseDateTime)]
+    [InlineData("ob-starling", "Starling", "starling", "fintech_starling", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-santander", "Santander", "santander", "uk_retail_santander", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-rbs", "The Royal Bank of Scotland", "natwest_family", "uk_natwest_rbs_ulster_family", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-ulster", "Ulster Bank", "natwest_family", "uk_natwest_rbs_ulster_family", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-halifax", "Halifax", "lloyds_family", "uk_lloyds_halifax_bos_mbna_family", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-hsbc", "HSBC", "hsbc_family", "uk_hsbc_firstdirect_ms_family", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-barclays", "Barclays", "barclays_family", "uk_barclays_barclaycard_family", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-barclaycard", "Barclaycard", "barclaycard", "uk_barclaycard", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.PreciseDateTime)]
+    [InlineData("ob-capital-one", "Capital One", "capital_one", "uk_capital_one", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.PreciseDateTime)]
+    [InlineData("ob-transferwise", "Wise", "wise", "fintech_wise", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.PreciseDateTime)]
+    [InlineData("ob-tide", "Tide", "tide", "fintech_tide_business", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.PreciseDateTime)]
+    [InlineData("ob-mettle", "Mettle Bank", "mettle_zempler", "fintech_business_banking", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-cashplus", "Zempler (formerly Cashplus)", "mettle_zempler", "fintech_business_banking", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-chelsea-building-society", "Chelsea Building Society", "building_society", "uk_building_society", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-yorkshire-building-society", "Yorkshire Building Society", "building_society", "uk_building_society", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-tsb", "TSB", "tsb_precise", "uk_tsb", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.PreciseDateTime)]
+    [InlineData("ob-danske", "Danske Bank", "danske", "uk_danske", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
+    [InlineData("ob-nationwide", "Nationwide", "nationwide", "uk_nationwide", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
     public void ResolveForAccount_MapsKnownProvidersToExpectedPolicyFamily(
         string providerId,
         string providerDisplayName,
         string expectedPolicyKey,
         string expectedFamily,
-        ProviderTransactionVisibilityMode expectedVisibilityMode)
+        ProviderTransactionVisibilityMode expectedVisibilityMode,
+        ProviderTimestampPrecisionMode expectedTimestampPrecision)
     {
         var account = BuildAccount(providerId, providerDisplayName);
 
@@ -41,6 +45,7 @@ public class ProviderSyncPolicyCatalogTests
         Assert.Equal(expectedPolicyKey, policy.ProviderKey);
         Assert.Equal(expectedFamily, policy.ProviderFamily);
         Assert.Equal(expectedVisibilityMode, policy.VisibilityMode);
+        Assert.Equal(expectedTimestampPrecision, policy.TimestampPrecision);
     }
 
     [Fact]
@@ -85,6 +90,7 @@ public class ProviderSyncPolicyCatalogTests
         Assert.Equal("default", policy.ProviderKey);
         Assert.Equal("generic_date_history", policy.ProviderFamily);
         Assert.Equal(ProviderPendingSupportMode.Unknown, policy.PendingSupport);
+        Assert.Equal(ProviderTimestampPrecisionMode.UnknownNeedsVerification, policy.TimestampPrecision);
     }
 
     private static TrueLayerAccountRecord BuildAccount(string providerId, string providerDisplayName)

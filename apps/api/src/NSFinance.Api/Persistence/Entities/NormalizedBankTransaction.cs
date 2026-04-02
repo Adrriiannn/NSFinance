@@ -1,9 +1,12 @@
 namespace NSFinance.Api.Persistence.Entities;
 
-public class RawBankTransaction
+public class NormalizedBankTransaction
 {
     public Guid Id { get; set; }
+    public Guid RawBankTransactionId { get; set; }
     public Guid LinkedBankAccountId { get; set; }
+    public Guid? FinancialAccountId { get; set; }
+    public Guid? ProjectedTransactionId { get; set; }
     public string? ProviderTransactionId { get; set; }
     public string? NormalizedProviderTransactionId { get; set; }
     public string DedupeKey { get; set; } = string.Empty;
@@ -21,12 +24,17 @@ public class RawBankTransaction
     public string? ValueTimestampRaw { get; set; }
     public string? TimestampSource { get; set; }
     public string TimestampPrecision { get; set; } = "unknown_needs_verification";
-    public string? TimestampNormalizationPolicyKey { get; set; }
-    public Guid? ProjectedTransactionId { get; set; }
-    public string RawPayloadJson { get; set; } = "{}";
+    public string? TimestampNormalizedByPolicy { get; set; }
+    public string? NormalizationPolicyKey { get; set; }
+    public string? NormalizationPolicyFamily { get; set; }
+    public int? InterpretationConfidenceScore { get; set; }
+    public string? InterpretationConfidenceTier { get; set; }
+    public string? InterpretationReasonJson { get; set; }
     public DateTime ImportedUtc { get; set; }
+    public DateTime LastNormalizedUtc { get; set; }
 
+    public RawBankTransaction? RawBankTransaction { get; set; }
     public LinkedBankAccount? LinkedBankAccount { get; set; }
+    public FinancialAccount? FinancialAccount { get; set; }
     public Transaction? ProjectedTransaction { get; set; }
-    public NormalizedBankTransaction? NormalizedTransaction { get; set; }
 }

@@ -127,6 +127,17 @@ Provider support varies by scope and endpoint. Sync now treats dataset availabil
 
 NSFinance now treats imported banking data as a long-term ledger:
 
+- Transaction persistence is now layered:
+  - `RawBankTransactions` preserves provider-truth ingest details.
+  - `NormalizedBankTransactions` stores normalized banking-layer records with provenance and policy metadata.
+  - `Transactions` remains the user-visible ledger projection layer.
+- Timestamp provenance is preserved per transaction:
+  - raw provider timestamp string
+  - value timestamp string
+  - timestamp source field used
+  - precision classification (`precise_datetime`, `date_only_midnight`, `unknown_needs_verification`)
+  - policy key used for normalization
+
 - Initial sync uses an explicit backfill window (`from`/`to`) instead of relying on provider defaults.
 - Backfill windows are provider-aware where we have known constraints/opportunities:
   - Revolut: target up to 6 years on initial sync
@@ -163,6 +174,11 @@ NSFinance now treats imported banking data as a long-term ledger:
   - dedupe identity no longer relies on `normalised_provider_transaction_id` alone
   - when normalized IDs are reused for related provider events (for example merchant + round-up/pocket movement), identity now includes extra signature components so both rows stay distinct
   - this prevents legitimate same-time rows being collapsed into one visible ledger entry
+- Transfer linking now emits explicit confidence metadata on linked ledger rows:
+  - `TransferMatchConfidenceScore`
+  - `TransferMatchConfidenceTier`
+  - `TransferMatchReason`
+  - auto-linking only proceeds for high-confidence matches
 - Connection metadata tracks:
   - initial backfill started/completed
   - requested initial backfill window start

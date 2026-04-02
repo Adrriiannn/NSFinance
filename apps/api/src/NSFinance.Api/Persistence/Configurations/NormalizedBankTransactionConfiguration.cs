@@ -4,11 +4,11 @@ using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Persistence.Configurations;
 
-public class RawBankTransactionConfiguration : IEntityTypeConfiguration<RawBankTransaction>
+public class NormalizedBankTransactionConfiguration : IEntityTypeConfiguration<NormalizedBankTransaction>
 {
-    public void Configure(EntityTypeBuilder<RawBankTransaction> builder)
+    public void Configure(EntityTypeBuilder<NormalizedBankTransaction> builder)
     {
-        builder.ToTable("RawBankTransactions");
+        builder.ToTable("NormalizedBankTransactions");
 
         builder.HasKey(x => x.Id);
         builder.Property(x => x.ProviderTransactionId).HasMaxLength(180);
@@ -17,7 +17,6 @@ public class RawBankTransactionConfiguration : IEntityTypeConfiguration<RawBankT
         builder.Property(x => x.Amount).HasColumnType("numeric(18,2)");
         builder.Property(x => x.Currency).HasMaxLength(3).IsRequired();
         builder.Property(x => x.BookedAtUtc).IsRequired();
-        builder.Property(x => x.ValueAtUtc);
         builder.Property(x => x.Description).HasMaxLength(512).IsRequired();
         builder.Property(x => x.TransactionType).HasMaxLength(80);
         builder.Property(x => x.TransactionStatus).HasMaxLength(80);
@@ -28,24 +27,35 @@ public class RawBankTransactionConfiguration : IEntityTypeConfiguration<RawBankT
         builder.Property(x => x.ValueTimestampRaw).HasMaxLength(80);
         builder.Property(x => x.TimestampSource).HasMaxLength(64);
         builder.Property(x => x.TimestampPrecision).HasMaxLength(64).IsRequired();
-        builder.Property(x => x.TimestampNormalizationPolicyKey).HasMaxLength(64);
-        builder.Property(x => x.ProjectedTransactionId);
-        builder.Property(x => x.RawPayloadJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.TimestampNormalizedByPolicy).HasMaxLength(64);
+        builder.Property(x => x.NormalizationPolicyKey).HasMaxLength(64);
+        builder.Property(x => x.NormalizationPolicyFamily).HasMaxLength(64);
+        builder.Property(x => x.InterpretationConfidenceTier).HasMaxLength(24);
+        builder.Property(x => x.InterpretationReasonJson).HasColumnType("jsonb");
         builder.Property(x => x.ImportedUtc).IsRequired();
+        builder.Property(x => x.LastNormalizedUtc).IsRequired();
 
+        builder.HasIndex(x => x.RawBankTransactionId).IsUnique();
         builder.HasIndex(x => x.LinkedBankAccountId);
+        builder.HasIndex(x => x.FinancialAccountId);
         builder.HasIndex(x => x.ProjectedTransactionId);
-        builder.HasIndex(x => new { x.LinkedBankAccountId, x.ProviderTransactionId })
-            .IsUnique()
-            .HasFilter("\"ProviderTransactionId\" IS NOT NULL");
-        builder.HasIndex(x => new { x.LinkedBankAccountId, x.NormalizedProviderTransactionId })
-            .HasFilter("\"NormalizedProviderTransactionId\" IS NOT NULL");
-        builder.HasIndex(x => new { x.LinkedBankAccountId, x.DedupeKey }).IsUnique();
+        builder.HasIndex(x => new { x.LinkedBankAccountId, x.ProviderTransactionId });
+        builder.HasIndex(x => new { x.LinkedBankAccountId, x.DedupeKey });
+
+        builder.HasOne(x => x.RawBankTransaction)
+            .WithOne(x => x.NormalizedTransaction)
+            .HasForeignKey<NormalizedBankTransaction>(x => x.RawBankTransactionId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(x => x.LinkedBankAccount)
-            .WithMany(x => x.Transactions)
+            .WithMany()
             .HasForeignKey(x => x.LinkedBankAccountId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.FinancialAccount)
+            .WithMany()
+            .HasForeignKey(x => x.FinancialAccountId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasOne(x => x.ProjectedTransaction)
             .WithMany()

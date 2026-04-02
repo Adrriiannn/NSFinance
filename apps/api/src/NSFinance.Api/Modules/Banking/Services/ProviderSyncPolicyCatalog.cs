@@ -18,8 +18,11 @@ public enum ProviderPendingSupportMode
 
 public enum ProviderTimestampPrecisionMode
 {
-    FullTimestamp,
-    DateOnlyOrMixed
+    UnknownNeedsVerification = 0,
+    PreciseDateTime = 1,
+    DateOnlyMidnight = 2,
+    FullTimestamp = PreciseDateTime,
+    DateOnlyOrMixed = DateOnlyMidnight
 }
 
 public sealed record ProviderTransactionSyncPolicy(
@@ -63,7 +66,7 @@ public static class ProviderSyncPolicyCatalog
         MinAdaptiveWindow: TimeSpan.Zero,
         ReScanVisibleSliceEachSync: false,
         PendingSupport: ProviderPendingSupportMode.Unknown,
-        TimestampPrecision: ProviderTimestampPrecisionMode.DateOnlyOrMixed,
+        TimestampPrecision: ProviderTimestampPrecisionMode.UnknownNeedsVerification,
         InitialLongHistoryGraceMinutes: null,
         HistoryNotes: "Generic TrueLayer date-history provider profile.");
 
@@ -82,9 +85,17 @@ public static class ProviderSyncPolicyCatalog
         MinAdaptiveWindow: TimeSpan.FromHours(6),
         ReScanVisibleSliceEachSync: true,
         PendingSupport: ProviderPendingSupportMode.Unknown,
-        TimestampPrecision: ProviderTimestampPrecisionMode.DateOnlyOrMixed,
+        TimestampPrecision: ProviderTimestampPrecisionMode.UnknownNeedsVerification,
         InitialLongHistoryGraceMinutes: null,
         HistoryNotes: "Count-limited visible-slice provider (up to ~100 returned rows).");
+
+    private static readonly ProviderTransactionSyncPolicy AibBusinessPolicy = AibPolicy with
+    {
+        ProviderKey = "aib_business",
+        ProviderFamily = "irish_capped_slice_business",
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
+        HistoryNotes = "AIB Business profile; treat as date-only precision until provider payloads confirm otherwise."
+    };
 
     private static readonly ProviderTransactionSyncPolicy BoiPolicy = DefaultPolicy with
     {
@@ -112,7 +123,7 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "fintech_revolut",
         InitialBackfillPolicyName = "revolut_initial_6y",
         PendingSupport = ProviderPendingSupportMode.Supported,
-        TimestampPrecision = ProviderTimestampPrecisionMode.FullTimestamp,
+        TimestampPrecision = ProviderTimestampPrecisionMode.PreciseDateTime,
         InitialLongHistoryGraceMinutes = 5,
         HistoryNotes = "Revolut can expose deep history on early consent window; later calls may narrow by SCA window."
     };
@@ -123,7 +134,7 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "fintech_monzo",
         InitialBackfillPolicyName = "monzo_initial_6y",
         PendingSupport = ProviderPendingSupportMode.Supported,
-        TimestampPrecision = ProviderTimestampPrecisionMode.FullTimestamp,
+        TimestampPrecision = ProviderTimestampPrecisionMode.PreciseDateTime,
         InitialLongHistoryGraceMinutes = 5,
         HistoryNotes = "Monzo supports deep initial history with later consent-window constraints."
     };
@@ -134,7 +145,7 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "fintech_starling",
         InitialBackfillPolicyName = "starling_initial_6y",
         PendingSupport = ProviderPendingSupportMode.Partial,
-        TimestampPrecision = ProviderTimestampPrecisionMode.FullTimestamp,
+        TimestampPrecision = ProviderTimestampPrecisionMode.UnknownNeedsVerification,
         HistoryNotes = "Starling pending behavior is provider-specific; treat as partial capability."
     };
 
@@ -146,6 +157,7 @@ public static class ProviderSyncPolicyCatalog
         CardInitialBackfillHistoryDays = 365 * 2,
         InitialBackfillPolicyName = "santander_initial_2y",
         PendingSupport = ProviderPendingSupportMode.Unsupported,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "Santander profile: treat pending as unsupported unless provider behavior changes."
     };
 
@@ -155,6 +167,7 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "uk_natwest_rbs_ulster_family",
         InitialBackfillPolicyName = "natwest_family_initial_6y",
         CardInitialBackfillHistoryDays = 180,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "NatWest/RBS/Ulster family; initial long history often available with post-window constraints."
     };
 
@@ -165,6 +178,7 @@ public static class ProviderSyncPolicyCatalog
         InitialBackfillPolicyName = "lloyds_family_initial_6y",
         CardInitialBackfillHistoryDays = 180,
         InitialLongHistoryGraceMinutes = 45,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "Lloyds family often offers long account history with tighter card-history windows."
     };
 
@@ -175,6 +189,7 @@ public static class ProviderSyncPolicyCatalog
         InitialBackfillPolicyName = "hsbc_family_initial_6y",
         CardInitialBackfillHistoryDays = 180,
         InitialLongHistoryGraceMinutes = 60,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "HSBC/First Direct/M&S profile; long history is time-window sensitive after consent."
     };
 
@@ -186,7 +201,16 @@ public static class ProviderSyncPolicyCatalog
         CardInitialBackfillHistoryDays = 365 * 2,
         InitialBackfillPolicyName = "barclays_family_initial_2y",
         PendingSupport = ProviderPendingSupportMode.Unknown,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "Barclays/Barclaycard profile with card-heavy datasets."
+    };
+
+    private static readonly ProviderTransactionSyncPolicy BarclaycardPolicy = BarclaysFamilyPolicy with
+    {
+        ProviderKey = "barclaycard",
+        ProviderFamily = "uk_barclaycard",
+        TimestampPrecision = ProviderTimestampPrecisionMode.PreciseDateTime,
+        HistoryNotes = "Barclaycard profile with precise timestamp support."
     };
 
     private static readonly ProviderTransactionSyncPolicy CardFirstPolicy = DefaultPolicy with
@@ -197,7 +221,16 @@ public static class ProviderSyncPolicyCatalog
         CardInitialBackfillHistoryDays = 365 * 2,
         InitialBackfillPolicyName = "card_first_initial_2y",
         PendingSupport = ProviderPendingSupportMode.Unknown,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "Card-first providers (Amex/Capital One/Tesco/Virgin) may have narrower account-like surfaces."
+    };
+
+    private static readonly ProviderTransactionSyncPolicy CapitalOnePolicy = CardFirstPolicy with
+    {
+        ProviderKey = "capital_one",
+        ProviderFamily = "uk_capital_one",
+        TimestampPrecision = ProviderTimestampPrecisionMode.PreciseDateTime,
+        HistoryNotes = "Capital One profile with precise timestamp support."
     };
 
     private static readonly ProviderTransactionSyncPolicy WisePolicy = DefaultPolicy with
@@ -206,7 +239,7 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "fintech_wise",
         InitialBackfillPolicyName = "wise_initial_full_history",
         PendingSupport = ProviderPendingSupportMode.Unknown,
-        TimestampPrecision = ProviderTimestampPrecisionMode.FullTimestamp,
+        TimestampPrecision = ProviderTimestampPrecisionMode.PreciseDateTime,
         HistoryNotes = "Wise generally exposes broad history from online banking records."
     };
 
@@ -216,7 +249,7 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "fintech_tide_business",
         InitialBackfillPolicyName = "tide_initial_all_then_90d",
         PendingSupport = ProviderPendingSupportMode.Unknown,
-        TimestampPrecision = ProviderTimestampPrecisionMode.FullTimestamp,
+        TimestampPrecision = ProviderTimestampPrecisionMode.PreciseDateTime,
         HistoryNotes = "Tide profile: deep initial visibility, then shorter rolling windows may apply."
     };
 
@@ -226,7 +259,7 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "fintech_business_banking",
         InitialBackfillPolicyName = "mettle_zempler_initial_6y",
         PendingSupport = ProviderPendingSupportMode.Unknown,
-        TimestampPrecision = ProviderTimestampPrecisionMode.FullTimestamp,
+        TimestampPrecision = ProviderTimestampPrecisionMode.UnknownNeedsVerification,
         HistoryNotes = "Business fintech profile for Mettle and Zempler/Cashplus."
     };
 
@@ -236,7 +269,16 @@ public static class ProviderSyncPolicyCatalog
         ProviderFamily = "uk_building_society",
         InitialBackfillPolicyName = "building_society_initial_6y",
         PendingSupport = ProviderPendingSupportMode.Unknown,
+        TimestampPrecision = ProviderTimestampPrecisionMode.UnknownNeedsVerification,
         HistoryNotes = "Building society profile (Chelsea/Yorkshire/TSB)."
+    };
+
+    private static readonly ProviderTransactionSyncPolicy TsbPolicy = BuildingSocietyPolicy with
+    {
+        ProviderKey = "tsb_precise",
+        ProviderFamily = "uk_tsb",
+        TimestampPrecision = ProviderTimestampPrecisionMode.PreciseDateTime,
+        HistoryNotes = "TSB profile with precise timestamp support."
     };
 
     private static readonly ProviderTransactionSyncPolicy DanskePolicy = DefaultPolicy with
@@ -247,6 +289,7 @@ public static class ProviderSyncPolicyCatalog
         CardInitialBackfillHistoryDays = 760,
         InitialBackfillPolicyName = "danske_initial_25m",
         PendingSupport = ProviderPendingSupportMode.Unknown,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "Danske profile with roughly 25-month initial history windows."
     };
 
@@ -259,11 +302,16 @@ public static class ProviderSyncPolicyCatalog
         InitialBackfillPolicyName = "nationwide_initial_15m",
         InitialLongHistoryGraceMinutes = 15,
         PendingSupport = ProviderPendingSupportMode.Unknown,
+        TimestampPrecision = ProviderTimestampPrecisionMode.DateOnlyMidnight,
         HistoryNotes = "Nationwide profile: longer current-account history with shorter card window."
     };
 
     private static readonly IReadOnlyList<ProviderPolicyRule> Rules =
     [
+        new ProviderPolicyRule(
+            AibBusinessPolicy,
+            ProviderIdHints: ["ob-aib-business"],
+            ProviderDisplayHints: ["aib business"]),
         new ProviderPolicyRule(
             AibPolicy,
             ProviderIdHints: ["ob-aib"],
@@ -306,11 +354,19 @@ public static class ProviderSyncPolicyCatalog
             ProviderDisplayHints: ["hsbc", "first direct", "m&s bank", "marks & spencer bank"]),
         new ProviderPolicyRule(
             BarclaysFamilyPolicy,
-            ProviderIdHints: ["ob-barclays", "ob-barclaycard"],
-            ProviderDisplayHints: ["barclays", "barclaycard"]),
+            ProviderIdHints: ["ob-barclays"],
+            ProviderDisplayHints: ["barclays"]),
+        new ProviderPolicyRule(
+            BarclaycardPolicy,
+            ProviderIdHints: ["ob-barclaycard"],
+            ProviderDisplayHints: ["barclaycard"]),
+        new ProviderPolicyRule(
+            CapitalOnePolicy,
+            ProviderIdHints: ["ob-capital-one"],
+            ProviderDisplayHints: ["capital one"]),
         new ProviderPolicyRule(
             CardFirstPolicy,
-            ProviderIdHints: ["ob-amex", "ob-capital-one", "ob-tesco", "ob-virgin-money"],
+            ProviderIdHints: ["ob-amex", "ob-tesco", "ob-virgin-money"],
             ProviderDisplayHints: ["american express", "capital one", "tesco bank", "virgin money"]),
         new ProviderPolicyRule(
             WisePolicy,
@@ -325,8 +381,12 @@ public static class ProviderSyncPolicyCatalog
             ProviderIdHints: ["ob-mettle", "ob-cashplus"],
             ProviderDisplayHints: ["mettle", "zempler", "cashplus"]),
         new ProviderPolicyRule(
+            TsbPolicy,
+            ProviderIdHints: ["ob-tsb"],
+            ProviderDisplayHints: ["tsb"]),
+        new ProviderPolicyRule(
             BuildingSocietyPolicy,
-            ProviderIdHints: ["ob-chelsea-building-society", "ob-yorkshire-building-society", "ob-tsb"],
+            ProviderIdHints: ["ob-chelsea-building-society", "ob-yorkshire-building-society"],
             ProviderDisplayHints: ["chelsea building society", "yorkshire building society", "tsb"]),
         new ProviderPolicyRule(
             DanskePolicy,

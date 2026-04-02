@@ -34,6 +34,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<BankBalanceSnapshot> BankBalanceSnapshots => Set<BankBalanceSnapshot>();
     public DbSet<BankCardBalanceSnapshot> BankCardBalanceSnapshots => Set<BankCardBalanceSnapshot>();
     public DbSet<RawBankTransaction> RawBankTransactions => Set<RawBankTransaction>();
+    public DbSet<NormalizedBankTransaction> NormalizedBankTransactions => Set<NormalizedBankTransaction>();
     public DbSet<RawBankCardTransaction> RawBankCardTransactions => Set<RawBankCardTransaction>();
     public DbSet<BankDirectDebit> BankDirectDebits => Set<BankDirectDebit>();
     public DbSet<BankStandingOrder> BankStandingOrders => Set<BankStandingOrder>();

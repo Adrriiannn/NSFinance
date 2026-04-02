@@ -348,12 +348,21 @@ public sealed class BankConnectionService(
                 x.Id,
                 x.LinkedBankAccountId,
                 x.ProviderTransactionId,
+                x.NormalizedProviderTransactionId,
                 x.Amount,
                 x.Currency,
                 x.BookedAtUtc,
+                x.ValueAtUtc,
                 x.Description,
                 x.TransactionType,
                 x.TransactionStatus,
+                x.SourceEndpoint,
+                x.ProviderStatus,
+                x.StatusNormalizationReason,
+                x.ProviderTimestampRaw,
+                x.ValueTimestampRaw,
+                x.TimestampSource,
+                x.TimestampPrecision,
                 x.ImportedUtc))
             .ToListAsync(cancellationToken);
 

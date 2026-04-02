@@ -253,6 +253,108 @@ public class TrueLayerDataServiceTests
         Assert.Equal("pending_endpoint_default", transaction.StatusNormalizationReason);
     }
 
+    [Fact]
+    public async Task GetTransactionsAsync_CapturesDateOnlyTimestampProvenance()
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id": "tx-date-only",
+                          "amount": 10.00,
+                          "currency": "EUR",
+                          "timestamp": "2026-04-01",
+                          "description": "Date only feed"
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            }));
+
+        var service = new TrueLayerDataService(
+            new TrueLayerHttpClient(new HttpClient(handler)),
+            NullLogger<TrueLayerDataService>.Instance);
+
+        var result = await service.GetTransactionsAsync(
+            new TrueLayerResolvedConfiguration(
+                "client",
+                "secret",
+                "http://localhost:5080/api/banking/truelayer/callback",
+                "sandbox",
+                "https://auth.truelayer-sandbox.com",
+                "https://api.truelayer-sandbox.com"),
+            "access-token",
+            "acc-001",
+            null,
+            null,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var transaction = Assert.Single(result.Value!);
+        Assert.Equal("timestamp", transaction.TimestampSource);
+        Assert.Equal("date_only_midnight", transaction.TimestampPrecision);
+        Assert.Equal("2026-04-01", transaction.ProviderTimestampRaw);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_CapturesPreciseTimestampAndValueSource()
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id": "tx-precise",
+                          "normalised_provider_transaction_id": "norm-precise",
+                          "amount": -12.34,
+                          "currency": "EUR",
+                          "booked_timestamp": "2026-04-01T09:07:11+00:00",
+                          "value_date": "2026-04-01",
+                          "description": "Precise feed"
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            }));
+
+        var service = new TrueLayerDataService(
+            new TrueLayerHttpClient(new HttpClient(handler)),
+            NullLogger<TrueLayerDataService>.Instance);
+
+        var result = await service.GetTransactionsAsync(
+            new TrueLayerResolvedConfiguration(
+                "client",
+                "secret",
+                "http://localhost:5080/api/banking/truelayer/callback",
+                "sandbox",
+                "https://auth.truelayer-sandbox.com",
+                "https://api.truelayer-sandbox.com"),
+            "access-token",
+            "acc-001",
+            null,
+            null,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var transaction = Assert.Single(result.Value!);
+        Assert.Equal("booked_timestamp", transaction.TimestampSource);
+        Assert.Equal("precise_datetime", transaction.TimestampPrecision);
+        Assert.Equal("2026-04-01T09:07:11+00:00", transaction.ProviderTimestampRaw);
+        Assert.Equal("2026-04-01", transaction.ValueTimestampRaw);
+        Assert.NotNull(transaction.ValueAtUtc);
+    }
+
     private sealed class StubHttpMessageHandler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
         : HttpMessageHandler
