@@ -3,6 +3,7 @@ import type {
   BankRecurringPaymentsDto,
   BankConnectionDto,
   ConnectedBanksOverviewDto,
+  BankEnrichmentProgressDto,
   GlobalBankSyncRequest,
   GlobalBankSyncResponse,
   LinkedBankCardDto,
@@ -18,6 +19,10 @@ export function getBankConnections(): Promise<BankConnectionDto[]> {
 
 export function getConnectedBanks(): Promise<ConnectedBanksOverviewDto> {
   return apiRequest<ConnectedBanksOverviewDto>("/api/banking/connected-banks");
+}
+
+export function getBankEnrichmentProgress(): Promise<BankEnrichmentProgressDto> {
+  return apiRequest<BankEnrichmentProgressDto>("/api/banking/enrichment-progress");
 }
 
 export function getBankConnection(connectionId: string): Promise<BankConnectionDto> {

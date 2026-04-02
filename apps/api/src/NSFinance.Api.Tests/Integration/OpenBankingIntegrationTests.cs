@@ -3011,7 +3011,8 @@ public class OpenBankingIntegrationTests
             var tokenService = new TrueLayerTokenService(httpClient, NullLogger<TrueLayerTokenService>.Instance);
             var dataService = new TrueLayerDataService(httpClient, NullLogger<TrueLayerDataService>.Instance);
             var connectionService = CreateConnectionService();
-            return new BankSyncService(
+            var enrichmentQueue = new ImmediateBankDeterministicEnrichmentQueue();
+            var syncService = new BankSyncService(
                 DbContext,
                 connectionService,
                 configurationService,
@@ -3019,7 +3020,10 @@ public class OpenBankingIntegrationTests
                 dataService,
                 new TestSecretProtector(),
                 _auditService,
+                enrichmentQueue,
                 NullLogger<BankSyncService>.Instance);
+            enrichmentQueue.Attach(syncService);
+            return syncService;
         }
 
         public BankConnectionService CreateConnectionService()
@@ -3117,6 +3121,34 @@ public class OpenBankingIntegrationTests
             CancellationToken cancellationToken = default)
         {
             await ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class ImmediateBankDeterministicEnrichmentQueue : IBankDeterministicEnrichmentQueue
+    {
+        private BankSyncService? _syncService;
+
+        public void Attach(BankSyncService syncService)
+        {
+            _syncService = syncService;
+        }
+
+        public async ValueTask QueueConnectionAsync(
+            Guid userId,
+            Guid connectionId,
+            string reason,
+            CancellationToken cancellationToken = default)
+        {
+            if (_syncService is null)
+            {
+                return;
+            }
+
+            await _syncService.RunDeterministicEnrichmentAsync(
+                userId,
+                connectionId,
+                trigger: $"test_queue:{reason}",
+                cancellationToken);
         }
     }
 

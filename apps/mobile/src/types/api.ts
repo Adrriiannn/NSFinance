@@ -583,6 +583,10 @@ export type BankConnectionDto = {
   supportsStandingOrders: boolean | null;
   connectedFullName: string | null;
   identityFetchedUtc: string | null;
+  historicalEnrichmentInProgress?: boolean | null;
+  historicalEnrichmentCompleted?: boolean | null;
+  historicalEnrichmentProgressPercent?: number | null;
+  historicalEnrichmentCheckpointUtc?: string | null;
 };
 
 export type ConnectedBanksOverviewDto = {
@@ -732,6 +736,10 @@ export type GlobalBankSyncConnectionResponse = {
   latestFetchedRowUtc: string | null;
   hasFetchedRowNewerThanCheckpoint: boolean | null;
   freshnessSummary: string | null;
+  historicalEnrichmentInProgress?: boolean | null;
+  historicalEnrichmentCompleted?: boolean | null;
+  historicalEnrichmentProgressPercent?: number | null;
+  historicalEnrichmentCheckpointUtc?: string | null;
   errorCode: string | null;
   errorMessage: string | null;
 };
@@ -761,6 +769,32 @@ export type GlobalBankSyncResponse = {
   providerBackoffConnectionCount: number;
   noNewerRowsConnectionCount: number;
   connections: GlobalBankSyncConnectionResponse[];
+};
+
+export type BankEnrichmentConnectionProgressDto = {
+  connectionId: string;
+  providerDisplayName: string | null;
+  inProgress: boolean;
+  completed: boolean;
+  progressPercent: number;
+  processedCount: number;
+  totalCount: number;
+  remainingCount: number;
+  stage: string;
+  lastUpdatedUtc: string | null;
+};
+
+export type BankEnrichmentProgressDto = {
+  inProgress: boolean;
+  completed: boolean;
+  progressPercent: number;
+  processedCount: number;
+  totalCount: number;
+  remainingCount: number;
+  stage: string;
+  lastUpdatedUtc: string | null;
+  newestFirst: boolean;
+  connections: BankEnrichmentConnectionProgressDto[];
 };
 
 

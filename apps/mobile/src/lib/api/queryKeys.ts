@@ -14,6 +14,7 @@ export const queryKeys = {
     connections: ["banking", "connections"] as const,
     connection: (id: string) => ["banking", "connections", id] as const,
     connectedBanks: ["banking", "connected-banks"] as const,
+    enrichmentProgress: ["banking", "enrichment-progress"] as const,
     accounts: ["banking", "accounts"] as const,
     cards: ["banking", "cards"] as const,
     recurringPayments: ["banking", "recurring-payments"] as const,

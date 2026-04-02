@@ -283,6 +283,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<BankConnectionService>();
         services.AddScoped<BankSyncService>();
         services.AddScoped<BankGlobalSyncService>();
+        services.AddSingleton<BankDeterministicEnrichmentBackgroundWorker>();
+        services.AddSingleton<IBankDeterministicEnrichmentQueue>(sp => sp.GetRequiredService<BankDeterministicEnrichmentBackgroundWorker>());
+        services.AddHostedService(sp => sp.GetRequiredService<BankDeterministicEnrichmentBackgroundWorker>());
         services.AddSingleton<TrueLayerSyncBackgroundWorker>();
         services.AddSingleton<ITrueLayerSyncQueue>(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());
         services.AddHostedService(sp => sp.GetRequiredService<TrueLayerSyncBackgroundWorker>());

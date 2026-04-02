@@ -31,6 +31,23 @@ public sealed class BankConnectionService(
         BankConnectionStatuses.DisconnectPending,
         BankConnectionStatuses.DisconnectFailed
     ];
+    private const int DeterministicEnrichmentCurrentVersion = 1;
+
+    private sealed record EnrichmentConnectionRow(
+        Guid Id,
+        string? ProviderDisplayName,
+        string Status,
+        DateTime UpdatedUtc,
+        DateTime? HistoricalEnrichmentStartedUtc,
+        DateTime? HistoricalEnrichmentCompletedUtc,
+        int? HistoricalEnrichmentVersion,
+        bool NeedsHistoricalReclassification);
+
+    private sealed record ConnectionTransactionEnrichmentStats(
+        Guid ConnectionId,
+        int TotalCount,
+        int ProcessedCount,
+        DateTime? LastUpdatedUtc);
     public async Task<OpenBankingConnection> CreateConnectionStartedAsync(
         Guid userId,
         string providerName,
@@ -244,6 +261,115 @@ public sealed class BankConnectionService(
 
             return await ListUserVisibleConnectionsWithoutBrandingAsync(userId, cancellationToken);
         }
+    }
+
+    public async Task<BankEnrichmentProgressDto> GetEnrichmentProgressAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var candidateStatuses = UserVisibleActiveStatuses
+            .Concat(UserVisibleAttentionStatuses)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var connections = await dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(x => x.UserId == userId && candidateStatuses.Contains(x.Status))
+            .OrderByDescending(x => x.UpdatedUtc)
+            .Select(x => new EnrichmentConnectionRow(
+                x.Id,
+                x.ProviderDisplayName,
+                x.Status,
+                x.UpdatedUtc,
+                x.HistoricalEnrichmentStartedUtc,
+                x.HistoricalEnrichmentCompletedUtc,
+                x.HistoricalEnrichmentVersion,
+                x.NeedsHistoricalReclassification))
+            .ToListAsync(cancellationToken);
+
+        if (connections.Count == 0)
+        {
+            return new BankEnrichmentProgressDto(
+                InProgress: false,
+                Completed: true,
+                ProgressPercent: 100d,
+                ProcessedCount: 0,
+                TotalCount: 0,
+                RemainingCount: 0,
+                Stage: "idle",
+                LastUpdatedUtc: null,
+                NewestFirst: true,
+                Connections: []);
+        }
+
+        var transactionStatsByConnectionId = await BuildConnectionEnrichmentStatsAsync(
+            connections.Select(x => x.Id).ToArray(),
+            cancellationToken);
+
+        var connectionProgress = connections
+            .Select(connection =>
+            {
+                transactionStatsByConnectionId.TryGetValue(connection.Id, out var stats);
+
+                var totalCount = stats?.TotalCount ?? 0;
+                var processedCount = Math.Clamp(stats?.ProcessedCount ?? 0, 0, totalCount);
+                var remainingCount = Math.Max(0, totalCount - processedCount);
+                var completed = IsHistoricalEnrichmentCompleted(connection);
+                var inProgress = IsHistoricalEnrichmentInProgress(connection, remainingCount);
+                var stage = ResolveHistoricalEnrichmentStage(connection.Status, inProgress, completed, totalCount, remainingCount);
+                var progressPercent = totalCount > 0
+                    ? Math.Round((processedCount / (double)totalCount) * 100d, 2, MidpointRounding.AwayFromZero)
+                    : completed
+                        ? 100d
+                        : 0d;
+                var lastUpdatedUtc = MaxUtc(stats?.LastUpdatedUtc, connection.UpdatedUtc);
+
+                return new BankEnrichmentConnectionProgressDto(
+                    connection.Id,
+                    connection.ProviderDisplayName,
+                    inProgress,
+                    completed,
+                    progressPercent,
+                    processedCount,
+                    totalCount,
+                    remainingCount,
+                    stage,
+                    lastUpdatedUtc);
+            })
+            .OrderByDescending(x => x.InProgress)
+            .ThenBy(x => x.RemainingCount == 0 ? 1 : 0)
+            .ThenByDescending(x => x.LastUpdatedUtc)
+            .ToList();
+
+        var total = connectionProgress.Sum(x => x.TotalCount);
+        var processed = connectionProgress.Sum(x => x.ProcessedCount);
+        var remaining = Math.Max(0, total - processed);
+        var inProgressOverall = connectionProgress.Any(x => x.InProgress);
+        var completedOverall = total > 0 ? remaining == 0 : !inProgressOverall;
+        var percentOverall = total > 0
+            ? Math.Round((processed / (double)total) * 100d, 2, MidpointRounding.AwayFromZero)
+            : completedOverall
+                ? 100d
+                : 0d;
+        var lastUpdatedOverall = connectionProgress
+            .Where(x => x.LastUpdatedUtc.HasValue)
+            .Select(x => x.LastUpdatedUtc!.Value)
+            .DefaultIfEmpty()
+            .Max();
+
+        var resolvedStage = ResolveOverallHistoricalEnrichmentStage(connectionProgress, inProgressOverall, completedOverall);
+
+        return new BankEnrichmentProgressDto(
+            InProgress: inProgressOverall,
+            Completed: completedOverall,
+            ProgressPercent: percentOverall,
+            ProcessedCount: processed,
+            TotalCount: total,
+            RemainingCount: remaining,
+            Stage: resolvedStage,
+            LastUpdatedUtc: lastUpdatedOverall == default ? null : lastUpdatedOverall,
+            NewestFirst: true,
+            Connections: connectionProgress);
     }
 
     public async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsAsync(
@@ -1812,6 +1938,176 @@ public sealed class BankConnectionService(
         }
 
         return alphanumeric[^4..].ToUpperInvariant();
+    }
+
+    private async Task<Dictionary<Guid, ConnectionTransactionEnrichmentStats>> BuildConnectionEnrichmentStatsAsync(
+        IReadOnlyCollection<Guid> connectionIds,
+        CancellationToken cancellationToken)
+    {
+        if (connectionIds.Count == 0)
+        {
+            return [];
+        }
+
+        var linkedFinancialAccounts = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x => connectionIds.Contains(x.ConnectionId) && x.FinancialAccountId.HasValue)
+            .Select(x => new
+            {
+                x.ConnectionId,
+                FinancialAccountId = x.FinancialAccountId!.Value
+            })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        if (linkedFinancialAccounts.Count == 0)
+        {
+            return [];
+        }
+
+        var financialAccountIds = linkedFinancialAccounts
+            .Select(x => x.FinancialAccountId)
+            .Distinct()
+            .ToArray();
+
+        var transactionStatsByFinancialAccount = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x => financialAccountIds.Contains(x.FinancialAccountId))
+            .GroupBy(x => x.FinancialAccountId)
+            .Select(group => new
+            {
+                FinancialAccountId = group.Key,
+                TotalCount = group.Count(),
+                ProcessedCount = group.Count(x =>
+                    x.DeterministicEnrichmentVersion.HasValue
+                    && x.DeterministicEnrichmentVersion.Value >= DeterministicEnrichmentCurrentVersion),
+                LastUpdatedUtc = group.Max(x => x.LastDeterministicEnrichedUtc)
+            })
+            .ToDictionaryAsync(x => x.FinancialAccountId, cancellationToken);
+
+        var grouped = linkedFinancialAccounts
+            .GroupBy(x => x.ConnectionId)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var total = 0;
+                    var processed = 0;
+                    DateTime? lastUpdatedUtc = null;
+
+                    foreach (var linked in group)
+                    {
+                        if (!transactionStatsByFinancialAccount.TryGetValue(linked.FinancialAccountId, out var stats))
+                        {
+                            continue;
+                        }
+
+                        total += stats.TotalCount;
+                        processed += stats.ProcessedCount;
+                        lastUpdatedUtc = MaxUtc(lastUpdatedUtc, stats.LastUpdatedUtc);
+                    }
+
+                    return new ConnectionTransactionEnrichmentStats(
+                        group.Key,
+                        total,
+                        processed,
+                        lastUpdatedUtc);
+                });
+
+        return grouped;
+    }
+
+    private static bool IsHistoricalEnrichmentCompleted(EnrichmentConnectionRow connection)
+    {
+        return connection.HistoricalEnrichmentCompletedUtc.HasValue
+            && (connection.HistoricalEnrichmentVersion ?? 0) >= DeterministicEnrichmentCurrentVersion
+            && !connection.NeedsHistoricalReclassification;
+    }
+
+    private static bool IsHistoricalEnrichmentInProgress(
+        EnrichmentConnectionRow connection,
+        int remainingCount)
+    {
+        if (remainingCount > 0)
+        {
+            return true;
+        }
+
+        if (connection.NeedsHistoricalReclassification)
+        {
+            return true;
+        }
+
+        return connection.HistoricalEnrichmentStartedUtc.HasValue
+            && !IsHistoricalEnrichmentCompleted(connection);
+    }
+
+    private static string ResolveHistoricalEnrichmentStage(
+        string connectionStatus,
+        bool inProgress,
+        bool completed,
+        int totalCount,
+        int remainingCount)
+    {
+        if (completed)
+        {
+            return "completed";
+        }
+
+        if (!inProgress)
+        {
+            return totalCount > 0 && remainingCount == 0 ? "completed" : "idle";
+        }
+
+        if (connectionStatus is BankConnectionStatuses.ConnectedPendingSync or BankConnectionStatuses.SyncPending)
+        {
+            return "awaiting_sync";
+        }
+
+        return "historical_backfill";
+    }
+
+    private static string ResolveOverallHistoricalEnrichmentStage(
+        IReadOnlyList<BankEnrichmentConnectionProgressDto> connections,
+        bool inProgress,
+        bool completed)
+    {
+        if (completed)
+        {
+            return "completed";
+        }
+
+        if (!inProgress)
+        {
+            return "idle";
+        }
+
+        if (connections.Any(x => x.Stage == "awaiting_sync"))
+        {
+            return "awaiting_sync";
+        }
+
+        if (connections.Any(x => x.Stage == "historical_backfill"))
+        {
+            return "historical_backfill";
+        }
+
+        return "in_progress";
+    }
+
+    private static DateTime? MaxUtc(DateTime? left, DateTime? right)
+    {
+        if (!left.HasValue)
+        {
+            return right;
+        }
+
+        if (!right.HasValue)
+        {
+            return left;
+        }
+
+        return left.Value >= right.Value ? left : right;
     }
 
     private static bool IsProviderBrandingSchemaMissing(Exception exception)

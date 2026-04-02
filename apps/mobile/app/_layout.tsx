@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { type ComponentProps, useEffect, useMemo } from "react";
 import { Text, TextInput } from "react-native";
 import { GlobalFlashToast } from "../src/components/feedback/GlobalFlashToast";
+import { GlobalEnrichmentProgressDial } from "../src/components/feedback/GlobalEnrichmentProgressDial";
 import { AppProviders } from "../src/providers/AppProviders";
 import { ThemeRuntimeProvider, useThemeRuntime } from "../src/theme/runtime/ThemeRuntimeProvider";
 
@@ -82,6 +83,7 @@ function RootNavigator() {
         backgroundColor={theme.colors.canvas}
       />
       <GlobalFlashToast />
+      <GlobalEnrichmentProgressDial />
       <Stack
         screenOptions={{
           headerShown: false,

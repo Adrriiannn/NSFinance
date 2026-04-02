@@ -9,6 +9,7 @@ import type {
 } from "../../types/api";
 import {
   disconnectBankConnection,
+  getBankEnrichmentProgress,
   getBankConnection,
   getBankConnections,
   getLinkedBankCards,
@@ -30,6 +31,7 @@ const {
 const postBankingSyncInvalidateQueryKeys = [
   queryKeys.banking.connections,
   queryKeys.banking.connectedBanks,
+  queryKeys.banking.enrichmentProgress,
   queryKeys.banking.accounts,
   queryKeys.banking.cards,
   queryKeys.banking.recurringPayments,
@@ -91,10 +93,39 @@ export function useConnectedBanksQuery() {
       const hasDisconnectPending =
         data.activeConnections.some((connection) => connection.status === "disconnect_pending")
         || data.attentionConnections.some((connection) => connection.status === "disconnect_pending");
+      const hasEnrichmentInProgress =
+        data.activeConnections.some(
+          (connection) => connection.historicalEnrichmentInProgress === true
+        )
+        || data.attentionConnections.some(
+          (connection) => connection.historicalEnrichmentInProgress === true
+        );
 
-      return hasDisconnectPending ? 3_000 : false;
+      if (hasDisconnectPending || hasEnrichmentInProgress) {
+        return 3_000;
+      }
+
+      return false;
     },
     refetchIntervalInBackground: false
+  });
+}
+
+export function useBankEnrichmentProgressQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.banking.enrichmentProgress,
+    queryFn: getBankEnrichmentProgress,
+    enabled,
+    ...nearLiveOptionsWithoutInterval,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) {
+        return false;
+      }
+
+      return data.inProgress ? 2_500 : false;
+    },
+    refetchIntervalInBackground: true
   });
 }
 

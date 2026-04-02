@@ -19,6 +19,7 @@ public sealed class BankSyncService(
     TrueLayerDataService dataService,
     ISecretProtector secretProtector,
     IAuditService auditService,
+    IBankDeterministicEnrichmentQueue enrichmentQueue,
     ILogger<BankSyncService> logger)
 {
     private const int InternalTransferMatchLookbackDays = 21;
@@ -74,6 +75,18 @@ public sealed class BankSyncService(
     ];
     private static readonly HashSet<string> RequestedScopeSet = TrueLayerScopes.Default
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public readonly record struct DeterministicEnrichmentRunResult(
+        Guid ConnectionId,
+        bool HistoricalEnrichmentInProgress,
+        bool HistoricalEnrichmentCompleted,
+        double? HistoricalEnrichmentProgressPercent,
+        DateTime? HistoricalEnrichmentCheckpointUtc,
+        int RowsEvaluated,
+        int RowsRemaining,
+        int BatchesProcessed,
+        string Mode,
+        bool HasChanges);
 
     public async Task<ServiceResult<BankSyncResult>> RunInitialSyncAsync(
         OpenBankingConnection connection,
@@ -281,6 +294,88 @@ public sealed class BankSyncService(
             tokenResult.Value!.AccessToken,
             trigger: "manual_sync",
             cancellationToken);
+    }
+
+    public async Task<ServiceResult<DeterministicEnrichmentRunResult>> RunDeterministicEnrichmentAsync(
+        Guid userId,
+        Guid connectionId,
+        string trigger,
+        CancellationToken cancellationToken)
+    {
+        var connection = await dbContext.OpenBankingConnections
+            .SingleOrDefaultAsync(x => x.Id == connectionId && x.UserId == userId, cancellationToken);
+
+        if (connection is null)
+        {
+            return ServiceResult<DeterministicEnrichmentRunResult>.Fail(
+                "Connection not found.",
+                "bank_connection_not_found",
+                StatusCodes.Status404NotFound);
+        }
+
+        if (connection.Status is BankConnectionStatuses.DisconnectPending
+            or BankConnectionStatuses.DisconnectFailed
+            or BankConnectionStatuses.Revoked)
+        {
+            return ServiceResult<DeterministicEnrichmentRunResult>.Fail(
+                "Connection is disconnected.",
+                "bank_connection_disconnected",
+                StatusCodes.Status409Conflict);
+        }
+
+        if (connection.Status is not (
+                BankConnectionStatuses.ConnectedPendingSync
+                or BankConnectionStatuses.Connected
+                or BankConnectionStatuses.SyncPending
+                or BankConnectionStatuses.Synced
+                or BankConnectionStatuses.ReauthRequired
+                or BankConnectionStatuses.Expired
+                or BankConnectionStatuses.Failed))
+        {
+            return ServiceResult<DeterministicEnrichmentRunResult>.Fail(
+                "Connection is not ready for deterministic enrichment.",
+                "bank_connection_not_ready_for_enrichment",
+                StatusCodes.Status409Conflict);
+        }
+
+        var now = DateTime.UtcNow;
+        var summary = await RunDeterministicEnrichmentPassAsync(
+            connection,
+            now,
+            isInitialBackfill: false,
+            includeHistorical: true,
+            cancellationToken);
+
+        connection.UpdatedUtc = now;
+
+        if (summary.HasChanges || dbContext.ChangeTracker.HasChanges())
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        logger.LogInformation(
+            "Deterministic enrichment run completed connectionId={ConnectionId} trigger={Trigger} mode={Mode} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} progressPercent={ProgressPercent} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining}",
+            connection.Id,
+            trigger,
+            summary.Mode,
+            summary.HistoricalEnrichmentInProgress,
+            summary.HistoricalEnrichmentCompleted,
+            summary.HistoricalEnrichmentProgressPercent,
+            summary.RowsEvaluated,
+            summary.RowsRemaining);
+
+        return ServiceResult<DeterministicEnrichmentRunResult>.Ok(
+            new DeterministicEnrichmentRunResult(
+                connection.Id,
+                summary.HistoricalEnrichmentInProgress,
+                summary.HistoricalEnrichmentCompleted,
+                summary.HistoricalEnrichmentProgressPercent,
+                summary.HistoricalEnrichmentCheckpointUtc,
+                summary.RowsEvaluated,
+                summary.RowsRemaining,
+                summary.BatchesProcessed,
+                summary.Mode,
+                summary.HasChanges));
     }
 
     private async Task<ServiceResult<BankSyncResult>> SyncWithAccessTokenAsync(
@@ -1017,6 +1112,7 @@ public sealed class BankSyncService(
             connection,
             now,
             isInitialBackfill,
+            includeHistorical: false,
             cancellationToken);
         linkedTransfersMatched = deterministicEnrichmentSummary.LinkedTransfersMatched;
         relationshipRowsUpserted = deterministicEnrichmentSummary.RelationshipRowsUpserted;
@@ -1051,6 +1147,22 @@ public sealed class BankSyncService(
             errorCode: null,
             errorReason: null,
             cancellationToken);
+
+        try
+        {
+            await enrichmentQueue.QueueConnectionAsync(
+                connection.UserId,
+                connection.Id,
+                "post_sync_enqueue",
+                CancellationToken.None);
+        }
+        catch (Exception queueException)
+        {
+            logger.LogWarning(
+                queueException,
+                "Unable to enqueue deterministic enrichment after sync connectionId={ConnectionId}",
+                connection.Id);
+        }
 
         await auditService.WriteEventAsync(
             category: "banking",
@@ -2703,6 +2815,7 @@ public sealed class BankSyncService(
         OpenBankingConnection connection,
         DateTime now,
         bool isInitialBackfill,
+        bool includeHistorical,
         CancellationToken cancellationToken)
     {
         EnsureDeterministicEnrichmentState(connection);
@@ -2781,7 +2894,17 @@ public sealed class BankSyncService(
             && (connection.HistoricalEnrichmentVersion ?? 0) >= DeterministicEnrichmentCurrentVersion
             && !connection.NeedsHistoricalReclassification;
 
-        if (historicalRequired)
+        if (historicalRequired && !includeHistorical)
+        {
+            connection.HistoricalEnrichmentStartedUtc ??= now;
+            connection.HistoricalEnrichmentCompletedUtc = null;
+            connection.NeedsHistoricalReclassification = true;
+            rowsRemaining = await CountAllStaleDeterministicRowsAsync(connection.UserId, cancellationToken);
+            historicalInProgress = rowsRemaining > 0;
+            historicalCompleted = !historicalInProgress;
+            modeParts.Add("historical_deferred");
+        }
+        else if (historicalRequired)
         {
             connection.HistoricalEnrichmentStartedUtc ??= now;
             connection.HistoricalEnrichmentCompletedUtc = null;
@@ -2986,6 +3109,25 @@ public sealed class BankSyncService(
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
                 && x.BookedAtUtc < beforeUtc
+                && (!x.DeterministicEnrichmentVersion.HasValue
+                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+            .CountAsync(cancellationToken);
+    }
+
+    private async Task<int> CountAllStaleDeterministicRowsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return 0;
+        }
+
+        return await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
                 && (!x.DeterministicEnrichmentVersion.HasValue
                     || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
             .CountAsync(cancellationToken);
