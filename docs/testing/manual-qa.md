@@ -155,6 +155,8 @@ Mobile freshness UX:
    - for newly fetched account transactions, confirm `RawBankTransactions` stores:
      - `ProviderTimestampRaw`, `TimestampSource`, `TimestampPrecision`
    - confirm corresponding `NormalizedBankTransactions` rows are created/updated with matching provenance and policy metadata
+   - when payload includes both date-only and precise booked fields, verify `TimestampSource` points to the precise field (for example `booked_timestamp` or `transaction_timestamp`)
+   - for date-only provider rows, verify UI/API does not imply an exact local-time precision that was not present upstream
 13. Validate stuck-sync recovery behavior:
    - force one connection into `sync_pending` with a recent `LastSyncAttemptedUtc` and run global manual sync
    - verify that connection is skipped as `skipped_sync_in_progress`

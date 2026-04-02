@@ -137,6 +137,11 @@ NSFinance now treats imported banking data as a long-term ledger:
   - timestamp source field used
   - precision classification (`precise_datetime`, `date_only_midnight`, `unknown_needs_verification`)
   - policy key used for normalization
+- Timestamp selection uses a best-available strategy:
+  - evaluate known booked timestamp fields (for example `transaction_timestamp`, `booked_timestamp`, `timestamp`, `booking_date`)
+  - prefer the most precise parseable value, not simply the first parseable field
+  - preserve original source field + raw string for auditability
+  - do not fabricate time for date-only provider payloads
 
 - Initial sync uses an explicit backfill window (`from`/`to`) instead of relying on provider defaults.
 - Backfill windows are provider-aware where we have known constraints/opportunities:
@@ -191,6 +196,7 @@ NSFinance now treats imported banking data as a long-term ledger:
 - Provider profiles are grouped into provider families (for example Irish capped-slice, NatWest family, Lloyds family, fintech families) so new provider variants can be onboarded without scattering service-layer conditionals.
 - The provider policy catalog is grounded in the TrueLayer Supported Providers table exported from Console (`Supported Providers.xlsx`) and kept explicit in code.
 - AIB is modeled as a capped visible-slice provider (`up to 100`), so incremental sync re-scans overlapping visible slices safely rather than assuming full historical replay access.
+- Consumer AIB is currently treated as `date_only_midnight` timestamp precision based on observed payload behavior and live diagnostics; if precise fields are observed in future payload captures, policy should be reclassified with evidence.
 - Sync persistence is stage-based:
   - account/balance refresh stage is persisted durably
   - transaction/commitments stage is persisted separately

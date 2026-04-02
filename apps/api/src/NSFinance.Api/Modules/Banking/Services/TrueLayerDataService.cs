@@ -954,8 +954,11 @@ public sealed class TrueLayerDataService(
             transaction,
             [
                 "timestamp",
+                "transaction_timestamp",
                 "booked_timestamp",
+                "booked_datetime",
                 "booking_timestamp",
+                "booking_datetime",
                 "booked_date",
                 "booking_date",
                 "date"
@@ -969,6 +972,7 @@ public sealed class TrueLayerDataService(
             transaction,
             [
                 "value_timestamp",
+                "value_datetime",
                 "value_date",
                 "effective_date"
             ],
@@ -980,6 +984,9 @@ public sealed class TrueLayerDataService(
         IReadOnlyList<string> candidateFieldNames,
         string fallbackSource)
     {
+        ExtractedTimestamp? bestMatch = null;
+        var bestPrecisionRank = -1;
+
         foreach (var fieldName in candidateFieldNames)
         {
             var raw = GetString(source, fieldName);
@@ -991,12 +998,25 @@ public sealed class TrueLayerDataService(
             var parsed = ParseDateTime(raw);
             if (parsed.HasValue)
             {
-                return new ExtractedTimestamp(
+                var precision = ClassifyTimestampPrecision(raw);
+                var precisionRank = GetTimestampPrecisionRank(precision);
+                if (bestMatch is not null && precisionRank <= bestPrecisionRank)
+                {
+                    continue;
+                }
+
+                bestMatch = new ExtractedTimestamp(
                     parsed.Value,
                     raw,
                     fieldName,
-                    ClassifyTimestampPrecision(raw));
+                    precision);
+                bestPrecisionRank = precisionRank;
             }
+        }
+
+        if (bestMatch is not null)
+        {
+            return bestMatch.Value;
         }
 
         return new ExtractedTimestamp(
@@ -1004,6 +1024,16 @@ public sealed class TrueLayerDataService(
             Raw: null,
             Source: fallbackSource,
             Precision: "unknown_needs_verification");
+    }
+
+    private static int GetTimestampPrecisionRank(string precision)
+    {
+        return precision switch
+        {
+            "precise_datetime" => 2,
+            "date_only_midnight" => 1,
+            _ => 0
+        };
     }
 
     private static string ClassifyTimestampPrecision(string rawTimestamp)

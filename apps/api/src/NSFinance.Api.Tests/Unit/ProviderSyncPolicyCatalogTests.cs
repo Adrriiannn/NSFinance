@@ -6,7 +6,7 @@ namespace NSFinance.Api.Tests.Unit;
 public class ProviderSyncPolicyCatalogTests
 {
     [Theory]
-    [InlineData("ob-aib", "AIB", "aib", "irish_capped_slice", ProviderTransactionVisibilityMode.CappedVisibleSlice, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
+    [InlineData("ob-aib", "AIB", "aib", "irish_capped_slice", ProviderTransactionVisibilityMode.CappedVisibleSlice, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
     [InlineData("ob-aib-business", "AIB Business", "aib_business", "irish_capped_slice_business", ProviderTransactionVisibilityMode.CappedVisibleSlice, ProviderTimestampPrecisionMode.DateOnlyMidnight)]
     [InlineData("ob-boi-ie", "Bank of Ireland", "boi", "irish_retail_standard", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]
     [InlineData("ob-ptsb", "PTSB", "ptsb", "irish_mixed_history", ProviderTransactionVisibilityMode.DateHistory, ProviderTimestampPrecisionMode.UnknownNeedsVerification)]

@@ -26,7 +26,7 @@ Classes:
 
 | Provider | PrecisionClass | SourceType | Policy Family |
 |---|---|---|---|
-| AIB | `unknown_needs_verification` | observed | `irish_capped_slice` |
+| AIB | `date_only_midnight` | observed | `irish_capped_slice` |
 | American Express | `date_only_midnight` | documented | `uk_card_first_mix` |
 | Bank of Scotland | `date_only_midnight` | documented | `uk_lloyds_halifax_bos_mbna_family` |
 | Barclaycard | `precise_datetime` | documented | `uk_barclaycard` |
@@ -64,3 +64,19 @@ Classes:
 - Transfer matching applies a penalty/deferral path when precision is weak and counterpart confidence is low.
 - Timestamp provenance (`source`, `raw`, `precision`) is persisted on raw and normalized transaction layers.
 - Low-confidence pairing is prevented from auto-linking into analytics-neutral transfer handling.
+
+## AIB timestamp evidence
+
+Current evidence for consumer AIB in NSFinance points to date-only precision in the Data API payload:
+
+- Integration fixture that mirrors the problematic cross-bank scenario uses:
+  - `provider_id: ob-aib`
+  - transaction `timestamp: "2026-04-01"` (date-only)
+  - matching Revolut counterpart rows include full datetime (`2026-04-01T09:07:00Z`)
+- Live sync diagnostics for AIB repeatedly showed:
+  - `earliestReturnedUtc=03/29/2026 23:00:00`
+  - `latestReturnedUtc=03/30/2026 23:00:00`
+  - no newer row beyond checkpoint in the same run
+
+These are consistent with date-level booking timestamps rendered in UTC/BST boundaries.  
+If future payload captures show precise consumer AIB transaction timestamps, reclassify `ob-aib` in `ProviderSyncPolicyCatalog` and update this matrix.

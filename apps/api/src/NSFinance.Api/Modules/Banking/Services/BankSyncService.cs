@@ -1441,6 +1441,41 @@ public sealed class BankSyncService(
             }
         }
 
+        if (providerTransactions.Count > 0)
+        {
+            var timestampSourceBreakdown = string.Join(
+                ",",
+                providerTransactions
+                    .GroupBy(x => string.IsNullOrWhiteSpace(x.TimestampSource) ? "unknown" : x.TimestampSource, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => $"{group.Key}:{group.Count()}")
+                    .OrderBy(x => x, StringComparer.Ordinal));
+
+            var timestampPrecisionBreakdown = string.Join(
+                ",",
+                providerTransactions
+                    .GroupBy(x => string.IsNullOrWhiteSpace(x.TimestampPrecision) ? "unknown_needs_verification" : x.TimestampPrecision, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => $"{group.Key}:{group.Count()}")
+                    .OrderBy(x => x, StringComparer.Ordinal));
+
+            var rawTimestampSamples = string.Join(
+                ",",
+                providerTransactions
+                    .Select(x => x.ProviderTimestampRaw)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(3));
+
+            logger.LogInformation(
+                "Fetched transaction timestamp provenance accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} sourceBreakdown={SourceBreakdown} precisionBreakdown={PrecisionBreakdown} rawTimestampSamples={RawTimestampSamples}",
+                providerAccount.AccountId,
+                linkedAccount.ConnectionId,
+                providerAccount.ProviderId ?? "<unknown>",
+                providerAccount.ProviderDisplayName ?? "<unknown>",
+                string.IsNullOrWhiteSpace(timestampSourceBreakdown) ? "<none>" : timestampSourceBreakdown,
+                string.IsNullOrWhiteSpace(timestampPrecisionBreakdown) ? "<none>" : timestampPrecisionBreakdown,
+                string.IsNullOrWhiteSpace(rawTimestampSamples) ? "<none>" : rawTimestampSamples);
+        }
+
         foreach (var providerTransaction in providerTransactions)
         {
             logger.LogDebug(

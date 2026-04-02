@@ -85,9 +85,9 @@ public static class ProviderSyncPolicyCatalog
         MinAdaptiveWindow: TimeSpan.FromHours(6),
         ReScanVisibleSliceEachSync: true,
         PendingSupport: ProviderPendingSupportMode.Unknown,
-        TimestampPrecision: ProviderTimestampPrecisionMode.UnknownNeedsVerification,
+        TimestampPrecision: ProviderTimestampPrecisionMode.DateOnlyMidnight,
         InitialLongHistoryGraceMinutes: null,
-        HistoryNotes: "Count-limited visible-slice provider (up to ~100 returned rows).");
+        HistoryNotes: "Count-limited visible-slice provider (up to ~100 returned rows); observed consumer payloads currently behave as date-only precision.");
 
     private static readonly ProviderTransactionSyncPolicy AibBusinessPolicy = AibPolicy with
     {
