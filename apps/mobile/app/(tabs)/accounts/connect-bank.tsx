@@ -22,7 +22,6 @@ import {
   buildBankConnectReturnUri,
   sanitizeConnectBankReturnPath
 } from "../../../src/features/banking/bankingLinking";
-import { requestEnrichmentTooltip } from "../../../src/features/banking/enrichmentUxEvents";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { queryKeys } from "../../../src/lib/api/queryKeys";
 import { useFeedbackSound } from "../../../src/lib/sound/useFeedbackSound";
@@ -1079,10 +1078,6 @@ export default function AddAccountModalScreen() {
             onPress={() => {
               if (isSyncingInProgress) {
                 return;
-              }
-
-              if (isCompletedSynced) {
-                requestEnrichmentTooltip();
               }
 
               logBankingEvent("modal_close", {

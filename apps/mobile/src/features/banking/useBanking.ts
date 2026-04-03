@@ -79,10 +79,11 @@ export function useBankConnectionsQuery(enabled = true) {
   });
 }
 
-export function useConnectedBanksQuery() {
+export function useConnectedBanksQuery(enabled = true) {
   return useQuery({
     queryKey: queryKeys.banking.connectedBanks,
     queryFn: getConnectedBanks,
+    enabled,
     ...nearLiveOptionsWithoutInterval,
     refetchInterval: (query) => {
       const data = query.state.data;

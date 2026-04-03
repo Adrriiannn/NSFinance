@@ -11,12 +11,14 @@ import {
 import Svg, { Circle, G } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getActivityFeedInteracting } from "../../features/activity/activityFeedRuntime";
-import { subscribeToEnrichmentTooltip } from "../../features/banking/enrichmentUxEvents";
 import {
   getEnrichmentDialState,
   setEnrichmentDialState
 } from "../../features/banking/enrichmentDial.storage";
-import { useBankEnrichmentProgressQuery } from "../../features/banking/useBanking";
+import {
+  useBankEnrichmentProgressQuery,
+  useConnectedBanksQuery
+} from "../../features/banking/useBanking";
 import { useAuthSession } from "../../providers/AuthProvider";
 import {
   createRuntimeStyleSheet,
@@ -26,14 +28,16 @@ import {
   typography
 } from "../../theme/tokens";
 
-const TOOLTIP_VISIBLE_MS = 10_000;
+const AUTO_OPEN_VISIBLE_MS = 5_000;
 const LIVE_INVALIDATION_INTERVAL_MS = 6_000;
 const DIAL_SIZE = 52;
 const DIAL_MARGIN = spacing[12];
 const DETAILS_WIDTH = 236;
-const DETAILS_HEIGHT = 132;
+const DETAILS_HEIGHT = 110;
 const POPUP_GAP = 10;
 const DIAL_BOTTOM_CLEARANCE = 88;
+const RING_SIZE = DIAL_SIZE - 4;
+const RING_STROKE_WIDTH = 3.5;
 
 type DialPosition = {
   left: number;
@@ -165,7 +169,6 @@ export function GlobalEnrichmentProgressDial() {
   const userId = session?.user.id ?? null;
 
   const [detailsVisible, setDetailsVisible] = useState(false);
-  const [tooltipVisible, setTooltipVisible] = useState(false);
   const [dotCount, setDotCount] = useState(1);
   const [dismissedCompletedSignature, setDismissedCompletedSignature] = useState<string | null>(null);
 
@@ -181,11 +184,18 @@ export function GlobalEnrichmentProgressDial() {
   const [dialPosition, setDialPosition] = useState<DialPosition>(defaultPosition);
   const dialPositionRef = useRef<DialPosition>(defaultPosition);
   const dragStartRef = useRef<DialPosition>(defaultPosition);
-  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previousHasActiveWorkRef = useRef(false);
   const didHydrateRef = useRef(false);
 
   const enrichmentQuery = useBankEnrichmentProgressQuery(isAuthenticated && !isBootstrapping);
+  const connectedBanksQuery = useConnectedBanksQuery(isAuthenticated && !isBootstrapping);
   const progress = enrichmentQuery.data;
+  const hasConnectedBanks = Boolean(
+    connectedBanksQuery.data
+    && ((connectedBanksQuery.data.activeConnections?.length ?? 0) > 0
+      || (connectedBanksQuery.data.attentionConnections?.length ?? 0) > 0)
+  );
 
   useEffect(() => {
     dialPositionRef.current = dialPosition;
@@ -274,12 +284,23 @@ export function GlobalEnrichmentProgressDial() {
     && dismissedCompletedSignature === progressSignature
   );
 
-  const shouldShowDial = hasActiveWork || (isCompletedState && !completedDismissed);
+  const shouldShowDial = hasConnectedBanks && (hasActiveWork || (isCompletedState && !completedDismissed));
   const progressPercent = Math.max(0, Math.min(100, Math.round(progress?.progressPercent ?? 0)));
-  const stageLabel = progress ? mapStageLabel(progress.stage) : "In progress";
+  const stageLabel = !hasConnectedBanks
+    ? "Connect a bank account"
+    : progress
+      ? mapStageLabel(progress.stage)
+      : "In progress";
+  const popupMode: "before" | "active" | "completed" = !hasConnectedBanks
+    ? "before"
+    : hasActiveWork
+      ? "active"
+      : "completed";
   const titleText = hasActiveWork
     ? `Organizing transactions${".".repeat(dotCount)}`
-    : "Done";
+    : isCompletedState
+      ? "Transactions organized."
+      : "No transactions.";
 
   useEffect(() => {
     if (!hasActiveWork) {
@@ -313,30 +334,39 @@ export function GlobalEnrichmentProgressDial() {
   }, [dismissedCompletedSignature, hasActiveWork, userId]);
 
   useEffect(() => {
-    return subscribeToEnrichmentTooltip(() => {
-      if (!hasActiveWork) {
-        return;
-      }
+    const becameActive = hasActiveWork && !previousHasActiveWorkRef.current;
+    previousHasActiveWorkRef.current = hasActiveWork;
 
-      setTooltipVisible(true);
-      if (tooltipTimerRef.current) {
-        clearTimeout(tooltipTimerRef.current);
+    if (!hasActiveWork) {
+      if (autoCloseTimerRef.current) {
+        clearTimeout(autoCloseTimerRef.current);
+        autoCloseTimerRef.current = null;
       }
+      return;
+    }
 
-      tooltipTimerRef.current = setTimeout(() => {
-        setTooltipVisible(false);
-      }, TOOLTIP_VISIBLE_MS);
-    });
-  }, [hasActiveWork]);
+    if (!becameActive || detailsVisible) {
+      return;
+    }
+
+    setDetailsVisible(true);
+    if (autoCloseTimerRef.current) {
+      clearTimeout(autoCloseTimerRef.current);
+    }
+
+    autoCloseTimerRef.current = setTimeout(() => {
+      setDetailsVisible((current) => (current ? false : current));
+      autoCloseTimerRef.current = null;
+    }, AUTO_OPEN_VISIBLE_MS);
+  }, [detailsVisible, hasActiveWork]);
 
   useEffect(() => {
-    if (hasActiveWork) {
+    if (shouldShowDial) {
       return;
     }
 
     setDetailsVisible(false);
-    setTooltipVisible(false);
-  }, [hasActiveWork]);
+  }, [shouldShowDial]);
 
   useEffect(() => {
     if (!hasActiveWork) {
@@ -376,8 +406,8 @@ export function GlobalEnrichmentProgressDial() {
 
   useEffect(() => {
     return () => {
-      if (tooltipTimerRef.current) {
-        clearTimeout(tooltipTimerRef.current);
+      if (autoCloseTimerRef.current) {
+        clearTimeout(autoCloseTimerRef.current);
       }
     };
   }, []);
@@ -433,30 +463,19 @@ export function GlobalEnrichmentProgressDial() {
     [dialPosition, screenHeight, screenWidth]
   );
 
-  const tooltipPlacement = useMemo(
-    () => ({
-      left: Math.max(
-        DIAL_MARGIN,
-        Math.min(
-          dialPosition.left + DIAL_SIZE / 2 - 132,
-          screenWidth - 264 - DIAL_MARGIN
-        )
-      ),
-      top: Math.max(DIAL_MARGIN, dialPosition.top - 92)
-    }),
-    [dialPosition, screenWidth]
-  );
-
   const ringProgress = isCompletedState ? 100 : progressPercent;
-  const ringSize = DIAL_SIZE - 8;
-  const ringRadius = (ringSize / 2) - 3;
+  const ringRadius = (RING_SIZE / 2) - 2;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const ringStrokeOffset = ringCircumference - ((Math.max(0, Math.min(100, ringProgress)) / 100) * ringCircumference);
 
   const handleDialPress = useCallback(() => {
+    if (autoCloseTimerRef.current) {
+      clearTimeout(autoCloseTimerRef.current);
+      autoCloseTimerRef.current = null;
+    }
+
     if (isCompletedState && progressSignature) {
       setDetailsVisible(false);
-      setTooltipVisible(false);
       setDismissedCompletedSignature(progressSignature);
       void setEnrichmentDialState(
         {
@@ -469,10 +488,17 @@ export function GlobalEnrichmentProgressDial() {
       return;
     }
 
-    if (hasActiveWork) {
-      setDetailsVisible((current) => !current);
+    setDetailsVisible((current) => !current);
+  }, [isCompletedState, progressSignature, userId]);
+
+  const handleDetailsPress = useCallback(() => {
+    if (autoCloseTimerRef.current) {
+      clearTimeout(autoCloseTimerRef.current);
+      autoCloseTimerRef.current = null;
     }
-  }, [hasActiveWork, isCompletedState, progressSignature, userId]);
+
+    setDetailsVisible(false);
+  }, []);
 
   if (!isAuthenticated || isBootstrapping || !progress || !shouldShowDial) {
     return null;
@@ -485,25 +511,33 @@ export function GlobalEnrichmentProgressDial() {
 
   return (
     <View pointerEvents="box-none" style={styles.host}>
-      {tooltipVisible && hasActiveWork ? (
-        <View style={[styles.tooltipCard, { left: tooltipPlacement.left, top: tooltipPlacement.top }]}>
-          <Text style={styles.tooltipTitle}>Organizing your transactions</Text>
-          <Text style={styles.tooltipBody}>
-            We&apos;re reviewing your transaction history and applying links and categories. You can keep using the app while this finishes.
-          </Text>
-        </View>
-      ) : null}
-
-      {detailsVisible && hasActiveWork ? (
-        <View style={[styles.detailsCard, { left: detailsPlacement.left, top: detailsPlacement.top }]}>
+      {detailsVisible ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close enrichment status"
+          onPress={handleDetailsPress}
+          style={[styles.detailsCard, { left: detailsPlacement.left, top: detailsPlacement.top }]}
+        >
           <Text style={styles.detailsTitle}>{titleText}</Text>
           <Text style={styles.detailsLine}>Stage: {stageLabel}</Text>
-          <Text style={styles.detailsLine}>
-            Progress: {formatCompactNumber(processedCount)} / {formatCompactNumber(totalCount)}
-          </Text>
-          <Text style={styles.detailsLine}>Remaining: {formatCompactNumber(remainingCount)}</Text>
-          <Text style={styles.detailsHint}>Newest transactions are processed first.</Text>
-        </View>
+          {popupMode !== "before" ? (
+            <>
+              <View style={styles.progressCompactRow}>
+                <Text style={[styles.detailsLine, styles.progressCompactText]}>
+                  Progress: {formatCompactNumber(processedCount)} / {formatCompactNumber(totalCount)}
+                </Text>
+                <Text style={[styles.detailsLine, styles.progressCompactText]}>
+                  Remaining: {formatCompactNumber(remainingCount)}
+                </Text>
+              </View>
+              {popupMode === "active" ? (
+                <Text style={styles.detailsHint}>Newest transactions are processed first.</Text>
+              ) : (
+                <Text style={styles.detailsHint}>Tap Done to close me</Text>
+              )}
+            </>
+          ) : null}
+        </Pressable>
       ) : null}
 
       <View
@@ -519,22 +553,22 @@ export function GlobalEnrichmentProgressDial() {
         >
           <View style={[styles.dialOuter, isDone ? styles.dialOuterDone : null]}>
             <View style={styles.ringLayer}>
-              <Svg width={ringSize} height={ringSize}>
-                <G rotation={-90} originX={ringSize / 2} originY={ringSize / 2}>
+              <Svg width={RING_SIZE} height={RING_SIZE}>
+                <G rotation={-90} originX={RING_SIZE / 2} originY={RING_SIZE / 2}>
                   <Circle
-                    cx={ringSize / 2}
-                    cy={ringSize / 2}
+                    cx={RING_SIZE / 2}
+                    cy={RING_SIZE / 2}
                     r={ringRadius}
                     stroke={isDone ? palette.accentStrong : "rgba(242, 140, 40, 0.26)"}
-                    strokeWidth={3}
+                    strokeWidth={RING_STROKE_WIDTH}
                     fill="transparent"
                   />
                   <Circle
-                    cx={ringSize / 2}
-                    cy={ringSize / 2}
+                    cx={RING_SIZE / 2}
+                    cy={RING_SIZE / 2}
                     r={ringRadius}
                     stroke={isDone ? palette.accentStrong : palette.accent}
-                    strokeWidth={3}
+                    strokeWidth={RING_STROKE_WIDTH}
                     strokeLinecap="round"
                     strokeDasharray={`${ringCircumference} ${ringCircumference}`}
                     strokeDashoffset={ringStrokeOffset}
@@ -588,8 +622,8 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   ringLayer: {
     position: "absolute",
-    width: DIAL_SIZE - 8,
-    height: DIAL_SIZE - 8,
+    width: RING_SIZE,
+    height: RING_SIZE,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -608,26 +642,6 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   dialDoneText: {
     color: palette.accentStrong
-  },
-  tooltipCard: {
-    position: "absolute",
-    width: 264,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: surfaces.card,
-    paddingHorizontal: spacing[12],
-    paddingVertical: spacing[10],
-    gap: spacing[6]
-  },
-  tooltipTitle: {
-    color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "700"
-  },
-  tooltipBody: {
-    color: palette.textSecondary,
-    ...typography.caption
   },
   detailsCard: {
     position: "absolute",
@@ -648,6 +662,15 @@ const styles = createRuntimeStyleSheet(() => ({
   detailsLine: {
     color: palette.textSecondary,
     ...typography.caption
+  },
+  progressCompactRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[8]
+  },
+  progressCompactText: {
+    flexShrink: 1
   },
   detailsHint: {
     color: palette.textMuted,
