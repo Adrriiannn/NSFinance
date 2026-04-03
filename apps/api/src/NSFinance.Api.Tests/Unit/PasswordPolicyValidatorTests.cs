@@ -10,7 +10,7 @@ public class PasswordPolicyValidatorTests
         var errors = PasswordPolicyValidator.Validate("short");
 
         Assert.NotEmpty(errors);
-        Assert.Contains(errors, x => x.Contains("at least 10", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, x => x.Contains("at least 12", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

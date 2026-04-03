@@ -282,7 +282,7 @@ public class AuthAndTrustIntegrationTests
             new UpdateUserProfileRequest(
                 "account.flow@test.local",
                 "Updated Integration User",
-                "Updated User",
+                "updated-user",
                 "updated-user",
                 null,
                 "Focused on: tracking subscriptions",
@@ -300,8 +300,10 @@ public class AuthAndTrustIntegrationTests
                 "stable",
                 "saving"),
             CancellationToken.None);
-        Assert.True(profileUpdate.Succeeded);
-        Assert.Equal("Updated User", profileUpdate.Value!.DisplayName);
+        Assert.True(
+            profileUpdate.Succeeded,
+            $"Profile update failed with code '{profileUpdate.Error?.Code}' and message '{profileUpdate.Error?.Message}'.");
+        Assert.Equal("updated-user", profileUpdate.Value!.DisplayName);
 
         var acceptPolicy = await harness.PolicyService.AcceptPolicyAsync(
             new AcceptPolicyRequest("terms_of_service", "1.0.0", "integration_test", "mobile", "1.0.0"),
