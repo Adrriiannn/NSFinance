@@ -131,9 +131,9 @@ Savings movement relationship coherence:
 2. Verify both rows remain visible in Activity.
 3. Verify merchant row remains a normal expense candidate.
 4. Verify spare-change row is marked as savings movement (`savings_roundup`) and does not count toward expense/income totals.
-5. Trigger a manual move to savings destination (for example `To Flexible Cash Funds`).
+5. Trigger a manual move to savings destination (for example `To Internal Savings Pocket`).
 6. Verify row is marked `savings_manual_deposit`, remains visible, and is globally neutralized for income/expense.
-7. Trigger a manual move from savings destination (for example `From Flexible Cash Funds`).
+7. Trigger a manual move from savings destination (for example `From Internal Savings Pocket`).
 8. Verify row is marked `savings_manual_withdrawal`, remains visible, and is globally neutralized for income/expense.
 9. Confirm logs/inspectors expose relationship confidence, reasons, and analytics treatment for each savings movement.
 

@@ -22,6 +22,7 @@ This folder is organized by canonical topic. Each topic has one primary source o
 - Banking sync architecture cleanup: `features/banking-sync-architecture-cleanup.md`
 - Banking scope productization: `features/banking-scope-productization.md`
 - Banking provider timestamp matrix: `features/banking-provider-timestamp-matrix.md`
+- Banking fixture standards (privacy-safe tests): `testing/banking-fixture-standards.md`
 - Expense plans and community publishing: `features/expense-plans.md`
 
 ## Testing

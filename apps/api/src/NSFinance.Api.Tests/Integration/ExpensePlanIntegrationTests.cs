@@ -12,6 +12,10 @@ namespace NSFinance.Api.Tests.Integration;
 
 public class ExpensePlanIntegrationTests
 {
+    private const string SeedDisplayName = "Plan Alpha";
+    private const string SeedHandle = "plan_alpha";
+    private const string SeedEmail = "plan.alpha@example.test";
+
     [Fact]
     public async Task CreatePlanAsync_PersistsCanonicalLineItemsAndRecurrenceMetadata()
     {
@@ -50,7 +54,7 @@ public class ExpensePlanIntegrationTests
         Assert.Equal(2, created.LineItems.Count);
         Assert.Equal(130111, created.LineItems[0].TaxonomySubcategoryId);
         Assert.Equal(130, created.LineItems[0].TaxonomyDomainId);
-        Assert.Equal("@marius", created.CreatorTagSnapshot);
+        Assert.Equal($"@{SeedHandle}", created.CreatorTagSnapshot);
 
         var stored = await harness.DbContext.ExpensePlans.Include(x => x.LineItems).SingleAsync();
         Assert.Equal(harness.CurrentUserProvider.UserId, stored.UserId);
@@ -244,11 +248,11 @@ public class ExpensePlanIntegrationTests
             DbContext.Users.Add(new User
             {
                 Id = CurrentUserProvider.UserId,
-                PrimaryEmail = "marius@example.com",
-                NormalizedEmail = "MARIUS@EXAMPLE.COM",
-                DisplayName = "Marius",
-                FullName = "Marius Albu",
-                Handle = "marius",
+                PrimaryEmail = SeedEmail,
+                NormalizedEmail = SeedEmail.ToUpperInvariant(),
+                DisplayName = SeedDisplayName,
+                FullName = $"{SeedDisplayName} User",
+                Handle = SeedHandle,
                 Status = "active",
                 OnboardingStatus = "complete",
                 Role = "user",

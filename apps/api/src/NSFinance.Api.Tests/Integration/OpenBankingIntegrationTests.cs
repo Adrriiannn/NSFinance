@@ -19,6 +19,10 @@ namespace NSFinance.Api.Tests.Integration;
 
 public class OpenBankingIntegrationTests
 {
+    private const string SyntheticOutboundTransferDescription = "Outbound Transfer Holder Alpha";
+    private const string SyntheticInboundTransferDescription = "Inbound Transfer Holder Alpha";
+    private const string SyntheticSavingsDestinationLabel = "Internal Savings Pocket";
+
     [Fact]
     public async Task CallbackFlow_SuccessfullyIngestsAccountsBalancesAndTransactions()
     {
@@ -137,23 +141,23 @@ public class OpenBankingIntegrationTests
 
         Assert.Equal(3, transactions.Count);
 
-        var debitToMarius = transactions.Single(x => x.Description.Contains("To Marius Albu", StringComparison.OrdinalIgnoreCase));
-        var debitToPocket = transactions.Single(x => x.Description.Contains("Flexible Cash Funds", StringComparison.OrdinalIgnoreCase));
-        var aibIncoming = transactions.Single(x => x.Description.Contains("ALBU MARIUS", StringComparison.OrdinalIgnoreCase));
+        var outboundLinkedTransfer = transactions.Single(x => x.Description.Contains(SyntheticOutboundTransferDescription, StringComparison.OrdinalIgnoreCase));
+        var outboundSavingsMovement = transactions.Single(x => x.Description.Contains(SyntheticSavingsDestinationLabel, StringComparison.OrdinalIgnoreCase));
+        var inboundLinkedTransfer = transactions.Single(x => x.Description.Contains(SyntheticInboundTransferDescription, StringComparison.OrdinalIgnoreCase));
 
-        Assert.Equal(aibIncoming.Id, debitToMarius.LinkedTransferTransactionId);
-        Assert.Equal(debitToMarius.Id, aibIncoming.LinkedTransferTransactionId);
-        Assert.Equal(TransactionTransferKind.LinkedInternal, debitToMarius.TransferKind);
-        Assert.Equal(TransactionTransferKind.LinkedInternal, aibIncoming.TransferKind);
+        Assert.Equal(inboundLinkedTransfer.Id, outboundLinkedTransfer.LinkedTransferTransactionId);
+        Assert.Equal(outboundLinkedTransfer.Id, inboundLinkedTransfer.LinkedTransferTransactionId);
+        Assert.Equal(TransactionTransferKind.LinkedInternal, outboundLinkedTransfer.TransferKind);
+        Assert.Equal(TransactionTransferKind.LinkedInternal, inboundLinkedTransfer.TransferKind);
 
-        Assert.Null(debitToPocket.LinkedTransferTransactionId);
-        Assert.Equal(TransactionTransferKind.SavingsManualDeposit, debitToPocket.TransferKind);
-        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, debitToPocket.TaxonomyDomainId);
-        Assert.Equal(920102, debitToPocket.TaxonomySubcategoryId);
+        Assert.Null(outboundSavingsMovement.LinkedTransferTransactionId);
+        Assert.Equal(TransactionTransferKind.SavingsManualDeposit, outboundSavingsMovement.TransferKind);
+        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, outboundSavingsMovement.TaxonomyDomainId);
+        Assert.Equal(920102, outboundSavingsMovement.TaxonomySubcategoryId);
 
         var savingsRelationship = await harness.DbContext.TransactionRelationships
             .SingleAsync(x =>
-                x.SourceTransactionId == debitToPocket.Id
+                x.SourceTransactionId == outboundSavingsMovement.Id
                 && x.RelationshipType == TransactionRelationshipType.SavingsManualDeposit
                 && x.RelationshipStatus == TransactionRelationshipStatus.Active);
         Assert.Equal("exclude_income_expense_include_savings_flow", savingsRelationship.AnalyticsTreatment);
@@ -182,15 +186,15 @@ public class OpenBankingIntegrationTests
             .ToListAsync();
 
         var aibIncoming = transactions
-            .Where(x => x.Amount > 0m && x.Description.Contains("ALBU MARIUS", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.Amount > 0m && x.Description.Contains(SyntheticInboundTransferDescription, StringComparison.OrdinalIgnoreCase))
             .OrderBy(x => x.BookedAtUtc)
             .ToList();
         var revolutOutgoing = transactions
-            .Where(x => x.Amount < 0m && x.Description.Contains("To Marius Albu", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.Amount < 0m && x.Description.Contains(SyntheticOutboundTransferDescription, StringComparison.OrdinalIgnoreCase))
             .OrderBy(x => x.BookedAtUtc)
             .ToList();
         var pocketMovement = transactions
-            .Single(x => x.Description.Contains("Flexible Cash Funds", StringComparison.OrdinalIgnoreCase));
+            .Single(x => x.Description.Contains(SyntheticSavingsDestinationLabel, StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal(4, aibIncoming.Count);
         Assert.Equal(4, revolutOutgoing.Count);
@@ -226,9 +230,9 @@ public class OpenBankingIntegrationTests
         Assert.True(callback.Succeeded);
 
         var aibIncoming = await harness.DbContext.Transactions.SingleAsync(
-            x => x.Amount > 0m && x.Description.Contains("ALBU MARIUS", StringComparison.OrdinalIgnoreCase));
+            x => x.Amount > 0m && x.Description.Contains(SyntheticInboundTransferDescription, StringComparison.OrdinalIgnoreCase));
         var revolutOutgoing = await harness.DbContext.Transactions
-            .Where(x => x.Amount < 0m && x.Description.Contains("To Marius Albu", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.Amount < 0m && x.Description.Contains(SyntheticOutboundTransferDescription, StringComparison.OrdinalIgnoreCase))
             .OrderBy(x => x.BookedAtUtc)
             .ToListAsync();
 
@@ -314,7 +318,7 @@ public class OpenBankingIntegrationTests
         Assert.True(outcome.Succeeded);
 
         var withdrawal = await harness.DbContext.Transactions.SingleAsync(
-            x => x.Description.Contains("Flexible Cash Funds", StringComparison.OrdinalIgnoreCase));
+            x => x.Description.Contains(SyntheticSavingsDestinationLabel, StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal(TransactionTransferKind.SavingsManualWithdrawal, withdrawal.TransferKind);
 
@@ -1894,7 +1898,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-aib-001",
-                          "display_name": "AIB Current",
+                          "display_name": "Primary Current Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -1904,7 +1908,7 @@ public class OpenBankingIntegrationTests
                         },
                         {
                           "account_id": "acc-revolut-001",
-                          "display_name": "Revolut Main",
+                          "display_name": "Linked External Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2023,7 +2027,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-aib-pocket-001",
-                          "display_name": "AIB Current",
+                          "display_name": "Primary Current Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2033,7 +2037,7 @@ public class OpenBankingIntegrationTests
                         },
                         {
                           "account_id": "acc-revolut-pocket-001",
-                          "display_name": "Revolut Main",
+                          "display_name": "Linked External Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2092,7 +2096,7 @@ public class OpenBankingIntegrationTests
                           "amount":1.00,
                           "currency":"EUR",
                           "timestamp":"2026-04-01",
-                          "description":"ALBU MARIUS IE260401",
+                          "description":"Inbound Transfer Holder Alpha REF-CROSS-1",
                           "transaction_type":"CREDIT",
                           "status":"booked"
                         }
@@ -2113,7 +2117,7 @@ public class OpenBankingIntegrationTests
                           "amount":-1.00,
                           "currency":"EUR",
                           "timestamp":"2026-04-01T09:07:00Z",
-                          "description":"To Marius Albu",
+                          "description":"Outbound Transfer Holder Alpha",
                           "transaction_type":"TRANSFER",
                           "status":"booked"
                         },
@@ -2123,7 +2127,7 @@ public class OpenBankingIntegrationTests
                           "amount":-1.00,
                           "currency":"EUR",
                           "timestamp":"2026-03-31T21:37:00Z",
-                          "description":"To Flexible Cash Funds",
+                          "description":"To Internal Savings Pocket",
                           "transaction_type":"TRANSFER",
                           "status":"booked"
                         }
@@ -2162,7 +2166,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-aib-repeated-001",
-                          "display_name": "AIB Current",
+                          "display_name": "Primary Current Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2172,7 +2176,7 @@ public class OpenBankingIntegrationTests
                         },
                         {
                           "account_id": "acc-revolut-repeated-001",
-                          "display_name": "Revolut Main",
+                          "display_name": "Linked External Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2221,114 +2225,25 @@ public class OpenBankingIntegrationTests
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-repeated-001/transactions", StringComparison.Ordinal))
             {
-                return Json(HttpStatusCode.OK,
-                    """
-                    {
-                      "results": [
-                        {
-                          "transaction_id":"tx-aib-chain-20260330",
-                          "normalised_provider_transaction_id":"norm-aib-chain-20260330",
-                          "amount":1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-03-30",
-                          "description":"ALBU MARIUS IE260330",
-                          "transaction_type":"CREDIT",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-aib-chain-20260331",
-                          "normalised_provider_transaction_id":"norm-aib-chain-20260331",
-                          "amount":1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-03-31",
-                          "description":"ALBU MARIUS IE260331",
-                          "transaction_type":"CREDIT",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-aib-chain-20260401",
-                          "normalised_provider_transaction_id":"norm-aib-chain-20260401",
-                          "amount":1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-04-01",
-                          "description":"ALBU MARIUS IE260401",
-                          "transaction_type":"CREDIT",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-aib-chain-20260402",
-                          "normalised_provider_transaction_id":"norm-aib-chain-20260402",
-                          "amount":1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-04-02",
-                          "description":"ALBU MARIUS IE260402",
-                          "transaction_type":"CREDIT",
-                          "status":"booked"
-                        }
-                      ]
-                    }
-                    """);
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddDateOnlyInbound("tx-chain-inbound-a", "norm-chain-inbound-a", 1.00m, new DateTime(2026, 3, 30, 0, 0, 0, DateTimeKind.Utc), "REF-A")
+                    .AddDateOnlyInbound("tx-chain-inbound-b", "norm-chain-inbound-b", 1.00m, new DateTime(2026, 3, 31, 0, 0, 0, DateTimeKind.Utc), "REF-B")
+                    .AddDateOnlyInbound("tx-chain-inbound-c", "norm-chain-inbound-c", 1.00m, new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc), "REF-C")
+                    .AddDateOnlyInbound("tx-chain-inbound-d", "norm-chain-inbound-d", 1.00m, new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc), "REF-D");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-repeated-001/transactions", StringComparison.Ordinal))
             {
-                return Json(HttpStatusCode.OK,
-                    """
-                    {
-                      "results": [
-                        {
-                          "transaction_id":"tx-revolut-chain-20260330-0533",
-                          "normalised_provider_transaction_id":"norm-revolut-chain-20260330-0533",
-                          "amount":-1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-03-30T05:33:00Z",
-                          "description":"To Marius Albu",
-                          "transaction_type":"TRANSFER",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-revolut-chain-20260331-0319",
-                          "normalised_provider_transaction_id":"norm-revolut-chain-20260331-0319",
-                          "amount":-1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-03-31T03:19:00Z",
-                          "description":"To Marius Albu",
-                          "transaction_type":"TRANSFER",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-revolut-chain-20260401-0907",
-                          "normalised_provider_transaction_id":"norm-revolut-chain-20260401-0907",
-                          "amount":-1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-04-01T09:07:00Z",
-                          "description":"To Marius Albu",
-                          "transaction_type":"TRANSFER",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-revolut-chain-20260402-0726",
-                          "normalised_provider_transaction_id":"norm-revolut-chain-20260402-0726",
-                          "amount":-1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-04-02T07:26:00Z",
-                          "description":"To Marius Albu",
-                          "transaction_type":"TRANSFER",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-revolut-chain-pocket-20260331",
-                          "normalised_provider_transaction_id":"norm-revolut-chain-pocket-20260331",
-                          "amount":-1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-03-31T21:37:00Z",
-                          "description":"To Flexible Cash Funds",
-                          "transaction_type":"TRANSFER",
-                          "status":"booked"
-                        }
-                      ]
-                    }
-                    """);
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddPreciseOutbound("tx-chain-outbound-a", "norm-chain-outbound-a", -1.00m, new DateTime(2026, 3, 30, 5, 33, 0, DateTimeKind.Utc), "LEG-A")
+                    .AddPreciseOutbound("tx-chain-outbound-b", "norm-chain-outbound-b", -1.00m, new DateTime(2026, 3, 31, 3, 19, 0, DateTimeKind.Utc), "LEG-B")
+                    .AddPreciseOutbound("tx-chain-outbound-c", "norm-chain-outbound-c", -1.00m, new DateTime(2026, 4, 1, 9, 7, 0, DateTimeKind.Utc), "LEG-C")
+                    .AddPreciseOutbound("tx-chain-outbound-d", "norm-chain-outbound-d", -1.00m, new DateTime(2026, 4, 2, 7, 26, 0, DateTimeKind.Utc), "LEG-D")
+                    .AddSavingsOutflow("tx-chain-savings-a", "norm-chain-savings-a", -1.00m, new DateTime(2026, 3, 31, 21, 37, 0, DateTimeKind.Utc));
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
@@ -2366,7 +2281,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-aib-ambiguous-001",
-                          "display_name": "AIB Current",
+                          "display_name": "Primary Current Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2376,7 +2291,7 @@ public class OpenBankingIntegrationTests
                         },
                         {
                           "account_id": "acc-revolut-ambiguous-001",
-                          "display_name": "Revolut Main",
+                          "display_name": "Linked External Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2425,54 +2340,24 @@ public class OpenBankingIntegrationTests
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-ambiguous-001/transactions", StringComparison.Ordinal))
             {
-                return Json(HttpStatusCode.OK,
-                    """
-                    {
-                      "results": [
-                        {
-                          "transaction_id":"tx-aib-ambiguous-20260402",
-                          "normalised_provider_transaction_id":"norm-aib-ambiguous-20260402",
-                          "amount":1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-04-02",
-                          "description":"ALBU MARIUS IE260402",
-                          "transaction_type":"CREDIT",
-                          "status":"booked"
-                        }
-                      ]
-                    }
-                    """);
+                var scenario = new AmbiguousClusterScenarioBuilder()
+                    .AddDateOnlyInbound(
+                        "tx-ambiguous-inbound-a",
+                        "norm-ambiguous-inbound-a",
+                        1.00m,
+                        new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc),
+                        "REF-AMB-A");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-ambiguous-001/transactions", StringComparison.Ordinal))
             {
-                return Json(HttpStatusCode.OK,
-                    """
-                    {
-                      "results": [
-                        {
-                          "transaction_id":"tx-revolut-ambiguous-20260402-0800",
-                          "normalised_provider_transaction_id":"norm-revolut-ambiguous-20260402-0800",
-                          "amount":-1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-04-02T07:50:00Z",
-                          "description":"To Marius Albu",
-                          "transaction_type":"TRANSFER",
-                          "status":"booked"
-                        },
-                        {
-                          "transaction_id":"tx-revolut-ambiguous-20260402-0805",
-                          "normalised_provider_transaction_id":"norm-revolut-ambiguous-20260402-0805",
-                          "amount":-1.00,
-                          "currency":"EUR",
-                          "timestamp":"2026-04-02T07:55:00Z",
-                          "description":"To Marius Albu",
-                          "transaction_type":"TRANSFER",
-                          "status":"booked"
-                        }
-                      ]
-                    }
-                    """);
+                var scenario = new AmbiguousClusterScenarioBuilder()
+                    .AddPreciseOutbound("tx-ambiguous-outbound-a", "norm-ambiguous-outbound-a", -1.00m, new DateTime(2026, 4, 2, 7, 50, 0, DateTimeKind.Utc), "AMB-A")
+                    .AddPreciseOutbound("tx-ambiguous-outbound-b", "norm-ambiguous-outbound-b", -1.00m, new DateTime(2026, 4, 2, 7, 55, 0, DateTimeKind.Utc), "AMB-B");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
@@ -2510,7 +2395,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-revolut-roundup-001",
-                          "display_name": "Revolut Main",
+                          "display_name": "Linked External Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2607,7 +2492,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-revolut-withdrawal-001",
-                          "display_name": "Revolut Main",
+                          "display_name": "Linked External Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -2649,7 +2534,7 @@ public class OpenBankingIntegrationTests
                           "amount":1.00,
                           "currency":"EUR",
                           "timestamp":"2026-04-01T11:10:00Z",
-                          "description":"From Flexible Cash Funds",
+                          "description":"From Internal Savings Pocket",
                           "transaction_type":"TRANSFER",
                           "status":"booked"
                         }
@@ -3152,7 +3037,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-revolut-shared-normalized-001",
-                          "display_name": "Revolut Current",
+                          "display_name": "Linked External Account",
                           "currency": "EUR",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -3319,6 +3204,26 @@ public class OpenBankingIntegrationTests
 
             return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
         });
+    }
+
+    private static string BuildTransactionsResponseJson(IEnumerable<TransferScenarioTransactionSeed> rows)
+    {
+        var payload = new
+        {
+            results = rows.Select(row => new
+            {
+                transaction_id = row.TransactionId,
+                normalised_provider_transaction_id = row.NormalizedProviderTransactionId,
+                amount = row.Amount,
+                currency = row.Currency,
+                timestamp = row.Timestamp,
+                description = row.Description,
+                transaction_type = row.TransactionType,
+                status = row.Status
+            })
+        };
+
+        return JsonSerializer.Serialize(payload);
     }
 
     private static IReadOnlyList<CappedProviderTransactionSeed> BuildAibCappedTransactionCatalog(DateTime referenceNowUtc)
@@ -3633,6 +3538,79 @@ public class OpenBankingIntegrationTests
         decimal Amount,
         DateTime BookedAtUtc,
         string Description);
+
+    private sealed record TransferScenarioTransactionSeed(
+        string TransactionId,
+        string NormalizedProviderTransactionId,
+        decimal Amount,
+        string Currency,
+        string Timestamp,
+        string Description,
+        string TransactionType,
+        string Status = "booked");
+
+    private class TransferPairScenarioBuilder
+    {
+        protected readonly List<TransferScenarioTransactionSeed> rows = [];
+
+        public TransferPairScenarioBuilder AddDateOnlyInbound(
+            string transactionId,
+            string normalizedProviderTransactionId,
+            decimal amount,
+            DateTime bookedDateUtc,
+            string referenceSuffix)
+        {
+            rows.Add(new TransferScenarioTransactionSeed(
+                transactionId,
+                normalizedProviderTransactionId,
+                amount,
+                "EUR",
+                bookedDateUtc.ToString("yyyy-MM-dd"),
+                $"{SyntheticInboundTransferDescription} {referenceSuffix}",
+                "CREDIT"));
+            return this;
+        }
+
+        public TransferPairScenarioBuilder AddPreciseOutbound(
+            string transactionId,
+            string normalizedProviderTransactionId,
+            decimal amount,
+            DateTime timestampUtc,
+            string referenceSuffix)
+        {
+            rows.Add(new TransferScenarioTransactionSeed(
+                transactionId,
+                normalizedProviderTransactionId,
+                amount,
+                "EUR",
+                timestampUtc.ToString("O"),
+                $"{SyntheticOutboundTransferDescription} {referenceSuffix}",
+                "TRANSFER"));
+            return this;
+        }
+
+        public TransferPairScenarioBuilder AddSavingsOutflow(
+            string transactionId,
+            string normalizedProviderTransactionId,
+            decimal amount,
+            DateTime timestampUtc)
+        {
+            rows.Add(new TransferScenarioTransactionSeed(
+                transactionId,
+                normalizedProviderTransactionId,
+                amount,
+                "EUR",
+                timestampUtc.ToString("O"),
+                $"To {SyntheticSavingsDestinationLabel}",
+                "TRANSFER"));
+            return this;
+        }
+
+        public string BuildResultsJson() => BuildTransactionsResponseJson(rows);
+    }
+
+    private sealed class RepeatedAmountClusterScenarioBuilder : TransferPairScenarioBuilder;
+    private sealed class AmbiguousClusterScenarioBuilder : TransferPairScenarioBuilder;
 }
 
 

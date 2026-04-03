@@ -79,6 +79,28 @@ public sealed class BankSyncService(
         "the",
         "and"
     ];
+    private static readonly string[] SavingsMovementSignalKeywords =
+    [
+        "pocket",
+        "vault",
+        "cash fund",
+        "flexible cash",
+        "savings pot",
+        "spare change",
+        "round up",
+        "round-up"
+    ];
+    private static readonly string[] StrongSavingsMovementSignalKeywords =
+    [
+        "flexible cash",
+        "pocket",
+        "vault",
+        "cash fund",
+        "savings pot",
+        "spare change",
+        "round up",
+        "round-up"
+    ];
     private static readonly HashSet<string> RequestedScopeSet = TrueLayerScopes.Default
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -4881,28 +4903,22 @@ public sealed class BankSyncService(
             || normalized.Contains("spare change", StringComparison.Ordinal);
     }
 
-    private static string ResolveSavingsDestinationLabel(string description, string? providerPolicyKey)
+    private static string ResolveSavingsDestinationLabel(string description, string? _providerPolicyKey)
     {
         var normalized = description.ToLowerInvariant();
         if (normalized.Contains("flexible cash", StringComparison.Ordinal))
         {
-            return "Flexible Cash Funds";
+            return "Savings destination";
         }
 
         if (normalized.Contains("pocket", StringComparison.Ordinal))
         {
-            return "Pocket";
+            return "Savings pocket";
         }
 
         if (normalized.Contains("vault", StringComparison.Ordinal))
         {
-            return "Vault";
-        }
-
-        if (!string.IsNullOrWhiteSpace(providerPolicyKey)
-            && providerPolicyKey.Contains("revolut", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Revolut Savings";
+            return "Savings vault";
         }
 
         return "Internal savings destination";
@@ -5357,14 +5373,7 @@ public sealed class BankSyncService(
         }
 
         var normalized = description.ToLowerInvariant();
-        return normalized.Contains("pocket", StringComparison.Ordinal)
-            || normalized.Contains("vault", StringComparison.Ordinal)
-            || normalized.Contains("cash fund", StringComparison.Ordinal)
-            || normalized.Contains("flexible cash", StringComparison.Ordinal)
-            || normalized.Contains("savings pot", StringComparison.Ordinal)
-            || normalized.Contains("spare change", StringComparison.Ordinal)
-            || normalized.Contains("round up", StringComparison.Ordinal)
-            || normalized.Contains("round-up", StringComparison.Ordinal);
+        return ContainsAnyKeyword(normalized, SavingsMovementSignalKeywords);
     }
 
     private static bool HasStrongSavingsPocketSignal(string? description)
@@ -5375,14 +5384,20 @@ public sealed class BankSyncService(
         }
 
         var normalized = description.ToLowerInvariant();
-        return normalized.Contains("flexible cash", StringComparison.Ordinal)
-            || normalized.Contains("pocket", StringComparison.Ordinal)
-            || normalized.Contains("vault", StringComparison.Ordinal)
-            || normalized.Contains("cash fund", StringComparison.Ordinal)
-            || normalized.Contains("savings pot", StringComparison.Ordinal)
-            || normalized.Contains("spare change", StringComparison.Ordinal)
-            || normalized.Contains("round up", StringComparison.Ordinal)
-            || normalized.Contains("round-up", StringComparison.Ordinal);
+        return ContainsAnyKeyword(normalized, StrongSavingsMovementSignalKeywords);
+    }
+
+    private static bool ContainsAnyKeyword(string normalizedText, IReadOnlyList<string> keywords)
+    {
+        foreach (var keyword in keywords)
+        {
+            if (normalizedText.Contains(keyword, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private enum TransferMatchConfidenceTier

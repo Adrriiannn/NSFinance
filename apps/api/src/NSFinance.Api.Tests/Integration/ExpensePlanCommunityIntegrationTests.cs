@@ -12,6 +12,9 @@ namespace NSFinance.Api.Tests.Integration;
 
 public class ExpensePlanCommunityIntegrationTests
 {
+    private const string FirstUserDisplayName = "Planner Alpha";
+    private const string FirstUserHandle = "planner_alpha";
+
     [Fact]
     public async Task PublishPlanAsync_CreatesPublishedCommunityPlanWithCreatorAttribution()
     {
@@ -25,8 +28,8 @@ public class ExpensePlanCommunityIntegrationTests
         Assert.Equal("published", publication.PublicationStatus);
         Assert.Equal("approved", publication.ModerationStatus);
         Assert.Equal(sourcePlan.Id, publication.SourcePlanId);
-        Assert.Equal("Marius", publication.CreatorDisplayNameSnapshot);
-        Assert.Equal("@marius", publication.CreatorTagSnapshot);
+        Assert.Equal(FirstUserDisplayName, publication.CreatorDisplayNameSnapshot);
+        Assert.Equal($"@{FirstUserHandle}", publication.CreatorTagSnapshot);
     }
 
     [Fact]
@@ -158,9 +161,9 @@ public class ExpensePlanCommunityIntegrationTests
                 .Options;
 
             DbContext = new AppDbContext(options);
-            SeedUser(FirstUserId, "marius@example.com", "Marius", "marius");
-            SeedUser(SecondUserId, "aoife@example.com", "Aoife", "aoife");
-            SeedUser(ThirdUserId, "liam@example.com", "Liam", "liam");
+            SeedUser(FirstUserId, "planner.alpha@example.test", FirstUserDisplayName, FirstUserHandle);
+            SeedUser(SecondUserId, "planner.beta@example.test", "Planner Beta", "planner_beta");
+            SeedUser(ThirdUserId, "planner.gamma@example.test", "Planner Gamma", "planner_gamma");
             TaxonomyService = new ExpenseTaxonomyService();
             PlanService = new ExpensePlanService(DbContext, CurrentUserProvider, TaxonomyService);
             CommunityService = new ExpensePlanCommunityService(DbContext, CurrentUserProvider, new NullAuditService());
