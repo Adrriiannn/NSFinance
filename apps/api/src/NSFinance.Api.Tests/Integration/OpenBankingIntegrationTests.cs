@@ -2142,6 +2142,12 @@ public class OpenBankingIntegrationTests
 
     private static HttpMessageHandler RepeatedSameAmountTransferChainFlowHandler()
     {
+        var baseDateUtc = new DateTime(2026, 3, 30, 0, 0, 0, DateTimeKind.Utc);
+        var day1 = baseDateUtc;
+        var day2 = baseDateUtc.AddDays(1);
+        var day3 = baseDateUtc.AddDays(2);
+        var day4 = baseDateUtc.AddDays(3);
+
         return new StubHttpMessageHandler(async (request, _) =>
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
@@ -2226,10 +2232,10 @@ public class OpenBankingIntegrationTests
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-repeated-001/transactions", StringComparison.Ordinal))
             {
                 var scenario = new RepeatedAmountClusterScenarioBuilder()
-                    .AddDateOnlyInbound("tx-chain-inbound-a", "norm-chain-inbound-a", 1.00m, new DateTime(2026, 3, 30, 0, 0, 0, DateTimeKind.Utc), "REF-A")
-                    .AddDateOnlyInbound("tx-chain-inbound-b", "norm-chain-inbound-b", 1.00m, new DateTime(2026, 3, 31, 0, 0, 0, DateTimeKind.Utc), "REF-B")
-                    .AddDateOnlyInbound("tx-chain-inbound-c", "norm-chain-inbound-c", 1.00m, new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc), "REF-C")
-                    .AddDateOnlyInbound("tx-chain-inbound-d", "norm-chain-inbound-d", 1.00m, new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc), "REF-D");
+                    .AddDateOnlyInbound("tx-chain-inbound-a", "norm-chain-inbound-a", 1.00m, day1, "REF-A")
+                    .AddDateOnlyInbound("tx-chain-inbound-b", "norm-chain-inbound-b", 1.00m, day2, "REF-B")
+                    .AddDateOnlyInbound("tx-chain-inbound-c", "norm-chain-inbound-c", 1.00m, day3, "REF-C")
+                    .AddDateOnlyInbound("tx-chain-inbound-d", "norm-chain-inbound-d", 1.00m, day4, "REF-D");
 
                 return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }
@@ -2237,11 +2243,11 @@ public class OpenBankingIntegrationTests
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-repeated-001/transactions", StringComparison.Ordinal))
             {
                 var scenario = new RepeatedAmountClusterScenarioBuilder()
-                    .AddPreciseOutbound("tx-chain-outbound-a", "norm-chain-outbound-a", -1.00m, new DateTime(2026, 3, 30, 5, 33, 0, DateTimeKind.Utc), "LEG-A")
-                    .AddPreciseOutbound("tx-chain-outbound-b", "norm-chain-outbound-b", -1.00m, new DateTime(2026, 3, 31, 3, 19, 0, DateTimeKind.Utc), "LEG-B")
-                    .AddPreciseOutbound("tx-chain-outbound-c", "norm-chain-outbound-c", -1.00m, new DateTime(2026, 4, 1, 9, 7, 0, DateTimeKind.Utc), "LEG-C")
-                    .AddPreciseOutbound("tx-chain-outbound-d", "norm-chain-outbound-d", -1.00m, new DateTime(2026, 4, 2, 7, 26, 0, DateTimeKind.Utc), "LEG-D")
-                    .AddSavingsOutflow("tx-chain-savings-a", "norm-chain-savings-a", -1.00m, new DateTime(2026, 3, 31, 21, 37, 0, DateTimeKind.Utc));
+                    .AddPreciseOutbound("tx-chain-outbound-a", "norm-chain-outbound-a", -1.00m, day1.AddHours(5).AddMinutes(33), "LEG-A")
+                    .AddPreciseOutbound("tx-chain-outbound-b", "norm-chain-outbound-b", -1.00m, day2.AddHours(3).AddMinutes(19), "LEG-B")
+                    .AddPreciseOutbound("tx-chain-outbound-c", "norm-chain-outbound-c", -1.00m, day3.AddHours(9).AddMinutes(7), "LEG-C")
+                    .AddPreciseOutbound("tx-chain-outbound-d", "norm-chain-outbound-d", -1.00m, day4.AddHours(7).AddMinutes(26), "LEG-D")
+                    .AddSavingsOutflow("tx-chain-savings-a", "norm-chain-savings-a", -1.00m, day2.AddHours(21).AddMinutes(37));
 
                 return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }
@@ -2257,6 +2263,8 @@ public class OpenBankingIntegrationTests
 
     private static HttpMessageHandler AmbiguousRepeatedAmountTransferFlowHandler()
     {
+        var baseDateUtc = new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc);
+
         return new StubHttpMessageHandler(async (request, _) =>
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
@@ -2345,7 +2353,7 @@ public class OpenBankingIntegrationTests
                         "tx-ambiguous-inbound-a",
                         "norm-ambiguous-inbound-a",
                         1.00m,
-                        new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc),
+                        baseDateUtc,
                         "REF-AMB-A");
 
                 return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
@@ -2354,8 +2362,8 @@ public class OpenBankingIntegrationTests
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-ambiguous-001/transactions", StringComparison.Ordinal))
             {
                 var scenario = new AmbiguousClusterScenarioBuilder()
-                    .AddPreciseOutbound("tx-ambiguous-outbound-a", "norm-ambiguous-outbound-a", -1.00m, new DateTime(2026, 4, 2, 7, 50, 0, DateTimeKind.Utc), "AMB-A")
-                    .AddPreciseOutbound("tx-ambiguous-outbound-b", "norm-ambiguous-outbound-b", -1.00m, new DateTime(2026, 4, 2, 7, 55, 0, DateTimeKind.Utc), "AMB-B");
+                    .AddPreciseOutbound("tx-ambiguous-outbound-a", "norm-ambiguous-outbound-a", -1.00m, baseDateUtc.AddHours(7).AddMinutes(50), "AMB-A")
+                    .AddPreciseOutbound("tx-ambiguous-outbound-b", "norm-ambiguous-outbound-b", -1.00m, baseDateUtc.AddHours(7).AddMinutes(55), "AMB-B");
 
                 return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }

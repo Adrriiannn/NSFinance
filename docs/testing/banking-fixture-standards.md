@@ -58,10 +58,13 @@ Avoid brittle date-encoded identifiers when dates are already represented by tra
 - Keep fixtures provider-extensible and user-agnostic.
 - Cover ambiguity and conservative no-force-link behavior.
 - Ensure same-day preference and repeated-amount chain handling stay regression-safe.
+- Use `baseDate + offset` fixture construction for scenario timelines when possible.
+- Prefer semantic/relative assertions (`same day`, `ordered`, `within window`) over literal calendar-day equality unless exact date parsing is the point of the test.
 
 ## Runtime policy note
 
 Runtime matching logic must remain generic and policy-driven. Personal-name literals are prohibited in runtime code.
+Runtime/app logic must not branch on hardcoded calendar dates unless the date is an explicit documented business constant.
 
 ## Historical cleanup note
 
