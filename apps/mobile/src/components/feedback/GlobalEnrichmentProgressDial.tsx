@@ -1,30 +1,250 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { AppState, Pressable, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AppState,
+  PanResponder,
+  Pressable,
+  Text,
+  useWindowDimensions,
+  View
+} from "react-native";
+import Svg, { Circle, G } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getActivityFeedInteracting } from "../../features/activity/activityFeedRuntime";
-import { useBankEnrichmentProgressQuery } from "../../features/banking/useBanking";
 import { subscribeToEnrichmentTooltip } from "../../features/banking/enrichmentUxEvents";
+import {
+  getEnrichmentDialState,
+  setEnrichmentDialState
+} from "../../features/banking/enrichmentDial.storage";
+import { useBankEnrichmentProgressQuery } from "../../features/banking/useBanking";
 import { useAuthSession } from "../../providers/AuthProvider";
-import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
+import {
+  createRuntimeStyleSheet,
+  palette,
+  spacing,
+  surfaces,
+  typography
+} from "../../theme/tokens";
 
 const TOOLTIP_VISIBLE_MS = 10_000;
 const LIVE_INVALIDATION_INTERVAL_MS = 6_000;
+const DIAL_SIZE = 52;
+const DIAL_MARGIN = spacing[12];
+const DETAILS_WIDTH = 236;
+const DETAILS_HEIGHT = 132;
+const POPUP_GAP = 10;
+const DIAL_BOTTOM_CLEARANCE = 88;
+
+type DialPosition = {
+  left: number;
+  top: number;
+};
 
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-GB").format(value);
 }
 
+function buildProgressSignature(progress: {
+  stage: string;
+  totalCount: number;
+  processedCount: number;
+  remainingCount: number;
+  lastUpdatedUtc: string | null;
+  connections: ReadonlyArray<{
+    connectionId: string;
+    stage: string;
+    totalCount: number;
+    processedCount: number;
+    remainingCount: number;
+    lastUpdatedUtc: string | null;
+  }>;
+}) {
+  const connectionParts = progress.connections
+    .map((connection) =>
+      [
+        connection.connectionId,
+        connection.stage,
+        connection.totalCount,
+        connection.processedCount,
+        connection.remainingCount,
+        connection.lastUpdatedUtc ?? ""
+      ].join(":"))
+    .sort();
+
+  return [
+    progress.stage,
+    progress.totalCount,
+    progress.processedCount,
+    progress.remainingCount,
+    progress.lastUpdatedUtc ?? "",
+    connectionParts.join("|")
+  ].join("::");
+}
+
+function clampDialPosition(
+  position: DialPosition,
+  screenWidth: number,
+  screenHeight: number,
+  minTop: number,
+  maxTop: number
+): DialPosition {
+  const minLeft = DIAL_MARGIN;
+  const maxLeft = Math.max(minLeft, screenWidth - DIAL_SIZE - DIAL_MARGIN);
+  return {
+    left: Math.max(minLeft, Math.min(position.left, maxLeft)),
+    top: Math.max(minTop, Math.min(position.top, maxTop))
+  };
+}
+
+function resolveDetailsPlacement(
+  position: DialPosition,
+  screenWidth: number,
+  screenHeight: number
+) {
+  const spaceLeft = position.left - DIAL_MARGIN;
+  const spaceRight = screenWidth - (position.left + DIAL_SIZE) - DIAL_MARGIN;
+  const canPlaceLeft = spaceLeft >= DETAILS_WIDTH + POPUP_GAP;
+  const canPlaceRight = spaceRight >= DETAILS_WIDTH + POPUP_GAP;
+
+  const minTop = DIAL_MARGIN;
+  const maxTop = Math.max(minTop, screenHeight - DETAILS_HEIGHT - DIAL_MARGIN);
+  const alignedTop = Math.max(minTop, Math.min(position.top - 8, maxTop));
+
+  if (canPlaceLeft) {
+    return {
+      left: position.left - DETAILS_WIDTH - POPUP_GAP,
+      top: alignedTop
+    };
+  }
+
+  if (canPlaceRight) {
+    return {
+      left: position.left + DIAL_SIZE + POPUP_GAP,
+      top: alignedTop
+    };
+  }
+
+  const centeredLeft = Math.max(
+    DIAL_MARGIN,
+    Math.min(position.left + DIAL_SIZE / 2 - DETAILS_WIDTH / 2, screenWidth - DETAILS_WIDTH - DIAL_MARGIN)
+  );
+  const aboveTop = position.top - DETAILS_HEIGHT - POPUP_GAP;
+  if (aboveTop >= DIAL_MARGIN) {
+    return { left: centeredLeft, top: aboveTop };
+  }
+
+  const belowTop = position.top + DIAL_SIZE + POPUP_GAP;
+  const clampedBelowTop = Math.max(DIAL_MARGIN, Math.min(belowTop, screenHeight - DETAILS_HEIGHT - DIAL_MARGIN));
+  return { left: centeredLeft, top: clampedBelowTop };
+}
+
+function mapStageLabel(stage: string) {
+  switch (stage) {
+    case "queued_for_sync":
+      return "Queued for sync";
+    case "waiting_for_first_sync":
+      return "Waiting for first sync";
+    case "needs_reclassification":
+      return "Queued for organization";
+    case "historical_backfill":
+      return "Applying deterministic rules";
+    case "sync_stalled":
+      return "Sync stalled";
+    case "completed":
+      return "Completed";
+    default:
+      return "In progress";
+  }
+}
+
 export function GlobalEnrichmentProgressDial() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
-  const { isAuthenticated, isBootstrapping } = useAuthSession();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { isAuthenticated, isBootstrapping, session } = useAuthSession();
+  const userId = session?.user.id ?? null;
+
   const [detailsVisible, setDetailsVisible] = useState(false);
   const [tooltipVisible, setTooltipVisible] = useState(false);
+  const [dotCount, setDotCount] = useState(1);
+  const [dismissedCompletedSignature, setDismissedCompletedSignature] = useState<string | null>(null);
+
+  const minTop = insets.top + spacing[16];
+  const maxTop = Math.max(minTop, screenHeight - insets.bottom - DIAL_SIZE - DIAL_BOTTOM_CLEARANCE);
+  const defaultPosition = useMemo<DialPosition>(
+    () => ({
+      left: Math.max(DIAL_MARGIN, screenWidth - DIAL_SIZE - spacing[16]),
+      top: insets.top + DIAL_BOTTOM_CLEARANCE
+    }),
+    [insets.top, screenWidth]
+  );
+  const [dialPosition, setDialPosition] = useState<DialPosition>(defaultPosition);
+  const dialPositionRef = useRef<DialPosition>(defaultPosition);
+  const dragStartRef = useRef<DialPosition>(defaultPosition);
   const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didHydrateRef = useRef(false);
 
   const enrichmentQuery = useBankEnrichmentProgressQuery(isAuthenticated && !isBootstrapping);
   const progress = enrichmentQuery.data;
+
+  useEffect(() => {
+    dialPositionRef.current = dialPosition;
+  }, [dialPosition]);
+
+  useEffect(() => {
+    if (!isAuthenticated || isBootstrapping || didHydrateRef.current) {
+      return;
+    }
+
+    didHydrateRef.current = true;
+    let cancelled = false;
+
+    void (async () => {
+      const persisted = await getEnrichmentDialState(userId);
+      if (cancelled) {
+        return;
+      }
+
+      if (persisted) {
+        const clampedPosition = clampDialPosition(
+          { left: persisted.left, top: persisted.top },
+          screenWidth,
+          screenHeight,
+          minTop,
+          maxTop
+        );
+        dialPositionRef.current = clampedPosition;
+        setDialPosition(clampedPosition);
+        setDismissedCompletedSignature(persisted.dismissedCompletedSignature ?? null);
+      } else {
+        const clampedDefault = clampDialPosition(defaultPosition, screenWidth, screenHeight, minTop, maxTop);
+        dialPositionRef.current = clampedDefault;
+        setDialPosition(clampedDefault);
+        setDismissedCompletedSignature(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultPosition, isAuthenticated, isBootstrapping, maxTop, minTop, screenHeight, screenWidth, userId]);
+
+  useEffect(() => {
+    const clamped = clampDialPosition(dialPositionRef.current, screenWidth, screenHeight, minTop, maxTop);
+    if (clamped.left !== dialPositionRef.current.left || clamped.top !== dialPositionRef.current.top) {
+      dialPositionRef.current = clamped;
+      setDialPosition(clamped);
+    }
+  }, [maxTop, minTop, screenHeight, screenWidth]);
+
+  const pendingStage = progress
+    ? progress.stage === "queued_for_sync"
+      || progress.stage === "sync_stalled"
+      || progress.stage === "needs_reclassification"
+      || progress.stage === "waiting_for_first_sync"
+      || progress.stage === "historical_backfill"
+    : false;
+
   const hasPendingConnection = Boolean(
     progress?.connections?.some((connection) =>
       connection.inProgress
@@ -32,26 +252,72 @@ export function GlobalEnrichmentProgressDial() {
       || connection.stage === "queued_for_sync"
       || connection.stage === "sync_stalled"
       || connection.stage === "needs_reclassification"
-      || connection.stage === "waiting_for_first_sync")
+      || connection.stage === "waiting_for_first_sync"
+      || connection.stage === "historical_backfill")
   );
-  const inProgress = Boolean(progress?.inProgress || hasPendingConnection);
+
+  const hasActiveWork = Boolean(
+    progress
+    && (progress.inProgress || hasPendingConnection || progress.remainingCount > 0 || pendingStage)
+  );
+
+  const hasCompletionSnapshot = Boolean(progress && (progress.totalCount > 0 || progress.processedCount > 0));
+  const isCompletedState = Boolean(progress && !hasActiveWork && progress.completed && hasCompletionSnapshot);
+  const progressSignature = progress
+    ? buildProgressSignature(progress)
+    : null;
+
+  const completedDismissed = Boolean(
+    isCompletedState
+    && progressSignature
+    && dismissedCompletedSignature
+    && dismissedCompletedSignature === progressSignature
+  );
+
+  const shouldShowDial = hasActiveWork || (isCompletedState && !completedDismissed);
   const progressPercent = Math.max(0, Math.min(100, Math.round(progress?.progressPercent ?? 0)));
-  const stageLabel = progress?.stage === "historical_backfill"
-    ? "Organizing history"
-    : progress?.stage === "queued_for_sync"
-      ? "Queued for sync"
-      : progress?.stage === "waiting_for_first_sync"
-        ? "Waiting for first sync"
-        : progress?.stage === "needs_reclassification"
-          ? "Queued for organization"
-      : progress?.stage === "sync_stalled"
-        ? "Sync stalled"
-        : progress?.stage === "completed"
-          ? "Completed"
-          : "Preparing";
+  const stageLabel = progress ? mapStageLabel(progress.stage) : "In progress";
+  const titleText = hasActiveWork
+    ? `Organizing transactions${".".repeat(dotCount)}`
+    : "Done";
+
+  useEffect(() => {
+    if (!hasActiveWork) {
+      setDotCount(1);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setDotCount((current) => (current >= 3 ? 1 : current + 1));
+    }, 450);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [hasActiveWork]);
+
+  useEffect(() => {
+    if (!hasActiveWork || !dismissedCompletedSignature) {
+      return;
+    }
+
+    setDismissedCompletedSignature(null);
+    void setEnrichmentDialState(
+      {
+        left: dialPositionRef.current.left,
+        top: dialPositionRef.current.top,
+        dismissedCompletedSignature: null
+      },
+      userId
+    );
+  }, [dismissedCompletedSignature, hasActiveWork, userId]);
 
   useEffect(() => {
     return subscribeToEnrichmentTooltip(() => {
+      if (!hasActiveWork) {
+        return;
+      }
+
       setTooltipVisible(true);
       if (tooltipTimerRef.current) {
         clearTimeout(tooltipTimerRef.current);
@@ -61,19 +327,19 @@ export function GlobalEnrichmentProgressDial() {
         setTooltipVisible(false);
       }, TOOLTIP_VISIBLE_MS);
     });
-  }, []);
+  }, [hasActiveWork]);
 
   useEffect(() => {
-    if (inProgress) {
+    if (hasActiveWork) {
       return;
     }
 
     setDetailsVisible(false);
     setTooltipVisible(false);
-  }, [inProgress]);
+  }, [hasActiveWork]);
 
   useEffect(() => {
-    if (!inProgress) {
+    if (!hasActiveWork) {
       return;
     }
 
@@ -106,7 +372,7 @@ export function GlobalEnrichmentProgressDial() {
     return () => {
       clearInterval(intervalId);
     };
-  }, [inProgress, queryClient]);
+  }, [hasActiveWork, queryClient]);
 
   useEffect(() => {
     return () => {
@@ -116,48 +382,171 @@ export function GlobalEnrichmentProgressDial() {
     };
   }, []);
 
-  if (!isAuthenticated || isBootstrapping || !progress || !inProgress) {
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gestureState) =>
+          Math.abs(gestureState.dx) > 6 || Math.abs(gestureState.dy) > 6,
+        onPanResponderGrant: () => {
+          dragStartRef.current = dialPositionRef.current;
+        },
+        onPanResponderMove: (_event, gestureState) => {
+          const next = clampDialPosition(
+            {
+              left: dragStartRef.current.left + gestureState.dx,
+              top: dragStartRef.current.top + gestureState.dy
+            },
+            screenWidth,
+            screenHeight,
+            minTop,
+            maxTop
+          );
+          dialPositionRef.current = next;
+          setDialPosition(next);
+        },
+        onPanResponderRelease: () => {
+          void setEnrichmentDialState(
+            {
+              left: dialPositionRef.current.left,
+              top: dialPositionRef.current.top,
+              dismissedCompletedSignature
+            },
+            userId
+          );
+        },
+        onPanResponderTerminate: () => {
+          void setEnrichmentDialState(
+            {
+              left: dialPositionRef.current.left,
+              top: dialPositionRef.current.top,
+              dismissedCompletedSignature
+            },
+            userId
+          );
+        }
+      }),
+    [dismissedCompletedSignature, maxTop, minTop, screenHeight, screenWidth, userId]
+  );
+
+  const detailsPlacement = useMemo(
+    () => resolveDetailsPlacement(dialPosition, screenWidth, screenHeight),
+    [dialPosition, screenHeight, screenWidth]
+  );
+
+  const tooltipPlacement = useMemo(
+    () => ({
+      left: Math.max(
+        DIAL_MARGIN,
+        Math.min(
+          dialPosition.left + DIAL_SIZE / 2 - 132,
+          screenWidth - 264 - DIAL_MARGIN
+        )
+      ),
+      top: Math.max(DIAL_MARGIN, dialPosition.top - 92)
+    }),
+    [dialPosition, screenWidth]
+  );
+
+  const ringProgress = isCompletedState ? 100 : progressPercent;
+  const ringSize = DIAL_SIZE - 8;
+  const ringRadius = (ringSize / 2) - 3;
+  const ringCircumference = 2 * Math.PI * ringRadius;
+  const ringStrokeOffset = ringCircumference - ((Math.max(0, Math.min(100, ringProgress)) / 100) * ringCircumference);
+
+  const handleDialPress = useCallback(() => {
+    if (isCompletedState && progressSignature) {
+      setDetailsVisible(false);
+      setTooltipVisible(false);
+      setDismissedCompletedSignature(progressSignature);
+      void setEnrichmentDialState(
+        {
+          left: dialPositionRef.current.left,
+          top: dialPositionRef.current.top,
+          dismissedCompletedSignature: progressSignature
+        },
+        userId
+      );
+      return;
+    }
+
+    if (hasActiveWork) {
+      setDetailsVisible((current) => !current);
+    }
+  }, [hasActiveWork, isCompletedState, progressSignature, userId]);
+
+  if (!isAuthenticated || isBootstrapping || !progress || !shouldShowDial) {
     return null;
   }
 
-  const topOffset = insets.top + 88;
   const processedCount = progress.processedCount ?? 0;
   const totalCount = progress.totalCount ?? 0;
   const remainingCount = progress.remainingCount ?? Math.max(0, totalCount - processedCount);
+  const isDone = isCompletedState;
 
   return (
     <View pointerEvents="box-none" style={styles.host}>
-      <View style={[styles.anchor, { top: topOffset }]}>
-        {tooltipVisible ? (
-          <View style={styles.tooltipCard}>
-            <Text style={styles.tooltipTitle}>Organizing your transactions</Text>
-            <Text style={styles.tooltipBody}>
-              We&apos;re reviewing your transaction history and applying links and categories. You can keep using the app while this finishes.
-            </Text>
-          </View>
-        ) : null}
+      {tooltipVisible && hasActiveWork ? (
+        <View style={[styles.tooltipCard, { left: tooltipPlacement.left, top: tooltipPlacement.top }]}>
+          <Text style={styles.tooltipTitle}>Organizing your transactions</Text>
+          <Text style={styles.tooltipBody}>
+            We&apos;re reviewing your transaction history and applying links and categories. You can keep using the app while this finishes.
+          </Text>
+        </View>
+      ) : null}
 
-        {detailsVisible ? (
-          <View style={styles.detailsCard}>
-            <Text style={styles.detailsTitle}>Transaction organization</Text>
-            <Text style={styles.detailsLine}>Stage: {stageLabel}</Text>
-            <Text style={styles.detailsLine}>
-              Progress: {formatCompactNumber(processedCount)} / {formatCompactNumber(totalCount)}
-            </Text>
-            <Text style={styles.detailsLine}>Remaining: {formatCompactNumber(remainingCount)}</Text>
-            <Text style={styles.detailsHint}>Newest transactions are processed first.</Text>
-          </View>
-        ) : null}
+      {detailsVisible && hasActiveWork ? (
+        <View style={[styles.detailsCard, { left: detailsPlacement.left, top: detailsPlacement.top }]}>
+          <Text style={styles.detailsTitle}>{titleText}</Text>
+          <Text style={styles.detailsLine}>Stage: {stageLabel}</Text>
+          <Text style={styles.detailsLine}>
+            Progress: {formatCompactNumber(processedCount)} / {formatCompactNumber(totalCount)}
+          </Text>
+          <Text style={styles.detailsLine}>Remaining: {formatCompactNumber(remainingCount)}</Text>
+          <Text style={styles.detailsHint}>Newest transactions are processed first.</Text>
+        </View>
+      ) : null}
 
+      <View
+        pointerEvents="box-none"
+        style={[styles.dialAnchor, { left: dialPosition.left, top: dialPosition.top }]}
+        {...panResponder.panHandlers}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Transaction organization progress"
-          onPress={() => setDetailsVisible((current) => !current)}
+          onPress={handleDialPress}
           style={({ pressed }) => [styles.dialWrap, pressed ? styles.dialWrapPressed : null]}
         >
-          <View style={styles.dialOuter}>
+          <View style={[styles.dialOuter, isDone ? styles.dialOuterDone : null]}>
+            <View style={styles.ringLayer}>
+              <Svg width={ringSize} height={ringSize}>
+                <G rotation={-90} originX={ringSize / 2} originY={ringSize / 2}>
+                  <Circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={ringRadius}
+                    stroke={isDone ? palette.accentStrong : "rgba(242, 140, 40, 0.26)"}
+                    strokeWidth={3}
+                    fill="transparent"
+                  />
+                  <Circle
+                    cx={ringSize / 2}
+                    cy={ringSize / 2}
+                    r={ringRadius}
+                    stroke={isDone ? palette.accentStrong : palette.accent}
+                    strokeWidth={3}
+                    strokeLinecap="round"
+                    strokeDasharray={`${ringCircumference} ${ringCircumference}`}
+                    strokeDashoffset={ringStrokeOffset}
+                    fill="transparent"
+                  />
+                </G>
+              </Svg>
+            </View>
             <View style={styles.dialInner}>
-              <Text style={styles.dialPercent}>{progressPercent}%</Text>
+              <Text style={[styles.dialPercent, isDone ? styles.dialDoneText : null]}>
+                {isDone ? "Done" : `${progressPercent}%`}
+              </Text>
             </View>
           </View>
         </Pressable>
@@ -172,32 +561,42 @@ const styles = createRuntimeStyleSheet(() => ({
     top: 0,
     left: 0,
     right: 0,
+    bottom: 0,
     zIndex: 999
   },
-  anchor: {
-    position: "absolute",
-    right: spacing[16],
-    alignItems: "flex-end",
-    gap: spacing[8]
+  dialAnchor: {
+    position: "absolute"
   },
   dialWrap: {
-    borderRadius: 22
+    borderRadius: DIAL_SIZE / 2
   },
   dialWrapPressed: {
     opacity: 0.86
   },
   dialOuter: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 2,
+    width: DIAL_SIZE,
+    height: DIAL_SIZE,
+    borderRadius: DIAL_SIZE / 2,
+    borderWidth: 1.5,
     borderColor: palette.borderStrong,
-    backgroundColor: surfaces.card
+    backgroundColor: surfaces.card,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  dialOuterDone: {
+    borderColor: palette.accentStrong
+  },
+  ringLayer: {
+    position: "absolute",
+    width: DIAL_SIZE - 8,
+    height: DIAL_SIZE - 8,
+    alignItems: "center",
+    justifyContent: "center"
   },
   dialInner: {
-    flex: 1,
-    borderRadius: 20,
-    margin: 3,
+    width: DIAL_SIZE - 16,
+    height: DIAL_SIZE - 16,
+    borderRadius: (DIAL_SIZE - 16) / 2,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: surfaces.field
@@ -207,7 +606,11 @@ const styles = createRuntimeStyleSheet(() => ({
     ...typography.caption,
     fontWeight: "700"
   },
+  dialDoneText: {
+    color: palette.accentStrong
+  },
   tooltipCard: {
+    position: "absolute",
     width: 264,
     borderRadius: 8,
     borderWidth: 1,
@@ -227,7 +630,8 @@ const styles = createRuntimeStyleSheet(() => ({
     ...typography.caption
   },
   detailsCard: {
-    width: 220,
+    position: "absolute",
+    width: DETAILS_WIDTH,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: palette.border,

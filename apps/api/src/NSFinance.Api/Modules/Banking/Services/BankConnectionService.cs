@@ -48,7 +48,9 @@ public sealed class BankConnectionService(
     private sealed record ConnectionTransactionEnrichmentStats(
         Guid ConnectionId,
         int TotalCount,
-        int ProcessedCount,
+        int CurrentCount,
+        int StaleCount,
+        int CurrentEnrichedAfterStartCount,
         DateTime? LastUpdatedUtc);
     public async Task<OpenBankingConnection> CreateConnectionStartedAsync(
         Guid userId,
@@ -315,7 +317,7 @@ public sealed class BankConnectionService(
         }
 
         var transactionStatsByConnectionId = await BuildConnectionEnrichmentStatsAsync(
-            connections.Select(x => x.Id).ToArray(),
+            connections,
             cancellationToken);
 
         var connectionProgress = connections
@@ -323,12 +325,35 @@ public sealed class BankConnectionService(
             {
                 transactionStatsByConnectionId.TryGetValue(connection.Id, out var stats);
 
-                var totalCount = stats?.TotalCount ?? 0;
-                var processedCount = Math.Clamp(stats?.ProcessedCount ?? 0, 0, totalCount);
-                var remainingCount = Math.Max(0, totalCount - processedCount);
                 var completed = IsHistoricalEnrichmentCompleted(connection);
                 var required = IsHistoricalEnrichmentRequired(connection);
                 var awaitingSync = IsSyncAwaitingRunStatus(connection.Status);
+                var totalRows = Math.Max(0, stats?.TotalCount ?? 0);
+                var staleCount = Math.Max(0, Math.Min(stats?.StaleCount ?? 0, totalRows));
+                var currentCount = Math.Max(0, Math.Min(stats?.CurrentCount ?? 0, totalRows));
+                var currentEnrichedAfterStartCount = connection.HistoricalEnrichmentStartedUtc.HasValue
+                    ? Math.Max(0, Math.Min(stats?.CurrentEnrichedAfterStartCount ?? 0, currentCount))
+                    : 0;
+
+                int totalCount;
+                int processedCount;
+                int remainingCount;
+
+                // During active/pending enrichment, progress should track work completed in
+                // the current run scope rather than rows already current from older runs.
+                if (required || connection.HistoricalEnrichmentStartedUtc.HasValue)
+                {
+                    processedCount = currentEnrichedAfterStartCount;
+                    remainingCount = staleCount;
+                    totalCount = processedCount + remainingCount;
+                }
+                else
+                {
+                    processedCount = currentCount;
+                    totalCount = totalRows;
+                    remainingCount = Math.Max(0, totalCount - processedCount);
+                }
+
                 var inProgress = IsHistoricalEnrichmentInProgress(connection, remainingCount, awaitingSync, required);
                 var stage = ResolveHistoricalEnrichmentStage(
                     connection.Status,
@@ -365,28 +390,35 @@ public sealed class BankConnectionService(
             .ThenByDescending(x => x.LastUpdatedUtc)
             .ToList();
 
-        var total = connectionProgress.Sum(x => x.TotalCount);
-        var processed = connectionProgress.Sum(x => x.ProcessedCount);
-        var remaining = Math.Max(0, total - processed);
-        var inProgressOverall = connectionProgress.Any(x =>
-            x.InProgress
-            || x.Stage is "queued_for_sync"
-            || x.Stage is "sync_stalled"
-            || x.Stage is "needs_reclassification"
-            || x.Stage is "waiting_for_first_sync");
-        var completedOverall = total > 0 ? remaining == 0 && !inProgressOverall : !inProgressOverall;
+        var activeConnections = connectionProgress
+            .Where(x =>
+                x.InProgress
+                || x.Stage is "queued_for_sync"
+                || x.Stage is "sync_stalled"
+                || x.Stage is "needs_reclassification"
+                || x.Stage is "waiting_for_first_sync"
+                || x.Stage is "historical_backfill")
+            .ToList();
+
+        var inProgressOverall = activeConnections.Count > 0;
+        var progressScope = inProgressOverall ? activeConnections : connectionProgress;
+
+        var total = progressScope.Sum(x => x.TotalCount);
+        var processed = progressScope.Sum(x => x.ProcessedCount);
+        var remaining = progressScope.Sum(x => x.RemainingCount);
+        var completedOverall = !inProgressOverall && connectionProgress.All(x => x.Completed || x.Stage is "completed" or "idle");
         var percentOverall = total > 0
             ? Math.Round((processed / (double)total) * 100d, 2, MidpointRounding.AwayFromZero)
-            : completedOverall
-                ? 100d
-                : 0d;
-        var lastUpdatedOverall = connectionProgress
+            : inProgressOverall
+                ? 0d
+                : 100d;
+        var lastUpdatedOverall = progressScope
             .Where(x => x.LastUpdatedUtc.HasValue)
             .Select(x => x.LastUpdatedUtc!.Value)
             .DefaultIfEmpty()
             .Max();
 
-        var resolvedStage = ResolveOverallHistoricalEnrichmentStage(connectionProgress, inProgressOverall, completedOverall);
+        var resolvedStage = ResolveOverallHistoricalEnrichmentStage(progressScope, inProgressOverall, completedOverall);
 
         return new BankEnrichmentProgressDto(
             InProgress: inProgressOverall,
@@ -1970,13 +2002,15 @@ public sealed class BankConnectionService(
     }
 
     private async Task<Dictionary<Guid, ConnectionTransactionEnrichmentStats>> BuildConnectionEnrichmentStatsAsync(
-        IReadOnlyCollection<Guid> connectionIds,
+        IReadOnlyCollection<EnrichmentConnectionRow> connections,
         CancellationToken cancellationToken)
     {
-        if (connectionIds.Count == 0)
+        if (connections.Count == 0)
         {
             return [];
         }
+
+        var connectionIds = connections.Select(x => x.Id).ToArray();
 
         var linkedFinancialAccounts = await dbContext.LinkedBankAccounts
             .AsNoTracking()
@@ -1999,20 +2033,46 @@ public sealed class BankConnectionService(
             .Distinct()
             .ToArray();
 
-        var transactionStatsByFinancialAccount = await dbContext.Transactions
+        var transactionRows = await dbContext.Transactions
             .AsNoTracking()
             .Where(x => financialAccountIds.Contains(x.FinancialAccountId))
-            .GroupBy(x => x.FinancialAccountId)
-            .Select(group => new
+            .Select(x => new
             {
-                FinancialAccountId = group.Key,
-                TotalCount = group.Count(),
-                ProcessedCount = group.Count(x =>
-                    x.DeterministicEnrichmentVersion.HasValue
-                    && x.DeterministicEnrichmentVersion.Value >= DeterministicEnrichmentCurrentVersion),
-                LastUpdatedUtc = group.Max(x => x.LastDeterministicEnrichedUtc)
+                x.FinancialAccountId,
+                x.DeterministicEnrichmentVersion,
+                x.LastDeterministicEnrichedUtc
             })
-            .ToDictionaryAsync(x => x.FinancialAccountId, cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        var transactionStatsByFinancialAccount = transactionRows
+            .GroupBy(x => x.FinancialAccountId)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var totalCount = group.Count();
+                    var currentRows = group
+                        .Where(x =>
+                            x.DeterministicEnrichmentVersion.HasValue
+                            && x.DeterministicEnrichmentVersion.Value >= DeterministicEnrichmentCurrentVersion)
+                        .ToList();
+
+                    return new
+                    {
+                        TotalCount = totalCount,
+                        CurrentCount = currentRows.Count,
+                        CurrentEnrichedCountByStartUtc = currentRows
+                            .Where(x => x.LastDeterministicEnrichedUtc.HasValue)
+                            .Select(x => x.LastDeterministicEnrichedUtc!.Value)
+                            .ToList(),
+                        LastUpdatedUtc = group
+                            .Where(x => x.LastDeterministicEnrichedUtc.HasValue)
+                            .Select(x => x.LastDeterministicEnrichedUtc)
+                            .Max()
+                    };
+                });
+
+        var startedByConnectionId = connections.ToDictionary(x => x.Id, x => x.HistoricalEnrichmentStartedUtc);
 
         var grouped = linkedFinancialAccounts
             .GroupBy(x => x.ConnectionId)
@@ -2021,8 +2081,10 @@ public sealed class BankConnectionService(
                 group =>
                 {
                     var total = 0;
-                    var processed = 0;
+                    var current = 0;
+                    var currentEnrichedAfterStart = 0;
                     DateTime? lastUpdatedUtc = null;
+                    startedByConnectionId.TryGetValue(group.Key, out var startedUtc);
 
                     foreach (var linked in group)
                     {
@@ -2032,14 +2094,23 @@ public sealed class BankConnectionService(
                         }
 
                         total += stats.TotalCount;
-                        processed += stats.ProcessedCount;
+                        current += stats.CurrentCount;
+                        if (startedUtc.HasValue)
+                        {
+                            currentEnrichedAfterStart += stats.CurrentEnrichedCountByStartUtc.Count(x => x >= startedUtc.Value);
+                        }
+
                         lastUpdatedUtc = MaxUtc(lastUpdatedUtc, stats.LastUpdatedUtc);
                     }
+
+                    var stale = Math.Max(0, total - current);
 
                     return new ConnectionTransactionEnrichmentStats(
                         group.Key,
                         total,
-                        processed,
+                        current,
+                        stale,
+                        currentEnrichedAfterStart,
                         lastUpdatedUtc);
                 });
 

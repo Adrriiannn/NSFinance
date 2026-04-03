@@ -835,10 +835,97 @@ public class OpenBankingIntegrationTests
 
         Assert.True(progress.InProgress);
         Assert.Equal("needs_reclassification", progress.Stage);
+        Assert.Equal(0, progress.TotalCount);
+        Assert.Equal(0, progress.ProcessedCount);
+        Assert.Equal(0, progress.RemainingCount);
+        Assert.Equal(0d, progress.ProgressPercent);
         Assert.Contains(progress.Connections, x =>
             x.ConnectionId == connection.Id
             && x.Stage == "needs_reclassification"
             && x.InProgress == false);
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_DoesNotCountCompletedConnections_WhenAnotherConnectionIsWaitingForFirstSync()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-active-scope@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-enrichment-active-scope", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var seededNow = DateTime.UtcNow;
+        var completedConnection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        completedConnection.Status = BankConnectionStatuses.Synced;
+        completedConnection.NeedsHistoricalReclassification = false;
+        completedConnection.HistoricalEnrichmentStartedUtc = seededNow.AddMinutes(-3);
+        completedConnection.HistoricalEnrichmentCompletedUtc = seededNow.AddMinutes(-1);
+        completedConnection.HistoricalEnrichmentVersion = 1;
+        completedConnection.LastSyncAttemptedUtc = seededNow.AddMinutes(-2);
+        completedConnection.LastSuccessfulSyncUtc = seededNow.AddMinutes(-2);
+
+        var completedFinancialAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == completedConnection.Id && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var completedTransactions = await harness.DbContext.Transactions
+            .Where(x => completedFinancialAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+        Assert.NotEmpty(completedTransactions);
+
+        foreach (var transaction in completedTransactions)
+        {
+            transaction.DeterministicEnrichmentVersion = 1;
+            transaction.LastDeterministicEnrichedUtc = seededNow.AddMinutes(-1);
+        }
+
+        var waitingConnection = new OpenBankingConnection
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Waiting Connection",
+            Status = BankConnectionStatuses.ConnectedPendingSync,
+            NeedsHistoricalReclassification = true,
+            HistoricalEnrichmentStartedUtc = null,
+            HistoricalEnrichmentCompletedUtc = null,
+            HistoricalEnrichmentVersion = null,
+            LastSyncAttemptedUtc = null,
+            LastSuccessfulSyncUtc = null,
+            CreatedUtc = seededNow.AddMinutes(-5),
+            UpdatedUtc = seededNow
+        };
+
+        harness.DbContext.OpenBankingConnections.Add(waitingConnection);
+        await harness.DbContext.SaveChangesAsync();
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+
+        Assert.True(progress.InProgress);
+        Assert.Equal("waiting_for_first_sync", progress.Stage);
+        Assert.Equal(0, progress.TotalCount);
+        Assert.Equal(0, progress.ProcessedCount);
+        Assert.Equal(0, progress.RemainingCount);
+        Assert.Equal(0d, progress.ProgressPercent);
+
+        Assert.Contains(progress.Connections, x =>
+            x.ConnectionId == completedConnection.Id
+            && x.Stage == "completed"
+            && x.Completed);
+        Assert.Contains(progress.Connections, x =>
+            x.ConnectionId == waitingConnection.Id
+            && x.Stage == "waiting_for_first_sync"
+            && x.InProgress);
     }
 
     [Fact]
