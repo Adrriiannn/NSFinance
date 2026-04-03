@@ -127,11 +127,15 @@ export function useBankEnrichmentProgressQuery(enabled = true) {
         connection.inProgress
         || connection.remainingCount > 0
         || connection.stage === "queued_for_sync"
-        || connection.stage === "sync_stalled");
+        || connection.stage === "sync_stalled"
+        || connection.stage === "needs_reclassification"
+        || connection.stage === "waiting_for_first_sync");
       const shouldPoll = data.inProgress
         || hasPendingConnection
         || data.stage === "queued_for_sync"
-        || data.stage === "sync_stalled";
+        || data.stage === "sync_stalled"
+        || data.stage === "needs_reclassification"
+        || data.stage === "waiting_for_first_sync";
 
       return shouldPoll ? 2_500 : false;
     },

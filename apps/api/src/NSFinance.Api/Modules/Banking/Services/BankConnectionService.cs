@@ -38,6 +38,8 @@ public sealed class BankConnectionService(
         string? ProviderDisplayName,
         string Status,
         DateTime UpdatedUtc,
+        DateTime? LastSyncAttemptedUtc,
+        DateTime? LastSuccessfulSyncUtc,
         DateTime? HistoricalEnrichmentStartedUtc,
         DateTime? HistoricalEnrichmentCompletedUtc,
         int? HistoricalEnrichmentVersion,
@@ -289,6 +291,8 @@ public sealed class BankConnectionService(
                 x.ProviderDisplayName,
                 x.Status,
                 x.UpdatedUtc,
+                x.LastSyncAttemptedUtc,
+                x.LastSuccessfulSyncUtc,
                 x.HistoricalEnrichmentStartedUtc,
                 x.HistoricalEnrichmentCompletedUtc,
                 x.HistoricalEnrichmentVersion,
@@ -323,15 +327,19 @@ public sealed class BankConnectionService(
                 var processedCount = Math.Clamp(stats?.ProcessedCount ?? 0, 0, totalCount);
                 var remainingCount = Math.Max(0, totalCount - processedCount);
                 var completed = IsHistoricalEnrichmentCompleted(connection);
+                var required = IsHistoricalEnrichmentRequired(connection);
                 var awaitingSync = IsSyncAwaitingRunStatus(connection.Status);
-                var inProgress = IsHistoricalEnrichmentInProgress(connection, remainingCount, awaitingSync);
+                var inProgress = IsHistoricalEnrichmentInProgress(connection, remainingCount, awaitingSync, required);
                 var stage = ResolveHistoricalEnrichmentStage(
                     connection.Status,
                     inProgress,
                     completed,
+                    required,
                     totalCount,
                     remainingCount,
                     awaitingSync,
+                    connection.LastSyncAttemptedUtc,
+                    connection.LastSuccessfulSyncUtc,
                     connection.UpdatedUtc);
                 var progressPercent = totalCount > 0
                     ? Math.Round((processedCount / (double)totalCount) * 100d, 2, MidpointRounding.AwayFromZero)
@@ -360,7 +368,12 @@ public sealed class BankConnectionService(
         var total = connectionProgress.Sum(x => x.TotalCount);
         var processed = connectionProgress.Sum(x => x.ProcessedCount);
         var remaining = Math.Max(0, total - processed);
-        var inProgressOverall = connectionProgress.Any(x => x.InProgress);
+        var inProgressOverall = connectionProgress.Any(x =>
+            x.InProgress
+            || x.Stage is "queued_for_sync"
+            || x.Stage is "sync_stalled"
+            || x.Stage is "needs_reclassification"
+            || x.Stage is "waiting_for_first_sync");
         var completedOverall = total > 0 ? remaining == 0 && !inProgressOverall : !inProgressOverall;
         var percentOverall = total > 0
             ? Math.Round((processed / (double)total) * 100d, 2, MidpointRounding.AwayFromZero)
@@ -2040,17 +2053,38 @@ public sealed class BankConnectionService(
             && !connection.NeedsHistoricalReclassification;
     }
 
+    private static bool IsHistoricalEnrichmentRequired(EnrichmentConnectionRow connection)
+    {
+        if (connection.NeedsHistoricalReclassification)
+        {
+            return true;
+        }
+
+        if (!connection.HistoricalEnrichmentCompletedUtc.HasValue)
+        {
+            return true;
+        }
+
+        return (connection.HistoricalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion;
+    }
+
     private static bool IsHistoricalEnrichmentInProgress(
         EnrichmentConnectionRow connection,
         int remainingCount,
-        bool awaitingSync)
+        bool awaitingSync,
+        bool required)
     {
         if (remainingCount > 0)
         {
             return true;
         }
 
-        if (connection.NeedsHistoricalReclassification && awaitingSync)
+        if (required && awaitingSync)
+        {
+            return true;
+        }
+
+        if (required && connection.HistoricalEnrichmentStartedUtc.HasValue)
         {
             return true;
         }
@@ -2071,14 +2105,29 @@ public sealed class BankConnectionService(
         string connectionStatus,
         bool inProgress,
         bool completed,
+        bool required,
         int totalCount,
         int remainingCount,
         bool awaitingSync,
+        DateTime? lastSyncAttemptedUtc,
+        DateTime? lastSuccessfulSyncUtc,
         DateTime updatedUtc)
     {
         if (completed)
         {
             return "completed";
+        }
+
+        var hasEverSynced = lastSyncAttemptedUtc.HasValue || lastSuccessfulSyncUtc.HasValue;
+
+        if (required && !hasEverSynced && awaitingSync)
+        {
+            return "waiting_for_first_sync";
+        }
+
+        if (required && !inProgress && !awaitingSync)
+        {
+            return "needs_reclassification";
         }
 
         if (!inProgress)
@@ -2122,9 +2171,19 @@ public sealed class BankConnectionService(
             return "sync_stalled";
         }
 
+        if (connections.Any(x => x.Stage == "waiting_for_first_sync"))
+        {
+            return "waiting_for_first_sync";
+        }
+
         if (connections.Any(x => x.Stage == "queued_for_sync"))
         {
             return "queued_for_sync";
+        }
+
+        if (connections.Any(x => x.Stage == "needs_reclassification"))
+        {
+            return "needs_reclassification";
         }
 
         if (connections.Any(x => x.Stage == "historical_backfill"))

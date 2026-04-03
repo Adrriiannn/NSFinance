@@ -25,6 +25,7 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
 {
     private static readonly TimeSpan IdleDelay = TimeSpan.FromMilliseconds(800);
     private static readonly TimeSpan PendingSweepInterval = TimeSpan.FromSeconds(45);
+    private const int DeterministicEnrichmentCurrentVersion = 1;
 
     private readonly Channel<BankDeterministicEnrichmentWorkItem> _queue = Channel.CreateUnbounded<BankDeterministicEnrichmentWorkItem>(
         new UnboundedChannelOptions
@@ -141,7 +142,16 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
         var pendingConnections = await dbContext.OpenBankingConnections
             .AsNoTracking()
             .Where(x =>
-                x.NeedsHistoricalReclassification
+                (x.NeedsHistoricalReclassification
+                 || !x.HistoricalEnrichmentCompletedUtc.HasValue
+                 || (x.HistoricalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion)
+                && (x.Status == BankConnectionStatuses.ConnectedPendingSync
+                    || x.Status == BankConnectionStatuses.Connected
+                    || x.Status == BankConnectionStatuses.SyncPending
+                    || x.Status == BankConnectionStatuses.Synced
+                    || x.Status == BankConnectionStatuses.ReauthRequired
+                    || x.Status == BankConnectionStatuses.Expired
+                    || x.Status == BankConnectionStatuses.Failed)
                 && x.Status != BankConnectionStatuses.DisconnectPending
                 && x.Status != BankConnectionStatuses.DisconnectFailed
                 && x.Status != BankConnectionStatuses.Revoked)

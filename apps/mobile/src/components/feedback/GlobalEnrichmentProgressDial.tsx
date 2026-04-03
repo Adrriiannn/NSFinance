@@ -30,7 +30,9 @@ export function GlobalEnrichmentProgressDial() {
       connection.inProgress
       || connection.remainingCount > 0
       || connection.stage === "queued_for_sync"
-      || connection.stage === "sync_stalled")
+      || connection.stage === "sync_stalled"
+      || connection.stage === "needs_reclassification"
+      || connection.stage === "waiting_for_first_sync")
   );
   const inProgress = Boolean(progress?.inProgress || hasPendingConnection);
   const progressPercent = Math.max(0, Math.min(100, Math.round(progress?.progressPercent ?? 0)));
@@ -38,6 +40,10 @@ export function GlobalEnrichmentProgressDial() {
     ? "Organizing history"
     : progress?.stage === "queued_for_sync"
       ? "Queued for sync"
+      : progress?.stage === "waiting_for_first_sync"
+        ? "Waiting for first sync"
+        : progress?.stage === "needs_reclassification"
+          ? "Queued for organization"
       : progress?.stage === "sync_stalled"
         ? "Sync stalled"
         : progress?.stage === "completed"

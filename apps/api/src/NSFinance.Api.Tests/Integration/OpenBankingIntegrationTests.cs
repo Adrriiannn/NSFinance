@@ -212,6 +212,81 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_RepairsStaleWrongRepeatedSameAmountLinks_ToSameDayCounterparts()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: RepeatedSameAmountTransferChainFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.transfer-repair-chain@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-transfer-repair-chain", state, null, null),
+            CancellationToken.None);
+        Assert.True(outcome.Succeeded);
+
+        var incoming = await harness.DbContext.Transactions
+            .Where(x => x.Amount > 0m && x.Description.Contains(SyntheticInboundTransferDescription, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+        var outgoing = await harness.DbContext.Transactions
+            .Where(x => x.Amount < 0m && x.Description.Contains(SyntheticOutboundTransferDescription, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        Assert.True(incoming.Count >= 4);
+        Assert.True(outgoing.Count >= 4);
+
+        var latestIncoming = incoming[^1];
+        var correctLatestOutgoing = outgoing.Single(x => x.BookedAtUtc.Date == latestIncoming.BookedAtUtc.Date);
+        var wrongPriorDayOutgoing = outgoing[^2];
+
+        latestIncoming.LinkedTransferTransactionId = wrongPriorDayOutgoing.Id;
+        latestIncoming.TransferKind = TransactionTransferKind.LinkedInternal;
+        latestIncoming.TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId;
+
+        wrongPriorDayOutgoing.LinkedTransferTransactionId = latestIncoming.Id;
+        wrongPriorDayOutgoing.TransferKind = TransactionTransferKind.LinkedInternal;
+        wrongPriorDayOutgoing.TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId;
+
+        correctLatestOutgoing.LinkedTransferTransactionId = null;
+        correctLatestOutgoing.TransferKind = null;
+        correctLatestOutgoing.TaxonomyDomainId = null;
+        correctLatestOutgoing.TaxonomyCategoryId = null;
+        correctLatestOutgoing.TaxonomySubcategoryId = null;
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var secondSync = await globalSyncService.ExecuteAsync(
+            user.Id,
+            trigger: "manual",
+            source: "test_repeated_chain_repair",
+            force: true,
+            cancellationToken: CancellationToken.None);
+        Assert.Equal("completed", secondSync.Outcome);
+
+        var repairedIncoming = await harness.DbContext.Transactions
+            .Where(x => x.Amount > 0m && x.Description.Contains(SyntheticInboundTransferDescription, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+        var repairedOutgoing = await harness.DbContext.Transactions
+            .Where(x => x.Amount < 0m && x.Description.Contains(SyntheticOutboundTransferDescription, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        foreach (var credit in repairedIncoming)
+        {
+            Assert.True(credit.LinkedTransferTransactionId.HasValue);
+            var linkedDebit = repairedOutgoing.Single(x => x.Id == credit.LinkedTransferTransactionId.Value);
+            Assert.Equal(credit.BookedAtUtc.Date, linkedDebit.BookedAtUtc.Date);
+        }
+    }
+
+    [Fact]
     public async Task CallbackFlow_DoesNotForceMatch_WhenRepeatedCandidatesAreAmbiguous()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -708,6 +783,62 @@ public class OpenBankingIntegrationTests
         Assert.True(progress.InProgress, $"Expected in-progress enrichment, got: {debugProgress}");
         Assert.Equal("queued_for_sync", progress.Stage);
         Assert.Contains(progress.Connections, x => x.ConnectionId == connection.Id && x.Stage == "queued_for_sync");
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_SyncedLegacyConnectionWithoutDurableState_IsNeedsReclassification()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-needs-reclassification@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-enrichment-needs-reclassification", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.Status = BankConnectionStatuses.Synced;
+        connection.NeedsHistoricalReclassification = false;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentCheckpointUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSyncAttemptedUtc = DateTime.UtcNow.AddMinutes(-5);
+        connection.LastSuccessfulSyncUtc = DateTime.UtcNow.AddMinutes(-5);
+
+        var linkedAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+
+        var seededNow = DateTime.UtcNow;
+        var linkedTransactions = await harness.DbContext.Transactions
+            .Where(x => linkedAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+
+        foreach (var transaction in linkedTransactions)
+        {
+            transaction.DeterministicEnrichmentVersion = 1;
+            transaction.LastDeterministicEnrichedUtc = seededNow;
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+
+        Assert.True(progress.InProgress);
+        Assert.Equal("needs_reclassification", progress.Stage);
+        Assert.Contains(progress.Connections, x =>
+            x.ConnectionId == connection.Id
+            && x.Stage == "needs_reclassification"
+            && x.InProgress == false);
     }
 
     [Fact]

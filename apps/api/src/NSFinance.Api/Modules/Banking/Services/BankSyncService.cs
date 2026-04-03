@@ -2862,8 +2862,13 @@ public sealed class BankSyncService(
             incrementalWindowStartUtc,
             now,
             cancellationToken);
+        var hasTransferLinkIntegrityDrift = await HasTransferLinkIntegrityDriftInWindowAsync(
+            connection.UserId,
+            incrementalWindowStartUtc,
+            now,
+            cancellationToken);
 
-        if (hasStaleIncrementalRows)
+        if (hasStaleIncrementalRows || hasTransferLinkIntegrityDrift)
         {
             var incrementalContextStartUtc = incrementalWindowStartUtc.AddHours(-InternalTransferMatchMaxWindowHours);
             var incrementalContextEndUtc = now.AddHours(InternalTransferMatchMaxWindowHours);
@@ -2898,7 +2903,7 @@ public sealed class BankSyncService(
                 || incrementalRowsMarkedCurrent > 0;
 
             logger.LogInformation(
-                "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsMarkedCurrent={RowsMarkedCurrent}",
+                "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsMarkedCurrent={RowsMarkedCurrent} hasStaleRows={HasStaleRows} hasTransferLinkIntegrityDrift={HasTransferLinkIntegrityDrift}",
                 connection.Id,
                 connection.UserId,
                 "incremental_recent",
@@ -2908,7 +2913,9 @@ public sealed class BankSyncService(
                 incrementalContextEndUtc,
                 incrementalMatched,
                 incrementalRelationships,
-                incrementalRowsMarkedCurrent);
+                incrementalRowsMarkedCurrent,
+                hasStaleIncrementalRows,
+                hasTransferLinkIntegrityDrift);
         }
 
         var historicalEligible = connection.InitialBackfillCompletedUtc.HasValue || isInitialBackfill;
@@ -3094,6 +3101,70 @@ public sealed class BankSyncService(
                     && (!x.DeterministicEnrichmentVersion.HasValue
                         || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion),
                 cancellationToken);
+    }
+
+    private async Task<bool> HasTransferLinkIntegrityDriftInWindowAsync(
+        Guid userId,
+        DateTime windowStartUtc,
+        DateTime windowEndUtc,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return false;
+        }
+
+        var linkedRows = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                && x.BookedAtUtc >= windowStartUtc
+                && x.BookedAtUtc <= windowEndUtc
+                && x.TransferKind == TransactionTransferKind.LinkedInternal
+                && x.LinkedTransferTransactionId.HasValue)
+            .Select(x => new
+            {
+                x.Id,
+                CounterpartId = x.LinkedTransferTransactionId!.Value
+            })
+            .ToListAsync(cancellationToken);
+
+        if (linkedRows.Count == 0)
+        {
+            return false;
+        }
+
+        var counterpartIds = linkedRows
+            .Select(x => x.CounterpartId)
+            .Distinct()
+            .ToList();
+
+        if (counterpartIds.Count == 0)
+        {
+            return false;
+        }
+
+        var counterpartBackLinks = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x => counterpartIds.Contains(x.Id))
+            .Select(x => new
+            {
+                x.Id,
+                x.LinkedTransferTransactionId
+            })
+            .ToDictionaryAsync(x => x.Id, x => x.LinkedTransferTransactionId, cancellationToken);
+
+        foreach (var row in linkedRows)
+        {
+            if (!counterpartBackLinks.TryGetValue(row.CounterpartId, out var linkedBackReference)
+                || linkedBackReference != row.Id)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<List<DateTime>> GetStaleDeterministicBookedAtBatchAsync(
@@ -3405,6 +3476,19 @@ public sealed class BankSyncService(
             candidatesRejectedByMutualBest += groupSummary.CandidatesRejectedByMutualBest;
         }
 
+        var sameDayRepairs = RepairCrossDayLinkedPairsWithSameDayCandidates(
+            candidates,
+            accountProfilesByFinancialAccountId,
+            now);
+        matchedPairs += sameDayRepairs;
+        if (sameDayRepairs > 0)
+        {
+            logger.LogInformation(
+                "Linked transfer same-day repair completed userId={UserId} repairsApplied={RepairsApplied}",
+                userId,
+                sameDayRepairs);
+        }
+
         logger.LogInformation(
             "Linked transfer cluster matching completed userId={UserId} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} matchedPairs={MatchedPairs} clustersProcessed={ClustersProcessed} clustersRepaired={ClustersRepaired} candidatesEvaluated={CandidatesEvaluated} candidatesAutoEligible={CandidatesAutoEligible} candidatesRejectedByAmbiguity={CandidatesRejectedByAmbiguity} candidatesRejectedByMutualBest={CandidatesRejectedByMutualBest} noMatchAmountGroups={NoMatchAmountGroups}",
             userId,
@@ -3420,6 +3504,98 @@ public sealed class BankSyncService(
             noMatchAmountGroups);
 
         return matchedPairs;
+    }
+
+    private int RepairCrossDayLinkedPairsWithSameDayCandidates(
+        IReadOnlyList<Transaction> candidates,
+        IReadOnlyDictionary<Guid, InternalTransferAccountMatchProfile> accountProfilesByFinancialAccountId,
+        DateTime now)
+    {
+        var byId = candidates.ToDictionary(x => x.Id);
+        var repairsApplied = 0;
+
+        var incomingLinked = candidates
+            .Where(x => x.Amount > 0m && x.LinkedTransferTransactionId.HasValue)
+            .OrderBy(x => x.BookedAtUtc)
+            .ThenBy(x => x.Id)
+            .ToList();
+
+        foreach (var credit in incomingLinked)
+        {
+            if (!credit.LinkedTransferTransactionId.HasValue
+                || !byId.TryGetValue(credit.LinkedTransferTransactionId.Value, out var currentDebit)
+                || currentDebit.Amount >= 0m
+                || currentDebit.FinancialAccountId == credit.FinancialAccountId)
+            {
+                continue;
+            }
+
+            var creditWeak = IsWeakTimestampForMatching(credit, accountProfilesByFinancialAccountId);
+            var currentDebitWeak = IsWeakTimestampForMatching(currentDebit, accountProfilesByFinancialAccountId);
+            var creditMatchDate = GetTransferMatchingDate(credit.BookedAtUtc, creditWeak);
+            var currentDebitMatchDate = GetTransferMatchingDate(currentDebit.BookedAtUtc, currentDebitWeak);
+            if (creditMatchDate == currentDebitMatchDate)
+            {
+                continue;
+            }
+
+            var amountCurrencyKey = CreateInternalTransferAmountCurrencyKey(credit);
+            var sameDayCandidate = candidates
+                .Where(x =>
+                    x.Amount < 0m
+                    && x.Id != currentDebit.Id
+                    && !x.LinkedTransferTransactionId.HasValue
+                    && x.FinancialAccountId != credit.FinancialAccountId
+                    && !LooksLikeSavingsPocketMovementDescription(x.Description)
+                    && string.Equals(CreateInternalTransferAmountCurrencyKey(x), amountCurrencyKey, StringComparison.Ordinal))
+                .Select(x => new
+                {
+                    Debit = x,
+                    Score = ScoreInternalTransferPair(x, credit, accountProfilesByFinancialAccountId),
+                    MatchDate = GetTransferMatchingDate(
+                        x.BookedAtUtc,
+                        IsWeakTimestampForMatching(x, accountProfilesByFinancialAccountId))
+                })
+                .Where(x =>
+                    x.MatchDate == creditMatchDate
+                    && x.Score.Score != int.MinValue
+                    && x.Score.HasTransferEvidence
+                    && x.Score.Score >= InternalTransferMatchMinimumScore)
+                .OrderByDescending(x => x.Score.Score)
+                .ThenBy(x => x.Score.Distance)
+                .ThenBy(x => x.Debit.BookedAtUtc)
+                .FirstOrDefault();
+
+            if (sameDayCandidate is null)
+            {
+                continue;
+            }
+
+            ResetLinkedTransferState(credit);
+            if (currentDebit.LinkedTransferTransactionId == credit.Id)
+            {
+                ResetLinkedTransferState(currentDebit);
+            }
+
+            var repairedScore = sameDayCandidate.Score with
+            {
+                DecisionReason = $"same_day_repair:{sameDayCandidate.Score.DecisionReason}"
+            };
+            ApplyLinkedInternalTransferPair(sameDayCandidate.Debit, credit, repairedScore, now);
+            repairsApplied++;
+
+            logger.LogInformation(
+                "Linked transfer same-day repair applied creditId={CreditId} oldDebitId={OldDebitId} newDebitId={NewDebitId} creditDate={CreditDate} oldDebitDate={OldDebitDate} newDebitDate={NewDebitDate} score={Score}",
+                credit.Id,
+                currentDebit.Id,
+                sameDayCandidate.Debit.Id,
+                creditMatchDate,
+                currentDebitMatchDate,
+                sameDayCandidate.MatchDate,
+                sameDayCandidate.Score.Score);
+        }
+
+        return repairsApplied;
     }
 
     private InternalTransferAmountGroupSummary ReconcileInternalTransferAmountGroup(
@@ -3444,6 +3620,12 @@ public sealed class BankSyncService(
         var incomingOrderIndex = incomingOrdered
             .Select((transaction, index) => new { transaction.Id, Index = index })
             .ToDictionary(x => x.Id, x => x.Index);
+        var isRepeatedAmountCluster = outgoingOrdered.Count > 1 && incomingOrdered.Count > 1;
+        var weakTimestampByTransactionId = outgoingOrdered
+            .Concat(incomingOrdered)
+            .ToDictionary(
+                x => x.Id,
+                x => IsWeakTimestampForMatching(x, accountProfilesByFinancialAccountId));
 
         var edges = new List<InternalTransferCandidateEdge>();
 
@@ -3479,7 +3661,11 @@ public sealed class BankSyncService(
                     };
                 }
 
-                var dayDistance = Math.Abs((debit.BookedAtUtc.Date - credit.BookedAtUtc.Date).Days);
+                var debitWeakTimestamp = weakTimestampByTransactionId[debit.Id];
+                var creditWeakTimestamp = weakTimestampByTransactionId[credit.Id];
+                var debitMatchDate = GetTransferMatchingDate(debit.BookedAtUtc, debitWeakTimestamp);
+                var creditMatchDate = GetTransferMatchingDate(credit.BookedAtUtc, creditWeakTimestamp);
+                var dayDistance = Math.Abs((debitMatchDate - creditMatchDate).Days);
                 var distanceMinutes = (int)Math.Round(scoreResult.Distance.TotalMinutes, MidpointRounding.AwayFromZero);
                 var sequenceDistance = Math.Abs(outgoingOrderIndex[debit.Id] - incomingOrderIndex[credit.Id]);
                 var sequenceBonus = Math.Max(0, InternalTransferSequenceTieBreakBoost - sequenceDistance);
@@ -3575,17 +3761,45 @@ public sealed class BankSyncService(
             }
 
             var adjustedTier = DetermineTransferConfidenceTier(adjustedScore, edge.BaseScore.HasCounterpartyConfidence);
+            var hasAnySameDayAlternative =
+                sameDayByDebit.Contains(edge.Debit.Id)
+                || sameDayByCredit.Contains(edge.Credit.Id);
             var disallowCrossDayBecauseSameDayExists =
                 !edge.IsSameDay
-                && sameDayByDebit.Contains(edge.Debit.Id)
-                && sameDayByCredit.Contains(edge.Credit.Id);
+                && hasAnySameDayAlternative
+                && (edge.BaseScore.HasWeakTimestampPrecision || isRepeatedAmountCluster);
+            var allowCrossDayAutoLink =
+                edge.IsSameDay
+                || (
+                    !edge.BaseScore.HasWeakTimestampPrecision
+                    && !isRepeatedAmountCluster
+                    && !hasAnySameDayAlternative
+                    && edge.BaseScore.HasCounterpartyConfidence
+                    && edge.DistanceMinutes <= 360);
 
             if (disallowCrossDayBecauseSameDayExists)
             {
-                scoreBreakdown.Add("crossDayDisallowedWhenBothHaveSameDay=true");
+                scoreBreakdown.Add("crossDayDisallowedWhenAnySameDayAlternative=true");
+                if (isRepeatedAmountCluster)
+                {
+                    scoreBreakdown.Add("crossDayDisallowedReason=repeated_same_amount_cluster");
+                }
+
+                if (edge.BaseScore.HasWeakTimestampPrecision)
+                {
+                    scoreBreakdown.Add("crossDayDisallowedReason=weak_timestamp");
+                }
+            }
+            else if (!allowCrossDayAutoLink)
+            {
+                if (!edge.IsSameDay)
+                {
+                    scoreBreakdown.Add("crossDayDisallowedByStrictAutoLinkPolicy=true");
+                }
             }
 
             var autoEligible = !disallowCrossDayBecauseSameDayExists
+                && allowCrossDayAutoLink
                 && adjustedScore >= InternalTransferMatchMinimumScore
                 && adjustedTier == TransferMatchConfidenceTier.High;
             var weight = autoEligible
@@ -4193,6 +4407,17 @@ public sealed class BankSyncService(
     private static bool IsAutoMatchCandidateForReconciliation(Transaction transaction)
     {
         if (IsAutoMatchEligible(transaction))
+        {
+            return true;
+        }
+
+        // Allow conservative rematching for transfer-looking rows that were already
+        // metadata-enriched in earlier runs but are currently unlinked. Without this,
+        // stale wrong links in repeated same-amount clusters can remain unrepaired.
+        if (!transaction.LinkedTransferTransactionId.HasValue
+            && transaction.Amount != 0m
+            && LooksLikeInternalTransferDescription(transaction.Description)
+            && !LooksLikeSavingsPocketMovementDescription(transaction.Description))
         {
             return true;
         }
@@ -5062,7 +5287,8 @@ public sealed class BankSyncService(
 
         if (hasWeakTimestampPrecision
             && distance.TotalHours > 2
-            && !hasCounterpartyConfidence)
+            && !hasCounterpartyConfidence
+            && debit.BookedAtUtc.Date != credit.BookedAtUtc.Date)
         {
             return new InternalTransferPairScore(
                 Score: int.MinValue,
@@ -5317,7 +5543,14 @@ public sealed class BankSyncService(
             return false;
         }
 
-        return transaction.BookedAtUtc.TimeOfDay == TimeSpan.Zero;
+        return true;
+    }
+
+    private static DateTime GetTransferMatchingDate(DateTime bookedAtUtc, bool weakTimestamp)
+    {
+        return weakTimestamp
+            ? bookedAtUtc.AddHours(12).Date
+            : bookedAtUtc.Date;
     }
 
     private static HashSet<string> BuildInternalTransferAccountHintTokens(
