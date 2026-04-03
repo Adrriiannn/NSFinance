@@ -33,7 +33,7 @@ public sealed class BankSyncService(
     private const int InternalTransferAmbiguityMaxScoreGap = 1;
     private const int SavingsRelationshipLookbackDays = 35;
     private const int SavingsTransferSubcategoryId = 920102;
-    private const int DeterministicEnrichmentCurrentVersion = 1;
+    private const int DeterministicEnrichmentCurrentVersion = 2;
     private const int DeterministicEnrichmentIncrementalLookbackDays = 35;
     private const int DeterministicEnrichmentHistoricalBatchSize = 600;
     private const int DeterministicEnrichmentHistoricalContextPaddingDays = 4;
@@ -2945,16 +2945,14 @@ public sealed class BankSyncService(
             connection.HistoricalEnrichmentCompletedUtc = null;
             connection.NeedsHistoricalReclassification = true;
 
-            var checkpointUtc = connection.HistoricalEnrichmentCheckpointUtc ?? incrementalWindowStartUtc;
-            var historicalBatchBookedAtUtc = await GetStaleDeterministicBookedAtBatchAsync(
+            var historicalBatch = await GetStaleDeterministicBatchAsync(
                 connection.UserId,
-                checkpointUtc,
                 DeterministicEnrichmentHistoricalBatchSize,
                 cancellationToken);
 
-            if (historicalBatchBookedAtUtc.Count == 0)
+            if (historicalBatch.Count == 0)
             {
-                connection.HistoricalEnrichmentCheckpointUtc = connection.EarliestImportedTransactionUtc ?? checkpointUtc;
+                connection.HistoricalEnrichmentCheckpointUtc = connection.EarliestImportedTransactionUtc ?? incrementalWindowStartUtc;
                 connection.HistoricalEnrichmentCompletedUtc = now;
                 connection.HistoricalEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
                 connection.NeedsHistoricalReclassification = false;
@@ -2965,8 +2963,8 @@ public sealed class BankSyncService(
             }
             else
             {
-                var historicalWindowStartUtc = historicalBatchBookedAtUtc.Min();
-                var historicalWindowEndUtc = historicalBatchBookedAtUtc.Max();
+                var historicalWindowStartUtc = historicalBatch.Min(x => x.BookedAtUtc);
+                var historicalWindowEndUtc = historicalBatch.Max(x => x.BookedAtUtc);
                 var historicalContextStartUtc = historicalWindowStartUtc.AddDays(-DeterministicEnrichmentHistoricalContextPaddingDays);
                 var historicalContextEndUtc = historicalWindowEndUtc.AddDays(DeterministicEnrichmentHistoricalContextPaddingDays);
 
@@ -2982,10 +2980,8 @@ public sealed class BankSyncService(
                     historicalContextStartUtc,
                     historicalContextEndUtc,
                     cancellationToken);
-                var historicalRowsMarkedCurrent = await MarkDeterministicEnrichmentVersionAsync(
-                    connection.UserId,
-                    historicalWindowStartUtc,
-                    historicalWindowEndUtc,
+                var historicalRowsMarkedCurrent = await MarkDeterministicEnrichmentVersionForIdsAsync(
+                    historicalBatch.Select(x => x.TransactionId).ToArray(),
                     now,
                     cancellationToken);
 
@@ -2999,11 +2995,10 @@ public sealed class BankSyncService(
                     || historicalRelationships > 0
                     || historicalRowsMarkedCurrent > 0;
 
-                connection.HistoricalEnrichmentCheckpointUtc = historicalWindowStartUtc;
-                rowsRemaining = await CountStaleDeterministicRowsBeforeUtcAsync(
-                    connection.UserId,
-                    historicalWindowStartUtc,
-                    cancellationToken);
+                rowsRemaining = await CountAllStaleDeterministicRowsAsync(connection.UserId, cancellationToken);
+                connection.HistoricalEnrichmentCheckpointUtc = rowsRemaining == 0
+                    ? connection.EarliestImportedTransactionUtc ?? historicalWindowStartUtc
+                    : await GetOldestStaleDeterministicBookedAtUtcAsync(connection.UserId, cancellationToken);
 
                 historicalInProgress = rowsRemaining > 0;
                 historicalCompleted = rowsRemaining == 0;
@@ -3031,7 +3026,25 @@ public sealed class BankSyncService(
             }
         }
 
-        var progressPercent = ComputeHistoricalEnrichmentProgressPercent(connection, historicalCompleted);
+        if (historicalEligible && rowsRemaining == 0 && !connection.NeedsHistoricalReclassification)
+        {
+            historicalInProgress = false;
+            historicalCompleted = true;
+        }
+        else if (historicalEligible && rowsRemaining == 0)
+        {
+            connection.HistoricalEnrichmentCompletedUtc ??= now;
+            connection.HistoricalEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
+            connection.NeedsHistoricalReclassification = false;
+            connection.HistoricalEnrichmentCheckpointUtc ??= connection.EarliestImportedTransactionUtc ?? incrementalWindowStartUtc;
+            historicalInProgress = false;
+            historicalCompleted = true;
+        }
+
+        var progressPercent = await ComputeHistoricalEnrichmentProgressPercentAsync(
+            connection.UserId,
+            historicalCompleted,
+            cancellationToken);
 
         logger.LogInformation(
             "Deterministic enrichment summary connectionId={ConnectionId} userId={UserId} mode={Mode} batchesProcessed={BatchesProcessed} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} checkpointUtc={CheckpointUtc} progressPercent={ProgressPercent}",
@@ -3167,9 +3180,10 @@ public sealed class BankSyncService(
         return false;
     }
 
-    private async Task<List<DateTime>> GetStaleDeterministicBookedAtBatchAsync(
+    private readonly record struct StaleDeterministicTransactionBatchRow(Guid TransactionId, DateTime BookedAtUtc);
+
+    private async Task<List<StaleDeterministicTransactionBatchRow>> GetStaleDeterministicBatchAsync(
         Guid userId,
-        DateTime beforeUtc,
         int batchSize,
         CancellationToken cancellationToken)
     {
@@ -3183,34 +3197,33 @@ public sealed class BankSyncService(
             .AsNoTracking()
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                && x.BookedAtUtc < beforeUtc
                 && (!x.DeterministicEnrichmentVersion.HasValue
                     || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
             .OrderByDescending(x => x.BookedAtUtc)
-            .Select(x => x.BookedAtUtc)
+            .ThenByDescending(x => x.CreatedUtc)
+            .Select(x => new StaleDeterministicTransactionBatchRow(x.Id, x.BookedAtUtc))
             .Take(batchSize)
             .ToListAsync(cancellationToken);
     }
 
-    private async Task<int> CountStaleDeterministicRowsBeforeUtcAsync(
+    private async Task<DateTime?> GetOldestStaleDeterministicBookedAtUtcAsync(
         Guid userId,
-        DateTime beforeUtc,
         CancellationToken cancellationToken)
     {
         var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
         if (linkedFinancialAccountIds.Count == 0)
         {
-            return 0;
+            return null;
         }
 
         return await dbContext.Transactions
             .AsNoTracking()
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                && x.BookedAtUtc < beforeUtc
                 && (!x.DeterministicEnrichmentVersion.HasValue
                     || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
-            .CountAsync(cancellationToken);
+            .Select(x => (DateTime?)x.BookedAtUtc)
+            .MinAsync(cancellationToken);
     }
 
     private async Task<int> CountAllStaleDeterministicRowsAsync(
@@ -3268,6 +3281,37 @@ public sealed class BankSyncService(
         return candidates.Count;
     }
 
+    private async Task<int> MarkDeterministicEnrichmentVersionForIdsAsync(
+        IReadOnlyCollection<Guid> transactionIds,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (transactionIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var candidates = await dbContext.Transactions
+            .Where(x =>
+                transactionIds.Contains(x.Id)
+                && (!x.DeterministicEnrichmentVersion.HasValue
+                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+            .ToListAsync(cancellationToken);
+
+        if (candidates.Count == 0)
+        {
+            return 0;
+        }
+
+        foreach (var transaction in candidates)
+        {
+            transaction.DeterministicEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
+            transaction.LastDeterministicEnrichedUtc = now;
+        }
+
+        return candidates.Count;
+    }
+
     private async Task<List<Guid>> LoadLinkedFinancialAccountIdsAsync(Guid userId, CancellationToken cancellationToken)
     {
         return await dbContext.LinkedBankAccounts
@@ -3281,29 +3325,40 @@ public sealed class BankSyncService(
             .ToListAsync(cancellationToken);
     }
 
-    private static double? ComputeHistoricalEnrichmentProgressPercent(
-        OpenBankingConnection connection,
-        bool completed)
+    private async Task<double?> ComputeHistoricalEnrichmentProgressPercentAsync(
+        Guid userId,
+        bool completed,
+        CancellationToken cancellationToken)
     {
         if (completed)
         {
             return 100d;
         }
 
-        if (!connection.HistoricalEnrichmentCheckpointUtc.HasValue
-            || !connection.EarliestImportedTransactionUtc.HasValue
-            || !connection.LatestImportedTransactionUtc.HasValue)
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
         {
-            return null;
+            return 0d;
         }
 
-        var earliest = connection.EarliestImportedTransactionUtc.Value;
-        var latest = connection.LatestImportedTransactionUtc.Value;
-        var checkpoint = connection.HistoricalEnrichmentCheckpointUtc.Value;
+        var totalCount = await dbContext.Transactions
+            .AsNoTracking()
+            .CountAsync(x => linkedFinancialAccountIds.Contains(x.FinancialAccountId), cancellationToken);
 
-        var totalRangeSeconds = Math.Max(1d, (latest - earliest).TotalSeconds);
-        var processedRangeSeconds = Math.Max(0d, (latest - checkpoint).TotalSeconds);
-        var percent = Math.Clamp((processedRangeSeconds / totalRangeSeconds) * 100d, 0d, 99.5d);
+        if (totalCount == 0)
+        {
+            return 0d;
+        }
+
+        var currentCount = await dbContext.Transactions
+            .AsNoTracking()
+            .CountAsync(
+                x => linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                     && x.DeterministicEnrichmentVersion.HasValue
+                     && x.DeterministicEnrichmentVersion.Value >= DeterministicEnrichmentCurrentVersion,
+                cancellationToken);
+
+        var percent = Math.Clamp((currentCount / (double)totalCount) * 100d, 0d, 99.5d);
 
         return Math.Round(percent, 2, MidpointRounding.AwayFromZero);
     }

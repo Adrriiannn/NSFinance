@@ -31,7 +31,7 @@ public sealed class BankConnectionService(
         BankConnectionStatuses.DisconnectPending,
         BankConnectionStatuses.DisconnectFailed
     ];
-    private const int DeterministicEnrichmentCurrentVersion = 1;
+    private const int DeterministicEnrichmentCurrentVersion = 2;
 
     private sealed record EnrichmentConnectionRow(
         Guid Id,
@@ -334,14 +334,21 @@ public sealed class BankConnectionService(
                 var currentEnrichedAfterStartCount = connection.HistoricalEnrichmentStartedUtc.HasValue
                     ? Math.Max(0, Math.Min(stats?.CurrentEnrichedAfterStartCount ?? 0, currentCount))
                     : 0;
+                var hasEverSynced = connection.LastSyncAttemptedUtc.HasValue || connection.LastSuccessfulSyncUtc.HasValue;
 
                 int totalCount;
                 int processedCount;
                 int remainingCount;
 
+                if (awaitingSync && !hasEverSynced && !connection.HistoricalEnrichmentStartedUtc.HasValue)
+                {
+                    totalCount = 0;
+                    processedCount = 0;
+                    remainingCount = 0;
+                }
                 // During active/pending enrichment, progress should track work completed in
                 // the current run scope rather than rows already current from older runs.
-                if (required || connection.HistoricalEnrichmentStartedUtc.HasValue)
+                else if (required || connection.HistoricalEnrichmentStartedUtc.HasValue)
                 {
                     processedCount = currentEnrichedAfterStartCount;
                     remainingCount = staleCount;

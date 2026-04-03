@@ -25,7 +25,7 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
 {
     private static readonly TimeSpan IdleDelay = TimeSpan.FromMilliseconds(800);
     private static readonly TimeSpan PendingSweepInterval = TimeSpan.FromSeconds(45);
-    private const int DeterministicEnrichmentCurrentVersion = 1;
+    private const int DeterministicEnrichmentCurrentVersion = 2;
 
     private readonly Channel<BankDeterministicEnrichmentWorkItem> _queue = Channel.CreateUnbounded<BankDeterministicEnrichmentWorkItem>(
         new UnboundedChannelOptions
