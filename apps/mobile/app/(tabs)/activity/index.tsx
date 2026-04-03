@@ -24,6 +24,7 @@ import {
   consumeActivitySearchSnapshot,
   setActivitySearchSnapshot
 } from "../../../src/features/activity/search/activitySearch.bridge";
+import { setActivityFeedInteracting } from "../../../src/features/activity/activityFeedRuntime";
 import { useActivitySearch } from "../../../src/features/activity/search/activitySearch.hooks";
 import type {
   ActivityAccountSuggestion,
@@ -94,6 +95,7 @@ export default function ActivityTabScreen() {
   const isInitialLoading = transactionsQuery.isLoading && !transactionsQuery.data;
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [showSyncSpin, setShowSyncSpin] = useState(false);
+  const [isListInteracting, setIsListInteracting] = useState(false);
   const refreshing = isManualRefreshing && !isInitialLoading;
   const focusTransactionId =
     typeof params.focusTransactionId === "string" ? params.focusTransactionId : "";
@@ -162,7 +164,7 @@ export default function ActivityTabScreen() {
     }
   }, [transactionsQuery]);
 
-  const grouped = useMemo(() => {
+  const groupedCandidate = useMemo(() => {
     return groupTransactionsByTimeBucket(search.filteredTransactions)
       .filter((section) => section.items.length > 0)
       .map((section) => ({
@@ -170,6 +172,34 @@ export default function ActivityTabScreen() {
         data: section.items
       }));
   }, [search.filteredTransactions]);
+  const [grouped, setGrouped] = useState(groupedCandidate);
+  const pendingGroupedRef = useRef(groupedCandidate);
+
+  const commitPendingGrouped = useCallback(() => {
+    setIsListInteracting(false);
+    setActivityFeedInteracting(false);
+    if (pendingGroupedRef.current !== grouped) {
+      setGrouped(pendingGroupedRef.current);
+    }
+  }, [grouped]);
+
+  const beginListInteraction = useCallback(() => {
+    setIsListInteracting(true);
+    setActivityFeedInteracting(true);
+  }, []);
+
+  useEffect(() => {
+    pendingGroupedRef.current = groupedCandidate;
+    if (!isListInteracting) {
+      setGrouped(groupedCandidate);
+    }
+  }, [groupedCandidate, isListInteracting]);
+
+  useEffect(() => {
+    return () => {
+      setActivityFeedInteracting(false);
+    };
+  }, []);
   const hasAnyTransactions = (transactionsQuery.data?.length ?? 0) > 0;
   const hasActiveSearch =
     search.tokens.length > 0 || search.rawSearchText.trim().length > 0;
@@ -518,7 +548,18 @@ export default function ActivityTabScreen() {
               keyExtractor={(item) => item.id}
               stickySectionHeadersEnabled={false}
               bounces={false}
-              onScrollBeginDrag={search.dismissDropdown}
+              onScrollBeginDrag={() => {
+                beginListInteraction();
+                search.dismissDropdown();
+              }}
+              onMomentumScrollBegin={beginListInteraction}
+              onScrollEndDrag={(event) => {
+                const velocityY = event.nativeEvent.velocity?.y ?? 0;
+                if (Math.abs(velocityY) < 0.15) {
+                  commitPendingGrouped();
+                }
+              }}
+              onMomentumScrollEnd={commitPendingGrouped}
               renderSectionHeader={({ section }) => (
                 <Text style={styles.groupHeading}>{section.title}</Text>
               )}

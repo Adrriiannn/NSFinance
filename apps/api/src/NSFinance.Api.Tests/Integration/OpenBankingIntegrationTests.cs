@@ -160,6 +160,85 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task CallbackFlow_MatchesRepeatedSameAmountTransfers_WithSameDayPreference()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: RepeatedSameAmountTransferChainFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.transfer-repeated-chain@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-transfer-repeated-chain", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+
+        var transactions = await harness.DbContext.Transactions
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        var aibIncoming = transactions
+            .Where(x => x.Amount > 0m && x.Description.Contains("ALBU MARIUS", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.BookedAtUtc)
+            .ToList();
+        var revolutOutgoing = transactions
+            .Where(x => x.Amount < 0m && x.Description.Contains("To Marius Albu", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.BookedAtUtc)
+            .ToList();
+        var pocketMovement = transactions
+            .Single(x => x.Description.Contains("Flexible Cash Funds", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(4, aibIncoming.Count);
+        Assert.Equal(4, revolutOutgoing.Count);
+        Assert.Equal(TransactionTransferKind.SavingsManualDeposit, pocketMovement.TransferKind);
+        Assert.Null(pocketMovement.LinkedTransferTransactionId);
+
+        foreach (var credit in aibIncoming)
+        {
+            Assert.True(credit.LinkedTransferTransactionId.HasValue);
+            var linkedDebit = revolutOutgoing.Single(x => x.Id == credit.LinkedTransferTransactionId.Value);
+            Assert.Equal(credit.BookedAtUtc.Date, linkedDebit.BookedAtUtc.Date);
+            Assert.Equal(TransactionTransferKind.LinkedInternal, credit.TransferKind);
+            Assert.Equal(TransactionTransferKind.LinkedInternal, linkedDebit.TransferKind);
+        }
+    }
+
+    [Fact]
+    public async Task CallbackFlow_DoesNotForceMatch_WhenRepeatedCandidatesAreAmbiguous()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: AmbiguousRepeatedAmountTransferFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.transfer-ambiguous-repeated@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-transfer-ambiguous-repeated", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+
+        var aibIncoming = await harness.DbContext.Transactions.SingleAsync(
+            x => x.Amount > 0m && x.Description.Contains("ALBU MARIUS", StringComparison.OrdinalIgnoreCase));
+        var revolutOutgoing = await harness.DbContext.Transactions
+            .Where(x => x.Amount < 0m && x.Description.Contains("To Marius Albu", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        Assert.Equal(2, revolutOutgoing.Count);
+        Assert.Null(aibIncoming.LinkedTransferTransactionId);
+        Assert.All(revolutOutgoing, x => Assert.Null(x.LinkedTransferTransactionId));
+        Assert.All(revolutOutgoing, x => Assert.NotEqual(TransactionTransferKind.LinkedInternal, x.TransferKind));
+    }
+
+    [Fact]
     public async Task CallbackFlow_DetectsRoundupSavingsRelationship_AndKeepsMerchantExpenseVisible()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -590,6 +669,41 @@ public class OpenBankingIntegrationTests
         Assert.False(connection.NeedsHistoricalReclassification);
         Assert.NotNull(connection.HistoricalEnrichmentCompletedUtc);
         Assert.Equal(1, connection.HistoricalEnrichmentVersion);
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_ConnectionAwaitingSyncWithPendingReclassification_IsQueuedForSync()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-queue@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-enrichment-queue", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.Status = BankConnectionStatuses.ConnectionStarted;
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.UpdatedUtc = DateTime.UtcNow;
+        await harness.DbContext.SaveChangesAsync();
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+
+        var debugProgress = JsonSerializer.Serialize(progress);
+        Assert.True(progress.InProgress, $"Expected in-progress enrichment, got: {debugProgress}");
+        Assert.Equal("queued_for_sync", progress.Stage);
+        Assert.Contains(progress.Connections, x => x.ConnectionId == connection.Id && x.Stage == "queued_for_sync");
     }
 
     [Fact]
@@ -2016,6 +2130,354 @@ public class OpenBankingIntegrationTests
                       ]
                     }
                     """);
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler RepeatedSameAmountTransferChainFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-transfer-repeated-chain",
+                      "refresh_token":"refresh-token-transfer-repeated-chain",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-repeated-001",
+                          "display_name": "AIB Current",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-aib",
+                            "display_name": "AIB"
+                          }
+                        },
+                        {
+                          "account_id": "acc-revolut-repeated-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-repeated-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 2000.00,
+                          "current": 2000.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-02T01:00:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-repeated-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 2000.00,
+                          "current": 2000.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-02T07:30:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-repeated-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-aib-chain-20260330",
+                          "normalised_provider_transaction_id":"norm-aib-chain-20260330",
+                          "amount":1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-30",
+                          "description":"ALBU MARIUS IE260330",
+                          "transaction_type":"CREDIT",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-aib-chain-20260331",
+                          "normalised_provider_transaction_id":"norm-aib-chain-20260331",
+                          "amount":1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-31",
+                          "description":"ALBU MARIUS IE260331",
+                          "transaction_type":"CREDIT",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-aib-chain-20260401",
+                          "normalised_provider_transaction_id":"norm-aib-chain-20260401",
+                          "amount":1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-01",
+                          "description":"ALBU MARIUS IE260401",
+                          "transaction_type":"CREDIT",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-aib-chain-20260402",
+                          "normalised_provider_transaction_id":"norm-aib-chain-20260402",
+                          "amount":1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-02",
+                          "description":"ALBU MARIUS IE260402",
+                          "transaction_type":"CREDIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-repeated-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-revolut-chain-20260330-0533",
+                          "normalised_provider_transaction_id":"norm-revolut-chain-20260330-0533",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-30T05:33:00Z",
+                          "description":"To Marius Albu",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-chain-20260331-0319",
+                          "normalised_provider_transaction_id":"norm-revolut-chain-20260331-0319",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-31T03:19:00Z",
+                          "description":"To Marius Albu",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-chain-20260401-0907",
+                          "normalised_provider_transaction_id":"norm-revolut-chain-20260401-0907",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-01T09:07:00Z",
+                          "description":"To Marius Albu",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-chain-20260402-0726",
+                          "normalised_provider_transaction_id":"norm-revolut-chain-20260402-0726",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-02T07:26:00Z",
+                          "description":"To Marius Albu",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-chain-pocket-20260331",
+                          "normalised_provider_transaction_id":"norm-revolut-chain-pocket-20260331",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-03-31T21:37:00Z",
+                          "description":"To Flexible Cash Funds",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler AmbiguousRepeatedAmountTransferFlowHandler()
+    {
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-transfer-ambiguous-repeated",
+                      "refresh_token":"refresh-token-transfer-ambiguous-repeated",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-ambiguous-001",
+                          "display_name": "AIB Current",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-aib",
+                            "display_name": "AIB"
+                          }
+                        },
+                        {
+                          "account_id": "acc-revolut-ambiguous-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-ambiguous-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1500.00,
+                          "current": 1500.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-02T00:10:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-ambiguous-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1500.00,
+                          "current": 1500.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-02T08:10:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-ambiguous-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-aib-ambiguous-20260402",
+                          "normalised_provider_transaction_id":"norm-aib-ambiguous-20260402",
+                          "amount":1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-02",
+                          "description":"ALBU MARIUS IE260402",
+                          "transaction_type":"CREDIT",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-ambiguous-001/transactions", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "transaction_id":"tx-revolut-ambiguous-20260402-0800",
+                          "normalised_provider_transaction_id":"norm-revolut-ambiguous-20260402-0800",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-02T07:50:00Z",
+                          "description":"To Marius Albu",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        },
+                        {
+                          "transaction_id":"tx-revolut-ambiguous-20260402-0805",
+                          "normalised_provider_transaction_id":"norm-revolut-ambiguous-20260402-0805",
+                          "amount":-1.00,
+                          "currency":"EUR",
+                          "timestamp":"2026-04-02T07:55:00Z",
+                          "description":"To Marius Albu",
+                          "transaction_type":"TRANSFER",
+                          "status":"booked"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }
 
             return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");

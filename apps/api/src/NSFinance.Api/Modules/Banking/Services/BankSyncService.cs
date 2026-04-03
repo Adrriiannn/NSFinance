@@ -25,6 +25,12 @@ public sealed class BankSyncService(
     private const int InternalTransferMatchLookbackDays = 21;
     private const int InternalTransferMatchMaxWindowHours = 72;
     private const int InternalTransferMatchMinimumScore = 6;
+    private const int InternalTransferMutualBestMinimumMargin = 2;
+    private const int InternalTransferCrossDayPenaltyWhenSameDayExists = 4;
+    private const int InternalTransferWeakTimestampCrossDayPenalty = 3;
+    private const int InternalTransferNearestNeighborPenalty = 2;
+    private const int InternalTransferSequenceTieBreakBoost = 2;
+    private const int InternalTransferAmbiguityMaxScoreGap = 1;
     private const int SavingsRelationshipLookbackDays = 35;
     private const int SavingsTransferSubcategoryId = 920102;
     private const int DeterministicEnrichmentCurrentVersion = 1;
@@ -3321,12 +3327,14 @@ public sealed class BankSyncService(
         }
 
         var outgoing = candidates
-            .Where(x => x.Amount < 0m && IsAutoMatchEligible(x))
+            .Where(x => x.Amount < 0m && IsAutoMatchCandidateForReconciliation(x))
             .OrderBy(x => x.BookedAtUtc)
+            .ThenBy(x => x.Id)
             .ToList();
         var incoming = candidates
-            .Where(x => x.Amount > 0m && IsAutoMatchEligible(x))
+            .Where(x => x.Amount > 0m && IsAutoMatchCandidateForReconciliation(x))
             .OrderBy(x => x.BookedAtUtc)
+            .ThenBy(x => x.Id)
             .ToList();
 
         if (outgoing.Count == 0 || incoming.Count == 0)
@@ -3334,187 +3342,841 @@ public sealed class BankSyncService(
             return 0;
         }
 
-        var incomingByKey = incoming
+        var outgoingByAmountCurrency = outgoing
+            .GroupBy(CreateInternalTransferAmountCurrencyKey)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+        var incomingByAmountCurrency = incoming
             .GroupBy(CreateInternalTransferAmountCurrencyKey)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
 
-        var usedIncomingIds = new HashSet<Guid>();
         var matchedPairs = 0;
-        var unmatchedNoAmountCurrencyKey = 0;
-        var unmatchedNoCandidatesAfterFilters = 0;
-        var unmatchedNoTransferEvidence = 0;
-        var unmatchedBelowThreshold = 0;
-        var unmatchedDeferredWeakTimestamp = 0;
-        var unmatchedDeferredSavingsPocket = 0;
-        var unmatchedMissingCounterpartyConfidence = 0;
+        var clustersProcessed = 0;
+        var clustersRepaired = 0;
+        var candidatesEvaluated = 0;
+        var candidatesAutoEligible = 0;
+        var candidatesRejectedByAmbiguity = 0;
+        var candidatesRejectedByMutualBest = 0;
+        var noMatchAmountGroups = 0;
 
-        foreach (var debit in outgoing)
+        foreach (var amountGroup in outgoingByAmountCurrency)
         {
-            var key = CreateInternalTransferAmountCurrencyKey(debit);
-            if (!incomingByKey.TryGetValue(key, out var incomingCandidates))
+            if (!incomingByAmountCurrency.TryGetValue(amountGroup.Key, out var incomingGroup)
+                || incomingGroup.Count == 0)
             {
-                unmatchedNoAmountCurrencyKey++;
+                noMatchAmountGroups++;
                 continue;
             }
 
-            Transaction? bestCredit = null;
-            var bestScore = int.MinValue;
-            var bestTimeDistance = TimeSpan.MaxValue;
-            InternalTransferPairScore? bestScoreResult = null;
-            var hadEligibleCounterpartyCandidate = false;
-            var hadTransferEvidenceCandidate = false;
+            var groupSummary = ReconcileInternalTransferAmountGroup(
+                amountGroup.Key,
+                amountGroup.Value,
+                incomingGroup,
+                accountProfilesByFinancialAccountId,
+                now);
 
-            foreach (var credit in incomingCandidates)
+            matchedPairs += groupSummary.MatchedPairs;
+            clustersProcessed += groupSummary.ClustersProcessed;
+            clustersRepaired += groupSummary.ClustersRepaired;
+            candidatesEvaluated += groupSummary.CandidatesEvaluated;
+            candidatesAutoEligible += groupSummary.CandidatesAutoEligible;
+            candidatesRejectedByAmbiguity += groupSummary.CandidatesRejectedByAmbiguity;
+            candidatesRejectedByMutualBest += groupSummary.CandidatesRejectedByMutualBest;
+        }
+
+        logger.LogInformation(
+            "Linked transfer cluster matching completed userId={UserId} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} matchedPairs={MatchedPairs} clustersProcessed={ClustersProcessed} clustersRepaired={ClustersRepaired} candidatesEvaluated={CandidatesEvaluated} candidatesAutoEligible={CandidatesAutoEligible} candidatesRejectedByAmbiguity={CandidatesRejectedByAmbiguity} candidatesRejectedByMutualBest={CandidatesRejectedByMutualBest} noMatchAmountGroups={NoMatchAmountGroups}",
+            userId,
+            windowStartUtc,
+            windowEndUtc,
+            matchedPairs,
+            clustersProcessed,
+            clustersRepaired,
+            candidatesEvaluated,
+            candidatesAutoEligible,
+            candidatesRejectedByAmbiguity,
+            candidatesRejectedByMutualBest,
+            noMatchAmountGroups);
+
+        return matchedPairs;
+    }
+
+    private InternalTransferAmountGroupSummary ReconcileInternalTransferAmountGroup(
+        string amountCurrencyKey,
+        IReadOnlyList<Transaction> outgoingGroup,
+        IReadOnlyList<Transaction> incomingGroup,
+        IReadOnlyDictionary<Guid, InternalTransferAccountMatchProfile> accountProfilesByFinancialAccountId,
+        DateTime now)
+    {
+        var outgoingOrdered = outgoingGroup
+            .OrderBy(x => x.BookedAtUtc)
+            .ThenBy(x => x.Id)
+            .ToList();
+        var incomingOrdered = incomingGroup
+            .OrderBy(x => x.BookedAtUtc)
+            .ThenBy(x => x.Id)
+            .ToList();
+
+        var outgoingOrderIndex = outgoingOrdered
+            .Select((transaction, index) => new { transaction.Id, Index = index })
+            .ToDictionary(x => x.Id, x => x.Index);
+        var incomingOrderIndex = incomingOrdered
+            .Select((transaction, index) => new { transaction.Id, Index = index })
+            .ToDictionary(x => x.Id, x => x.Index);
+
+        var edges = new List<InternalTransferCandidateEdge>();
+
+        foreach (var debit in outgoingOrdered)
+        {
+            foreach (var credit in incomingOrdered)
             {
-                if (usedIncomingIds.Contains(credit.Id) || credit.FinancialAccountId == debit.FinancialAccountId)
+                if (debit.FinancialAccountId == credit.FinancialAccountId)
                 {
                     continue;
                 }
 
-                hadEligibleCounterpartyCandidate = true;
                 var scoreResult = ScoreInternalTransferPair(
                     debit,
                     credit,
                     accountProfilesByFinancialAccountId);
-                if (scoreResult.HasTransferEvidence)
-                {
-                    hadTransferEvidenceCandidate = true;
-                }
+                var isExistingReciprocal =
+                    debit.LinkedTransferTransactionId == credit.Id
+                    && credit.LinkedTransferTransactionId == debit.Id;
 
-                if (scoreResult.DeferredByWeakTimestamp)
-                {
-                    unmatchedDeferredWeakTimestamp++;
-                }
-
-                if (scoreResult.DeferredBySavingsPocket)
-                {
-                    unmatchedDeferredSavingsPocket++;
-                }
-
-                if (scoreResult.MissingCounterpartyConfidence)
-                {
-                    unmatchedMissingCounterpartyConfidence++;
-                }
-
-                logger.LogDebug(
-                    "Linked transfer pair candidate evaluation debitId={DebitId} creditId={CreditId} score={Score} confidenceTier={ConfidenceTier} reason={Reason} distanceMinutes={DistanceMinutes} hasTransferEvidence={HasTransferEvidence} hasCounterpartyConfidence={HasCounterpartyConfidence} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket}",
-                    debit.Id,
-                    credit.Id,
-                    scoreResult.Score,
-                    scoreResult.ConfidenceTier,
-                    scoreResult.DecisionReason,
-                    (int)Math.Round(scoreResult.Distance.TotalMinutes, MidpointRounding.AwayFromZero),
-                    scoreResult.HasTransferEvidence,
-                    scoreResult.HasCounterpartyConfidence,
-                    scoreResult.DeferredByWeakTimestamp,
-                    scoreResult.DeferredBySavingsPocket);
-
-                var score = scoreResult.Score;
-                var distance = scoreResult.Distance;
-                if (score < InternalTransferMatchMinimumScore
-                    || scoreResult.ConfidenceTier != TransferMatchConfidenceTier.High)
+                if (scoreResult.Score == int.MinValue && !isExistingReciprocal)
                 {
                     continue;
                 }
 
-                if (score > bestScore || (score == bestScore && distance < bestTimeDistance))
+                if (scoreResult.Score == int.MinValue && isExistingReciprocal)
                 {
-                    bestCredit = credit;
-                    bestScore = score;
-                    bestTimeDistance = distance;
-                    bestScoreResult = scoreResult;
+                    scoreResult = scoreResult with
+                    {
+                        Score = InternalTransferMatchMinimumScore - 1,
+                        HasTransferEvidence = true,
+                        DecisionReason = "existing_link_context"
+                    };
+                }
+
+                var dayDistance = Math.Abs((debit.BookedAtUtc.Date - credit.BookedAtUtc.Date).Days);
+                var distanceMinutes = (int)Math.Round(scoreResult.Distance.TotalMinutes, MidpointRounding.AwayFromZero);
+                var sequenceDistance = Math.Abs(outgoingOrderIndex[debit.Id] - incomingOrderIndex[credit.Id]);
+                var sequenceBonus = Math.Max(0, InternalTransferSequenceTieBreakBoost - sequenceDistance);
+                var adjustedScore = scoreResult.Score + sequenceBonus;
+
+                edges.Add(new InternalTransferCandidateEdge(
+                    amountCurrencyKey,
+                    debit,
+                    credit,
+                    scoreResult,
+                    dayDistance,
+                    IsSameDay: dayDistance == 0,
+                    distanceMinutes,
+                    sequenceBonus,
+                    adjustedScore,
+                    DetermineTransferConfidenceTier(adjustedScore, scoreResult.HasCounterpartyConfidence),
+                    AutoEligible: false,
+                    Weight: 0,
+                    ScoreBreakdown: $"base={scoreResult.Score};sequenceBonus={sequenceBonus}"));
+            }
+        }
+
+        if (edges.Count == 0)
+        {
+            return InternalTransferAmountGroupSummary.Empty;
+        }
+
+        var sameDayByDebit = edges
+            .Where(x => x.IsSameDay && x.BaseScore.HasTransferEvidence)
+            .Select(x => x.Debit.Id)
+            .ToHashSet();
+        var sameDayByCredit = edges
+            .Where(x => x.IsSameDay && x.BaseScore.HasTransferEvidence)
+            .Select(x => x.Credit.Id)
+            .ToHashSet();
+        var nearestDistanceByDebit = edges
+            .GroupBy(x => x.Debit.Id)
+            .ToDictionary(group => group.Key, group => group.Min(x => x.DistanceMinutes));
+        var nearestDistanceByCredit = edges
+            .GroupBy(x => x.Credit.Id)
+            .ToDictionary(group => group.Key, group => group.Min(x => x.DistanceMinutes));
+
+        for (var index = 0; index < edges.Count; index++)
+        {
+            var edge = edges[index];
+            var adjustedScore = edge.AdjustedScore;
+            var scoreBreakdown = new List<string>(6)
+            {
+                $"base={edge.BaseScore.Score}",
+                $"sequence={edge.SequenceBonus}"
+            };
+
+            if (edge.IsSameDay)
+            {
+                adjustedScore += 2;
+                scoreBreakdown.Add("sameDayBoost=2");
+            }
+            else
+            {
+                if (sameDayByDebit.Contains(edge.Debit.Id))
+                {
+                    adjustedScore -= InternalTransferCrossDayPenaltyWhenSameDayExists;
+                    scoreBreakdown.Add($"crossDayPenaltyByDebit={InternalTransferCrossDayPenaltyWhenSameDayExists}");
+                }
+
+                if (sameDayByCredit.Contains(edge.Credit.Id))
+                {
+                    adjustedScore -= InternalTransferCrossDayPenaltyWhenSameDayExists;
+                    scoreBreakdown.Add($"crossDayPenaltyByCredit={InternalTransferCrossDayPenaltyWhenSameDayExists}");
                 }
             }
 
-            if (bestCredit is null)
+            if (nearestDistanceByDebit.TryGetValue(edge.Debit.Id, out var nearestDebitDistance)
+                && edge.DistanceMinutes > nearestDebitDistance + 120)
             {
-                if (!hadEligibleCounterpartyCandidate)
-                {
-                    unmatchedNoCandidatesAfterFilters++;
-                }
-                else if (!hadTransferEvidenceCandidate)
-                {
-                    unmatchedNoTransferEvidence++;
-                }
-                else
-                {
-                    unmatchedBelowThreshold++;
-                }
+                adjustedScore -= InternalTransferNearestNeighborPenalty;
+                scoreBreakdown.Add($"debitNearestPenalty={InternalTransferNearestNeighborPenalty}");
+            }
+
+            if (nearestDistanceByCredit.TryGetValue(edge.Credit.Id, out var nearestCreditDistance)
+                && edge.DistanceMinutes > nearestCreditDistance + 120)
+            {
+                adjustedScore -= InternalTransferNearestNeighborPenalty;
+                scoreBreakdown.Add($"creditNearestPenalty={InternalTransferNearestNeighborPenalty}");
+            }
+
+            if (edge.DayDistance > 0
+                && edge.BaseScore.HasWeakTimestampPrecision
+                && !edge.BaseScore.HasCounterpartyConfidence)
+            {
+                adjustedScore -= InternalTransferWeakTimestampCrossDayPenalty;
+                scoreBreakdown.Add($"weakTimestampCrossDayPenalty={InternalTransferWeakTimestampCrossDayPenalty}");
+            }
+
+            var adjustedTier = DetermineTransferConfidenceTier(adjustedScore, edge.BaseScore.HasCounterpartyConfidence);
+            var disallowCrossDayBecauseSameDayExists =
+                !edge.IsSameDay
+                && sameDayByDebit.Contains(edge.Debit.Id)
+                && sameDayByCredit.Contains(edge.Credit.Id);
+
+            if (disallowCrossDayBecauseSameDayExists)
+            {
+                scoreBreakdown.Add("crossDayDisallowedWhenBothHaveSameDay=true");
+            }
+
+            var autoEligible = !disallowCrossDayBecauseSameDayExists
+                && adjustedScore >= InternalTransferMatchMinimumScore
+                && adjustedTier == TransferMatchConfidenceTier.High;
+            var weight = autoEligible
+                ? (adjustedScore * 100_000) - edge.DistanceMinutes - (edge.DayDistance * 1_000)
+                : 0;
+
+            edge = edge with
+            {
+                AdjustedScore = adjustedScore,
+                AdjustedConfidenceTier = adjustedTier,
+                AutoEligible = autoEligible,
+                Weight = weight,
+                ScoreBreakdown = string.Join(";", scoreBreakdown)
+            };
+            edges[index] = edge;
+
+            logger.LogDebug(
+                "Linked transfer candidate amountKey={AmountKey} debitId={DebitId} creditId={CreditId} baseScore={BaseScore} adjustedScore={AdjustedScore} confidenceTier={ConfidenceTier} autoEligible={AutoEligible} dayDistance={DayDistance} distanceMinutes={DistanceMinutes} hasCounterpartyConfidence={HasCounterpartyConfidence} hasTransferEvidence={HasTransferEvidence} reason={Reason} breakdown={Breakdown}",
+                amountCurrencyKey,
+                edge.Debit.Id,
+                edge.Credit.Id,
+                edge.BaseScore.Score,
+                edge.AdjustedScore,
+                edge.AdjustedConfidenceTier,
+                edge.AutoEligible,
+                edge.DayDistance,
+                edge.DistanceMinutes,
+                edge.BaseScore.HasCounterpartyConfidence,
+                edge.BaseScore.HasTransferEvidence,
+                edge.BaseScore.DecisionReason,
+                edge.ScoreBreakdown);
+        }
+
+        var clusters = BuildInternalTransferClusters(amountCurrencyKey, outgoingOrdered, incomingOrdered, edges);
+        var matchedPairs = 0;
+        var clustersRepaired = 0;
+        var candidatesAutoEligible = edges.Count(x => x.AutoEligible);
+        var rejectedByAmbiguity = 0;
+        var rejectedByMutualBest = 0;
+
+        foreach (var cluster in clusters)
+        {
+            var clusterResult = ReconcileInternalTransferCluster(cluster, now);
+            matchedPairs += clusterResult.MatchedPairs;
+            rejectedByAmbiguity += clusterResult.RejectedByAmbiguity;
+            rejectedByMutualBest += clusterResult.RejectedByMutualBest;
+            if (clusterResult.Repaired)
+            {
+                clustersRepaired++;
+            }
+        }
+
+        return new InternalTransferAmountGroupSummary(
+            MatchedPairs: matchedPairs,
+            ClustersProcessed: clusters.Count,
+            ClustersRepaired: clustersRepaired,
+            CandidatesEvaluated: edges.Count,
+            CandidatesAutoEligible: candidatesAutoEligible,
+            CandidatesRejectedByAmbiguity: rejectedByAmbiguity,
+            CandidatesRejectedByMutualBest: rejectedByMutualBest);
+    }
+
+    private static List<InternalTransferCandidateCluster> BuildInternalTransferClusters(
+        string amountCurrencyKey,
+        IReadOnlyList<Transaction> outgoing,
+        IReadOnlyList<Transaction> incoming,
+        IReadOnlyList<InternalTransferCandidateEdge> edges)
+    {
+        var unionFind = new DisjointSet<Guid>();
+        var nodeIds = new HashSet<Guid>();
+
+        foreach (var edge in edges.Where(x => x.BaseScore.HasTransferEvidence))
+        {
+            nodeIds.Add(edge.Debit.Id);
+            nodeIds.Add(edge.Credit.Id);
+            unionFind.Union(edge.Debit.Id, edge.Credit.Id);
+        }
+
+        if (nodeIds.Count == 0)
+        {
+            return [];
+        }
+
+        var clusterNodeIds = nodeIds
+            .GroupBy(id => unionFind.Find(id))
+            .Select(group => group.ToHashSet())
+            .ToList();
+
+        var clusters = new List<InternalTransferCandidateCluster>(clusterNodeIds.Count);
+        foreach (var ids in clusterNodeIds)
+        {
+            var clusterOutgoing = outgoing
+                .Where(x => ids.Contains(x.Id))
+                .OrderBy(x => x.BookedAtUtc)
+                .ThenBy(x => x.Id)
+                .ToList();
+            var clusterIncoming = incoming
+                .Where(x => ids.Contains(x.Id))
+                .OrderBy(x => x.BookedAtUtc)
+                .ThenBy(x => x.Id)
+                .ToList();
+
+            if (clusterOutgoing.Count == 0 || clusterIncoming.Count == 0)
+            {
                 continue;
             }
 
-            logger.LogInformation(
-                "Linked transfer pair selected debitId={DebitId} creditId={CreditId} score={Score} confidenceTier={ConfidenceTier} distanceMinutes={DistanceMinutes} debitDescription={DebitDescription} creditDescription={CreditDescription}",
-                debit.Id,
-                bestCredit.Id,
-                bestScore,
-                bestScoreResult?.ConfidenceTier ?? TransferMatchConfidenceTier.High,
-                (int)Math.Round(bestTimeDistance.TotalMinutes, MidpointRounding.AwayFromZero),
-                debit.Description,
-                bestCredit.Description);
-            ApplyLinkedInternalTransferPair(
-                debit,
-                bestCredit,
-                bestScoreResult ?? new InternalTransferPairScore(
-                    bestScore,
-                    bestTimeDistance,
-                    TransferMatchConfidenceTier.High,
-                    HasTransferEvidence: true,
-                    HasCounterpartyConfidence: true,
-                    DeferredByWeakTimestamp: false,
-                    DeferredBySavingsPocket: false,
-                    MissingCounterpartyConfidence: false,
-                    DecisionReason: "high_confidence_default"),
-                now);
-            usedIncomingIds.Add(bestCredit.Id);
-            matchedPairs++;
+            var clusterEdges = edges
+                .Where(x => ids.Contains(x.Debit.Id) && ids.Contains(x.Credit.Id))
+                .ToList();
+            if (clusterEdges.Count == 0)
+            {
+                continue;
+            }
+
+            var clusterStartUtc = clusterOutgoing
+                .Concat(clusterIncoming)
+                .Min(x => x.BookedAtUtc);
+            var clusterEndUtc = clusterOutgoing
+                .Concat(clusterIncoming)
+                .Max(x => x.BookedAtUtc);
+            var accountIds = clusterOutgoing
+                .Select(x => x.FinancialAccountId)
+                .Concat(clusterIncoming.Select(x => x.FinancialAccountId))
+                .Distinct()
+                .OrderBy(x => x)
+                .ToArray();
+            var accountPairLabel = accountIds.Length == 2
+                ? $"{accountIds[0]:N}|{accountIds[1]:N}"
+                : $"multi:{string.Join('|', accountIds.Select(x => x.ToString("N")))}";
+
+            clusters.Add(new InternalTransferCandidateCluster(
+                Key: $"{amountCurrencyKey}|{accountPairLabel}|{clusterStartUtc:O}|{clusterEndUtc:O}",
+                AmountCurrencyKey: amountCurrencyKey,
+                StartUtc: clusterStartUtc,
+                EndUtc: clusterEndUtc,
+                Outgoing: clusterOutgoing,
+                Incoming: clusterIncoming,
+                Edges: clusterEdges));
         }
 
-        if (matchedPairs > 0)
+        return clusters;
+    }
+
+    private ClusterReconcileResult ReconcileInternalTransferCluster(
+        InternalTransferCandidateCluster cluster,
+        DateTime now)
+    {
+        var autoEligibleEdges = cluster.Edges
+            .Where(x => x.AutoEligible)
+            .ToList();
+
+        if (autoEligibleEdges.Count == 0)
         {
-            logger.LogInformation(
-                "Matched linked internal transfers userId={UserId} matchedPairs={MatchedPairs} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
-                userId,
-                matchedPairs,
-                windowStartUtc,
-                windowEndUtc,
-                outgoing.Count,
-                incoming.Count,
-                unmatchedNoAmountCurrencyKey,
-                unmatchedNoCandidatesAfterFilters,
-                unmatchedNoTransferEvidence,
-                unmatchedBelowThreshold);
-            logger.LogInformation(
-                "Linked transfer matcher diagnostics userId={UserId} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket} missingCounterpartyConfidence={MissingCounterpartyConfidence} minimumScore={MinimumScore}",
-                userId,
-                unmatchedDeferredWeakTimestamp,
-                unmatchedDeferredSavingsPocket,
-                unmatchedMissingCounterpartyConfidence,
-                InternalTransferMatchMinimumScore);
-        }
-        else
-        {
-            logger.LogInformation(
-                "No linked internal transfer pairs matched userId={UserId} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} outgoingCandidates={OutgoingCandidates} incomingCandidates={IncomingCandidates} unmatchedNoAmountCurrencyKey={UnmatchedNoAmountCurrencyKey} unmatchedNoCandidatesAfterFilters={UnmatchedNoCandidatesAfterFilters} unmatchedNoTransferEvidence={UnmatchedNoTransferEvidence} unmatchedBelowThreshold={UnmatchedBelowThreshold}",
-                userId,
-                windowStartUtc,
-                windowEndUtc,
-                outgoing.Count,
-                incoming.Count,
-                unmatchedNoAmountCurrencyKey,
-                unmatchedNoCandidatesAfterFilters,
-                unmatchedNoTransferEvidence,
-                unmatchedBelowThreshold);
-            logger.LogInformation(
-                "Linked transfer matcher diagnostics userId={UserId} deferredWeakTimestamp={DeferredWeakTimestamp} deferredSavingsPocket={DeferredSavingsPocket} missingCounterpartyConfidence={MissingCounterpartyConfidence} minimumScore={MinimumScore}",
-                userId,
-                unmatchedDeferredWeakTimestamp,
-                unmatchedDeferredSavingsPocket,
-                unmatchedMissingCounterpartyConfidence,
-                InternalTransferMatchMinimumScore);
+            logger.LogDebug(
+                "Linked transfer cluster skipped clusterKey={ClusterKey} amountKey={AmountKey} reason=no_auto_eligible_candidates outgoing={OutgoingCount} incoming={IncomingCount}",
+                cluster.Key,
+                cluster.AmountCurrencyKey,
+                cluster.Outgoing.Count,
+                cluster.Incoming.Count);
+            return ClusterReconcileResult.Empty;
         }
 
-        return matchedPairs;
+        var byPair = autoEligibleEdges.ToDictionary(
+            x => new InternalTransferPairIdentity(x.Debit.Id, x.Credit.Id),
+            x => x);
+        var debitRanking = BuildCandidateRankingByDebit(autoEligibleEdges);
+        var creditRanking = BuildCandidateRankingByCredit(autoEligibleEdges);
+        var selected = SelectBestClusterPairs(cluster.Outgoing, cluster.Incoming, byPair);
+
+        var accepted = new List<InternalTransferCandidateEdge>();
+        var rejectedByAmbiguity = 0;
+        var rejectedByMutualBest = 0;
+
+        foreach (var edge in selected)
+        {
+            var debitBest = debitRanking[edge.Debit.Id];
+            var creditBest = creditRanking[edge.Credit.Id];
+            var debitMutualMarginSatisfied = !debitBest.SecondBestScore.HasValue
+                || (debitBest.BestScore - debitBest.SecondBestScore.Value) >= InternalTransferMutualBestMinimumMargin;
+            var creditMutualMarginSatisfied = !creditBest.SecondBestScore.HasValue
+                || (creditBest.BestScore - creditBest.SecondBestScore.Value) >= InternalTransferMutualBestMinimumMargin;
+            var isMutualBest =
+                debitBest.BestCounterpartId == edge.Credit.Id
+                && creditBest.BestCounterpartId == edge.Debit.Id
+                && debitMutualMarginSatisfied
+                && creditMutualMarginSatisfied;
+
+            if (!isMutualBest)
+            {
+                rejectedByMutualBest++;
+                logger.LogDebug(
+                    "Linked transfer cluster candidate rejected clusterKey={ClusterKey} debitId={DebitId} creditId={CreditId} reason=mutual_best_required debitBestCounterpartId={DebitBestCounterpartId} creditBestCounterpartId={CreditBestCounterpartId} debitBestScore={DebitBestScore} debitSecondBestScore={DebitSecondBestScore} creditBestScore={CreditBestScore} creditSecondBestScore={CreditSecondBestScore}",
+                    cluster.Key,
+                    edge.Debit.Id,
+                    edge.Credit.Id,
+                    debitBest.BestCounterpartId,
+                    creditBest.BestCounterpartId,
+                    debitBest.BestScore,
+                    debitBest.SecondBestScore,
+                    creditBest.BestScore,
+                    creditBest.SecondBestScore);
+                continue;
+            }
+
+            var debitAmbiguous = debitBest.SecondBestScore.HasValue
+                && (debitBest.BestScore - debitBest.SecondBestScore.Value) <= InternalTransferAmbiguityMaxScoreGap;
+            var creditAmbiguous = creditBest.SecondBestScore.HasValue
+                && (creditBest.BestScore - creditBest.SecondBestScore.Value) <= InternalTransferAmbiguityMaxScoreGap;
+
+            if (debitAmbiguous || creditAmbiguous)
+            {
+                rejectedByAmbiguity++;
+                logger.LogDebug(
+                    "Linked transfer cluster candidate rejected clusterKey={ClusterKey} debitId={DebitId} creditId={CreditId} reason=ambiguous debitScoreGap={DebitScoreGap} creditScoreGap={CreditScoreGap}",
+                    cluster.Key,
+                    edge.Debit.Id,
+                    edge.Credit.Id,
+                    debitBest.SecondBestScore.HasValue ? debitBest.BestScore - debitBest.SecondBestScore.Value : int.MaxValue,
+                    creditBest.SecondBestScore.HasValue ? creditBest.BestScore - creditBest.SecondBestScore.Value : int.MaxValue);
+                continue;
+            }
+
+            accepted.Add(edge);
+        }
+
+        if (accepted.Count == 0)
+        {
+            logger.LogDebug(
+                "Linked transfer cluster produced no accepted pairs clusterKey={ClusterKey} selectedByOptimizer={SelectedByOptimizer} rejectedByMutualBest={RejectedByMutualBest} rejectedByAmbiguity={RejectedByAmbiguity}",
+                cluster.Key,
+                selected.Count,
+                rejectedByMutualBest,
+                rejectedByAmbiguity);
+        }
+
+        foreach (var debit in cluster.Outgoing)
+        {
+            var candidatesForDebit = autoEligibleEdges
+                .Where(x => x.Debit.Id == debit.Id)
+                .OrderByDescending(x => x.Weight)
+                .ThenBy(x => x.DistanceMinutes)
+                .ToList();
+            if (candidatesForDebit.Count == 0 || candidatesForDebit.All(x => !x.IsSameDay))
+            {
+                continue;
+            }
+
+            if (!accepted.Any(x => x.Debit.Id == debit.Id))
+            {
+                continue;
+            }
+
+            var selectedForDebit = accepted.FirstOrDefault(x => x.Debit.Id == debit.Id);
+            if (!selectedForDebit.IsSameDay)
+            {
+                var sameDayBest = candidatesForDebit.First(x => x.IsSameDay);
+                logger.LogDebug(
+                    "Linked transfer same-day candidate lost clusterKey={ClusterKey} debitId={DebitId} selectedCreditId={SelectedCreditId} selectedScore={SelectedScore} sameDayCreditId={SameDayCreditId} sameDayScore={SameDayScore}",
+                    cluster.Key,
+                    debit.Id,
+                    selectedForDebit.Credit.Id,
+                    selectedForDebit.AdjustedScore,
+                    sameDayBest.Credit.Id,
+                    sameDayBest.AdjustedScore);
+            }
+        }
+
+        var clusterTransactionIds = cluster.Outgoing
+            .Select(x => x.Id)
+            .Concat(cluster.Incoming.Select(x => x.Id))
+            .ToHashSet();
+
+        var existingPairs = ExtractExistingClusterPairKeys(cluster.Outgoing, cluster.Incoming, clusterTransactionIds);
+        var targetPairs = accepted
+            .Select(x => BuildLinkedPairKey(x.Debit.Id, x.Credit.Id))
+            .ToHashSet(StringComparer.Ordinal);
+        var repaired = !existingPairs.SetEquals(targetPairs);
+
+        var newCounterparts = accepted
+            .SelectMany(x => new[]
+            {
+                new { Id = x.Debit.Id, Counterpart = x.Credit.Id },
+                new { Id = x.Credit.Id, Counterpart = x.Debit.Id }
+            })
+            .ToDictionary(x => x.Id, x => x.Counterpart);
+
+        foreach (var transaction in cluster.Outgoing.Concat(cluster.Incoming))
+        {
+            if (!transaction.LinkedTransferTransactionId.HasValue)
+            {
+                continue;
+            }
+
+            var currentCounterpartId = transaction.LinkedTransferTransactionId.Value;
+            if (!clusterTransactionIds.Contains(currentCounterpartId))
+            {
+                continue;
+            }
+
+            if (newCounterparts.TryGetValue(transaction.Id, out var expectedCounterpartId)
+                && expectedCounterpartId == currentCounterpartId)
+            {
+                continue;
+            }
+
+            ResetLinkedTransferState(transaction);
+        }
+
+        foreach (var edge in accepted)
+        {
+            var score = edge.BaseScore with
+            {
+                Score = edge.AdjustedScore,
+                ConfidenceTier = edge.AdjustedConfidenceTier,
+                DecisionReason = $"cluster_optimal:{edge.ScoreBreakdown}"
+            };
+
+            ApplyLinkedInternalTransferPair(edge.Debit, edge.Credit, score, now);
+
+            logger.LogInformation(
+                "Linked transfer pair selected clusterKey={ClusterKey} amountKey={AmountKey} debitId={DebitId} creditId={CreditId} adjustedScore={AdjustedScore} confidenceTier={ConfidenceTier} distanceMinutes={DistanceMinutes} dayDistance={DayDistance} reason={Reason}",
+                cluster.Key,
+                cluster.AmountCurrencyKey,
+                edge.Debit.Id,
+                edge.Credit.Id,
+                edge.AdjustedScore,
+                edge.AdjustedConfidenceTier,
+                edge.DistanceMinutes,
+                edge.DayDistance,
+                edge.ScoreBreakdown);
+        }
+
+        logger.LogInformation(
+            "Linked transfer cluster reconciled clusterKey={ClusterKey} amountKey={AmountKey} startUtc={StartUtc} endUtc={EndUtc} outgoing={OutgoingCount} incoming={IncomingCount} autoEligibleCandidates={AutoEligibleCandidates} acceptedPairs={AcceptedPairs} repaired={Repaired} rejectedByMutualBest={RejectedByMutualBest} rejectedByAmbiguity={RejectedByAmbiguity}",
+            cluster.Key,
+            cluster.AmountCurrencyKey,
+            cluster.StartUtc,
+            cluster.EndUtc,
+            cluster.Outgoing.Count,
+            cluster.Incoming.Count,
+            autoEligibleEdges.Count,
+            accepted.Count,
+            repaired,
+            rejectedByMutualBest,
+            rejectedByAmbiguity);
+
+        return new ClusterReconcileResult(
+            MatchedPairs: accepted.Count,
+            Repaired: repaired,
+            RejectedByAmbiguity: rejectedByAmbiguity,
+            RejectedByMutualBest: rejectedByMutualBest);
+    }
+
+    private static Dictionary<Guid, CounterpartRanking> BuildCandidateRankingByDebit(
+        IReadOnlyList<InternalTransferCandidateEdge> candidates)
+    {
+        return candidates
+            .GroupBy(x => x.Debit.Id)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var ordered = group
+                        .OrderByDescending(x => x.Weight)
+                        .ThenBy(x => x.DistanceMinutes)
+                        .ThenBy(x => x.Credit.BookedAtUtc)
+                        .ToList();
+
+                    return new CounterpartRanking(
+                        BestCounterpartId: ordered[0].Credit.Id,
+                        BestScore: ordered[0].AdjustedScore,
+                        SecondBestScore: ordered.Count > 1 ? ordered[1].AdjustedScore : null);
+                });
+    }
+
+    private static Dictionary<Guid, CounterpartRanking> BuildCandidateRankingByCredit(
+        IReadOnlyList<InternalTransferCandidateEdge> candidates)
+    {
+        return candidates
+            .GroupBy(x => x.Credit.Id)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var ordered = group
+                        .OrderByDescending(x => x.Weight)
+                        .ThenBy(x => x.DistanceMinutes)
+                        .ThenBy(x => x.Debit.BookedAtUtc)
+                        .ToList();
+
+                    return new CounterpartRanking(
+                        BestCounterpartId: ordered[0].Debit.Id,
+                        BestScore: ordered[0].AdjustedScore,
+                        SecondBestScore: ordered.Count > 1 ? ordered[1].AdjustedScore : null);
+                });
+    }
+
+    private static List<InternalTransferCandidateEdge> SelectBestClusterPairs(
+        IReadOnlyList<Transaction> outgoing,
+        IReadOnlyList<Transaction> incoming,
+        IReadOnlyDictionary<InternalTransferPairIdentity, InternalTransferCandidateEdge> candidatesByPair)
+    {
+        var outgoingIndexById = outgoing
+            .Select((transaction, index) => new { transaction.Id, Index = index })
+            .ToDictionary(x => x.Id, x => x.Index);
+        var incomingIndexById = incoming
+            .Select((transaction, index) => new { transaction.Id, Index = index })
+            .ToDictionary(x => x.Id, x => x.Index);
+
+        var dimension = outgoing.Count + incoming.Count;
+        var scores = new int[dimension, dimension];
+
+        for (var row = 0; row < outgoing.Count; row++)
+        {
+            for (var col = 0; col < incoming.Count; col++)
+            {
+                var pair = new InternalTransferPairIdentity(outgoing[row].Id, incoming[col].Id);
+                scores[row, col] = candidatesByPair.TryGetValue(pair, out var edge)
+                    ? edge.Weight
+                    : -1_000_000;
+            }
+
+            for (var col = incoming.Count; col < dimension; col++)
+            {
+                scores[row, col] = 0;
+            }
+        }
+
+        for (var row = outgoing.Count; row < dimension; row++)
+        {
+            for (var col = 0; col < dimension; col++)
+            {
+                scores[row, col] = 0;
+            }
+        }
+
+        var assignment = SolveMaximumWeightAssignment(scores);
+        var selected = new List<InternalTransferCandidateEdge>(outgoing.Count);
+
+        for (var row = 0; row < outgoing.Count; row++)
+        {
+            var column = assignment[row];
+            if (column < 0 || column >= incoming.Count)
+            {
+                continue;
+            }
+
+            var pair = new InternalTransferPairIdentity(outgoing[row].Id, incoming[column].Id);
+            if (!candidatesByPair.TryGetValue(pair, out var edge))
+            {
+                continue;
+            }
+
+            if (edge.Weight <= 0)
+            {
+                continue;
+            }
+
+            selected.Add(edge);
+        }
+
+        return selected;
+    }
+
+    private static int[] SolveMaximumWeightAssignment(int[,] weights)
+    {
+        var n = weights.GetLength(0);
+        var m = weights.GetLength(1);
+        if (n == 0 || m == 0)
+        {
+            return [];
+        }
+
+        var u = new int[n + 1];
+        var v = new int[m + 1];
+        var p = new int[m + 1];
+        var way = new int[m + 1];
+
+        for (var i = 1; i <= n; i++)
+        {
+            p[0] = i;
+            var j0 = 0;
+            var minv = new int[m + 1];
+            var used = new bool[m + 1];
+            for (var j = 0; j <= m; j++)
+            {
+                minv[j] = int.MaxValue / 4;
+            }
+
+            do
+            {
+                used[j0] = true;
+                var i0 = p[j0];
+                var delta = int.MaxValue / 4;
+                var j1 = 0;
+                for (var j = 1; j <= m; j++)
+                {
+                    if (used[j])
+                    {
+                        continue;
+                    }
+
+                    var current = -weights[i0 - 1, j - 1] - u[i0] - v[j];
+                    if (current < minv[j])
+                    {
+                        minv[j] = current;
+                        way[j] = j0;
+                    }
+
+                    if (minv[j] < delta)
+                    {
+                        delta = minv[j];
+                        j1 = j;
+                    }
+                }
+
+                for (var j = 0; j <= m; j++)
+                {
+                    if (used[j])
+                    {
+                        u[p[j]] += delta;
+                        v[j] -= delta;
+                    }
+                    else
+                    {
+                        minv[j] -= delta;
+                    }
+                }
+
+                j0 = j1;
+            } while (p[j0] != 0);
+
+            do
+            {
+                var j1 = way[j0];
+                p[j0] = p[j1];
+                j0 = j1;
+            } while (j0 != 0);
+        }
+
+        var assignment = Enumerable.Repeat(-1, n).ToArray();
+        for (var j = 1; j <= m; j++)
+        {
+            if (p[j] != 0)
+            {
+                assignment[p[j] - 1] = j - 1;
+            }
+        }
+
+        return assignment;
+    }
+
+    private static HashSet<string> ExtractExistingClusterPairKeys(
+        IReadOnlyList<Transaction> outgoing,
+        IReadOnlyList<Transaction> incoming,
+        IReadOnlySet<Guid> clusterTransactionIds)
+    {
+        var outgoingById = outgoing.ToDictionary(x => x.Id);
+        var incomingById = incoming.ToDictionary(x => x.Id);
+        var existingPairs = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var debit in outgoing)
+        {
+            if (!debit.LinkedTransferTransactionId.HasValue)
+            {
+                continue;
+            }
+
+            var creditId = debit.LinkedTransferTransactionId.Value;
+            if (!clusterTransactionIds.Contains(creditId)
+                || !incomingById.TryGetValue(creditId, out var credit)
+                || credit.LinkedTransferTransactionId != debit.Id)
+            {
+                continue;
+            }
+
+            existingPairs.Add(BuildLinkedPairKey(debit.Id, creditId));
+        }
+
+        foreach (var credit in incoming)
+        {
+            if (!credit.LinkedTransferTransactionId.HasValue)
+            {
+                continue;
+            }
+
+            var debitId = credit.LinkedTransferTransactionId.Value;
+            if (!clusterTransactionIds.Contains(debitId)
+                || !outgoingById.TryGetValue(debitId, out var debit)
+                || debit.LinkedTransferTransactionId != credit.Id)
+            {
+                continue;
+            }
+
+            existingPairs.Add(BuildLinkedPairKey(debitId, credit.Id));
+        }
+
+        return existingPairs;
+    }
+
+    private static string BuildLinkedPairKey(Guid debitId, Guid creditId)
+        => $"{debitId:N}|{creditId:N}";
+
+    private static bool IsAutoMatchCandidateForReconciliation(Transaction transaction)
+    {
+        if (IsAutoMatchEligible(transaction))
+        {
+            return true;
+        }
+
+        return transaction.TransferKind == TransactionTransferKind.LinkedInternal
+            && transaction.LinkedTransferTransactionId.HasValue;
     }
 
     private async Task<int> ApplyTransactionRelationshipLayerAsync(
@@ -4358,6 +5020,8 @@ public sealed class BankSyncService(
                 ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: hasTransferEvidence,
                 HasCounterpartyConfidence: hasCounterpartyConfidence,
+                HasWeakTimestampPrecision: hasWeakTimestampPrecision,
+                InvolvesSavingsPocketMovement: involvesSavingsPocketMovement,
                 DeferredByWeakTimestamp: false,
                 DeferredBySavingsPocket: false,
                 MissingCounterpartyConfidence: false,
@@ -4372,6 +5036,8 @@ public sealed class BankSyncService(
                 ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: false,
                 HasCounterpartyConfidence: hasCounterpartyConfidence,
+                HasWeakTimestampPrecision: hasWeakTimestampPrecision,
+                InvolvesSavingsPocketMovement: involvesSavingsPocketMovement,
                 DeferredByWeakTimestamp: false,
                 DeferredBySavingsPocket: false,
                 MissingCounterpartyConfidence: !hasCounterpartyConfidence,
@@ -4388,6 +5054,8 @@ public sealed class BankSyncService(
                 ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: hasTransferEvidence,
                 HasCounterpartyConfidence: false,
+                HasWeakTimestampPrecision: hasWeakTimestampPrecision,
+                InvolvesSavingsPocketMovement: involvesSavingsPocketMovement,
                 DeferredByWeakTimestamp: true,
                 DeferredBySavingsPocket: false,
                 MissingCounterpartyConfidence: true,
@@ -4402,6 +5070,8 @@ public sealed class BankSyncService(
                 ConfidenceTier: TransferMatchConfidenceTier.Low,
                 HasTransferEvidence: hasTransferEvidence,
                 HasCounterpartyConfidence: false,
+                HasWeakTimestampPrecision: hasWeakTimestampPrecision,
+                InvolvesSavingsPocketMovement: involvesSavingsPocketMovement,
                 DeferredByWeakTimestamp: false,
                 DeferredBySavingsPocket: true,
                 MissingCounterpartyConfidence: true,
@@ -4487,6 +5157,8 @@ public sealed class BankSyncService(
             ConfidenceTier: confidenceTier,
             HasTransferEvidence: hasTransferEvidence,
             HasCounterpartyConfidence: hasCounterpartyConfidence,
+            HasWeakTimestampPrecision: hasWeakTimestampPrecision,
+            InvolvesSavingsPocketMovement: involvesSavingsPocketMovement,
             DeferredByWeakTimestamp: false,
             DeferredBySavingsPocket: false,
             MissingCounterpartyConfidence: !hasCounterpartyConfidence,
@@ -4726,10 +5398,111 @@ public sealed class BankSyncService(
         TransferMatchConfidenceTier ConfidenceTier,
         bool HasTransferEvidence,
         bool HasCounterpartyConfidence,
+        bool HasWeakTimestampPrecision,
+        bool InvolvesSavingsPocketMovement,
         bool DeferredByWeakTimestamp,
         bool DeferredBySavingsPocket,
         bool MissingCounterpartyConfidence,
         string DecisionReason);
+
+    private readonly record struct InternalTransferPairIdentity(
+        Guid DebitId,
+        Guid CreditId);
+
+    private readonly record struct InternalTransferAmountGroupSummary(
+        int MatchedPairs,
+        int ClustersProcessed,
+        int ClustersRepaired,
+        int CandidatesEvaluated,
+        int CandidatesAutoEligible,
+        int CandidatesRejectedByAmbiguity,
+        int CandidatesRejectedByMutualBest)
+    {
+        public static InternalTransferAmountGroupSummary Empty =>
+            new(
+                MatchedPairs: 0,
+                ClustersProcessed: 0,
+                ClustersRepaired: 0,
+                CandidatesEvaluated: 0,
+                CandidatesAutoEligible: 0,
+                CandidatesRejectedByAmbiguity: 0,
+                CandidatesRejectedByMutualBest: 0);
+    }
+
+    private readonly record struct InternalTransferCandidateEdge(
+        string AmountCurrencyKey,
+        Transaction Debit,
+        Transaction Credit,
+        InternalTransferPairScore BaseScore,
+        int DayDistance,
+        bool IsSameDay,
+        int DistanceMinutes,
+        int SequenceBonus,
+        int AdjustedScore,
+        TransferMatchConfidenceTier AdjustedConfidenceTier,
+        bool AutoEligible,
+        int Weight,
+        string ScoreBreakdown);
+
+    private readonly record struct InternalTransferCandidateCluster(
+        string Key,
+        string AmountCurrencyKey,
+        DateTime StartUtc,
+        DateTime EndUtc,
+        IReadOnlyList<Transaction> Outgoing,
+        IReadOnlyList<Transaction> Incoming,
+        IReadOnlyList<InternalTransferCandidateEdge> Edges);
+
+    private readonly record struct CounterpartRanking(
+        Guid BestCounterpartId,
+        int BestScore,
+        int? SecondBestScore);
+
+    private readonly record struct ClusterReconcileResult(
+        int MatchedPairs,
+        bool Repaired,
+        int RejectedByAmbiguity,
+        int RejectedByMutualBest)
+    {
+        public static ClusterReconcileResult Empty =>
+            new(
+                MatchedPairs: 0,
+                Repaired: false,
+                RejectedByAmbiguity: 0,
+                RejectedByMutualBest: 0);
+    }
+
+    private sealed class DisjointSet<T>
+        where T : notnull
+    {
+        private readonly Dictionary<T, T> parent = [];
+
+        public T Find(T value)
+        {
+            if (!parent.TryGetValue(value, out var current))
+            {
+                parent[value] = value;
+                return value;
+            }
+
+            if (!EqualityComparer<T>.Default.Equals(current, value))
+            {
+                parent[value] = Find(current);
+            }
+
+            return parent[value];
+        }
+
+        public void Union(T left, T right)
+        {
+            var leftRoot = Find(left);
+            var rightRoot = Find(right);
+            if (!EqualityComparer<T>.Default.Equals(leftRoot, rightRoot))
+            {
+                parent[rightRoot] = leftRoot;
+            }
+        }
+    }
 
     private readonly record struct ProjectedRawReference(
         Guid RawBankTransactionId,

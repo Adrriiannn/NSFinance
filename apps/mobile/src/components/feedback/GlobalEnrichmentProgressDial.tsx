@@ -2,13 +2,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getActivityFeedInteracting } from "../../features/activity/activityFeedRuntime";
 import { useBankEnrichmentProgressQuery } from "../../features/banking/useBanking";
 import { subscribeToEnrichmentTooltip } from "../../features/banking/enrichmentUxEvents";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 const TOOLTIP_VISIBLE_MS = 10_000;
-const LIVE_INVALIDATION_INTERVAL_MS = 4_000;
+const LIVE_INVALIDATION_INTERVAL_MS = 6_000;
 
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-GB").format(value);
@@ -24,15 +25,24 @@ export function GlobalEnrichmentProgressDial() {
 
   const enrichmentQuery = useBankEnrichmentProgressQuery(isAuthenticated && !isBootstrapping);
   const progress = enrichmentQuery.data;
-  const inProgress = Boolean(progress?.inProgress);
+  const hasPendingConnection = Boolean(
+    progress?.connections?.some((connection) =>
+      connection.inProgress
+      || connection.remainingCount > 0
+      || connection.stage === "queued_for_sync"
+      || connection.stage === "sync_stalled")
+  );
+  const inProgress = Boolean(progress?.inProgress || hasPendingConnection);
   const progressPercent = Math.max(0, Math.min(100, Math.round(progress?.progressPercent ?? 0)));
   const stageLabel = progress?.stage === "historical_backfill"
     ? "Organizing history"
-    : progress?.stage === "awaiting_sync"
-      ? "Waiting for sync"
-      : progress?.stage === "completed"
-        ? "Completed"
-        : "Preparing";
+    : progress?.stage === "queued_for_sync"
+      ? "Queued for sync"
+      : progress?.stage === "sync_stalled"
+        ? "Sync stalled"
+        : progress?.stage === "completed"
+          ? "Completed"
+          : "Preparing";
 
   useEffect(() => {
     return subscribeToEnrichmentTooltip(() => {
@@ -66,18 +76,25 @@ export function GlobalEnrichmentProgressDial() {
         return;
       }
 
-      void Promise.all([
-        queryClient.invalidateQueries({
-          predicate: (query) =>
-            Array.isArray(query.queryKey)
-            && query.queryKey[0] === "transactions"
-        }),
+      const queryOperations: Promise<unknown>[] = [
         queryClient.invalidateQueries({
           predicate: (query) =>
             Array.isArray(query.queryKey)
             && (query.queryKey[0] === "accounts" || query.queryKey[0] === "dashboard")
         })
-      ]);
+      ];
+
+      if (!getActivityFeedInteracting()) {
+        queryOperations.push(
+          queryClient.invalidateQueries({
+            predicate: (query) =>
+              Array.isArray(query.queryKey)
+              && query.queryKey[0] === "transactions"
+          })
+        );
+      }
+
+      void Promise.all(queryOperations);
     }, LIVE_INVALIDATION_INTERVAL_MS);
 
     return () => {

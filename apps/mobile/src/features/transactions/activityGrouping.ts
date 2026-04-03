@@ -133,7 +133,10 @@ export function buildTransactionMetaLine(
 ): string {
   const category =
     categoryOverride ??
+    transaction.taxonomySubcategoryName ??
+    transaction.taxonomyCategoryName ??
     transaction.categoryName ??
+    transaction.taxonomyDomainName ??
     "Uncategorized";
   return category;
 }
