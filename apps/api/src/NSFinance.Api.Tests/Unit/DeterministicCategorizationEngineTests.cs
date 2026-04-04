@@ -137,6 +137,30 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void TransferPairing_WeakTransferLikeWithoutExplicitCounterpartySignal_EvaluatesAsNoMatch()
+    {
+        var engine = new TransferPairingEngine();
+        var feature = CreateFeature(
+            signedAmount: -125m,
+            hasTransferKeyword: true,
+            hasSavingsKeyword: false,
+            accountHint: null,
+            tokens: ["transfer", "memo"],
+            isBooked: true,
+            isPending: false,
+            hasCounterpartyAccounts: true);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature> { [feature.TransactionId] = feature },
+            new HashSet<Guid>());
+
+        var decision = analysis.PendingDecisions[feature.TransactionId];
+        Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, decision.Status);
+        Assert.Equal(DeterministicClassificationReasonCodes.EvaluatedInsufficientSignals, decision.ReasonCode);
+        Assert.False(decision.RetryEligible);
+    }
+
+    [Fact]
     public void TransferPairing_AmbiguousCandidates_AreRejected()
     {
         var engine = new TransferPairingEngine();

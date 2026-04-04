@@ -1271,6 +1271,304 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task DeterministicEnrichment_SmallTransferLikeResidual_FinalizesAsTerminalNoMatch()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.deterministic-small-residual@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-deterministic-small-residual", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var primaryLinkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var primaryFinancialAccountId = primaryLinkedAccount.FinancialAccountId!.Value;
+
+        var secondaryFinancialAccountId = Guid.NewGuid();
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = secondaryFinancialAccountId,
+            UserId = user.Id,
+            Name = "Counterparty Account",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddDays(-3)
+        });
+
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = connection.Id,
+            ProviderAccountId = "counterparty-account-seed",
+            DisplayName = "Counterparty Account",
+            AccountType = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddDays(-3),
+            UpdatedUtc = now.AddDays(-3),
+            FinancialAccountId = secondaryFinancialAccountId
+        });
+
+        var residualIds = new List<Guid>();
+        var seedBaseUtc = now.AddDays(-28);
+        for (var i = 0; i < 38; i++)
+        {
+            var id = Guid.NewGuid();
+            residualIds.Add(id);
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = id,
+                FinancialAccountId = primaryFinancialAccountId,
+                Amount = -(1_000 + i),
+                Currency = "EUR",
+                Description = $"Transfer memo reference row {i:D2}",
+                BookedAtUtc = seedBaseUtc.AddMinutes(i),
+                CreatedUtc = seedBaseUtc.AddMinutes(i)
+            });
+        }
+
+        harness.DbContext.Transactions.Add(new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = secondaryFinancialAccountId,
+            Amount = 12.34m,
+            Currency = "EUR",
+            Description = "Counterparty activity marker",
+            BookedAtUtc = now.AddDays(-7),
+            CreatedUtc = now.AddDays(-7)
+        });
+
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentCheckpointUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSyncAttemptedUtc = now.AddHours(-2);
+        connection.LastSuccessfulSyncUtc = now.AddHours(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        BankSyncService.DeterministicEnrichmentRunResult? lastRun = null;
+        for (var run = 0; run < 6; run++)
+        {
+            var outcome = await syncService.RunDeterministicEnrichmentAsync(
+                user.Id,
+                connection.Id,
+                trigger: "test_small_residual_completion",
+                cancellationToken: CancellationToken.None);
+            Assert.True(outcome.Succeeded);
+            lastRun = outcome.Value;
+            if (lastRun.Value.RowsActionableRemaining == 0)
+            {
+                break;
+            }
+        }
+
+        Assert.True(lastRun.HasValue);
+        Assert.Equal(0, lastRun.Value.RowsActionableRemaining);
+        Assert.Equal(0, lastRun.Value.RowsRemaining);
+
+        var residualRows = await harness.DbContext.Transactions
+            .Where(x => residualIds.Contains(x.Id))
+            .ToListAsync();
+
+        Assert.Equal(38, residualRows.Count);
+        Assert.All(residualRows, row =>
+        {
+            Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, row.DeterministicClassificationStatus);
+            Assert.True(row.DeterministicClassificationTerminal);
+            Assert.True(row.DeterministicClassificationVersion.HasValue && row.DeterministicClassificationVersion.Value >= currentVersion);
+        });
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+        Assert.Equal("completed", progress.Stage);
+        Assert.True(progress.Completed);
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_LargeHistoricalRows_WithInitialBackfillUnset_CompletesWithoutPlateau()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.deterministic-large-plateau@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-deterministic-large-plateau", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+
+        const int seededRows = 4_476;
+        var seedBaseUtc = now.AddDays(-120);
+        for (var i = 0; i < seededRows; i++)
+        {
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = Guid.NewGuid(),
+                FinancialAccountId = accountId,
+                Amount = -(40 + i),
+                Currency = "EUR",
+                Description = $"Merchant historical row {i:D4}",
+                BookedAtUtc = seedBaseUtc.AddMinutes(i),
+                CreatedUtc = seedBaseUtc.AddMinutes(i)
+            });
+        }
+
+        connection.InitialBackfillCompletedUtc = null;
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentCheckpointUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSyncAttemptedUtc = now.AddHours(-2);
+        connection.LastSuccessfulSyncUtc = now.AddHours(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var remainingSequence = new List<int>();
+        BankSyncService.DeterministicEnrichmentRunResult? lastRun = null;
+
+        for (var run = 0; run < 16; run++)
+        {
+            var outcome = await syncService.RunDeterministicEnrichmentAsync(
+                user.Id,
+                connection.Id,
+                trigger: $"test_large_historical_run_{run}",
+                cancellationToken: CancellationToken.None);
+            Assert.True(outcome.Succeeded);
+
+            lastRun = outcome.Value;
+            remainingSequence.Add(lastRun.Value.RowsRemaining);
+
+            if (lastRun.Value.RowsActionableRemaining == 0)
+            {
+                break;
+            }
+        }
+
+        Assert.True(lastRun.HasValue);
+        Assert.Equal(0, lastRun.Value.RowsActionableRemaining);
+        Assert.Equal(0, lastRun.Value.RowsRemaining);
+        Assert.True(remainingSequence.Count >= 2);
+        Assert.True(remainingSequence.First() > remainingSequence.Last());
+        Assert.DoesNotContain(remainingSequence.Zip(remainingSequence.Skip(1)), pair => pair.Second > pair.First);
+
+        var terminalCurrentVersionCount = await harness.DbContext.Transactions
+            .CountAsync(x =>
+                x.FinancialAccountId == accountId
+                && x.DeterministicClassificationVersion.HasValue
+                && x.DeterministicClassificationVersion.Value >= currentVersion
+                && x.DeterministicClassificationTerminal);
+        Assert.True(terminalCurrentVersionCount >= seededRows);
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_DoesNotReportWaitingForFirstSync_WhenDeterministicProgressExists()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-stage-contradiction@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-enrichment-stage-contradiction", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var activeConnection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        activeConnection.Status = BankConnectionStatuses.Synced;
+        activeConnection.NeedsHistoricalReclassification = true;
+        activeConnection.HistoricalEnrichmentStartedUtc = now.AddMinutes(-10);
+        activeConnection.HistoricalEnrichmentCompletedUtc = null;
+        activeConnection.HistoricalEnrichmentVersion = currentVersion - 1;
+        activeConnection.LastSyncAttemptedUtc = now.AddMinutes(-11);
+        activeConnection.LastSuccessfulSyncUtc = now.AddMinutes(-11);
+
+        var activeAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == activeConnection.Id && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var activeRows = await harness.DbContext.Transactions
+            .Where(x => activeAccountIds.Contains(x.FinancialAccountId))
+            .OrderBy(x => x.CreatedUtc)
+            .ToListAsync();
+        Assert.True(activeRows.Count >= 2);
+
+        activeRows[0].DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+        activeRows[0].DeterministicClassificationVersion = currentVersion;
+        activeRows[0].DeterministicClassificationTerminal = true;
+        activeRows[0].DeterministicClassificationEvaluatedUtc = now.AddMinutes(-5);
+        activeRows[0].NeedsDeterministicReclassification = false;
+
+        activeRows[1].DeterministicClassificationStatus = DeterministicClassificationStatus.NotEvaluated;
+        activeRows[1].DeterministicClassificationVersion = currentVersion;
+        activeRows[1].DeterministicClassificationTerminal = false;
+        activeRows[1].DeterministicClassificationEvaluatedUtc = null;
+        activeRows[1].NeedsDeterministicReclassification = false;
+
+        var waitingConnection = new OpenBankingConnection
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Waiting First Sync Connection",
+            Status = BankConnectionStatuses.ConnectedPendingSync,
+            NeedsHistoricalReclassification = true,
+            HistoricalEnrichmentStartedUtc = null,
+            HistoricalEnrichmentCompletedUtc = null,
+            HistoricalEnrichmentVersion = null,
+            LastSyncAttemptedUtc = null,
+            LastSuccessfulSyncUtc = null,
+            CreatedUtc = now.AddMinutes(-20),
+            UpdatedUtc = now
+        };
+        harness.DbContext.OpenBankingConnections.Add(waitingConnection);
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+
+        Assert.True(progress.TotalCount > 0);
+        Assert.True(progress.ProcessedCount > 0);
+        Assert.True(progress.RemainingCount > 0);
+        Assert.NotEqual("waiting_for_first_sync", progress.Stage);
+        Assert.Equal("categorizing", progress.Stage);
+    }
+
+    [Fact]
     public async Task GlobalSync_AibCappedIncrementalWindow_RecoversRecentTransactions()
     {
         var handler = AibCappedOldestSliceFlowHandler(out var getTransactionsCallCount, out var referenceNowUtc);
@@ -3937,6 +4235,11 @@ public class OpenBankingIntegrationTests
                     AutoSyncIntervalMinutes = 60
                 }),
                 NullLogger<BankGlobalSyncService>.Instance);
+        }
+
+        public BankSyncService CreateSyncServiceForTesting(TrueLayerOptions options)
+        {
+            return CreateSyncService(options);
         }
 
         private BankSyncService CreateSyncService(TrueLayerOptions options)

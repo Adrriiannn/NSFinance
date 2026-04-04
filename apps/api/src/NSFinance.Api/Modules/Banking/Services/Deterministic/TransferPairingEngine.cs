@@ -58,9 +58,10 @@ public sealed class TransferPairingEngine
             candidateEdgeCount += candidates.Count;
             if (candidates.Count == 0)
             {
+                var explicitCounterpartyExpectation = HasExplicitCounterpartyExpectation(feature);
                 var status = feature.IsPending
                     ? DeterministicClassificationStatus.DeferredWaitingForMoreContext
-                    : feature.HasCounterpartyAccounts
+                    : feature.HasCounterpartyAccounts && explicitCounterpartyExpectation
                         ? DeterministicClassificationStatus.DeferredWaitingForCounterparty
                         : DeterministicClassificationStatus.EvaluatedNoMatchingRule;
                 var reasonCode = status switch
@@ -113,6 +114,8 @@ public sealed class TransferPairingEngine
             }
 
             var best = candidates[0];
+            var bestScoreStrongEnough = best.Score >= 8;
+            var explicitCounterpartyExpectationForBest = HasExplicitCounterpartyExpectation(feature);
             if (!feature.IsBooked || !best.Candidate.IsBooked || feature.IsPending || best.Candidate.IsPending)
             {
                 pending[feature.TransactionId] = new TransferPendingDecision(
@@ -126,6 +129,24 @@ public sealed class TransferPairingEngine
                         candidateId = best.Candidate.TransactionId,
                         candidateCount = candidates.Count,
                         bestScore = best.Score
+                    }));
+                continue;
+            }
+
+            if (!bestScoreStrongEnough || !explicitCounterpartyExpectationForBest)
+            {
+                pending[feature.TransactionId] = new TransferPendingDecision(
+                    feature.TransactionId,
+                    DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+                    DeterministicClassificationReasonCodes.EvaluatedInsufficientSignals,
+                    false,
+                    JsonSerializer.Serialize(new
+                    {
+                        pass = "defer_not_fail",
+                        candidateId = best.Candidate.TransactionId,
+                        candidateCount = candidates.Count,
+                        bestScore = best.Score,
+                        explicitCounterpartyExpectation = explicitCounterpartyExpectationForBest
                     }));
                 continue;
             }
@@ -207,5 +228,20 @@ public sealed class TransferPairingEngine
         }
 
         return score;
+    }
+
+    private static bool HasExplicitCounterpartyExpectation(DeterministicTransactionFeature feature)
+    {
+        if (!feature.HasCounterpartyAccounts)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(feature.AccountHint))
+        {
+            return true;
+        }
+
+        return feature.HasTransferKeyword && feature.HasProviderTransferHint && feature.ReferenceEntropy >= 0.3d;
     }
 }

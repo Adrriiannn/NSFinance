@@ -115,6 +115,14 @@ public sealed class BankSyncService(
         DateTime? HistoricalEnrichmentCheckpointUtc,
         int RowsEvaluated,
         int RowsRemaining,
+        int RowsActionableRemaining,
+        int RowsDeferredWaitingForCounterparty,
+        int RowsDeferredWaitingForMoreContext,
+        int RowsNotEvaluated,
+        int RowsEvaluating,
+        int RowsVersionBehind,
+        int RowsMarkedForReclassification,
+        int RowsSupersededRecomputeRequired,
         int BatchesProcessed,
         string Mode,
         bool HasChanges);
@@ -385,7 +393,7 @@ public sealed class BankSyncService(
         }
 
         logger.LogInformation(
-            "Deterministic enrichment run completed connectionId={ConnectionId} trigger={Trigger} mode={Mode} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} progressPercent={ProgressPercent} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining}",
+            "Deterministic enrichment run completed connectionId={ConnectionId} trigger={Trigger} mode={Mode} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} progressPercent={ProgressPercent} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext}",
             connection.Id,
             trigger,
             summary.Mode,
@@ -393,7 +401,10 @@ public sealed class BankSyncService(
             summary.HistoricalEnrichmentCompleted,
             summary.HistoricalEnrichmentProgressPercent,
             summary.RowsEvaluated,
-            summary.RowsRemaining);
+            summary.RowsRemaining,
+            summary.RemainingWorkSnapshot.RowsActionableRemaining,
+            summary.RemainingWorkSnapshot.RowsDeferredWaitingForCounterparty,
+            summary.RemainingWorkSnapshot.RowsDeferredWaitingForMoreContext);
 
         return ServiceResult<DeterministicEnrichmentRunResult>.Ok(
             new DeterministicEnrichmentRunResult(
@@ -404,6 +415,14 @@ public sealed class BankSyncService(
                 summary.HistoricalEnrichmentCheckpointUtc,
                 summary.RowsEvaluated,
                 summary.RowsRemaining,
+                summary.RemainingWorkSnapshot.RowsActionableRemaining,
+                summary.RemainingWorkSnapshot.RowsDeferredWaitingForCounterparty,
+                summary.RemainingWorkSnapshot.RowsDeferredWaitingForMoreContext,
+                summary.RemainingWorkSnapshot.RowsNotEvaluated,
+                summary.RemainingWorkSnapshot.RowsEvaluating,
+                summary.RemainingWorkSnapshot.RowsVersionBehind,
+                summary.RemainingWorkSnapshot.RowsMarkedForReclassification,
+                summary.RemainingWorkSnapshot.RowsSupersededRecomputeRequired,
                 summary.BatchesProcessed,
                 summary.Mode,
                 summary.HasChanges));
@@ -2868,6 +2887,7 @@ public sealed class BankSyncService(
         var rowsRemaining = 0;
         var batchesProcessed = 0;
         var hasChanges = false;
+        var remainingWorkSnapshot = DeterministicRemainingWorkSnapshot.Empty;
 
         var incrementalWindowStartUtc = now.AddDays(-DeterministicEnrichmentIncrementalLookbackDays);
         var hasStaleIncrementalRows = await HasStaleDeterministicRowsInWindowAsync(
@@ -2940,7 +2960,8 @@ public sealed class BankSyncService(
                 hasTransferLinkIntegrityDrift);
         }
 
-        var historicalEligible = connection.InitialBackfillCompletedUtc.HasValue || isInitialBackfill;
+        var hasDeterministicScopeRows = await HasAnyLinkedDeterministicScopeRowsAsync(connection.UserId, cancellationToken);
+        var historicalEligible = connection.InitialBackfillCompletedUtc.HasValue || isInitialBackfill || hasDeterministicScopeRows;
         var historicalRequired = historicalEligible
             && (connection.NeedsHistoricalReclassification
                 || !connection.HistoricalEnrichmentCompletedUtc.HasValue
@@ -2956,9 +2977,10 @@ public sealed class BankSyncService(
             connection.HistoricalEnrichmentStartedUtc ??= now;
             connection.HistoricalEnrichmentCompletedUtc = null;
             connection.NeedsHistoricalReclassification = true;
-            rowsRemaining = await CountAllStaleDeterministicRowsAsync(connection.UserId, cancellationToken);
-            historicalInProgress = rowsRemaining > 0;
-            historicalCompleted = !historicalInProgress;
+            remainingWorkSnapshot = await GetDeterministicRemainingWorkSnapshotAsync(connection.UserId, cancellationToken);
+            rowsRemaining = remainingWorkSnapshot.RowsRemaining;
+            historicalInProgress = remainingWorkSnapshot.RowsActionableRemaining > 0;
+            historicalCompleted = rowsRemaining == 0;
             modeParts.Add("historical_deferred");
         }
         else if (historicalRequired)
@@ -3020,12 +3042,13 @@ public sealed class BankSyncService(
                     || historicalRelationships > 0
                     || historicalCategorization.HasChanges;
 
-                rowsRemaining = await CountAllStaleDeterministicRowsAsync(connection.UserId, cancellationToken);
+                remainingWorkSnapshot = await GetDeterministicRemainingWorkSnapshotAsync(connection.UserId, cancellationToken);
+                rowsRemaining = remainingWorkSnapshot.RowsRemaining;
                 connection.HistoricalEnrichmentCheckpointUtc = rowsRemaining == 0
                     ? connection.EarliestImportedTransactionUtc ?? historicalWindowStartUtc
                     : await GetOldestStaleDeterministicBookedAtUtcAsync(connection.UserId, cancellationToken);
 
-                historicalInProgress = rowsRemaining > 0;
+                historicalInProgress = remainingWorkSnapshot.RowsActionableRemaining > 0;
                 historicalCompleted = rowsRemaining == 0;
 
                 if (historicalCompleted)
@@ -3036,7 +3059,7 @@ public sealed class BankSyncService(
                 }
 
                 logger.LogInformation(
-                    "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsEvaluated={RowsEvaluated} rowsTerminal={RowsTerminal} rowsNoMatch={RowsNoMatch} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsRemaining={RowsRemaining}",
+                    "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsEvaluated={RowsEvaluated} rowsTerminal={RowsTerminal} rowsNoMatch={RowsNoMatch} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining}",
                     connection.Id,
                     connection.UserId,
                     "historical_backfill_batch",
@@ -3051,23 +3074,47 @@ public sealed class BankSyncService(
                     historicalCategorization.RowsNoMatch,
                     historicalCategorization.RowsDeferredCounterparty,
                     historicalCategorization.RowsRejectedAmbiguous,
-                    rowsRemaining);
+                    rowsRemaining,
+                    remainingWorkSnapshot.RowsActionableRemaining);
             }
         }
 
-        if (historicalEligible && rowsRemaining == 0 && !connection.NeedsHistoricalReclassification)
+        remainingWorkSnapshot = await GetDeterministicRemainingWorkSnapshotAsync(connection.UserId, cancellationToken);
+        rowsRemaining = remainingWorkSnapshot.RowsRemaining;
+        var rowsActionableRemaining = remainingWorkSnapshot.RowsActionableRemaining;
+        var hasVersionOrReclassificationDebt = remainingWorkSnapshot.RowsVersionBehind > 0
+            || remainingWorkSnapshot.RowsMarkedForReclassification > 0
+            || remainingWorkSnapshot.RowsSupersededRecomputeRequired > 0
+            || remainingWorkSnapshot.RowsNotEvaluated > 0
+            || remainingWorkSnapshot.RowsEvaluating > 0;
+
+        if (historicalEligible)
         {
-            historicalInProgress = false;
-            historicalCompleted = true;
+            if (rowsRemaining == 0)
+            {
+                connection.HistoricalEnrichmentCompletedUtc ??= now;
+                connection.HistoricalEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
+                connection.NeedsHistoricalReclassification = false;
+                connection.HistoricalEnrichmentCheckpointUtc ??= connection.EarliestImportedTransactionUtc ?? incrementalWindowStartUtc;
+                historicalInProgress = false;
+                historicalCompleted = true;
+            }
+            else
+            {
+                historicalInProgress = rowsActionableRemaining > 0;
+                historicalCompleted = false;
+
+                if (!hasVersionOrReclassificationDebt)
+                {
+                    connection.NeedsHistoricalReclassification = false;
+                    connection.HistoricalEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
+                }
+            }
         }
-        else if (historicalEligible && rowsRemaining == 0)
+        else
         {
-            connection.HistoricalEnrichmentCompletedUtc ??= now;
-            connection.HistoricalEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
-            connection.NeedsHistoricalReclassification = false;
-            connection.HistoricalEnrichmentCheckpointUtc ??= connection.EarliestImportedTransactionUtc ?? incrementalWindowStartUtc;
-            historicalInProgress = false;
-            historicalCompleted = true;
+            historicalInProgress = rowsActionableRemaining > 0;
+            historicalCompleted = rowsRemaining == 0 && !connection.NeedsHistoricalReclassification;
         }
 
         var progressPercent = await ComputeHistoricalEnrichmentProgressPercentAsync(
@@ -3076,13 +3123,21 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Deterministic enrichment summary connectionId={ConnectionId} userId={UserId} mode={Mode} batchesProcessed={BatchesProcessed} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} checkpointUtc={CheckpointUtc} progressPercent={ProgressPercent}",
+            "Deterministic enrichment summary connectionId={ConnectionId} userId={UserId} mode={Mode} batchesProcessed={BatchesProcessed} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} deferredCounterparty={DeferredCounterparty} deferredMoreContext={DeferredMoreContext} notEvaluated={NotEvaluated} evaluating={Evaluating} versionBehind={VersionBehind} markedForReclassification={MarkedForReclassification} superseded={Superseded} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} checkpointUtc={CheckpointUtc} progressPercent={ProgressPercent}",
             connection.Id,
             connection.UserId,
             modeParts.Count == 0 ? "none" : string.Join("+", modeParts),
             batchesProcessed,
             rowsEvaluated,
             rowsRemaining,
+            rowsActionableRemaining,
+            remainingWorkSnapshot.RowsDeferredWaitingForCounterparty,
+            remainingWorkSnapshot.RowsDeferredWaitingForMoreContext,
+            remainingWorkSnapshot.RowsNotEvaluated,
+            remainingWorkSnapshot.RowsEvaluating,
+            remainingWorkSnapshot.RowsVersionBehind,
+            remainingWorkSnapshot.RowsMarkedForReclassification,
+            remainingWorkSnapshot.RowsSupersededRecomputeRequired,
             historicalInProgress,
             historicalCompleted,
             connection.HistoricalEnrichmentCheckpointUtc,
@@ -3099,6 +3154,7 @@ public sealed class BankSyncService(
             HistoricalEnrichmentCompleted: historicalCompleted,
             HistoricalEnrichmentProgressPercent: progressPercent,
             HistoricalEnrichmentCheckpointUtc: connection.HistoricalEnrichmentCheckpointUtc,
+            RemainingWorkSnapshot: remainingWorkSnapshot,
             HasChanges: hasChanges);
     }
 
@@ -3291,26 +3347,127 @@ public sealed class BankSyncService(
             .MinAsync(cancellationToken);
     }
 
-    private async Task<int> CountAllStaleDeterministicRowsAsync(
+    private async Task<DeterministicRemainingWorkSnapshot> GetDeterministicRemainingWorkSnapshotAsync(
         Guid userId,
         CancellationToken cancellationToken)
     {
         var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
         if (linkedFinancialAccountIds.Count == 0)
         {
-            return 0;
+            return DeterministicRemainingWorkSnapshot.Empty;
         }
 
-        return await dbContext.Transactions
+        var rows = await dbContext.Transactions
             .AsNoTracking()
             .Where(x =>
-                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                && (x.NeedsDeterministicReclassification
-                    || !x.DeterministicClassificationVersion.HasValue
-                    || x.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion
-                    || !x.DeterministicClassificationTerminal
-                    || x.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired))
-            .CountAsync(cancellationToken);
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId))
+            .Select(x => new
+            {
+                x.NeedsDeterministicReclassification,
+                x.DeterministicClassificationVersion,
+                x.DeterministicClassificationTerminal,
+                x.DeterministicClassificationStatus
+            })
+            .ToListAsync(cancellationToken);
+
+        if (rows.Count == 0)
+        {
+            return DeterministicRemainingWorkSnapshot.Empty;
+        }
+
+        var rowsTerminalCurrentVersion = 0;
+        var rowsRemaining = 0;
+        var rowsDeferredWaitingForCounterparty = 0;
+        var rowsDeferredWaitingForMoreContext = 0;
+        var rowsNotEvaluated = 0;
+        var rowsEvaluating = 0;
+        var rowsVersionBehind = 0;
+        var rowsMarkedForReclassification = 0;
+        var rowsSupersededRecomputeRequired = 0;
+        var rowsActionableRemaining = 0;
+
+        foreach (var row in rows)
+        {
+            var versionBehind = !row.DeterministicClassificationVersion.HasValue
+                || row.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion;
+            var terminalCurrentVersion = row.DeterministicClassificationVersion.HasValue
+                && row.DeterministicClassificationVersion.Value >= DeterministicEnrichmentCurrentVersion
+                && row.DeterministicClassificationTerminal;
+            var superseded = row.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired;
+            var remaining = row.NeedsDeterministicReclassification
+                || versionBehind
+                || !row.DeterministicClassificationTerminal
+                || superseded;
+
+            if (terminalCurrentVersion)
+            {
+                rowsTerminalCurrentVersion++;
+            }
+
+            if (versionBehind)
+            {
+                rowsVersionBehind++;
+            }
+
+            if (row.NeedsDeterministicReclassification)
+            {
+                rowsMarkedForReclassification++;
+            }
+
+            if (superseded)
+            {
+                rowsSupersededRecomputeRequired++;
+            }
+
+            if (row.DeterministicClassificationStatus == DeterministicClassificationStatus.NotEvaluated)
+            {
+                rowsNotEvaluated++;
+            }
+            else if (row.DeterministicClassificationStatus == DeterministicClassificationStatus.Evaluating)
+            {
+                rowsEvaluating++;
+            }
+
+            if (remaining)
+            {
+                rowsRemaining++;
+
+                var deferredCounterpartyCurrentVersion = row.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                    && !versionBehind
+                    && !row.NeedsDeterministicReclassification;
+                var deferredMoreContextCurrentVersion = row.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                    && !versionBehind
+                    && !row.NeedsDeterministicReclassification;
+
+                if (deferredCounterpartyCurrentVersion)
+                {
+                    rowsDeferredWaitingForCounterparty++;
+                }
+
+                if (deferredMoreContextCurrentVersion)
+                {
+                    rowsDeferredWaitingForMoreContext++;
+                }
+
+                if (!deferredCounterpartyCurrentVersion && !deferredMoreContextCurrentVersion)
+                {
+                    rowsActionableRemaining++;
+                }
+            }
+        }
+
+        return new DeterministicRemainingWorkSnapshot(
+            RowsTotal: rows.Count,
+            RowsTerminalCurrentVersion: rowsTerminalCurrentVersion,
+            RowsRemaining: rowsRemaining,
+            RowsActionableRemaining: rowsActionableRemaining,
+            RowsDeferredWaitingForCounterparty: rowsDeferredWaitingForCounterparty,
+            RowsDeferredWaitingForMoreContext: rowsDeferredWaitingForMoreContext,
+            RowsNotEvaluated: rowsNotEvaluated,
+            RowsEvaluating: rowsEvaluating,
+            RowsVersionBehind: rowsVersionBehind,
+            RowsMarkedForReclassification: rowsMarkedForReclassification,
+            RowsSupersededRecomputeRequired: rowsSupersededRecomputeRequired);
     }
 
     private async Task<List<Guid>> LoadLinkedFinancialAccountIdsAsync(Guid userId, CancellationToken cancellationToken)
@@ -3324,6 +3481,21 @@ public sealed class BankSyncService(
             .Select(x => x.FinancialAccountId!.Value)
             .Distinct()
             .ToListAsync(cancellationToken);
+    }
+
+    private async Task<bool> HasAnyLinkedDeterministicScopeRowsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return false;
+        }
+
+        return await dbContext.Transactions
+            .AsNoTracking()
+            .AnyAsync(x => linkedFinancialAccountIds.Contains(x.FinancialAccountId), cancellationToken);
     }
 
     private async Task<double?> ComputeHistoricalEnrichmentProgressPercentAsync(
@@ -5818,6 +5990,33 @@ public sealed class BankSyncService(
         decimal RoundupBase,
         int Multiplier);
 
+    private readonly record struct DeterministicRemainingWorkSnapshot(
+        int RowsTotal,
+        int RowsTerminalCurrentVersion,
+        int RowsRemaining,
+        int RowsActionableRemaining,
+        int RowsDeferredWaitingForCounterparty,
+        int RowsDeferredWaitingForMoreContext,
+        int RowsNotEvaluated,
+        int RowsEvaluating,
+        int RowsVersionBehind,
+        int RowsMarkedForReclassification,
+        int RowsSupersededRecomputeRequired)
+    {
+        public static readonly DeterministicRemainingWorkSnapshot Empty = new(
+            RowsTotal: 0,
+            RowsTerminalCurrentVersion: 0,
+            RowsRemaining: 0,
+            RowsActionableRemaining: 0,
+            RowsDeferredWaitingForCounterparty: 0,
+            RowsDeferredWaitingForMoreContext: 0,
+            RowsNotEvaluated: 0,
+            RowsEvaluating: 0,
+            RowsVersionBehind: 0,
+            RowsMarkedForReclassification: 0,
+            RowsSupersededRecomputeRequired: 0);
+    }
+
     private readonly record struct DeterministicEnrichmentPassSummary(
         int LinkedTransfersMatched,
         int RelationshipRowsUpserted,
@@ -5829,6 +6028,7 @@ public sealed class BankSyncService(
         bool HistoricalEnrichmentCompleted,
         double? HistoricalEnrichmentProgressPercent,
         DateTime? HistoricalEnrichmentCheckpointUtc,
+        DeterministicRemainingWorkSnapshot RemainingWorkSnapshot,
         bool HasChanges);
 
     private sealed class InternalTransferAccountMatchProfile(

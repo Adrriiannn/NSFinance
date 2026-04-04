@@ -373,6 +373,7 @@ public sealed class BankConnectionService(
                     completed,
                     required,
                     totalCount,
+                    processedCount,
                     remainingCount,
                     deferredWaitingForCounterpartyCount,
                     awaitingSync,
@@ -483,6 +484,7 @@ public sealed class BankConnectionService(
                 x.DeterministicClassificationStatus,
                 x.DeterministicClassificationTerminal,
                 x.DeterministicDeferredRetryEligible,
+                x.NeedsDeterministicReclassification,
                 x.DeterministicClassificationVersion,
                 x.DeterministicClassificationRuleKey,
                 x.DeterministicReasonCode,
@@ -527,8 +529,45 @@ public sealed class BankConnectionService(
             .ToList();
 
         var terminalCount = rows.Count(x => x.DeterministicClassificationTerminal);
+        var deferredMoreContextCount = rows.Count(x =>
+            x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext);
         var deferredCounterpartyCount = rows.Count(x =>
             x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty);
+        var actionableRemainingCount = rows.Count(x =>
+        {
+            var versionBehind = !x.DeterministicClassificationVersion.HasValue
+                || x.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion;
+            var remaining = x.NeedsDeterministicReclassification
+                || versionBehind
+                || !x.DeterministicClassificationTerminal
+                || x.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired;
+            if (!remaining)
+            {
+                return false;
+            }
+
+            var deferredCounterpartyCurrent = x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                && !versionBehind
+                && !x.NeedsDeterministicReclassification;
+            var deferredMoreContextCurrent = x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                && !versionBehind
+                && !x.NeedsDeterministicReclassification;
+
+            return !deferredCounterpartyCurrent && !deferredMoreContextCurrent;
+        });
+
+        var queueEligible = actionableRemainingCount > 0;
+        var queueEligibilityReason = queueEligible
+            ? "actionable_remaining_rows"
+            : rows.Count > terminalCount
+                ? "deferred_only_remaining_rows"
+                : "no_remaining_rows";
+        var continuationDecision = queueEligible ? "continue" : "stop";
+        var continuationReason = queueEligible
+            ? "actionable_remaining_rows"
+            : rows.Count > terminalCount
+                ? "deferred_only_remaining_rows"
+                : "no_remaining_rows";
 
         return ServiceResult<DeterministicCategorizationDiagnosticsDto>.Ok(
             new DeterministicCategorizationDiagnosticsDto(
@@ -537,7 +576,13 @@ public sealed class BankConnectionService(
                 rows.Count,
                 terminalCount,
                 Math.Max(0, rows.Count - terminalCount),
+                actionableRemainingCount,
+                deferredMoreContextCount,
                 deferredCounterpartyCount,
+                queueEligible,
+                queueEligibilityReason,
+                continuationDecision,
+                continuationReason,
                 statusCounts,
                 sampleDecisions));
     }
@@ -2298,6 +2343,7 @@ public sealed class BankConnectionService(
         bool completed,
         bool required,
         int totalCount,
+        int processedCount,
         int remainingCount,
         int deferredWaitingForCounterpartyCount,
         bool awaitingSync,
@@ -2311,8 +2357,9 @@ public sealed class BankConnectionService(
         }
 
         var hasEverSynced = lastSyncAttemptedUtc.HasValue || lastSuccessfulSyncUtc.HasValue;
+        var hasObservedDeterministicProgress = totalCount > 0 || processedCount > 0 || remainingCount > 0;
 
-        if (required && !hasEverSynced && awaitingSync)
+        if (required && !hasEverSynced && awaitingSync && !hasObservedDeterministicProgress)
         {
             return "waiting_for_first_sync";
         }
@@ -2360,7 +2407,10 @@ public sealed class BankConnectionService(
             return "idle";
         }
 
-        if (connections.Any(x => x.Stage == "waiting_for_first_sync"))
+        var hasObservedDeterministicProgress = connections.Any(x =>
+            x.TotalCount > 0 || x.ProcessedCount > 0 || x.RemainingCount > 0);
+
+        if (!hasObservedDeterministicProgress && connections.Any(x => x.Stage == "waiting_for_first_sync"))
         {
             return "waiting_for_first_sync";
         }

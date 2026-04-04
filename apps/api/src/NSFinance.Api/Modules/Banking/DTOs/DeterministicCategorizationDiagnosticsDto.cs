@@ -28,6 +28,12 @@ public sealed record DeterministicCategorizationDiagnosticsDto(
     int TotalTransactions,
     int TerminalTransactions,
     int NonTerminalTransactions,
+    int ActionableRemainingTransactions,
+    int DeferredMoreContextTransactions,
     int DeferredCounterpartyTransactions,
+    bool QueueEligible,
+    string QueueEligibilityReason,
+    string ContinuationDecision,
+    string ContinuationReason,
     IReadOnlyList<DeterministicCategorizationStatusCountDto> StatusCounts,
     IReadOnlyList<DeterministicTransactionDecisionDto> SampleDecisions);
