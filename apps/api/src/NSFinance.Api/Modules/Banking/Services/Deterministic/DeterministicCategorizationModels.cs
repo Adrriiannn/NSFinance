@@ -21,6 +21,12 @@ public sealed record DeterministicTransactionFeature(
     bool IsPending,
     bool HasProviderTransferHint,
     int NearbySameAmountCount,
+    int SameAmountSameDayOutflowCount,
+    int SameAmountSameDayInflowCount,
+    int NearbyMerchantOutflowCount,
+    int RepeatedSmallAuxiliaryOutflowPatternCount,
+    bool LooksLikeExternalCounterparty,
+    string Direction,
     bool HasCounterpartyAccounts,
     double ReferenceEntropy);
 
@@ -67,4 +73,10 @@ public sealed record TransferPendingDecision(
     DeterministicClassificationStatus Status,
     string ReasonCode,
     bool RetryEligible,
+    string CandidateFamily,
+    int CandidateCount,
+    Guid? TopCandidateTransactionId,
+    int? TopCandidateScore,
+    bool IsDuplicateClusterMember,
+    int DuplicateClusterSize,
     string EvidenceJson);

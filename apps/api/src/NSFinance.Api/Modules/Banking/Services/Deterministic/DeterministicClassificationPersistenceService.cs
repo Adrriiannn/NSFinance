@@ -129,6 +129,11 @@ public sealed class DeterministicClassificationPersistenceService(
         var linkedPairs = BuildLinkedPairMap(contextRows, byId);
         var pairedIds = linkedPairs.Keys.ToHashSet();
         var pairingAnalysis = transferPairingEngine.AnalyzeUnpairedTransactions(featuresById, pairedIds);
+        var deterministicResolvedPairCount = pairingAnalysis.ResolvedPairDecisions
+            .Values
+            .Select(x => $"{x.DebitTransactionId:N}:{x.CreditTransactionId:N}")
+            .Distinct(StringComparer.Ordinal)
+            .Count();
 
         var rowsEvaluated = 0;
         var rowsTerminal = 0;
@@ -154,6 +159,7 @@ public sealed class DeterministicClassificationPersistenceService(
                 feature,
                 featuresById,
                 linkedPairs,
+                pairingAnalysis.ResolvedPairDecisions,
                 pairingAnalysis.PendingDecisions);
 
             rowsEvaluated++;
@@ -225,7 +231,7 @@ public sealed class DeterministicClassificationPersistenceService(
             rowsDeferredCounterparty + rowsDeferredContext,
             rowsRejectedAmbiguous,
             pairingAnalysis.CandidateEdgeCount,
-            linkedPairs.Count / 2);
+            (linkedPairs.Count / 2) + deterministicResolvedPairCount);
 
         return new DeterministicCategorizationSummary(
             RowsSelected: targetSet.Count,
@@ -239,7 +245,7 @@ public sealed class DeterministicClassificationPersistenceService(
             RowsRejectedAmbiguous: rowsRejectedAmbiguous,
             RowsRetryQueued: rowsRetryQueued,
             PairingAttemptCount: pairingAnalysis.CandidateEdgeCount,
-            PairingSuccessCount: linkedPairs.Count / 2,
+            PairingSuccessCount: (linkedPairs.Count / 2) + deterministicResolvedPairCount,
             RelationshipRowsUpserted: relationshipRowsUpserted,
             HasChanges: changes > 0 || relationshipRowsUpserted > 0);
     }
@@ -249,6 +255,7 @@ public sealed class DeterministicClassificationPersistenceService(
         DeterministicTransactionFeature feature,
         IReadOnlyDictionary<Guid, DeterministicTransactionFeature> featuresById,
         IReadOnlyDictionary<Guid, Guid> linkedPairs,
+        IReadOnlyDictionary<Guid, TransferPairDecision> resolvedPairDecisions,
         IReadOnlyDictionary<Guid, TransferPendingDecision> pendingDecisions)
     {
         linkedPairs.TryGetValue(transaction.Id, out var linkedCounterpartId);
@@ -284,17 +291,42 @@ public sealed class DeterministicClassificationPersistenceService(
                 RelationshipGroupId: groupId);
         }
 
+        if (resolvedPairDecisions.TryGetValue(transaction.Id, out var resolvedDecision))
+        {
+            var counterpartId = resolvedDecision.DebitTransactionId == transaction.Id
+                ? resolvedDecision.CreditTransactionId
+                : resolvedDecision.DebitTransactionId;
+            var groupId = SavingsTransferClassifier.BuildPairGroupId(transaction.Id, counterpartId);
+            return new DeterministicClassificationOutcome(
+                DeterministicClassificationStatus.ClassifiedMatchedRule,
+                Terminal: true,
+                RetryEligible: false,
+                RuleKey: resolvedDecision.RuleKey,
+                ReasonCode: resolvedDecision.ReasonCode,
+                EvidenceJson: resolvedDecision.EvidenceJson,
+                MatchScore: resolvedDecision.Score,
+                ClassificationCategoryId: ExpenseTaxonomyService.TransferDefaultCategoryId,
+                ClassificationSubcategoryId: ExpenseTaxonomyService.TransferDefaultSubcategoryId,
+                LinkedTransactionId: counterpartId,
+                RelationshipType: "internal_transfer",
+                RelationshipGroupId: groupId);
+        }
+
         var legacySavings =
             transaction.TransferKind is TransactionTransferKind.SavingsRoundup
                 or TransactionTransferKind.SavingsManualDeposit
                 or TransactionTransferKind.SavingsManualWithdrawal;
 
-        if (legacySavings || feature.HasSavingsKeyword)
+        if (legacySavings
+            || feature.HasSavingsKeyword
+            || transaction.LinkedTransferTransactionId.HasValue
+            || ShouldEvaluateSavingsClassifier(feature))
         {
             var savingsOutcome = savingsTransferClassifier.Classify(
                 feature,
                 featuresById,
-                transaction.LinkedTransferTransactionId);
+                transaction.LinkedTransferTransactionId,
+                hasLegacySavingsMarker: legacySavings);
 
             if (savingsOutcome is not null)
             {
@@ -338,6 +370,23 @@ public sealed class DeterministicClassificationPersistenceService(
             LinkedTransactionId: null,
             RelationshipType: null,
             RelationshipGroupId: null);
+    }
+
+    private static bool ShouldEvaluateSavingsClassifier(DeterministicTransactionFeature feature)
+    {
+        if (feature.IsInflow)
+        {
+            return false;
+        }
+
+        if (feature.AbsoluteAmount > 25m)
+        {
+            return false;
+        }
+
+        return feature.HasProviderTransferHint
+               || feature.NearbyMerchantOutflowCount > 0
+               || feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2;
     }
 
     private bool ApplyClassificationOutcome(

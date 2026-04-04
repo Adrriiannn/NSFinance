@@ -9,54 +9,106 @@ public sealed class SavingsTransferClassifier
     public DeterministicClassificationOutcome? Classify(
         DeterministicTransactionFeature feature,
         IReadOnlyDictionary<Guid, DeterministicTransactionFeature> featuresById,
-        Guid? linkedTransactionId)
+        Guid? linkedTransactionId,
+        bool hasLegacySavingsMarker)
     {
-        if (!feature.HasSavingsKeyword)
-        {
-            return null;
-        }
-
-        var savingsPairCandidate = linkedTransactionId.HasValue && featuresById.ContainsKey(linkedTransactionId.Value)
+        var pairedCounterpart = linkedTransactionId.HasValue && featuresById.ContainsKey(linkedTransactionId.Value)
             ? linkedTransactionId
             : FindSavingsCounterpart(feature, featuresById.Values);
 
-        if (savingsPairCandidate.HasValue)
+        var providerStructuralSignal = feature.HasProviderTransferHint
+            && (feature.HasStrongSavingsKeyword || hasLegacySavingsMarker)
+            && !feature.LooksLikeExternalCounterparty;
+        var contextualRoundupSignal = feature.IsOutflow
+            && feature.AbsoluteAmount <= 5m
+            && feature.NearbyMerchantOutflowCount > 0
+            && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2
+            && !feature.LooksLikeExternalCounterparty;
+        var repeatedBehaviorSignal = feature.IsOutflow
+            && feature.AbsoluteAmount <= 10m
+            && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 3
+            && feature.NearbyMerchantOutflowCount > 0
+            && !feature.LooksLikeExternalCounterparty;
+
+        if (pairedCounterpart.HasValue)
         {
-            var groupId = BuildPairGroupId(feature.TransactionId, savingsPairCandidate.Value);
+            var groupId = BuildPairGroupId(feature.TransactionId, pairedCounterpart.Value);
             return new DeterministicClassificationOutcome(
                 DeterministicClassificationStatus.ClassifiedMatchedRule,
                 Terminal: true,
                 RetryEligible: false,
-                RuleKey: "savings_transfer.paired_signal_v3",
+                RuleKey: "savings_transfer.paired_structural_v3",
                 ReasonCode: DeterministicClassificationReasonCodes.MatchedSavingsKeywordSignal,
                 EvidenceJson: JsonSerializer.Serialize(new
                 {
                     family = "savings_transfer",
+                    evidenceClass = "paired_internal_savings_movement",
                     paired = true,
-                    candidateId = savingsPairCandidate.Value
+                    candidateId = pairedCounterpart.Value,
+                    providerStructuralSignal,
+                    contextualRoundupSignal,
+                    repeatedBehaviorSignal,
+                    hasLegacySavingsMarker
                 }),
                 MatchScore: 10,
                 ClassificationCategoryId: ExpenseTaxonomyService.TransferDefaultCategoryId,
                 ClassificationSubcategoryId: DeterministicCategorizationConstants.SavingsTransferSubcategoryId,
-                LinkedTransactionId: savingsPairCandidate.Value,
+                LinkedTransactionId: pairedCounterpart.Value,
                 RelationshipType: "savings_transfer",
                 RelationshipGroupId: groupId);
         }
 
-        if (feature.HasStrongSavingsKeyword)
+        var hasStrongContextualSignal = providerStructuralSignal || contextualRoundupSignal || repeatedBehaviorSignal;
+        if (!hasStrongContextualSignal)
+        {
+            return null;
+        }
+
+        if (feature.HasCounterpartyAccounts && feature.IsBooked && feature.IsOutflow)
+        {
+            return new DeterministicClassificationOutcome(
+                DeterministicClassificationStatus.DeferredWaitingForCounterparty,
+                Terminal: false,
+                RetryEligible: true,
+                RuleKey: "savings_transfer.pending_counterparty_structural_v3",
+                ReasonCode: DeterministicClassificationReasonCodes.DeferredStrongSavingsMissingCounterparty,
+                EvidenceJson: JsonSerializer.Serialize(new
+                {
+                    family = "savings_transfer",
+                    evidenceClass = "strong_savings_signal_missing_counterparty",
+                    paired = false,
+                    providerStructuralSignal,
+                    contextualRoundupSignal,
+                    repeatedBehaviorSignal,
+                    feature.NearbyMerchantOutflowCount,
+                    feature.RepeatedSmallAuxiliaryOutflowPatternCount,
+                    hasLegacySavingsMarker
+                }),
+                MatchScore: 7,
+                ClassificationCategoryId: ExpenseTaxonomyService.TransferDefaultCategoryId,
+                ClassificationSubcategoryId: DeterministicCategorizationConstants.SavingsTransferSubcategoryId,
+                LinkedTransactionId: null,
+                RelationshipType: "savings_transfer",
+                RelationshipGroupId: null);
+        }
+
+        if (contextualRoundupSignal || repeatedBehaviorSignal)
         {
             return new DeterministicClassificationOutcome(
                 DeterministicClassificationStatus.ClassifiedMatchedRule,
                 Terminal: true,
                 RetryEligible: false,
-                RuleKey: "savings_transfer.one_sided_signal_v3",
-                ReasonCode: DeterministicClassificationReasonCodes.MatchedSavingsOneSidedSignal,
+                RuleKey: "savings_transfer.contextual_pattern_v3",
+                ReasonCode: DeterministicClassificationReasonCodes.MatchedSavingsContextualPattern,
                 EvidenceJson: JsonSerializer.Serialize(new
                 {
                     family = "savings_transfer",
+                    evidenceClass = "contextual_cooccurrence",
                     paired = false,
-                    oneSided = true,
-                    strongSignal = true
+                    contextualRoundupSignal,
+                    repeatedBehaviorSignal,
+                    feature.NearbyMerchantOutflowCount,
+                    feature.RepeatedSmallAuxiliaryOutflowPatternCount
                 }),
                 MatchScore: 8,
                 ClassificationCategoryId: ExpenseTaxonomyService.TransferDefaultCategoryId,
@@ -66,25 +118,7 @@ public sealed class SavingsTransferClassifier
                 RelationshipGroupId: null);
         }
 
-        return new DeterministicClassificationOutcome(
-            DeterministicClassificationStatus.DeferredWaitingForCounterparty,
-            Terminal: false,
-            RetryEligible: true,
-            RuleKey: "savings_transfer.pending_counterparty_v3",
-            ReasonCode: DeterministicClassificationReasonCodes.DeferredMissingCounterparty,
-            EvidenceJson: JsonSerializer.Serialize(new
-            {
-                family = "savings_transfer",
-                paired = false,
-                oneSided = false,
-                strongSignal = false
-            }),
-            MatchScore: 5,
-            ClassificationCategoryId: ExpenseTaxonomyService.TransferDefaultCategoryId,
-            ClassificationSubcategoryId: DeterministicCategorizationConstants.SavingsTransferSubcategoryId,
-            LinkedTransactionId: null,
-            RelationshipType: "savings_transfer",
-            RelationshipGroupId: null);
+        return null;
     }
 
     private static Guid? FindSavingsCounterpart(
@@ -98,8 +132,11 @@ public sealed class SavingsTransferClassifier
                 && candidate.AbsoluteAmount == source.AbsoluteAmount
                 && candidate.IsOutflow != source.IsOutflow
                 && candidate.FinancialAccountId != source.FinancialAccountId
+                && !candidate.LooksLikeExternalCounterparty
                 && Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalHours) <= DeterministicCategorizationConstants.TransferCandidateWindowHours)
-            .OrderBy(candidate => Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalMinutes))
+            .OrderByDescending(candidate => candidate.HasStrongSavingsKeyword)
+            .ThenByDescending(candidate => candidate.HasProviderTransferHint)
+            .ThenBy(candidate => Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalMinutes))
             .Select(candidate => (Guid?)candidate.TransactionId)
             .FirstOrDefault();
     }

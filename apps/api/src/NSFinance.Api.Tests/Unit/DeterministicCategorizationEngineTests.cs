@@ -84,12 +84,14 @@ public class DeterministicCategorizationEngineTests
         Assert.Equal("GBP", outflow.Currency);
         Assert.True(outflow.HasTransferKeyword);
         Assert.Equal(1, outflow.NearbySameAmountCount);
+        Assert.Equal("outflow", outflow.Direction);
 
         Assert.True(inflow.IsInflow);
         Assert.False(inflow.IsOutflow);
         Assert.False(inflow.IsBooked);
         Assert.True(inflow.IsPending);
         Assert.Equal(1, inflow.NearbySameAmountCount);
+        Assert.Equal("inflow", inflow.Direction);
     }
 
     [Fact]
@@ -200,7 +202,7 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
-    public void TransferPairing_BookedMutualCandidate_DefersWaitingForCounterparty()
+    public void TransferPairing_BookedMutualCandidate_IsResolvedAsDeterministicPair()
     {
         var engine = new TransferPairingEngine();
         var bookedAt = new DateTime(2026, 03, 18, 10, 0, 0, DateTimeKind.Utc);
@@ -229,10 +231,10 @@ public class DeterministicCategorizationEngineTests
 
         var analysis = engine.AnalyzeUnpairedTransactions(features, new HashSet<Guid>());
 
-        var debitDecision = analysis.PendingDecisions[debit.TransactionId];
-        Assert.Equal(DeterministicClassificationStatus.DeferredWaitingForCounterparty, debitDecision.Status);
-        Assert.Equal(DeterministicClassificationReasonCodes.DeferredMissingCounterparty, debitDecision.ReasonCode);
-        Assert.True(debitDecision.RetryEligible);
+        Assert.True(analysis.ResolvedPairDecisions.ContainsKey(debit.TransactionId));
+        Assert.True(analysis.ResolvedPairDecisions.ContainsKey(credit.TransactionId));
+        var decision = analysis.ResolvedPairDecisions[debit.TransactionId];
+        Assert.Equal(DeterministicClassificationReasonCodes.MatchedExactInverseAmount, decision.ReasonCode);
     }
 
     [Fact]
@@ -256,7 +258,7 @@ public class DeterministicCategorizationEngineTests
             [counterpart.TransactionId] = counterpart
         };
 
-        var outcome = classifier.Classify(source, features, linkedTransactionId: null);
+        var outcome = classifier.Classify(source, features, linkedTransactionId: null, hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
         Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
@@ -266,22 +268,26 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
-    public void SavingsClassifier_OneSidedStrongSignal_MarksMatchedWithoutCounterpart()
+    public void SavingsClassifier_OneSidedStrongSignal_DefersForCounterparty()
     {
         var classifier = new SavingsTransferClassifier();
         var source = CreateFeature(
             signedAmount: -10m,
             hasSavingsKeyword: true,
             hasStrongSavingsKeyword: true,
-            tokens: ["round", "up", "pocket"]);
+            tokens: ["round", "up", "pocket"],
+            nearbyMerchantOutflowCount: 2,
+            repeatedSmallAuxiliaryOutflowPatternCount: 4,
+            hasProviderTransferHint: true);
 
         var outcome = classifier.Classify(
             source,
             new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
-            linkedTransactionId: null);
+            linkedTransactionId: null,
+            hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
-        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
+        Assert.Equal(DeterministicClassificationStatus.DeferredWaitingForCounterparty, outcome!.Status);
         Assert.Equal("savings_transfer", outcome.RelationshipType);
         Assert.Null(outcome.LinkedTransactionId);
     }
@@ -299,12 +305,99 @@ public class DeterministicCategorizationEngineTests
         var outcome = classifier.Classify(
             source,
             new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
-            linkedTransactionId: null);
+            linkedTransactionId: null,
+            hasLegacySavingsMarker: false);
 
-        Assert.NotNull(outcome);
-        Assert.Equal(DeterministicClassificationStatus.DeferredWaitingForCounterparty, outcome!.Status);
-        Assert.False(outcome.Terminal);
-        Assert.True(outcome.RetryEligible);
+        Assert.Null(outcome);
+    }
+
+    [Fact]
+    public void SavingsClassifier_NameOnlySignalWithoutContext_DoesNotClassify()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var source = CreateFeature(
+            signedAmount: -9m,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: true,
+            tokens: ["vault", "to"],
+            nearbyMerchantOutflowCount: 0,
+            repeatedSmallAuxiliaryOutflowPatternCount: 0,
+            hasProviderTransferHint: false);
+
+        var outcome = classifier.Classify(
+            source,
+            new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
+            linkedTransactionId: null,
+            hasLegacySavingsMarker: false);
+
+        Assert.Null(outcome);
+    }
+
+    [Fact]
+    public void SavingsClassifier_ExternalCounterpartyRisk_DoesNotClassifyAsSavings()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var source = CreateFeature(
+            signedAmount: -3m,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: true,
+            looksLikeExternalCounterparty: true,
+            nearbyMerchantOutflowCount: 3,
+            repeatedSmallAuxiliaryOutflowPatternCount: 4,
+            hasProviderTransferHint: true);
+
+        var outcome = classifier.Classify(
+            source,
+            new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
+            linkedTransactionId: null,
+            hasLegacySavingsMarker: false);
+
+        Assert.Null(outcome);
+    }
+
+    [Fact]
+    public void TransferPairing_DuplicateClusterStablePairs_AreResolved()
+    {
+        var engine = new TransferPairingEngine();
+        var baseUtc = new DateTime(2026, 03, 25, 8, 0, 0, DateTimeKind.Utc);
+        var debitA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: baseUtc,
+            hasTransferKeyword: true,
+            accountHint: "9901",
+            tokens: ["transfer", "ref", "9901"]);
+        var debitB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: baseUtc.AddMinutes(8),
+            hasTransferKeyword: true,
+            accountHint: "9902",
+            tokens: ["transfer", "ref", "9902"]);
+        var creditA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: baseUtc.AddMinutes(2),
+            hasTransferKeyword: true,
+            accountHint: "9901",
+            tokens: ["transfer", "ref", "9901"]);
+        var creditB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: baseUtc.AddMinutes(10),
+            hasTransferKeyword: true,
+            accountHint: "9902",
+            tokens: ["transfer", "ref", "9902"]);
+
+        var features = new Dictionary<Guid, DeterministicTransactionFeature>
+        {
+            [debitA.TransactionId] = debitA,
+            [debitB.TransactionId] = debitB,
+            [creditA.TransactionId] = creditA,
+            [creditB.TransactionId] = creditB
+        };
+
+        var analysis = engine.AnalyzeUnpairedTransactions(features, new HashSet<Guid>());
+
+        Assert.Equal(4, analysis.ResolvedPairDecisions.Count);
+        Assert.All(new[] { debitA.TransactionId, debitB.TransactionId, creditA.TransactionId, creditB.TransactionId }, id =>
+            Assert.True(analysis.ResolvedPairDecisions.ContainsKey(id)));
     }
 
     [Theory]
@@ -348,7 +441,13 @@ public class DeterministicCategorizationEngineTests
         IEnumerable<string>? tokens = null,
         bool isBooked = true,
         bool isPending = false,
-        bool hasCounterpartyAccounts = true)
+        bool hasCounterpartyAccounts = true,
+        bool hasProviderTransferHint = false,
+        int sameAmountSameDayOutflowCount = 0,
+        int sameAmountSameDayInflowCount = 0,
+        int nearbyMerchantOutflowCount = 0,
+        int repeatedSmallAuxiliaryOutflowPatternCount = 0,
+        bool looksLikeExternalCounterparty = false)
     {
         return new DeterministicTransactionFeature(
             TransactionId: Guid.NewGuid(),
@@ -367,8 +466,14 @@ public class DeterministicCategorizationEngineTests
             AccountHint: accountHint,
             IsBooked: isBooked,
             IsPending: isPending,
-            HasProviderTransferHint: false,
+            HasProviderTransferHint: hasProviderTransferHint,
             NearbySameAmountCount: 0,
+            SameAmountSameDayOutflowCount: sameAmountSameDayOutflowCount,
+            SameAmountSameDayInflowCount: sameAmountSameDayInflowCount,
+            NearbyMerchantOutflowCount: nearbyMerchantOutflowCount,
+            RepeatedSmallAuxiliaryOutflowPatternCount: repeatedSmallAuxiliaryOutflowPatternCount,
+            LooksLikeExternalCounterparty: looksLikeExternalCounterparty,
+            Direction: signedAmount < 0m ? "outflow" : signedAmount > 0m ? "inflow" : "neutral",
             HasCounterpartyAccounts: hasCounterpartyAccounts,
             ReferenceEntropy: 0.6d);
     }

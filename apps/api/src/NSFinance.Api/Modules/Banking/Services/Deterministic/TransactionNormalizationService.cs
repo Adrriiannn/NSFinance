@@ -12,11 +12,7 @@ public sealed class TransactionNormalizationService
     {
         "transfer",
         "xfer",
-        "faster",
-        "to",
-        "from",
-        "moved",
-        "move"
+        "faster"
     };
 
     private static readonly HashSet<string> SavingsKeywords = new(StringComparer.OrdinalIgnoreCase)
@@ -43,6 +39,20 @@ public sealed class TransactionNormalizationService
         "vault",
         "pocket"
     ];
+
+    private static readonly HashSet<string> ExternalPayeeRiskKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "paypal",
+        "venmo",
+        "cashapp",
+        "zelle",
+        "invoice",
+        "rent",
+        "gift",
+        "friend",
+        "family",
+        "split"
+    };
 
     public string NormalizeDescription(string? input)
     {
@@ -131,6 +141,24 @@ public sealed class TransactionNormalizationService
             .Count();
 
         return Math.Round(uniqueCount / (double)alphanumeric.Length, 4, MidpointRounding.AwayFromZero);
+    }
+
+    public bool LooksLikeExternalCounterparty(string normalizedDescription, IReadOnlySet<string> tokens)
+    {
+        if (tokens.Any(token => ExternalPayeeRiskKeywords.Contains(token)))
+        {
+            return true;
+        }
+
+        if (normalizedDescription.StartsWith("to ", StringComparison.Ordinal)
+            && !HasStrongSavingsKeyword(normalizedDescription)
+            && !normalizedDescription.Contains("internal transfer", StringComparison.Ordinal)
+            && !normalizedDescription.Contains("bank transfer", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     public string BuildSourceSignature(

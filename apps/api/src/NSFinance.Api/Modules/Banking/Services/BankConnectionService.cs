@@ -452,16 +452,30 @@ public sealed class BankConnectionService(
         Guid connectionId,
         CancellationToken cancellationToken)
     {
-        var linkedFinancialAccountIds = await dbContext.LinkedBankAccounts
+        var linkedAccounts = await dbContext.LinkedBankAccounts
             .AsNoTracking()
             .Where(x =>
                 x.ConnectionId == connectionId
                 && x.Connection != null
                 && x.Connection.UserId == userId
                 && x.FinancialAccountId.HasValue)
-            .Select(x => x.FinancialAccountId!.Value)
+            .Select(x => new
+            {
+                FinancialAccountId = x.FinancialAccountId!.Value,
+                Provider = x.Connection != null
+                    ? (x.Connection.ProviderDisplayName
+                       ?? x.Connection.ProviderId
+                       ?? x.Connection.ProviderName
+                       ?? "unknown_provider")
+                    : "unknown_provider"
+            })
             .Distinct()
-            .ToArrayAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        var linkedFinancialAccountIds = linkedAccounts
+            .Select(x => x.FinancialAccountId)
+            .Distinct()
+            .ToArray();
 
         if (linkedFinancialAccountIds.Length == 0)
         {
@@ -470,6 +484,12 @@ public sealed class BankConnectionService(
                 "bank_connection_not_found",
                 StatusCodes.Status404NotFound);
         }
+
+        var providerByFinancialAccountId = linkedAccounts
+            .GroupBy(x => x.FinancialAccountId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(x => x.Provider).FirstOrDefault() ?? "unknown_provider");
 
         var rows = await dbContext.Transactions
             .AsNoTracking()
@@ -481,6 +501,7 @@ public sealed class BankConnectionService(
                 x.Amount,
                 x.Currency,
                 x.BookedAtUtc,
+                x.Description,
                 x.DeterministicClassificationStatus,
                 x.DeterministicClassificationTerminal,
                 x.DeterministicDeferredRetryEligible,
@@ -488,6 +509,7 @@ public sealed class BankConnectionService(
                 x.DeterministicClassificationVersion,
                 x.DeterministicClassificationRuleKey,
                 x.DeterministicReasonCode,
+                x.DeterministicReasonDetailJson,
                 x.DeterministicLinkedTransactionId,
                 x.DeterministicRelationshipType,
                 x.DeterministicRelationshipGroupId,
@@ -495,6 +517,106 @@ public sealed class BankConnectionService(
                 x.DeterministicClassificationEvaluatedUtc
             })
             .ToListAsync(cancellationToken);
+
+        var hasCounterpartyAccountsByFinancialAccountId = linkedFinancialAccountIds
+            .Distinct()
+            .ToDictionary(
+                accountId => accountId,
+                accountId => linkedFinancialAccountIds.Any(other => other != accountId));
+
+        var duplicateClusterStats = rows
+            .GroupBy(x =>
+                $"{Math.Abs(x.Amount):0.00}|{x.Currency.Trim().ToUpperInvariant()}|{x.BookedAtUtc:yyyy-MM-dd}")
+            .ToDictionary(
+                group => group.Key,
+                group => new
+                {
+                    ClusterSize = group.Count(),
+                    OutflowCount = group.Count(x => x.Amount < 0m),
+                    InflowCount = group.Count(x => x.Amount > 0m)
+                },
+                StringComparer.Ordinal);
+
+        var enrichedRows = rows
+            .Select(row =>
+            {
+                var evidence = ParseDeterministicEvidence(row.DeterministicReasonDetailJson);
+                var normalizedDescription = NormalizeDeterministicDescriptionForDiagnostics(row.Description);
+                var direction = ResolveDeterministicDirection(row.Amount);
+                var amountBucket = ResolveDeterministicAmountBucket(row.Amount);
+                var amountKey = $"{Math.Abs(row.Amount):0.00}|{row.Currency.Trim().ToUpperInvariant()}|{row.BookedAtUtc:yyyy-MM-dd}";
+                duplicateClusterStats.TryGetValue(amountKey, out var duplicateClusterStat);
+                var duplicateClusterMember = duplicateClusterStat is not null
+                    && duplicateClusterStat.OutflowCount > 1
+                    && duplicateClusterStat.InflowCount > 1;
+                var duplicateClusterSize = duplicateClusterMember ? duplicateClusterStat!.ClusterSize : 0;
+                hasCounterpartyAccountsByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var hasCounterpartyAccounts);
+                var provider = providerByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var mappedProvider)
+                    ? mappedProvider
+                    : "unknown_provider";
+                var candidateCounterpartCount = rows.Count(candidate =>
+                    candidate.Id != row.Id
+                    && candidate.FinancialAccountId != row.FinancialAccountId
+                    && candidate.Currency.Equals(row.Currency, StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs(candidate.Amount) == Math.Abs(row.Amount)
+                    && ((candidate.Amount < 0m) != (row.Amount < 0m))
+                    && Math.Abs((candidate.BookedAtUtc - row.BookedAtUtc).TotalHours) <= DeterministicCategorizationConstants.TransferCandidateWindowHours);
+                var hasPlausibleCounterpartCandidates = candidateCounterpartCount > 0;
+                var hasTransferSignals = evidence.HasTransferSignals || ContainsTransferDiagnosticsSignal(normalizedDescription);
+                var hasSavingsSignals = evidence.HasSavingsSignals || ContainsSavingsDiagnosticsSignal(normalizedDescription);
+                var cooccurredNearbyMerchantSpend = rows.Any(candidate =>
+                    candidate.Id != row.Id
+                    && candidate.FinancialAccountId == row.FinancialAccountId
+                    && candidate.Amount < 0m
+                    && candidate.BookedAtUtc <= row.BookedAtUtc
+                    && (row.BookedAtUtc - candidate.BookedAtUtc).TotalHours <= 6
+                    && !ContainsTransferDiagnosticsSignal(NormalizeDeterministicDescriptionForDiagnostics(candidate.Description))
+                    && !ContainsSavingsDiagnosticsSignal(NormalizeDeterministicDescriptionForDiagnostics(candidate.Description))
+                    && Math.Abs(candidate.Amount) > Math.Max(1m, Math.Abs(row.Amount)));
+                var candidateFamily = ResolveCandidateFamily(row.DeterministicClassificationRuleKey, evidence.Family);
+                var deferredOnCounterpartyExpectation =
+                    row.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                    && row.DeterministicReasonCode is DeterministicClassificationReasonCodes.DeferredMissingCounterparty
+                        or DeterministicClassificationReasonCodes.DeferredStrongSavingsMissingCounterparty;
+
+                return new
+                {
+                    row.Id,
+                    row.FinancialAccountId,
+                    row.Amount,
+                    row.Currency,
+                    row.BookedAtUtc,
+                    NormalizedDescription = normalizedDescription,
+                    Provider = provider,
+                    row.DeterministicClassificationStatus,
+                    row.DeterministicClassificationTerminal,
+                    row.DeterministicDeferredRetryEligible,
+                    row.NeedsDeterministicReclassification,
+                    row.DeterministicClassificationVersion,
+                    row.DeterministicClassificationRuleKey,
+                    row.DeterministicReasonCode,
+                    row.DeterministicLinkedTransactionId,
+                    row.DeterministicRelationshipType,
+                    row.DeterministicRelationshipGroupId,
+                    row.DeterministicMatchScore,
+                    row.DeterministicClassificationEvaluatedUtc,
+                    Direction = direction,
+                    AmountBucket = amountBucket,
+                    DuplicateClusterMember = duplicateClusterMember,
+                    DuplicateClusterSize = duplicateClusterSize,
+                    HasCounterpartyAccounts = hasCounterpartyAccounts,
+                    CandidateCounterpartCount = candidateCounterpartCount,
+                    HasPlausibleCounterpartCandidates = hasPlausibleCounterpartCandidates,
+                    CandidateFamily = candidateFamily,
+                    TopCandidateTransactionId = evidence.TopCandidateTransactionId,
+                    TopCandidateScore = evidence.TopCandidateScore,
+                    HasTransferSignals = hasTransferSignals,
+                    HasSavingsSignals = hasSavingsSignals,
+                    CooccurredWithNearbyMerchantSpend = cooccurredNearbyMerchantSpend,
+                    DeferredOnCounterpartyExpectation = deferredOnCounterpartyExpectation
+                };
+            })
+            .ToList();
 
         var statusCounts = rows
             .GroupBy(x => x.DeterministicClassificationStatus)
@@ -505,9 +627,48 @@ public sealed class BankConnectionService(
             .ThenBy(x => x.Status, StringComparer.Ordinal)
             .ToList();
 
-        var sampleDecisions = rows
-            .OrderBy(x => x.DeterministicClassificationTerminal ? 1 : 0)
-            .ThenByDescending(x => x.DeterministicClassificationEvaluatedUtc)
+        var unresolvedRows = enrichedRows
+            .Where(x =>
+                !x.DeterministicClassificationTerminal
+                || x.DeterministicClassificationStatus == DeterministicClassificationStatus.RejectedAmbiguousMatch)
+            .ToList();
+
+        var unresolvedBreakdown = unresolvedRows
+            .GroupBy(x => new
+            {
+                Status = MapDeterministicClassificationStatus(x.DeterministicClassificationStatus),
+                x.DeterministicReasonCode,
+                x.CandidateFamily,
+                x.Provider,
+                x.FinancialAccountId,
+                x.Direction,
+                x.AmountBucket,
+                x.DuplicateClusterMember,
+                x.HasCounterpartyAccounts,
+                x.HasPlausibleCounterpartCandidates,
+                x.DeferredOnCounterpartyExpectation
+            })
+            .Select(group => new DeterministicDiagnosticsBreakdownDto(
+                group.Key.Status,
+                group.Key.DeterministicReasonCode,
+                group.Key.CandidateFamily,
+                group.Key.Provider,
+                group.Key.FinancialAccountId,
+                group.Key.Direction,
+                group.Key.AmountBucket,
+                group.Key.DuplicateClusterMember,
+                group.Key.HasCounterpartyAccounts,
+                group.Key.HasPlausibleCounterpartCandidates,
+                group.Key.DeferredOnCounterpartyExpectation,
+                group.Count()))
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Status, StringComparer.Ordinal)
+            .ThenBy(x => x.CandidateFamily, StringComparer.Ordinal)
+            .ToList();
+
+        var sampleDecisions = unresolvedRows
+            .OrderByDescending(x => x.DeterministicClassificationEvaluatedUtc)
+            .ThenByDescending(x => x.CandidateCounterpartCount)
             .Take(120)
             .Select(x => new DeterministicTransactionDecisionDto(
                 x.Id,
@@ -515,12 +676,28 @@ public sealed class BankConnectionService(
                 x.Amount,
                 x.Currency,
                 x.BookedAtUtc,
+                x.NormalizedDescription,
+                x.Provider,
                 MapDeterministicClassificationStatus(x.DeterministicClassificationStatus),
                 x.DeterministicClassificationTerminal,
                 x.DeterministicDeferredRetryEligible,
                 x.DeterministicClassificationVersion,
                 x.DeterministicClassificationRuleKey,
                 x.DeterministicReasonCode,
+                x.CandidateFamily,
+                x.Direction,
+                x.AmountBucket,
+                x.DuplicateClusterMember,
+                x.DuplicateClusterSize,
+                x.HasCounterpartyAccounts,
+                x.CandidateCounterpartCount,
+                x.TopCandidateTransactionId,
+                x.TopCandidateScore,
+                x.HasSavingsSignals,
+                x.HasTransferSignals,
+                x.CooccurredWithNearbyMerchantSpend,
+                x.HasPlausibleCounterpartCandidates,
+                x.DeferredOnCounterpartyExpectation,
                 x.DeterministicLinkedTransactionId,
                 x.DeterministicRelationshipType,
                 x.DeterministicRelationshipGroupId,
@@ -528,7 +705,7 @@ public sealed class BankConnectionService(
                 x.DeterministicClassificationEvaluatedUtc))
             .ToList();
 
-        var terminalCount = rows.Count(x => x.DeterministicClassificationTerminal);
+        var terminalCount = enrichedRows.Count(x => x.DeterministicClassificationTerminal);
         var deferredMoreContextCount = rows.Count(x =>
             x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext);
         var deferredCounterpartyCount = rows.Count(x =>
@@ -584,6 +761,7 @@ public sealed class BankConnectionService(
                 continuationDecision,
                 continuationReason,
                 statusCounts,
+                unresolvedBreakdown,
                 sampleDecisions));
     }
 
@@ -2431,6 +2609,220 @@ public sealed class BankConnectionService(
         }
 
         return "categorizing";
+    }
+
+    private sealed record DeterministicEvidenceParseResult(
+        string? Family,
+        Guid? TopCandidateTransactionId,
+        int? TopCandidateScore,
+        bool HasTransferSignals,
+        bool HasSavingsSignals);
+
+    private static DeterministicEvidenceParseResult ParseDeterministicEvidence(string? evidenceJson)
+    {
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+        {
+            return new DeterministicEvidenceParseResult(null, null, null, false, false);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(evidenceJson);
+            var root = document.RootElement;
+            var family = TryReadDiagnosticsJsonString(root, "family");
+            var candidateIdText = TryReadDiagnosticsJsonString(root, "candidateId")
+                ?? TryReadDiagnosticsJsonString(root, "topCandidateId");
+            Guid? topCandidateId = null;
+            if (!string.IsNullOrWhiteSpace(candidateIdText) && Guid.TryParse(candidateIdText, out var parsedCandidateId))
+            {
+                topCandidateId = parsedCandidateId;
+            }
+
+            var topCandidateScore = TryReadDiagnosticsJsonInt(root, "bestScore")
+                ?? TryReadDiagnosticsJsonInt(root, "topCandidateScore")
+                ?? TryReadDiagnosticsJsonInt(root, "score");
+            var transferSignals = TryReadDiagnosticsJsonBool(root, "transferKeyword")
+                || TryReadDiagnosticsJsonBool(root, "hasTransferKeyword")
+                || string.Equals(family, "bank_account_transfer", StringComparison.Ordinal);
+            var savingsSignals = TryReadDiagnosticsJsonBool(root, "savingsKeyword")
+                || TryReadDiagnosticsJsonBool(root, "strongSignal")
+                || string.Equals(family, "savings_transfer", StringComparison.Ordinal);
+
+            return new DeterministicEvidenceParseResult(
+                family,
+                topCandidateId,
+                topCandidateScore,
+                transferSignals,
+                savingsSignals);
+        }
+        catch (JsonException)
+        {
+            return new DeterministicEvidenceParseResult(null, null, null, false, false);
+        }
+    }
+
+    private static string ResolveCandidateFamily(string? ruleKey, string? evidenceFamily)
+    {
+        if (!string.IsNullOrWhiteSpace(evidenceFamily))
+        {
+            return evidenceFamily;
+        }
+
+        var normalizedRuleKey = ruleKey?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedRuleKey))
+        {
+            return "none";
+        }
+
+        if (normalizedRuleKey.Contains("savings_transfer", StringComparison.Ordinal))
+        {
+            return "savings_transfer";
+        }
+
+        if (normalizedRuleKey.Contains("bank_transfer", StringComparison.Ordinal)
+            || normalizedRuleKey.Contains("internal_transfer", StringComparison.Ordinal))
+        {
+            return "bank_account_transfer";
+        }
+
+        return "none";
+    }
+
+    private static string NormalizeDeterministicDescriptionForDiagnostics(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return string.Empty;
+        }
+
+        var lowered = description.Trim().ToLowerInvariant();
+        var normalizedChars = lowered
+            .Select(character => char.IsLetterOrDigit(character) || char.IsWhiteSpace(character) ? character : ' ')
+            .ToArray();
+        return string.Join(
+            ' ',
+            new string(normalizedChars)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    private static bool ContainsTransferDiagnosticsSignal(string normalizedDescription)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedDescription))
+        {
+            return false;
+        }
+
+        return normalizedDescription.Contains("internal transfer", StringComparison.Ordinal)
+            || normalizedDescription.Contains("bank transfer", StringComparison.Ordinal)
+            || normalizedDescription.Contains("transfer", StringComparison.Ordinal)
+            || normalizedDescription.Contains("xfer", StringComparison.Ordinal)
+            || normalizedDescription.Contains("faster", StringComparison.Ordinal);
+    }
+
+    private static bool ContainsSavingsDiagnosticsSignal(string normalizedDescription)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedDescription))
+        {
+            return false;
+        }
+
+        return normalizedDescription.Contains("savings", StringComparison.Ordinal)
+            || normalizedDescription.Contains("vault", StringComparison.Ordinal)
+            || normalizedDescription.Contains("pocket", StringComparison.Ordinal)
+            || normalizedDescription.Contains("round up", StringComparison.Ordinal)
+            || normalizedDescription.Contains("roundup", StringComparison.Ordinal)
+            || normalizedDescription.Contains("spare change", StringComparison.Ordinal)
+            || normalizedDescription.Contains("flexible cash", StringComparison.Ordinal);
+    }
+
+    private static string ResolveDeterministicDirection(decimal amount)
+    {
+        if (amount < 0m)
+        {
+            return "outflow";
+        }
+
+        if (amount > 0m)
+        {
+            return "inflow";
+        }
+
+        return "neutral";
+    }
+
+    private static string ResolveDeterministicAmountBucket(decimal amount)
+    {
+        var absolute = Math.Abs(amount);
+        if (absolute < 5m)
+        {
+            return "lt_5";
+        }
+
+        if (absolute < 20m)
+        {
+            return "5_to_20";
+        }
+
+        if (absolute < 100m)
+        {
+            return "20_to_100";
+        }
+
+        if (absolute < 500m)
+        {
+            return "100_to_500";
+        }
+
+        return "gte_500";
+    }
+
+    private static string? TryReadDiagnosticsJsonString(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString(),
+            JsonValueKind.Number => property.ToString(),
+            _ => null
+        };
+    }
+
+    private static int? TryReadDiagnosticsJsonInt(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        return null;
+    }
+
+    private static bool TryReadDiagnosticsJsonBool(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => bool.TryParse(property.GetString(), out var parsed) && parsed,
+            _ => false
+        };
     }
 
     private static string MapDeterministicClassificationStatus(DeterministicClassificationStatus status)
