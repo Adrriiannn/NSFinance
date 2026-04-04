@@ -155,6 +155,95 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void TransactionFeatureExtractor_NearbyMerchantSupport_IsSymmetricAroundCandidate()
+    {
+        var extractor = new TransactionFeatureExtractor(new TransactionNormalizationService());
+        var accountId = Guid.NewGuid();
+        var savingsId = Guid.NewGuid();
+        var merchantId = Guid.NewGuid();
+        var baseUtc = new DateTime(2026, 03, 30, 12, 0, 0, DateTimeKind.Utc);
+        var rows = new List<TransactionFeatureExtractor.TransactionFeatureInputRow>
+        {
+            new(
+                savingsId,
+                accountId,
+                -0.45m,
+                "EUR",
+                baseUtc,
+                "Aux move",
+                "DEBIT",
+                "booked",
+                HasProviderTransferHint: false,
+                HasCounterpartyAccounts: true),
+            new(
+                merchantId,
+                accountId,
+                -20m,
+                "EUR",
+                baseUtc.AddMinutes(5),
+                "Main purchase",
+                "DEBIT",
+                "booked",
+                HasProviderTransferHint: false,
+                HasCounterpartyAccounts: true)
+        };
+
+        var features = extractor.BuildFeatures(rows);
+        Assert.True(features[savingsId].NearbyMerchantOutflowCount > 0);
+    }
+
+    [Fact]
+    public void TransactionFeatureExtractor_RepeatedAuxiliarySupport_IsNotBackwardOnly()
+    {
+        var extractor = new TransactionFeatureExtractor(new TransactionNormalizationService());
+        var accountId = Guid.NewGuid();
+        var currentId = Guid.NewGuid();
+        var futureAuxId = Guid.NewGuid();
+        var futureMerchantId = Guid.NewGuid();
+        var baseUtc = new DateTime(2026, 03, 20, 10, 0, 0, DateTimeKind.Utc);
+
+        var rows = new List<TransactionFeatureExtractor.TransactionFeatureInputRow>
+        {
+            new(
+                currentId,
+                accountId,
+                -0.55m,
+                "EUR",
+                baseUtc,
+                "Aux pocket move now",
+                "DEBIT",
+                "booked",
+                HasProviderTransferHint: false,
+                HasCounterpartyAccounts: true),
+            new(
+                futureAuxId,
+                accountId,
+                -0.65m,
+                "EUR",
+                baseUtc.AddDays(1),
+                "Aux pocket move future",
+                "TRANSFER",
+                "booked",
+                HasProviderTransferHint: true,
+                HasCounterpartyAccounts: true),
+            new(
+                futureMerchantId,
+                accountId,
+                -17.25m,
+                "EUR",
+                baseUtc.AddDays(1).AddMinutes(2),
+                "Main groceries future",
+                "DEBIT",
+                "booked",
+                HasProviderTransferHint: false,
+                HasCounterpartyAccounts: true)
+        };
+
+        var features = extractor.BuildFeatures(rows);
+        Assert.True(features[currentId].RepeatedSmallAuxiliaryOutflowPatternCount > 0);
+    }
+
+    [Fact]
     public void TransferPairing_NoCandidatesAndPending_DefersForMoreContext()
     {
         var engine = new TransferPairingEngine();
@@ -603,6 +692,42 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void SavingsClassifier_DefaultPath_DoesNotUseCounterpartPairing()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var source = CreateFeature(
+            signedAmount: -95m,
+            hasTransferKeyword: true,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            accountHint: "5521",
+            hasProviderTransferHint: true,
+            nearbyMerchantOutflowCount: 0,
+            repeatedSmallAuxiliaryOutflowPatternCount: 0,
+            tokens: ["transfer", "5521"]);
+
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+
+        Assert.Null(outcome);
+    }
+
+    [Fact]
+    public void SavingsClassifier_DefaultPath_DoesNotUseLinkedTransferAsGenericSavingsShortcut()
+    {
+        var counterpartMethod = typeof(SavingsTransferClassifier).GetMethod(
+            "FindSavingsCounterpart",
+            BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
+        Assert.Null(counterpartMethod);
+
+        var classifySignatures = typeof(SavingsTransferClassifier)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(method => method.Name == "Classify")
+            .Select(method => string.Join(",", method.GetParameters().Select(parameter => parameter.Name)))
+            .ToArray();
+        Assert.DoesNotContain(classifySignatures, signature => signature.Contains("linkedTransactionId", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void TransferPairing_DuplicateClusterStablePairs_AreResolved()
     {
         var engine = new TransferPairingEngine();
@@ -732,6 +857,58 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void BuildOutcome_TransferPending_IsEvaluatedBeforeSavingsReturn()
+    {
+        using var dbContext = CreateDbContext();
+        var service = CreatePersistenceService(dbContext);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = Guid.NewGuid(),
+            Amount = -2.20m,
+            Currency = "EUR",
+            Description = "Round up with transfer cues 4455",
+            BookedAtUtc = new DateTime(2026, 03, 22, 10, 0, 0, DateTimeKind.Utc),
+            CreatedUtc = new DateTime(2026, 03, 22, 10, 0, 0, DateTimeKind.Utc)
+        };
+        var feature = CreateFeature(
+            signedAmount: -2.20m,
+            hasTransferKeyword: true,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: true,
+            hasProviderTransferHint: true,
+            nearbyMerchantOutflowCount: 2,
+            repeatedSmallAuxiliaryOutflowPatternCount: 3,
+            accountHint: "4455",
+            hasCounterpartyAccounts: true,
+            tokens: ["transfer", "round", "up", "4455"]);
+        var pending = new TransferPendingDecision(
+            transaction.Id,
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty,
+            DeterministicClassificationReasonCodes.DeferredMissingCounterparty,
+            RetryEligible: true,
+            CandidateFamily: "bank_account_transfer",
+            CandidateCount: 0,
+            TopCandidateTransactionId: null,
+            TopCandidateScore: null,
+            IsDuplicateClusterMember: false,
+            DuplicateClusterSize: 0,
+            EvidenceJson: "{}");
+
+        var outcome = InvokeBuildOutcome(
+            service,
+            transaction,
+            feature,
+            linkedPairs: new Dictionary<Guid, Guid>(),
+            resolvedPairDecisions: new Dictionary<Guid, TransferPairDecision>(),
+            pendingDecisions: new Dictionary<Guid, TransferPendingDecision> { [transaction.Id] = pending });
+
+        Assert.Equal(DeterministicClassificationStatus.DeferredWaitingForCounterparty, outcome.Status);
+        Assert.Equal("bank_transfer.deferred_or_rejected_v3", outcome.RuleKey);
+        Assert.Null(outcome.RelationshipType);
+    }
+
+    [Fact]
     public void BuildOutcome_LegacySavings_DoesNotForceSavingsRouting()
     {
         using var dbContext = CreateDbContext();
@@ -768,6 +945,25 @@ public class DeterministicCategorizationEngineTests
         Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, outcome.Status);
         Assert.Equal(DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily, outcome.ReasonCode);
         Assert.Null(outcome.RelationshipType);
+    }
+
+    [Fact]
+    public void ReasonCodes_StaleSavingsAliases_AreObsoleteOrUnused()
+    {
+        var staleNames = new[]
+        {
+            nameof(DeterministicClassificationReasonCodes.MatchedSavingsKeywordSignal),
+            nameof(DeterministicClassificationReasonCodes.MatchedSavingsOneSidedSignal),
+            nameof(DeterministicClassificationReasonCodes.DeferredStrongSavingsMissingCounterparty)
+        };
+
+        foreach (var staleName in staleNames)
+        {
+            var field = typeof(DeterministicClassificationReasonCodes).GetField(staleName, BindingFlags.Public | BindingFlags.Static);
+            Assert.NotNull(field);
+            var obsolete = field!.GetCustomAttribute<ObsoleteAttribute>();
+            Assert.NotNull(obsolete);
+        }
     }
 
     private static DeterministicClassificationOutcome InvokeBuildOutcome(
