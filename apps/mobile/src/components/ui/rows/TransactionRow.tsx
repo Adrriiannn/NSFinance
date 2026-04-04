@@ -6,7 +6,9 @@ import type { TransactionDto } from "../../../types/api";
 import { useThemeTokens } from "../../../theme/tokens";
 import {
   buildTransactionDetailDate,
-  buildTransactionMetaLine
+  buildTransactionMetaLine,
+  resolveCanonicalRelationshipBadge,
+  resolveCanonicalTransactionSemantic
 } from "../../../features/transactions/activityGrouping";
 import { AmountText } from "../../ui/AmountText";
 import { useRowPresets } from "./row.presets";
@@ -56,15 +58,12 @@ export function TransactionRow({
     ]).start();
   }, [index, opacity, translateY]);
 
+  const semantic = resolveCanonicalTransactionSemantic(transaction);
   const metadata = metadataOverride ?? buildTransactionMetaLine(transaction);
   const timestamp = buildTransactionDetailDate(transaction);
-  const isSavingsMovement =
-    transaction.deterministicClassificationStatus === "classified_matched_rule"
-    && transaction.deterministicRelationshipType === "savings_transfer";
-  const isInternalTransfer =
-    transaction.deterministicClassificationStatus === "classified_matched_rule"
-    && transaction.deterministicRelationshipType === "internal_transfer";
-  const relationshipBadge = resolveRelationshipBadge(transaction);
+  const isSavingsMovement = semantic === "savings_transfer";
+  const isInternalTransfer = semantic === "internal_transfer";
+  const relationshipBadge = resolveCanonicalRelationshipBadge(transaction);
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
@@ -127,20 +126,4 @@ export function TransactionRow({
       </Pressable>
     </Animated.View>
   );
-}
-
-function resolveRelationshipBadge(transaction: TransactionDto): string | null {
-  if (transaction.deterministicClassificationStatus !== "classified_matched_rule") {
-    return null;
-  }
-
-  if (transaction.deterministicRelationshipType === "internal_transfer") {
-    return "Linked transfer";
-  }
-
-  if (transaction.deterministicRelationshipType === "savings_transfer") {
-    return "Savings transfer";
-  }
-
-  return null;
 }

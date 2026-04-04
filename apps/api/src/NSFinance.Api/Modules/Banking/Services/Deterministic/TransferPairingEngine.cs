@@ -126,7 +126,7 @@ public sealed class TransferPairingEngine
                 {
                     DeterministicClassificationStatus.DeferredWaitingForMoreContext => DeterministicClassificationReasonCodes.DeferredPendingBookedContext,
                     DeterministicClassificationStatus.DeferredWaitingForCounterparty => DeterministicClassificationReasonCodes.DeferredMissingCounterparty,
-                    _ => DeterministicClassificationReasonCodes.EvaluatedInsufficientSignals
+                    _ => DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart
                 };
                 var retryEligible = status is DeterministicClassificationStatus.DeferredWaitingForCounterparty
                     or DeterministicClassificationStatus.DeferredWaitingForMoreContext;
@@ -163,7 +163,7 @@ public sealed class TransferPairingEngine
                 pending[feature.TransactionId] = new TransferPendingDecision(
                     feature.TransactionId,
                     DeterministicClassificationStatus.RejectedAmbiguousMatch,
-                    DeterministicClassificationReasonCodes.RejectedAmbiguousDuplicateCluster,
+                    DeterministicClassificationReasonCodes.TransferRejectedAmbiguousDuplicateCluster,
                     false,
                     CandidateFamily: "bank_account_transfer",
                     CandidateCount: candidates.Count,
@@ -193,7 +193,7 @@ public sealed class TransferPairingEngine
                     pending[feature.TransactionId] = new TransferPendingDecision(
                         feature.TransactionId,
                         DeterministicClassificationStatus.RejectedAmbiguousMatch,
-                        DeterministicClassificationReasonCodes.RejectedAmbiguousCandidates,
+                        DeterministicClassificationReasonCodes.TransferRejectedAmbiguous,
                         false,
                         CandidateFamily: "bank_account_transfer",
                         CandidateCount: candidates.Count,
@@ -245,7 +245,7 @@ public sealed class TransferPairingEngine
                 pending[feature.TransactionId] = new TransferPendingDecision(
                     feature.TransactionId,
                     DeterministicClassificationStatus.EvaluatedNoMatchingRule,
-                    DeterministicClassificationReasonCodes.EvaluatedInsufficientSignals,
+                    DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart,
                     false,
                     CandidateFamily: "bank_account_transfer",
                     CandidateCount: candidates.Count,
@@ -346,7 +346,7 @@ public sealed class TransferPairingEngine
                 source,
                 candidate.Candidate,
                 "bank_transfer.strict_unique_pair_v3",
-                DeterministicClassificationReasonCodes.MatchedExactInverseAmount,
+                DeterministicClassificationReasonCodes.TransferPairStrictMatch,
                 candidate.Score,
                 pass: "strict_unique_pair");
         }
@@ -405,7 +405,7 @@ public sealed class TransferPairingEngine
                 source,
                 best.Candidate,
                 "bank_transfer.mutual_best_pair_v3",
-                DeterministicClassificationReasonCodes.MatchedMutualBestCandidate,
+                DeterministicClassificationReasonCodes.TransferPairMutualBest,
                 best.Score,
                 pass: "mutual_best_pair");
         }
@@ -502,7 +502,7 @@ public sealed class TransferPairingEngine
                     selectedPair.Debit,
                     selectedPair.Credit,
                     "bank_transfer.duplicate_cluster_pair_v3",
-                    DeterministicClassificationReasonCodes.MatchedDuplicateClusterStablePairing,
+                    DeterministicClassificationReasonCodes.TransferPairDuplicateCluster,
                     selectedPair.Score,
                     pass: "duplicate_cluster_nearest_neighbor");
             }

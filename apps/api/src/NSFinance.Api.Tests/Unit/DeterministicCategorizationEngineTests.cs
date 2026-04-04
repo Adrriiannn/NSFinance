@@ -238,37 +238,27 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
-    public void SavingsClassifier_PairedCounterpart_MarksMatchedSavingsTransfer()
+    public void SavingsClassifier_StrongProviderSignal_ClassifiesWithoutCounterpartPair()
     {
         var classifier = new SavingsTransferClassifier();
         var source = CreateFeature(
-            signedAmount: -45m,
+            signedAmount: -4.75m,
             hasSavingsKeyword: true,
             hasStrongSavingsKeyword: true,
-            tokens: ["vault", "transfer"]);
-        var counterpart = CreateFeature(
-            signedAmount: 45m,
-            hasSavingsKeyword: true,
-            hasStrongSavingsKeyword: false,
-            tokens: ["vault", "transfer"]);
+            hasProviderTransferHint: true,
+            tokens: ["pocket", "move"]);
 
-        var features = new Dictionary<Guid, DeterministicTransactionFeature>
-        {
-            [source.TransactionId] = source,
-            [counterpart.TransactionId] = counterpart
-        };
-
-        var outcome = classifier.Classify(source, features, linkedTransactionId: null, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
         Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
         Assert.Equal("savings_transfer", outcome.RelationshipType);
-        Assert.Equal(counterpart.TransactionId, outcome.LinkedTransactionId);
+        Assert.Null(outcome.LinkedTransactionId);
         Assert.True(outcome.Terminal);
     }
 
     [Fact]
-    public void SavingsClassifier_OneSidedStrongSignal_DefersForCounterparty()
+    public void SavingsClassifier_OneSidedStrongSignal_ClassifiesFromContext()
     {
         var classifier = new SavingsTransferClassifier();
         var source = CreateFeature(
@@ -280,20 +270,16 @@ public class DeterministicCategorizationEngineTests
             repeatedSmallAuxiliaryOutflowPatternCount: 4,
             hasProviderTransferHint: true);
 
-        var outcome = classifier.Classify(
-            source,
-            new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
-            linkedTransactionId: null,
-            hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
-        Assert.Equal(DeterministicClassificationStatus.DeferredWaitingForCounterparty, outcome!.Status);
+        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
         Assert.Equal("savings_transfer", outcome.RelationshipType);
         Assert.Null(outcome.LinkedTransactionId);
     }
 
     [Fact]
-    public void SavingsClassifier_WeakUnpairedSignal_DefersForCounterparty()
+    public void SavingsClassifier_WeakUnpairedSignal_DoesNotClassify()
     {
         var classifier = new SavingsTransferClassifier();
         var source = CreateFeature(
@@ -302,11 +288,7 @@ public class DeterministicCategorizationEngineTests
             hasStrongSavingsKeyword: false,
             tokens: ["savings", "move"]);
 
-        var outcome = classifier.Classify(
-            source,
-            new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
-            linkedTransactionId: null,
-            hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
 
         Assert.Null(outcome);
     }
@@ -324,11 +306,7 @@ public class DeterministicCategorizationEngineTests
             repeatedSmallAuxiliaryOutflowPatternCount: 0,
             hasProviderTransferHint: false);
 
-        var outcome = classifier.Classify(
-            source,
-            new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
-            linkedTransactionId: null,
-            hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
 
         Assert.Null(outcome);
     }
@@ -346,11 +324,26 @@ public class DeterministicCategorizationEngineTests
             repeatedSmallAuxiliaryOutflowPatternCount: 4,
             hasProviderTransferHint: true);
 
-        var outcome = classifier.Classify(
-            source,
-            new Dictionary<Guid, DeterministicTransactionFeature> { [source.TransactionId] = source },
-            linkedTransactionId: null,
-            hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+
+        Assert.Null(outcome);
+    }
+
+    [Fact]
+    public void SavingsClassifier_PairStyleShapeWithoutSavingsContext_DoesNotClassify()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var source = CreateFeature(
+            signedAmount: -150m,
+            hasTransferKeyword: true,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            accountHint: "4421",
+            hasProviderTransferHint: true,
+            nearbyMerchantOutflowCount: 0,
+            repeatedSmallAuxiliaryOutflowPatternCount: 0);
+
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
 
         Assert.Null(outcome);
     }

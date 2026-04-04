@@ -157,7 +157,6 @@ public sealed class DeterministicClassificationPersistenceService(
             var outcome = BuildOutcome(
                 transaction,
                 feature,
-                featuresById,
                 linkedPairs,
                 pairingAnalysis.ResolvedPairDecisions,
                 pairingAnalysis.PendingDecisions);
@@ -253,7 +252,6 @@ public sealed class DeterministicClassificationPersistenceService(
     private DeterministicClassificationOutcome BuildOutcome(
         Transaction transaction,
         DeterministicTransactionFeature feature,
-        IReadOnlyDictionary<Guid, DeterministicTransactionFeature> featuresById,
         IReadOnlyDictionary<Guid, Guid> linkedPairs,
         IReadOnlyDictionary<Guid, TransferPairDecision> resolvedPairDecisions,
         IReadOnlyDictionary<Guid, TransferPendingDecision> pendingDecisions)
@@ -317,15 +315,17 @@ public sealed class DeterministicClassificationPersistenceService(
                 or TransactionTransferKind.SavingsManualDeposit
                 or TransactionTransferKind.SavingsManualWithdrawal;
 
-        if (legacySavings
-            || feature.HasSavingsKeyword
-            || transaction.LinkedTransferTransactionId.HasValue
-            || ShouldEvaluateSavingsClassifier(feature))
+        var shouldEvaluateSavings = ShouldEvaluateSavingsClassifier(feature, legacySavings);
+        if (pendingDecisions.TryGetValue(transaction.Id, out var pending)
+            && pending.Status != DeterministicClassificationStatus.EvaluatedNoMatchingRule)
+        {
+            return BuildTransferPendingOutcome(pending);
+        }
+
+        if (shouldEvaluateSavings)
         {
             var savingsOutcome = savingsTransferClassifier.Classify(
                 feature,
-                featuresById,
-                transaction.LinkedTransferTransactionId,
                 hasLegacySavingsMarker: legacySavings);
 
             if (savingsOutcome is not null)
@@ -334,15 +334,29 @@ public sealed class DeterministicClassificationPersistenceService(
             }
         }
 
-        if (pendingDecisions.TryGetValue(transaction.Id, out var pending))
+        if (pendingDecisions.TryGetValue(transaction.Id, out var pendingFallback))
+        {
+            return BuildTransferPendingOutcome(pendingFallback);
+        }
+
+        if (shouldEvaluateSavings)
         {
             return new DeterministicClassificationOutcome(
-                pending.Status,
-                Terminal: DeterministicClassificationRetryPlanner.IsTerminal(pending.Status),
-                RetryEligible: pending.RetryEligible,
-                RuleKey: "bank_transfer.deferred_or_rejected_v3",
-                ReasonCode: pending.ReasonCode,
-                EvidenceJson: pending.EvidenceJson,
+                DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+                Terminal: true,
+                RetryEligible: false,
+                RuleKey: "savings_transfer.rejected_insufficient_context_v4",
+                ReasonCode: DeterministicClassificationReasonCodes.SavingsRejectedInsufficientContext,
+                EvidenceJson: JsonSerializer.Serialize(new
+                {
+                    family = "savings_transfer",
+                    routeDecision = DeterministicClassificationReasonCodes.SavingsRejectedInsufficientContext,
+                    transferSignals = feature.HasTransferKeyword || feature.HasProviderTransferHint,
+                    savingsSignals = feature.HasSavingsKeyword || feature.HasStrongSavingsKeyword,
+                    feature.NearbyMerchantOutflowCount,
+                    feature.RepeatedSmallAuxiliaryOutflowPatternCount,
+                    legacySignalSupportOnly = legacySavings
+                }),
                 MatchScore: null,
                 ClassificationCategoryId: null,
                 ClassificationSubcategoryId: null,
@@ -372,21 +386,50 @@ public sealed class DeterministicClassificationPersistenceService(
             RelationshipGroupId: null);
     }
 
-    private static bool ShouldEvaluateSavingsClassifier(DeterministicTransactionFeature feature)
+    private static bool ShouldEvaluateSavingsClassifier(
+        DeterministicTransactionFeature feature,
+        bool hasLegacySavingsMarker)
     {
-        if (feature.IsInflow)
+        if (feature.IsInflow || feature.LooksLikeExternalCounterparty)
         {
             return false;
         }
 
-        if (feature.AbsoluteAmount > 25m)
+        if (feature.AbsoluteAmount > 50m)
+        {
+            return false;
+        }
+
+        if (feature.HasTransferKeyword
+            && !feature.HasStrongSavingsKeyword
+            && !feature.HasSavingsKeyword
+            && !feature.HasProviderTransferHint)
         {
             return false;
         }
 
         return feature.HasProviderTransferHint
+               || feature.HasStrongSavingsKeyword
                || feature.NearbyMerchantOutflowCount > 0
-               || feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2;
+               || feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2
+               || hasLegacySavingsMarker;
+    }
+
+    private static DeterministicClassificationOutcome BuildTransferPendingOutcome(TransferPendingDecision pending)
+    {
+        return new DeterministicClassificationOutcome(
+            pending.Status,
+            Terminal: DeterministicClassificationRetryPlanner.IsTerminal(pending.Status),
+            RetryEligible: pending.RetryEligible,
+            RuleKey: "bank_transfer.deferred_or_rejected_v3",
+            ReasonCode: pending.ReasonCode,
+            EvidenceJson: pending.EvidenceJson,
+            MatchScore: null,
+            ClassificationCategoryId: null,
+            ClassificationSubcategoryId: null,
+            LinkedTransactionId: null,
+            RelationshipType: null,
+            RelationshipGroupId: null);
     }
 
     private bool ApplyClassificationOutcome(

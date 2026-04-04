@@ -30,17 +30,20 @@ export type TransferReportingBucket =
   | "cash_out"
   | "cash_in";
 
+export const TRANSFER_DOMAIN_ID = 920;
+
 export type TransferPolicyInput = Pick<
   TransactionDto,
   | "amount"
+  | "taxonomyDomainId"
+  | "taxonomyCategoryId"
+  | "taxonomySubcategoryId"
   | "transferKind"
   | "linkedTransferTransactionId"
   | "transferPolicyKind"
   | "reportingBucket"
   | "isGloballyNeutralized"
-  | "deterministicClassificationStatus"
-  | "deterministicRelationshipType"
->;
+> & Partial<Pick<TransactionDto, "deterministicClassificationStatus" | "deterministicRelationshipType">>;
 
 export type TransferPolicyEvaluation = {
   policyKind: TransferPolicyKind;

@@ -2,18 +2,33 @@ namespace NSFinance.Api.Modules.Banking.Services.Deterministic;
 
 public static class DeterministicClassificationReasonCodes
 {
-    public const string MatchedExactInverseAmount = "matched_exact_inverse_amount";
-    public const string MatchedMutualBestCandidate = "matched_mutual_best_candidate";
-    public const string MatchedDuplicateClusterStablePairing = "matched_duplicate_cluster_stable_pairing";
-    public const string MatchedSavingsKeywordSignal = "matched_savings_keyword_signal";
-    public const string MatchedSavingsOneSidedSignal = "matched_savings_one_sided_signal";
-    public const string MatchedSavingsContextualPattern = "matched_savings_contextual_pattern";
+    public const string TransferPairStrictMatch = "transfer_pair_strict_match";
+    public const string TransferPairMutualBest = "transfer_pair_mutual_best";
+    public const string TransferPairDuplicateCluster = "transfer_pair_duplicate_cluster";
+    public const string TransferRejectedAmbiguous = "transfer_rejected_ambiguous";
+    public const string TransferRejectedAmbiguousDuplicateCluster = "transfer_rejected_ambiguous_duplicate_cluster";
+    public const string TransferRejectedNoCounterpart = "transfer_rejected_no_counterpart";
+
+    public const string SavingsProviderStructuralSignal = "savings_provider_structural_signal";
+    public const string SavingsContextNearbySpend = "savings_context_nearby_spend";
+    public const string SavingsRepeatedAuxiliaryPattern = "savings_repeated_auxiliary_pattern";
+    public const string SavingsRejectedTransferTakesPrecedence = "savings_rejected_transfer_takes_precedence";
+    public const string SavingsRejectedInsufficientContext = "savings_rejected_insufficient_context";
+    public const string LegacySignalSupportOnly = "legacy_signal_support_only";
+
+    // Compatibility aliases retained for existing tests and historical evidence references.
+    public const string MatchedExactInverseAmount = TransferPairStrictMatch;
+    public const string MatchedMutualBestCandidate = TransferPairMutualBest;
+    public const string MatchedDuplicateClusterStablePairing = TransferPairDuplicateCluster;
+    public const string MatchedSavingsKeywordSignal = SavingsProviderStructuralSignal;
+    public const string MatchedSavingsOneSidedSignal = SavingsProviderStructuralSignal;
+    public const string MatchedSavingsContextualPattern = SavingsContextNearbySpend;
     public const string DeferredMissingCounterparty = "deferred_missing_counterparty";
     public const string DeferredPendingBookedContext = "deferred_pending_booked_context";
     public const string DeferredStrongSavingsMissingCounterparty = "deferred_strong_savings_missing_counterparty";
-    public const string RejectedAmbiguousCandidates = "rejected_ambiguous_candidates";
-    public const string RejectedAmbiguousDuplicateCluster = "rejected_ambiguous_duplicate_cluster";
+    public const string RejectedAmbiguousCandidates = TransferRejectedAmbiguous;
+    public const string RejectedAmbiguousDuplicateCluster = TransferRejectedAmbiguousDuplicateCluster;
     public const string EvaluatedUnsupportedFamily = "evaluated_unsupported_family";
-    public const string EvaluatedInsufficientSignals = "insufficient_transfer_signals";
-    public const string EvaluatedSavingsInsufficientSignals = "insufficient_savings_signals";
+    public const string EvaluatedInsufficientSignals = TransferRejectedNoCounterpart;
+    public const string EvaluatedSavingsInsufficientSignals = SavingsRejectedInsufficientContext;
 }
