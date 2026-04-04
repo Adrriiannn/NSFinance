@@ -9,41 +9,52 @@ export type CanonicalSemanticVariant =
 export type CanonicalSemanticStyleKind = "default" | "internal_transfer" | "savings_transfer";
 export type CanonicalSemanticReasonSource = "deterministic" | "legacy_fallback" | "none";
 export type CanonicalSemanticConfidenceState = "matched" | "deferred" | "ambiguous" | "uncategorized";
+export type CanonicalSemanticIconKind = "income" | "expense" | "transfer" | "savings";
 
 export type CanonicalTransactionSemantic = {
   family: CanonicalSemanticFamily;
   variant: CanonicalSemanticVariant;
-  displaySubtitle: string | null;
+  subtitle: string | null;
   badgeText: string | null;
   styleKind: CanonicalSemanticStyleKind;
+  iconKind: CanonicalSemanticIconKind;
   analyticsNeutralized: boolean;
   reasonSource: CanonicalSemanticReasonSource;
   confidenceState: CanonicalSemanticConfidenceState;
-};
-
-const DEFAULT_SEMANTIC: CanonicalTransactionSemantic = {
-  family: "none",
-  variant: "none",
-  displaySubtitle: null,
-  badgeText: null,
-  styleKind: "default",
-  analyticsNeutralized: false,
-  reasonSource: "none",
-  confidenceState: "uncategorized"
+  isTransferLike: boolean;
+  isSavingsLike: boolean;
 };
 
 export function resolveCanonicalTransactionSemantic(transaction: TransactionDto): CanonicalTransactionSemantic {
+  const defaultIconKind: CanonicalSemanticIconKind = transaction.direction === "Expense" ? "expense" : "income";
+  const defaultSemantic: CanonicalTransactionSemantic = {
+    family: "none",
+    variant: "none",
+    subtitle: null,
+    badgeText: null,
+    styleKind: "default",
+    iconKind: defaultIconKind,
+    analyticsNeutralized: false,
+    reasonSource: "none",
+    confidenceState: "uncategorized",
+    isTransferLike: false,
+    isSavingsLike: false
+  };
+
   if (transaction.deterministicClassificationStatus === "classified_matched_rule") {
     if (transaction.deterministicRelationshipType === "internal_transfer") {
       return {
         family: "internal_transfer",
         variant: "internal_transfer",
-        displaySubtitle: "Bank account transfer",
+        subtitle: "Bank account transfer",
         badgeText: "Linked transfer",
         styleKind: "internal_transfer",
+        iconKind: "transfer",
         analyticsNeutralized: true,
         reasonSource: "deterministic",
-        confidenceState: "matched"
+        confidenceState: "matched",
+        isTransferLike: true,
+        isSavingsLike: false
       };
     }
 
@@ -54,38 +65,21 @@ export function resolveCanonicalTransactionSemantic(transaction: TransactionDto)
       return {
         family: "savings_transfer",
         variant: isRoundup ? "savings_roundup" : "savings_manual_move",
-        displaySubtitle: "Savings transfer",
+        subtitle: "Savings transfer",
         badgeText: "Savings transfer",
         styleKind: "savings_transfer",
+        iconKind: "savings",
         analyticsNeutralized: true,
         reasonSource: "deterministic",
-        confidenceState: "matched"
+        confidenceState: "matched",
+        isTransferLike: true,
+        isSavingsLike: true
       };
     }
-  }
 
-  if (transaction.displaySemantic === "internal_transfer") {
     return {
-      family: "internal_transfer",
-      variant: "internal_transfer",
-      displaySubtitle: "Bank account transfer",
-      badgeText: "Linked transfer",
-      styleKind: "internal_transfer",
-      analyticsNeutralized: true,
-      reasonSource: "legacy_fallback",
-      confidenceState: "matched"
-    };
-  }
-
-  if (transaction.displaySemantic === "savings_roundup" || transaction.displaySemantic === "savings_manual_move") {
-    return {
-      family: "savings_transfer",
-      variant: transaction.displaySemantic,
-      displaySubtitle: "Savings transfer",
-      badgeText: "Savings transfer",
-      styleKind: "savings_transfer",
-      analyticsNeutralized: true,
-      reasonSource: "legacy_fallback",
+      ...defaultSemantic,
+      reasonSource: "deterministic",
       confidenceState: "matched"
     };
   }
@@ -93,17 +87,56 @@ export function resolveCanonicalTransactionSemantic(transaction: TransactionDto)
   if (transaction.deterministicClassificationStatus === "deferred_waiting_for_counterparty"
     || transaction.deterministicClassificationStatus === "deferred_waiting_for_more_context") {
     return {
-      ...DEFAULT_SEMANTIC,
+      ...defaultSemantic,
+      reasonSource: "deterministic",
       confidenceState: "deferred"
     };
   }
 
   if (transaction.deterministicClassificationStatus === "rejected_ambiguous_match") {
     return {
-      ...DEFAULT_SEMANTIC,
+      ...defaultSemantic,
+      reasonSource: "deterministic",
       confidenceState: "ambiguous"
     };
   }
 
-  return DEFAULT_SEMANTIC;
+  const allowLegacyFallback =
+    transaction.deterministicClassificationStatus === "not_evaluated"
+    || transaction.deterministicClassificationStatus === "evaluating"
+    || transaction.deterministicClassificationStatus === "superseded_recompute_required";
+
+  if (allowLegacyFallback && transaction.displaySemantic === "internal_transfer") {
+    return {
+      family: "internal_transfer",
+      variant: "internal_transfer",
+      subtitle: "Bank account transfer",
+      badgeText: "Linked transfer",
+      styleKind: "internal_transfer",
+      iconKind: "transfer",
+      analyticsNeutralized: true,
+      reasonSource: "legacy_fallback",
+      confidenceState: "matched",
+      isTransferLike: true,
+      isSavingsLike: false
+    };
+  }
+
+  if (allowLegacyFallback && (transaction.displaySemantic === "savings_roundup" || transaction.displaySemantic === "savings_manual_move")) {
+    return {
+      family: "savings_transfer",
+      variant: transaction.displaySemantic,
+      subtitle: "Savings transfer",
+      badgeText: "Savings transfer",
+      styleKind: "savings_transfer",
+      iconKind: "savings",
+      analyticsNeutralized: true,
+      reasonSource: "legacy_fallback",
+      confidenceState: "matched",
+      isTransferLike: true,
+      isSavingsLike: true
+    };
+  }
+
+  return defaultSemantic;
 }

@@ -1873,7 +1873,7 @@ public class OpenBankingIntegrationTests
         var aux = await harness.DbContext.Transactions.SingleAsync(x => x.Id == nearbyAuxId);
         Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, aux.DeterministicClassificationStatus);
         Assert.NotEqual("savings_transfer", aux.DeterministicRelationshipType);
-        Assert.Equal(DeterministicClassificationReasonCodes.SavingsRejectedInsufficientContext, aux.DeterministicReasonCode);
+        Assert.Equal(DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily, aux.DeterministicReasonCode);
     }
 
     [Fact]
@@ -2397,6 +2397,102 @@ public class OpenBankingIntegrationTests
         {
             Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, row.DeterministicClassificationStatus);
             Assert.NotEqual("savings_transfer", row.DeterministicRelationshipType);
+        });
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_GenericSavingsWords_DoNotRouteSavingsOrDefer()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.savings-generic-keywords@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-savings-generic-keywords", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+
+        var genericRows = new[]
+        {
+            (Id: Guid.NewGuid(), Description: "Cash allocation for monthly planning"),
+            (Id: Guid.NewGuid(), Description: "Flexible fund adjustment"),
+            (Id: Guid.NewGuid(), Description: "Pot contribution"),
+            (Id: Guid.NewGuid(), Description: "Round movement")
+        };
+
+        var bookedBase = now.AddDays(-2).Date.AddHours(12);
+        for (var index = 0; index < genericRows.Length; index++)
+        {
+            var row = genericRows[index];
+            var bookedAt = bookedBase.AddMinutes(index * 3);
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = row.Id,
+                FinancialAccountId = accountId,
+                Amount = -(0.40m + (index * 0.10m)),
+                Currency = "EUR",
+                Description = row.Description,
+                BookedAtUtc = bookedAt,
+                CreatedUtc = bookedAt
+            });
+            harness.DbContext.NormalizedBankTransactions.Add(new NormalizedBankTransaction
+            {
+                Id = Guid.NewGuid(),
+                RawBankTransactionId = Guid.NewGuid(),
+                LinkedBankAccountId = linkedAccount.Id,
+                FinancialAccountId = accountId,
+                ProjectedTransactionId = row.Id,
+                DedupeKey = $"diag-savings-generic-{index}",
+                Amount = -(0.40m + (index * 0.10m)),
+                Currency = "EUR",
+                BookedAtUtc = bookedAt,
+                Description = row.Description,
+                TransactionType = "DEBIT",
+                TransactionStatus = "booked",
+                ImportedUtc = now,
+                LastNormalizedUtc = now
+            });
+        }
+
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSyncAttemptedUtc = now.AddHours(-2);
+        connection.LastSuccessfulSyncUtc = now.AddHours(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var run = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            connection.Id,
+            trigger: "test_savings_generic_keywords",
+            cancellationToken: CancellationToken.None);
+        Assert.True(run.Succeeded);
+
+        var ids = genericRows.Select(x => x.Id).ToArray();
+        var rows = await harness.DbContext.Transactions
+            .Where(x => ids.Contains(x.Id))
+            .ToListAsync();
+        Assert.Equal(genericRows.Length, rows.Count);
+        Assert.All(rows, row =>
+        {
+            Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, row.DeterministicClassificationStatus);
+            Assert.True(row.DeterministicClassificationTerminal);
+            Assert.NotEqual(DeterministicClassificationStatus.DeferredWaitingForCounterparty, row.DeterministicClassificationStatus);
+            Assert.NotEqual("savings_transfer", row.DeterministicRelationshipType);
+            Assert.Equal(DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily, row.DeterministicReasonCode);
         });
     }
 

@@ -198,6 +198,76 @@ public class TransactionServiceTests
         Assert.Equal("savingsallocation", roundup.ReportingBucket);
     }
 
+    [Fact]
+    public async Task GetTransactionsAsync_DeterministicSemantic_OverridesLegacyTransferKindFallback()
+    {
+        await using var dbContext = CreateDbContext();
+        var now = DateTime.UtcNow;
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var transactionId = Guid.NewGuid();
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        dbContext.Users.Add(new User
+        {
+            Id = userId,
+            PrimaryEmail = "semantic-override@local",
+            NormalizedEmail = "semantic-override@local",
+            DisplayName = "Semantic Override Tester",
+            Status = "active",
+            OnboardingStatus = "profile_created",
+            Role = "user",
+            CreatedUtc = now,
+            UpdatedUtc = now,
+            EmailVerified = true,
+            Timezone = "UTC",
+            Locale = "en-IE",
+            PreferredCurrency = "EUR",
+            PlanTier = "standard"
+        });
+
+        dbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = accountId,
+            UserId = userId,
+            Name = "Main",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now
+        });
+
+        dbContext.Transactions.Add(new Transaction
+        {
+            Id = transactionId,
+            FinancialAccountId = accountId,
+            Amount = -0.55m,
+            Currency = "EUR",
+            Description = "Aux move",
+            BookedAtUtc = now.AddMinutes(-10),
+            CreatedUtc = now.AddMinutes(-10),
+            TransferKind = TransactionTransferKind.LinkedInternal,
+            DeterministicClassificationStatus = DeterministicClassificationStatus.ClassifiedMatchedRule,
+            DeterministicClassificationVersion = currentVersion,
+            DeterministicClassificationRuleKey = "savings_transfer.contextual_pattern_v4",
+            DeterministicReasonCode = DeterministicClassificationReasonCodes.SavingsContextNearbySpend,
+            DeterministicRelationshipType = "savings_transfer",
+            DeterministicClassificationTerminal = true,
+            DeterministicClassificationEvaluatedUtc = now.AddMinutes(-9)
+        });
+
+        await dbContext.SaveChangesAsync();
+
+        var service = new TransactionService(
+            dbContext,
+            new TestCurrentUserProvider(userId),
+            new ExpenseTaxonomyService());
+
+        var rows = await service.GetTransactionsAsync(accountId, CancellationToken.None);
+        var row = Assert.Single(rows);
+
+        Assert.Equal("savings_roundup", row.DisplaySemantic);
+    }
+
     private static AppDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

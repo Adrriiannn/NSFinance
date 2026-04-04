@@ -58,11 +58,24 @@ export function TransactionRow({
   }, [index, opacity, translateY]);
 
   const semantic = resolveCanonicalTransactionSemantic(transaction);
-  const metadata = metadataOverride ?? buildTransactionMetaLine(transaction);
+  const metadata = metadataOverride ?? buildTransactionMetaLine(transaction, semantic.subtitle);
   const timestamp = buildTransactionDetailDate(transaction);
-  const isSavingsMovement = semantic.family === "savings_transfer";
-  const isInternalTransfer = semantic.family === "internal_transfer";
   const relationshipBadge = semantic.badgeText;
+  const savingsStyle = semantic.styleKind === "savings_transfer";
+  const leadingIconName =
+    semantic.iconKind === "transfer"
+      ? "swap-horizontal"
+      : semantic.iconKind === "savings"
+      ? "wallet-outline"
+      : semantic.iconKind === "expense"
+      ? "arrow-down"
+      : "arrow-up";
+  const leadingIconBackgroundColor =
+    semantic.styleKind === "savings_transfer"
+      ? "rgba(90, 186, 226, 0.18)"
+      : semantic.iconKind === "expense"
+      ? "rgba(226, 90, 90, 0.26)"
+      : "rgba(29, 186, 114, 0.22)";
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
@@ -75,7 +88,7 @@ export function TransactionRow({
         style={({ pressed }) => [
           rowPresets.container,
           { backgroundColor: surfaces.field },
-          isSavingsMovement
+          savingsStyle
             ? {
                 borderColor: "rgba(90, 186, 226, 0.35)"
               }
@@ -88,17 +101,12 @@ export function TransactionRow({
           style={[
             rowPresets.leadingIcon,
             {
-              backgroundColor:
-                isSavingsMovement
-                  ? "rgba(90, 186, 226, 0.18)"
-                  : transaction.direction === "Expense"
-                  ? "rgba(226, 90, 90, 0.26)"
-                  : "rgba(29, 186, 114, 0.22)"
+              backgroundColor: leadingIconBackgroundColor
             }
           ]}
         >
           <Ionicons
-            name={isInternalTransfer ? "swap-horizontal" : transaction.direction === "Expense" ? "arrow-down" : "arrow-up"}
+            name={leadingIconName}
             size={16}
             color={palette.textPrimary}
           />

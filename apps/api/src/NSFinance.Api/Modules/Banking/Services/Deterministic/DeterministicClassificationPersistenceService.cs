@@ -310,17 +310,19 @@ public sealed class DeterministicClassificationPersistenceService(
                 RelationshipGroupId: groupId);
         }
 
+        var hasPendingTransferDecision = pendingDecisions.TryGetValue(transaction.Id, out var pendingDecision);
+        if (hasPendingTransferDecision
+            && pendingDecision!.Status != DeterministicClassificationStatus.EvaluatedNoMatchingRule)
+        {
+            return BuildTransferPendingOutcome(pendingDecision);
+        }
+
         var legacySavings =
             transaction.TransferKind is TransactionTransferKind.SavingsRoundup
                 or TransactionTransferKind.SavingsManualDeposit
                 or TransactionTransferKind.SavingsManualWithdrawal;
 
-        var shouldEvaluateSavings = ShouldEvaluateSavingsClassifier(feature, legacySavings);
-        if (pendingDecisions.TryGetValue(transaction.Id, out var pending)
-            && pending.Status != DeterministicClassificationStatus.EvaluatedNoMatchingRule)
-        {
-            return BuildTransferPendingOutcome(pending);
-        }
+        var shouldEvaluateSavings = ShouldEvaluateSavingsClassifier(feature);
 
         if (shouldEvaluateSavings)
         {
@@ -334,9 +336,9 @@ public sealed class DeterministicClassificationPersistenceService(
             }
         }
 
-        if (pendingDecisions.TryGetValue(transaction.Id, out var pendingFallback))
+        if (hasPendingTransferDecision)
         {
-            return BuildTransferPendingOutcome(pendingFallback);
+            return BuildTransferPendingOutcome(pendingDecision!);
         }
 
         if (shouldEvaluateSavings)
@@ -387,8 +389,7 @@ public sealed class DeterministicClassificationPersistenceService(
     }
 
     private static bool ShouldEvaluateSavingsClassifier(
-        DeterministicTransactionFeature feature,
-        bool hasLegacySavingsMarker)
+        DeterministicTransactionFeature feature)
     {
         if (feature.IsInflow || feature.LooksLikeExternalCounterparty)
         {
@@ -408,11 +409,18 @@ public sealed class DeterministicClassificationPersistenceService(
             return false;
         }
 
-        return feature.HasProviderTransferHint
-               || feature.HasStrongSavingsKeyword
-               || feature.NearbyMerchantOutflowCount > 0
-               || feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2
-               || hasLegacySavingsMarker;
+        var providerStructuralSignal = feature.HasProviderTransferHint && feature.HasStrongSavingsKeyword;
+        var contextualSupportSignal = feature.NearbyMerchantOutflowCount > 0
+                                      && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2;
+        var repeatedAuxiliarySignal = feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 3
+                                      && feature.NearbyMerchantOutflowCount > 0;
+        var strongPhraseWithSupportSignal = feature.HasStrongSavingsKeyword
+                                            && (feature.HasProviderTransferHint || contextualSupportSignal);
+
+        return providerStructuralSignal
+               || contextualSupportSignal
+               || repeatedAuxiliarySignal
+               || strongPhraseWithSupportSignal;
     }
 
     private static DeterministicClassificationOutcome BuildTransferPendingOutcome(TransferPendingDecision pending)

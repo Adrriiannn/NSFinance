@@ -1,4 +1,8 @@
+using System.Reflection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSFinance.Api.Modules.Banking.Services.Deterministic;
+using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Tests.Unit;
@@ -32,6 +36,7 @@ public class DeterministicCategorizationEngineTests
     [InlineData("Cash move to somewhere")]
     [InlineData("Flexible payment")]
     [InlineData("Fund allocation")]
+    [InlineData("Pot transfer")]
     public void HasSavingsKeyword_GenericKeywordOnly_IsWeakSupportOnly(string description)
     {
         var normalization = new TransactionNormalizationService();
@@ -314,6 +319,48 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void SavingsClassifier_DoesNotRequireSavingsKeyword_WhenContextSignalsAreStrong()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var source = CreateFeature(
+            signedAmount: -1.75m,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            hasProviderTransferHint: false,
+            nearbyMerchantOutflowCount: 2,
+            repeatedSmallAuxiliaryOutflowPatternCount: 3,
+            hasCounterpartyAccounts: true,
+            tokens: ["auxiliary", "movement"]);
+
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+
+        Assert.NotNull(outcome);
+        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
+        Assert.Equal("savings_transfer", outcome.RelationshipType);
+        Assert.Null(outcome.LinkedTransactionId);
+    }
+
+    [Fact]
+    public void SavingsClassifier_ContextualSignal_DoesNotRequireMissingCounterpartyAccounts()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var source = CreateFeature(
+            signedAmount: -0.75m,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            nearbyMerchantOutflowCount: 2,
+            repeatedSmallAuxiliaryOutflowPatternCount: 2,
+            hasCounterpartyAccounts: true,
+            tokens: ["auxiliary", "sweep"]);
+
+        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+
+        Assert.NotNull(outcome);
+        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
+        Assert.Equal("savings_transfer", outcome.RelationshipType);
+    }
+
+    [Fact]
     public void SavingsClassifier_WeakUnpairedSignal_DoesNotClassify()
     {
         var classifier = new SavingsTransferClassifier();
@@ -457,6 +504,145 @@ public class DeterministicCategorizationEngineTests
 
         Assert.True(eligibleWithCounterparty);
         Assert.False(ineligibleWithoutCounterparty);
+    }
+
+    [Fact]
+    public void BuildOutcome_TransferPendingResolved_BeforeSavingsRuns()
+    {
+        using var dbContext = CreateDbContext();
+        var service = CreatePersistenceService(dbContext);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = Guid.NewGuid(),
+            Amount = -3.21m,
+            Currency = "EUR",
+            Description = "Round up move",
+            BookedAtUtc = new DateTime(2026, 03, 20, 10, 0, 0, DateTimeKind.Utc),
+            CreatedUtc = new DateTime(2026, 03, 20, 10, 0, 0, DateTimeKind.Utc)
+        };
+        var feature = CreateFeature(
+            signedAmount: -3.21m,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: true,
+            hasProviderTransferHint: true,
+            nearbyMerchantOutflowCount: 2,
+            repeatedSmallAuxiliaryOutflowPatternCount: 3,
+            accountHint: "4455",
+            tokens: ["round", "up", "pocket", "4455"]);
+        var pending = new TransferPendingDecision(
+            transaction.Id,
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty,
+            DeterministicClassificationReasonCodes.DeferredMissingCounterparty,
+            RetryEligible: true,
+            CandidateFamily: "bank_account_transfer",
+            CandidateCount: 0,
+            TopCandidateTransactionId: null,
+            TopCandidateScore: null,
+            IsDuplicateClusterMember: false,
+            DuplicateClusterSize: 0,
+            EvidenceJson: "{}");
+
+        var outcome = InvokeBuildOutcome(
+            service,
+            transaction,
+            feature,
+            linkedPairs: new Dictionary<Guid, Guid>(),
+            resolvedPairDecisions: new Dictionary<Guid, TransferPairDecision>(),
+            pendingDecisions: new Dictionary<Guid, TransferPendingDecision>
+            {
+                [transaction.Id] = pending
+            });
+
+        Assert.Equal(DeterministicClassificationStatus.DeferredWaitingForCounterparty, outcome.Status);
+        Assert.Equal(DeterministicClassificationReasonCodes.DeferredMissingCounterparty, outcome.ReasonCode);
+        Assert.Null(outcome.RelationshipType);
+    }
+
+    [Fact]
+    public void BuildOutcome_LegacySavings_DoesNotForceSavingsRouting()
+    {
+        using var dbContext = CreateDbContext();
+        var service = CreatePersistenceService(dbContext);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = Guid.NewGuid(),
+            Amount = -7.00m,
+            Currency = "EUR",
+            Description = "Manual move",
+            BookedAtUtc = new DateTime(2026, 03, 19, 9, 30, 0, DateTimeKind.Utc),
+            CreatedUtc = new DateTime(2026, 03, 19, 9, 30, 0, DateTimeKind.Utc),
+            TransferKind = TransactionTransferKind.SavingsRoundup
+        };
+        var feature = CreateFeature(
+            signedAmount: -7.00m,
+            hasTransferKeyword: false,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            hasProviderTransferHint: false,
+            nearbyMerchantOutflowCount: 0,
+            repeatedSmallAuxiliaryOutflowPatternCount: 0,
+            tokens: ["manual", "move"]);
+
+        var outcome = InvokeBuildOutcome(
+            service,
+            transaction,
+            feature,
+            linkedPairs: new Dictionary<Guid, Guid>(),
+            resolvedPairDecisions: new Dictionary<Guid, TransferPairDecision>(),
+            pendingDecisions: new Dictionary<Guid, TransferPendingDecision>());
+
+        Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, outcome.Status);
+        Assert.Equal(DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily, outcome.ReasonCode);
+        Assert.Null(outcome.RelationshipType);
+    }
+
+    private static DeterministicClassificationOutcome InvokeBuildOutcome(
+        DeterministicClassificationPersistenceService service,
+        Transaction transaction,
+        DeterministicTransactionFeature feature,
+        IReadOnlyDictionary<Guid, Guid> linkedPairs,
+        IReadOnlyDictionary<Guid, TransferPairDecision> resolvedPairDecisions,
+        IReadOnlyDictionary<Guid, TransferPendingDecision> pendingDecisions)
+    {
+        var method = typeof(DeterministicClassificationPersistenceService).GetMethod(
+            "BuildOutcome",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var result = method!.Invoke(service, [transaction, feature, linkedPairs, resolvedPairDecisions, pendingDecisions]);
+        Assert.NotNull(result);
+        return Assert.IsType<DeterministicClassificationOutcome>(result);
+    }
+
+    private static AppDbContext CreateDbContext()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"deterministic-build-outcome-tests-{Guid.NewGuid():N}")
+            .Options;
+
+        return new AppDbContext(options);
+    }
+
+    private static DeterministicClassificationPersistenceService CreatePersistenceService(AppDbContext dbContext)
+    {
+        var normalizationService = new TransactionNormalizationService();
+        var featureExtractor = new TransactionFeatureExtractor(normalizationService);
+        var transferPairingEngine = new TransferPairingEngine();
+        var savingsTransferClassifier = new SavingsTransferClassifier();
+        var retryPlanner = new DeterministicClassificationRetryPlanner();
+        var metrics = new DeterministicCategorizationMetrics();
+
+        return new DeterministicClassificationPersistenceService(
+            dbContext,
+            normalizationService,
+            featureExtractor,
+            transferPairingEngine,
+            savingsTransferClassifier,
+            retryPlanner,
+            metrics,
+            NullLogger<DeterministicClassificationPersistenceService>.Instance);
     }
 
     private static DeterministicTransactionFeature CreateFeature(

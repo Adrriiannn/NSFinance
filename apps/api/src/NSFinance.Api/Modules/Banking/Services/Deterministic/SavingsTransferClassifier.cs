@@ -16,17 +16,19 @@ public sealed class SavingsTransferClassifier
         }
 
         var providerStructuralSignal = feature.HasProviderTransferHint
-            && (feature.HasStrongSavingsKeyword || hasLegacySavingsMarker)
+            && feature.HasStrongSavingsKeyword
             && feature.AbsoluteAmount <= 50m;
+        var contextualSupportSignal = feature.NearbyMerchantOutflowCount > 0
+            && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2;
         var contextualRoundupSignal = feature.IsOutflow
             && feature.AbsoluteAmount <= 5m
-            && feature.NearbyMerchantOutflowCount > 0
-            && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2
-            && !feature.HasCounterpartyAccounts;
+            && contextualSupportSignal;
         var repeatedBehaviorSignal = feature.IsOutflow
             && feature.AbsoluteAmount <= 10m
             && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 3
             && feature.NearbyMerchantOutflowCount > 0;
+        var strongPhraseWithSupportSignal = feature.HasStrongSavingsKeyword
+            && (feature.HasProviderTransferHint || contextualSupportSignal);
 
         if (providerStructuralSignal)
         {
@@ -36,6 +38,20 @@ public sealed class SavingsTransferClassifier
                 score: 9,
                 feature,
                 evidenceClass: "provider_structural_signal",
+                providerStructuralSignal,
+                contextualRoundupSignal,
+                repeatedBehaviorSignal,
+                hasLegacySavingsMarker);
+        }
+
+        if (strongPhraseWithSupportSignal)
+        {
+            return BuildSavingsOutcome(
+                ruleKey: "savings_transfer.strong_phrase_support_v4",
+                reasonCode: DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal,
+                score: 8,
+                feature,
+                evidenceClass: "strong_phrase_with_support_signal",
                 providerStructuralSignal,
                 contextualRoundupSignal,
                 repeatedBehaviorSignal,

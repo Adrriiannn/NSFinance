@@ -1,6 +1,5 @@
 import type { TransactionDto } from "../../types/api";
 import { formatLongDate, formatTime } from "../../lib/format";
-import { resolveCanonicalTransactionSemantic } from "./semanticResolver";
 
 export type ActivityFilter =
   | "All"
@@ -132,15 +131,11 @@ export function buildTransactionMetaLine(
   transaction: TransactionDto,
   categoryOverride?: string | null
 ): string {
-  if (!categoryOverride) {
-    const semantic = resolveCanonicalTransactionSemantic(transaction);
-    if (semantic.displaySubtitle) {
-      return semantic.displaySubtitle;
-    }
+  if (categoryOverride) {
+    return categoryOverride;
   }
 
   const category =
-    categoryOverride ??
     transaction.taxonomySubcategoryName ??
     transaction.taxonomyCategoryName ??
     transaction.categoryName ??
