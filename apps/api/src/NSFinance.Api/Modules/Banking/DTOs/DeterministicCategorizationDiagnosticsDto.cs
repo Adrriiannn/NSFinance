@@ -16,6 +16,13 @@ public sealed record DeterministicDiagnosticsBreakdownDto(
     bool HasCounterpartyAccounts,
     bool HasPlausibleCounterpartCandidates,
     bool DeferredOnCounterpartyExpectation,
+    bool SavingsRoutingAllowed,
+    string? SavingsRoutingTier,
+    bool SavingsProviderStructuralSupport,
+    bool SavingsContextualSupport,
+    int SavingsRepetitionStrength,
+    bool SavingsExternalCounterpartyRisk,
+    int SavingsAmountRiskModifier,
     int Count);
 
 public sealed record DeterministicTransactionDecisionDto(
@@ -46,6 +53,14 @@ public sealed record DeterministicTransactionDecisionDto(
     bool CooccurredWithNearbyMerchantSpend,
     bool HasPlausibleCounterpartCandidates,
     bool DeferredOnCounterpartyExpectation,
+    bool SavingsRoutingAllowed,
+    string? SavingsRoutingTier,
+    bool SavingsProviderStructuralSupport,
+    bool SavingsContextualSupport,
+    int SavingsRepetitionStrength,
+    bool SavingsExternalCounterpartyRisk,
+    int SavingsAmountRiskModifier,
+    string SavingsEvaluationOutcome,
     Guid? LinkedTransactionId,
     string? RelationshipType,
     Guid? RelationshipGroupId,

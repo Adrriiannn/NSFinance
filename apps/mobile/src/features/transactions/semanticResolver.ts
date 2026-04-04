@@ -60,8 +60,7 @@ export function resolveCanonicalTransactionSemantic(transaction: TransactionDto)
 
     if (transaction.deterministicRelationshipType === "savings_transfer") {
       const isRoundup =
-        transaction.deterministicClassificationReasonCode === "savings_context_nearby_spend"
-        || transaction.displaySemantic === "savings_roundup";
+        transaction.deterministicClassificationReasonCode === "savings_context_nearby_spend";
       return {
         family: "savings_transfer",
         variant: isRoundup ? "savings_roundup" : "savings_manual_move",

@@ -568,16 +568,20 @@ public sealed class BankConnectionService(
                     candidate.Id != row.Id
                     && candidate.FinancialAccountId == row.FinancialAccountId
                     && candidate.Amount < 0m
-                    && candidate.BookedAtUtc <= row.BookedAtUtc
-                    && (row.BookedAtUtc - candidate.BookedAtUtc).TotalHours <= 6
+                    && Math.Abs((row.BookedAtUtc - candidate.BookedAtUtc).TotalHours) <= 6d
                     && !ContainsTransferDiagnosticsSignal(NormalizeDeterministicDescriptionForDiagnostics(candidate.Description))
                     && !ContainsSavingsDiagnosticsSignal(NormalizeDeterministicDescriptionForDiagnostics(candidate.Description))
                     && Math.Abs(candidate.Amount) > Math.Max(1m, Math.Abs(row.Amount)));
                 var candidateFamily = ResolveCandidateFamily(row.DeterministicClassificationRuleKey, evidence.Family);
+                var savingsEvaluationOutcome = ResolveSavingsEvaluationOutcome(
+                    candidateFamily,
+                    row.DeterministicClassificationStatus,
+                    row.DeterministicReasonCode,
+                    evidence.SavingsRoutingAllowed);
                 var deferredOnCounterpartyExpectation =
                     row.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
                     && row.DeterministicReasonCode is DeterministicClassificationReasonCodes.DeferredMissingCounterparty
-                        or DeterministicClassificationReasonCodes.DeferredStrongSavingsMissingCounterparty;
+                        or "deferred_strong_savings_missing_counterparty";
 
                 return new
                 {
@@ -613,7 +617,15 @@ public sealed class BankConnectionService(
                     HasTransferSignals = hasTransferSignals,
                     HasSavingsSignals = hasSavingsSignals,
                     CooccurredWithNearbyMerchantSpend = cooccurredNearbyMerchantSpend,
-                    DeferredOnCounterpartyExpectation = deferredOnCounterpartyExpectation
+                    DeferredOnCounterpartyExpectation = deferredOnCounterpartyExpectation,
+                    SavingsRoutingAllowed = evidence.SavingsRoutingAllowed,
+                    SavingsRoutingTier = evidence.SavingsRoutingTier,
+                    SavingsProviderStructuralSupport = evidence.SavingsProviderStructuralSupport,
+                    SavingsContextualSupport = evidence.SavingsContextualSupport,
+                    SavingsRepetitionStrength = evidence.SavingsRepetitionStrength,
+                    SavingsExternalCounterpartyRisk = evidence.SavingsExternalCounterpartyRisk,
+                    SavingsAmountRiskModifier = evidence.SavingsAmountRiskModifier,
+                    SavingsEvaluationOutcome = savingsEvaluationOutcome
                 };
             })
             .ToList();
@@ -646,7 +658,14 @@ public sealed class BankConnectionService(
                 x.DuplicateClusterMember,
                 x.HasCounterpartyAccounts,
                 x.HasPlausibleCounterpartCandidates,
-                x.DeferredOnCounterpartyExpectation
+                x.DeferredOnCounterpartyExpectation,
+                x.SavingsRoutingAllowed,
+                x.SavingsRoutingTier,
+                x.SavingsProviderStructuralSupport,
+                x.SavingsContextualSupport,
+                x.SavingsRepetitionStrength,
+                x.SavingsExternalCounterpartyRisk,
+                x.SavingsAmountRiskModifier
             })
             .Select(group => new DeterministicDiagnosticsBreakdownDto(
                 group.Key.Status,
@@ -660,6 +679,13 @@ public sealed class BankConnectionService(
                 group.Key.HasCounterpartyAccounts,
                 group.Key.HasPlausibleCounterpartCandidates,
                 group.Key.DeferredOnCounterpartyExpectation,
+                group.Key.SavingsRoutingAllowed,
+                group.Key.SavingsRoutingTier,
+                group.Key.SavingsProviderStructuralSupport,
+                group.Key.SavingsContextualSupport,
+                group.Key.SavingsRepetitionStrength,
+                group.Key.SavingsExternalCounterpartyRisk,
+                group.Key.SavingsAmountRiskModifier,
                 group.Count()))
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.Status, StringComparer.Ordinal)
@@ -698,6 +724,14 @@ public sealed class BankConnectionService(
                 x.CooccurredWithNearbyMerchantSpend,
                 x.HasPlausibleCounterpartCandidates,
                 x.DeferredOnCounterpartyExpectation,
+                x.SavingsRoutingAllowed,
+                x.SavingsRoutingTier,
+                x.SavingsProviderStructuralSupport,
+                x.SavingsContextualSupport,
+                x.SavingsRepetitionStrength,
+                x.SavingsExternalCounterpartyRisk,
+                x.SavingsAmountRiskModifier,
+                x.SavingsEvaluationOutcome,
                 x.DeterministicLinkedTransactionId,
                 x.DeterministicRelationshipType,
                 x.DeterministicRelationshipGroupId,
@@ -2616,13 +2650,20 @@ public sealed class BankConnectionService(
         Guid? TopCandidateTransactionId,
         int? TopCandidateScore,
         bool HasTransferSignals,
-        bool HasSavingsSignals);
+        bool HasSavingsSignals,
+        bool SavingsRoutingAllowed,
+        string? SavingsRoutingTier,
+        bool SavingsProviderStructuralSupport,
+        bool SavingsContextualSupport,
+        int SavingsRepetitionStrength,
+        bool SavingsExternalCounterpartyRisk,
+        int SavingsAmountRiskModifier);
 
     private static DeterministicEvidenceParseResult ParseDeterministicEvidence(string? evidenceJson)
     {
         if (string.IsNullOrWhiteSpace(evidenceJson))
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, false, null, false, false, 0, false, 0);
         }
 
         try
@@ -2647,17 +2688,31 @@ public sealed class BankConnectionService(
             var savingsSignals = TryReadDiagnosticsJsonBool(root, "savingsKeyword")
                 || TryReadDiagnosticsJsonBool(root, "strongSignal")
                 || string.Equals(family, "savings_transfer", StringComparison.Ordinal);
+            var savingsRoutingAllowed = TryReadDiagnosticsJsonBool(root, "savingsRoutingAllowed");
+            var savingsRoutingTier = TryReadDiagnosticsJsonString(root, "savingsRoutingTier");
+            var savingsProviderStructuralSupport = TryReadDiagnosticsJsonBool(root, "providerStructuralSupport");
+            var savingsContextualSupport = TryReadDiagnosticsJsonBool(root, "contextualSupport");
+            var savingsRepetitionStrength = TryReadDiagnosticsJsonInt(root, "repetitionStrength") ?? 0;
+            var savingsExternalCounterpartyRisk = TryReadDiagnosticsJsonBool(root, "externalCounterpartyRisk");
+            var savingsAmountRiskModifier = TryReadDiagnosticsJsonInt(root, "amountRiskModifier") ?? 0;
 
             return new DeterministicEvidenceParseResult(
                 family,
                 topCandidateId,
                 topCandidateScore,
                 transferSignals,
-                savingsSignals);
+                savingsSignals,
+                savingsRoutingAllowed,
+                savingsRoutingTier,
+                savingsProviderStructuralSupport,
+                savingsContextualSupport,
+                savingsRepetitionStrength,
+                savingsExternalCounterpartyRisk,
+                savingsAmountRiskModifier);
         }
         catch (JsonException)
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, false, null, false, false, 0, false, 0);
         }
     }
 
@@ -2686,6 +2741,36 @@ public sealed class BankConnectionService(
         }
 
         return "none";
+    }
+
+    private static string ResolveSavingsEvaluationOutcome(
+        string candidateFamily,
+        DeterministicClassificationStatus status,
+        string? reasonCode,
+        bool savingsRoutingAllowed)
+    {
+        if (!savingsRoutingAllowed && candidateFamily != "savings_transfer")
+        {
+            return "not_evaluated";
+        }
+
+        if (status == DeterministicClassificationStatus.ClassifiedMatchedRule
+            && string.Equals(candidateFamily, "savings_transfer", StringComparison.Ordinal))
+        {
+            return "classified";
+        }
+
+        if (string.Equals(reasonCode, DeterministicClassificationReasonCodes.SavingsRejectedInsufficientContext, StringComparison.Ordinal))
+        {
+            return "blocked_insufficient_context";
+        }
+
+        if (!savingsRoutingAllowed)
+        {
+            return "blocked_routing";
+        }
+
+        return "evaluated_not_classified";
     }
 
     private static string NormalizeDeterministicDescriptionForDiagnostics(string? description)

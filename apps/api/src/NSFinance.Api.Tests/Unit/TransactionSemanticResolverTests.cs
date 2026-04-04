@@ -18,6 +18,17 @@ public class TransactionSemanticResolverTests
     }
 
     [Fact]
+    public void ResolveDisplaySemantic_DeterministicSavingsRepeatedPattern_UsesManualMoveVariant()
+    {
+        var semantic = TransactionSemanticResolver.ResolveDisplaySemantic(
+            DeterministicClassificationStatus.ClassifiedMatchedRule,
+            deterministicRelationshipType: "savings_transfer",
+            deterministicReasonCode: DeterministicClassificationReasonCodes.SavingsRepeatedAuxiliaryPattern);
+
+        Assert.Equal("savings_manual_move", semantic);
+    }
+
+    [Fact]
     public void ResolveDisplaySemantic_DeterministicSavingsWithContextReason_UsesRoundupVariant()
     {
         var semantic = TransactionSemanticResolver.ResolveDisplaySemantic(

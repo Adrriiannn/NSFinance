@@ -114,6 +114,47 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void FeatureExtractor_ContextNearbySpend_IsSymmetricForPostingOrder()
+    {
+        var extractor = new TransactionFeatureExtractor(new TransactionNormalizationService());
+        var accountId = Guid.NewGuid();
+        var baseUtc = new DateTime(2026, 03, 30, 10, 0, 0, DateTimeKind.Utc);
+        var savingsId = Guid.NewGuid();
+        var merchantId = Guid.NewGuid();
+
+        var rows = new List<TransactionFeatureExtractor.TransactionFeatureInputRow>
+        {
+            new(
+                savingsId,
+                accountId,
+                -0.60m,
+                "EUR",
+                baseUtc,
+                "Aux jar sweep",
+                "DEBIT",
+                "booked",
+                HasProviderTransferHint: false,
+                HasCounterpartyAccounts: true),
+            new(
+                merchantId,
+                accountId,
+                -14.20m,
+                "EUR",
+                baseUtc.AddMinutes(6),
+                "Main groceries",
+                "DEBIT",
+                "booked",
+                HasProviderTransferHint: false,
+                HasCounterpartyAccounts: true)
+        };
+
+        var features = extractor.BuildFeatures(rows);
+        var savings = features[savingsId];
+
+        Assert.True(savings.NearbyMerchantOutflowCount > 0);
+    }
+
+    [Fact]
     public void TransferPairing_NoCandidatesAndPending_DefersForMoreContext()
     {
         var engine = new TransferPairingEngine();
@@ -281,6 +322,7 @@ public class DeterministicCategorizationEngineTests
     public void SavingsClassifier_StrongProviderSignal_ClassifiesWithoutCounterpartPair()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -4.75m,
             hasSavingsKeyword: true,
@@ -288,7 +330,7 @@ public class DeterministicCategorizationEngineTests
             hasProviderTransferHint: true,
             tokens: ["pocket", "move"]);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
         Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
@@ -298,9 +340,50 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void SavingsRoutingPolicy_StrongContextWithoutKeyword_AllowsEvaluation()
+    {
+        var policy = new SavingsRoutingPolicy();
+        var source = CreateFeature(
+            signedAmount: -1.25m,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            nearbyMerchantOutflowCount: 2,
+            repeatedSmallAuxiliaryOutflowPatternCount: 2,
+            hasProviderTransferHint: false,
+            hasWeakSavingsSupportKeyword: false);
+
+        var decision = policy.Evaluate(source, hasLegacySavingsMarker: false);
+
+        Assert.True(decision.ShouldEvaluate);
+        Assert.True(decision.ContextualSupport);
+        Assert.Equal(2, decision.RepetitionStrength);
+    }
+
+    [Fact]
+    public void SavingsRoutingPolicy_WeakKeywordOnly_DoesNotAllowEvaluation()
+    {
+        var policy = new SavingsRoutingPolicy();
+        var source = CreateFeature(
+            signedAmount: -2.10m,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            hasWeakSavingsSupportKeyword: true,
+            nearbyMerchantOutflowCount: 0,
+            repeatedSmallAuxiliaryOutflowPatternCount: 0,
+            hasProviderTransferHint: false,
+            tokens: ["cash", "fund"]);
+
+        var decision = policy.Evaluate(source, hasLegacySavingsMarker: false);
+
+        Assert.False(decision.ShouldEvaluate);
+        Assert.True(decision.WeakSupportOnlySignalsPresent);
+    }
+
+    [Fact]
     public void SavingsClassifier_OneSidedStrongSignal_ClassifiesFromContext()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -10m,
             hasSavingsKeyword: true,
@@ -310,7 +393,7 @@ public class DeterministicCategorizationEngineTests
             repeatedSmallAuxiliaryOutflowPatternCount: 4,
             hasProviderTransferHint: true);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
         Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
@@ -322,6 +405,7 @@ public class DeterministicCategorizationEngineTests
     public void SavingsClassifier_DoesNotRequireSavingsKeyword_WhenContextSignalsAreStrong()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -1.75m,
             hasSavingsKeyword: false,
@@ -332,7 +416,7 @@ public class DeterministicCategorizationEngineTests
             hasCounterpartyAccounts: true,
             tokens: ["auxiliary", "movement"]);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
         Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
@@ -344,6 +428,7 @@ public class DeterministicCategorizationEngineTests
     public void SavingsClassifier_ContextualSignal_DoesNotRequireMissingCounterpartyAccounts()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -0.75m,
             hasSavingsKeyword: false,
@@ -353,7 +438,7 @@ public class DeterministicCategorizationEngineTests
             hasCounterpartyAccounts: true,
             tokens: ["auxiliary", "sweep"]);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.NotNull(outcome);
         Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
@@ -361,16 +446,100 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void SavingsClassifier_StrongProviderSignal_AllowsLargerManualSavingsMove()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
+        var source = CreateFeature(
+            signedAmount: -165m,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: true,
+            hasProviderTransferHint: true,
+            nearbyMerchantOutflowCount: 0,
+            repeatedSmallAuxiliaryOutflowPatternCount: 0,
+            tokens: ["vault", "monthly", "transfer"]);
+
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
+
+        Assert.NotNull(outcome);
+        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
+        Assert.Equal(DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal, outcome.ReasonCode);
+    }
+
+    [Fact]
+    public void SavingsClassifier_ContextualSavings_NotBlockedByMainSpendPostingAfterCandidate()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
+        var source = CreateFeature(
+            signedAmount: -0.62m,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            nearbyMerchantOutflowCount: 1,
+            repeatedSmallAuxiliaryOutflowPatternCount: 2,
+            hasProviderTransferHint: false,
+            tokens: ["aux", "jar"]);
+
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
+
+        Assert.NotNull(outcome);
+        Assert.Equal(DeterministicClassificationReasonCodes.SavingsContextNearbySpend, outcome!.ReasonCode);
+    }
+
+    [Fact]
+    public void SavingsClassifier_SparseHistory_WithStrongProviderContext_CanStillClassify()
+    {
+        var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
+        var source = CreateFeature(
+            signedAmount: -12.4m,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: true,
+            nearbyMerchantOutflowCount: 1,
+            repeatedSmallAuxiliaryOutflowPatternCount: 0,
+            hasProviderTransferHint: true,
+            tokens: ["savings", "vault"]);
+
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
+
+        Assert.NotNull(outcome);
+        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
+    }
+
+    [Fact]
+    public void SavingsClassifier_RepetitionStrength_GraduatesSupport()
+    {
+        var policy = new SavingsRoutingPolicy();
+        var weak = CreateFeature(
+            signedAmount: -1m,
+            nearbyMerchantOutflowCount: 1,
+            repeatedSmallAuxiliaryOutflowPatternCount: 1);
+        var medium = CreateFeature(
+            signedAmount: -1m,
+            nearbyMerchantOutflowCount: 1,
+            repeatedSmallAuxiliaryOutflowPatternCount: 2);
+        var strong = CreateFeature(
+            signedAmount: -1m,
+            nearbyMerchantOutflowCount: 1,
+            repeatedSmallAuxiliaryOutflowPatternCount: 4);
+
+        Assert.Equal(1, policy.Evaluate(weak, hasLegacySavingsMarker: false).RepetitionStrength);
+        Assert.Equal(2, policy.Evaluate(medium, hasLegacySavingsMarker: false).RepetitionStrength);
+        Assert.Equal(3, policy.Evaluate(strong, hasLegacySavingsMarker: false).RepetitionStrength);
+    }
+
+    [Fact]
     public void SavingsClassifier_WeakUnpairedSignal_DoesNotClassify()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -12m,
             hasSavingsKeyword: true,
             hasStrongSavingsKeyword: false,
             tokens: ["savings", "move"]);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.Null(outcome);
     }
@@ -379,6 +548,7 @@ public class DeterministicCategorizationEngineTests
     public void SavingsClassifier_NameOnlySignalWithoutContext_DoesNotClassify()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -9m,
             hasSavingsKeyword: true,
@@ -388,7 +558,7 @@ public class DeterministicCategorizationEngineTests
             repeatedSmallAuxiliaryOutflowPatternCount: 0,
             hasProviderTransferHint: false);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.Null(outcome);
     }
@@ -397,6 +567,7 @@ public class DeterministicCategorizationEngineTests
     public void SavingsClassifier_ExternalCounterpartyRisk_DoesNotClassifyAsSavings()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -3m,
             hasSavingsKeyword: true,
@@ -406,7 +577,7 @@ public class DeterministicCategorizationEngineTests
             repeatedSmallAuxiliaryOutflowPatternCount: 4,
             hasProviderTransferHint: true);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.Null(outcome);
     }
@@ -415,6 +586,7 @@ public class DeterministicCategorizationEngineTests
     public void SavingsClassifier_PairStyleShapeWithoutSavingsContext_DoesNotClassify()
     {
         var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
         var source = CreateFeature(
             signedAmount: -150m,
             hasTransferKeyword: true,
@@ -425,7 +597,7 @@ public class DeterministicCategorizationEngineTests
             nearbyMerchantOutflowCount: 0,
             repeatedSmallAuxiliaryOutflowPatternCount: 0);
 
-        var outcome = classifier.Classify(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, policy.Evaluate(source, hasLegacySavingsMarker: false), hasLegacySavingsMarker: false);
 
         Assert.Null(outcome);
     }
@@ -630,6 +802,7 @@ public class DeterministicCategorizationEngineTests
         var normalizationService = new TransactionNormalizationService();
         var featureExtractor = new TransactionFeatureExtractor(normalizationService);
         var transferPairingEngine = new TransferPairingEngine();
+        var savingsRoutingPolicy = new SavingsRoutingPolicy();
         var savingsTransferClassifier = new SavingsTransferClassifier();
         var retryPlanner = new DeterministicClassificationRetryPlanner();
         var metrics = new DeterministicCategorizationMetrics();
@@ -639,6 +812,7 @@ public class DeterministicCategorizationEngineTests
             normalizationService,
             featureExtractor,
             transferPairingEngine,
+            savingsRoutingPolicy,
             savingsTransferClassifier,
             retryPlanner,
             metrics,
@@ -651,6 +825,7 @@ public class DeterministicCategorizationEngineTests
         bool hasTransferKeyword = false,
         bool hasSavingsKeyword = false,
         bool hasStrongSavingsKeyword = false,
+        bool hasWeakSavingsSupportKeyword = false,
         string? accountHint = null,
         IEnumerable<string>? tokens = null,
         bool isBooked = true,
@@ -677,6 +852,7 @@ public class DeterministicCategorizationEngineTests
             HasTransferKeyword: hasTransferKeyword,
             HasSavingsKeyword: hasSavingsKeyword,
             HasStrongSavingsKeyword: hasStrongSavingsKeyword,
+            HasWeakSavingsSupportKeyword: hasWeakSavingsSupportKeyword,
             AccountHint: accountHint,
             IsBooked: isBooked,
             IsPending: isPending,

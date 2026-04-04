@@ -38,6 +38,7 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                     HasTransferKeyword = transferKeyword,
                     HasSavingsKeyword = savingsKeyword,
                     HasStrongSavingsKeyword = normalizationService.HasStrongSavingsKeyword(normalizedDescription),
+                    HasWeakSavingsSupportKeyword = normalizationService.HasWeakSavingsSupportKeyword(tokens),
                     LooksLikeExternalCounterparty = normalizationService.LooksLikeExternalCounterparty(normalizedDescription, tokens),
                     IsBooked = IsBooked(row.TransactionStatus),
                     IsPending = IsPending(row.TransactionStatus),
@@ -62,6 +63,19 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
             .GroupBy(x => x.DayKey)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
 
+        var hasNearbyLikelyMainSpendByTransactionId = normalizedRows.ToDictionary(
+            candidate => candidate.Row.TransactionId,
+            candidate => normalizedRows.Any(mainSpend =>
+                mainSpend.Row.TransactionId != candidate.Row.TransactionId
+                && mainSpend.Row.FinancialAccountId == candidate.Row.FinancialAccountId
+                && mainSpend.IsOutflow
+                && !mainSpend.HasTransferKeyword
+                && !mainSpend.HasSavingsKeyword
+                && !mainSpend.HasStrongSavingsKeyword
+                && !mainSpend.LooksLikeExternalCounterparty
+                && Math.Abs(mainSpend.Row.Amount) > Math.Max(1m, Math.Abs(candidate.Row.Amount))
+                && Math.Abs((mainSpend.Row.BookedAtUtc - candidate.Row.BookedAtUtc).TotalHours) <= 6d));
+
         var features = new Dictionary<Guid, DeterministicTransactionFeature>(rows.Count);
         foreach (var current in normalizedRows)
         {
@@ -74,10 +88,10 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                 candidate.Row.TransactionId != row.TransactionId
                 && candidate.Row.FinancialAccountId == row.FinancialAccountId
                 && candidate.IsOutflow
-                && candidate.Row.BookedAtUtc <= row.BookedAtUtc
-                && (row.BookedAtUtc - candidate.Row.BookedAtUtc).TotalHours <= 6
+                && Math.Abs((candidate.Row.BookedAtUtc - row.BookedAtUtc).TotalHours) <= 6d
                 && !candidate.HasTransferKeyword
                 && !candidate.HasSavingsKeyword
+                && !candidate.HasStrongSavingsKeyword
                 && !candidate.LooksLikeExternalCounterparty
                 && Math.Abs(candidate.Row.Amount) > Math.Max(1m, Math.Abs(row.Amount)));
 
@@ -85,11 +99,13 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                 candidate.Row.TransactionId != row.TransactionId
                 && candidate.Row.FinancialAccountId == row.FinancialAccountId
                 && candidate.IsOutflow
-                && Math.Abs(candidate.Row.Amount) <= 5m
-                && candidate.Row.BookedAtUtc <= row.BookedAtUtc
-                && (row.BookedAtUtc - candidate.Row.BookedAtUtc).TotalDays <= 45
+                && Math.Abs(candidate.Row.Amount) <= Math.Max(20m, Math.Abs(row.Amount) * 2m)
+                && Math.Abs((candidate.Row.BookedAtUtc - row.BookedAtUtc).TotalDays) <= 45d
                 && !candidate.HasTransferKeyword
-                && (candidate.HasStrongSavingsKeyword || candidate.HasSavingsKeyword || candidate.Row.HasProviderTransferHint));
+                && !candidate.LooksLikeExternalCounterparty
+                && (hasNearbyLikelyMainSpendByTransactionId.TryGetValue(candidate.Row.TransactionId, out var hasNearbyMainSpend) && hasNearbyMainSpend
+                    || candidate.HasStrongSavingsKeyword
+                    || candidate.Row.HasProviderTransferHint));
 
             features[row.TransactionId] = new DeterministicTransactionFeature(
                 row.TransactionId,
@@ -105,6 +121,7 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                 current.HasTransferKeyword,
                 current.HasSavingsKeyword,
                 current.HasStrongSavingsKeyword,
+                current.HasWeakSavingsSupportKeyword,
                 normalizationService.ExtractAccountHint(current.NormalizedDescription),
                 current.IsBooked,
                 current.IsPending,

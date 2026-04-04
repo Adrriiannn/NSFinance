@@ -6,82 +6,134 @@ namespace NSFinance.Api.Modules.Banking.Services.Deterministic;
 
 public sealed class SavingsTransferClassifier
 {
+    private static readonly SavingsRoutingPolicy DefaultRoutingPolicy = new();
+
     public DeterministicClassificationOutcome? Classify(
         DeterministicTransactionFeature feature,
         bool hasLegacySavingsMarker)
     {
-        if (!feature.IsOutflow || feature.LooksLikeExternalCounterparty)
+        var routingDecision = DefaultRoutingPolicy.Evaluate(feature, hasLegacySavingsMarker);
+        return Classify(feature, routingDecision, hasLegacySavingsMarker);
+    }
+
+    public DeterministicClassificationOutcome? Classify(
+        DeterministicTransactionFeature feature,
+        SavingsRoutingDecision routingDecision,
+        bool hasLegacySavingsMarker)
+    {
+        if (!routingDecision.ShouldEvaluate)
         {
             return null;
         }
 
-        var providerStructuralSignal = feature.HasProviderTransferHint
-            && feature.HasStrongSavingsKeyword
-            && feature.AbsoluteAmount <= 50m;
-        var contextualSupportSignal = feature.NearbyMerchantOutflowCount > 0
-            && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2;
-        var contextualRoundupSignal = feature.IsOutflow
-            && feature.AbsoluteAmount <= 5m
-            && contextualSupportSignal;
-        var repeatedBehaviorSignal = feature.IsOutflow
-            && feature.AbsoluteAmount <= 10m
-            && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 3
-            && feature.NearbyMerchantOutflowCount > 0;
-        var strongPhraseWithSupportSignal = feature.HasStrongSavingsKeyword
-            && (feature.HasProviderTransferHint || contextualSupportSignal);
+        var providerStructuralSignal = routingDecision.ProviderStructuralSupport;
+        var contextualSupportSignal = routingDecision.ContextualSupport;
+        var repeatedBehaviorSignal = routingDecision.RepetitionStrength >= 2;
+        var strongPhraseWithSupportSignal = routingDecision.StrongPhraseSupport;
 
+        var repetitionScore = routingDecision.RepetitionStrength switch
+        {
+            <= 0 => 0,
+            1 => 1,
+            2 => 2,
+            _ => 3
+        };
+        var score = 0;
         if (providerStructuralSignal)
+        {
+            score += 4;
+        }
+
+        if (contextualSupportSignal)
+        {
+            score += 2;
+        }
+
+        score += repetitionScore;
+        if (strongPhraseWithSupportSignal)
+        {
+            score += 2;
+        }
+
+        if (hasLegacySavingsMarker
+            && (providerStructuralSignal || contextualSupportSignal || routingDecision.RepetitionStrength > 0))
+        {
+            score += 1;
+        }
+
+        score += routingDecision.AmountRiskModifier;
+
+        if (feature.HasTransferKeyword && feature.HasCounterpartyAccounts && feature.AccountHint is not null)
+        {
+            score -= 2;
+        }
+
+        if (feature.LooksLikeExternalCounterparty)
+        {
+            score -= 5;
+        }
+
+        var meetsProviderThreshold = providerStructuralSignal && score >= 4;
+        var meetsContextThreshold = contextualSupportSignal && (routingDecision.RepetitionStrength >= 1 || strongPhraseWithSupportSignal) && score >= 5;
+        var meetsRepetitionThreshold = repeatedBehaviorSignal && score >= 5;
+        var meetsStrongPhraseThreshold = strongPhraseWithSupportSignal && score >= 5;
+
+        if (meetsProviderThreshold)
         {
             return BuildSavingsOutcome(
                 ruleKey: "savings_transfer.provider_structural_v4",
                 reasonCode: DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal,
-                score: 9,
+                score,
                 feature,
                 evidenceClass: "provider_structural_signal",
+                routingDecision,
                 providerStructuralSignal,
-                contextualRoundupSignal,
+                contextualSupportSignal,
                 repeatedBehaviorSignal,
                 hasLegacySavingsMarker);
         }
 
-        if (strongPhraseWithSupportSignal)
-        {
-            return BuildSavingsOutcome(
-                ruleKey: "savings_transfer.strong_phrase_support_v4",
-                reasonCode: DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal,
-                score: 8,
-                feature,
-                evidenceClass: "strong_phrase_with_support_signal",
-                providerStructuralSignal,
-                contextualRoundupSignal,
-                repeatedBehaviorSignal,
-                hasLegacySavingsMarker);
-        }
-
-        if (repeatedBehaviorSignal)
-        {
-            return BuildSavingsOutcome(
-                ruleKey: "savings_transfer.repeated_auxiliary_pattern_v4",
-                reasonCode: DeterministicClassificationReasonCodes.SavingsRepeatedAuxiliaryPattern,
-                score: 8,
-                feature,
-                evidenceClass: "repeated_auxiliary_pattern",
-                providerStructuralSignal,
-                contextualRoundupSignal,
-                repeatedBehaviorSignal,
-                hasLegacySavingsMarker);
-        }
-
-        if (contextualRoundupSignal)
+        if (meetsContextThreshold)
         {
             return BuildSavingsOutcome(
                 ruleKey: "savings_transfer.contextual_pattern_v4",
                 reasonCode: DeterministicClassificationReasonCodes.SavingsContextNearbySpend,
-                score: 7,
+                score,
                 feature,
                 evidenceClass: "contextual_nearby_spend",
+                routingDecision,
                 providerStructuralSignal,
-                contextualRoundupSignal,
+                contextualSupportSignal,
+                repeatedBehaviorSignal,
+                hasLegacySavingsMarker);
+        }
+
+        if (meetsRepetitionThreshold)
+        {
+            return BuildSavingsOutcome(
+                ruleKey: "savings_transfer.repeated_auxiliary_pattern_v4",
+                reasonCode: DeterministicClassificationReasonCodes.SavingsRepeatedAuxiliaryPattern,
+                score,
+                feature,
+                evidenceClass: "repeated_auxiliary_pattern",
+                routingDecision,
+                providerStructuralSignal,
+                contextualSupportSignal,
+                repeatedBehaviorSignal,
+                hasLegacySavingsMarker);
+        }
+
+        if (meetsStrongPhraseThreshold)
+        {
+            return BuildSavingsOutcome(
+                ruleKey: "savings_transfer.strong_phrase_support_v4",
+                reasonCode: DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal,
+                score,
+                feature,
+                evidenceClass: "strong_phrase_with_support_signal",
+                routingDecision,
+                providerStructuralSignal,
+                contextualSupportSignal,
                 repeatedBehaviorSignal,
                 hasLegacySavingsMarker);
         }
@@ -95,8 +147,9 @@ public sealed class SavingsTransferClassifier
         int score,
         DeterministicTransactionFeature feature,
         string evidenceClass,
+        SavingsRoutingDecision routingDecision,
         bool providerStructuralSignal,
-        bool contextualRoundupSignal,
+        bool contextualSupportSignal,
         bool repeatedBehaviorSignal,
         bool hasLegacySavingsMarker)
     {
@@ -111,9 +164,14 @@ public sealed class SavingsTransferClassifier
                 family = "savings_transfer",
                 evidenceClass,
                 paired = false,
+                routingTier = routingDecision.RoutingTier,
                 providerStructuralSignal,
-                contextualRoundupSignal,
+                contextualSupportSignal,
                 repeatedBehaviorSignal,
+                repetitionStrength = routingDecision.RepetitionStrength,
+                amountRiskModifier = routingDecision.AmountRiskModifier,
+                weakSupportOnlySignalsPresent = routingDecision.WeakSupportOnlySignalsPresent,
+                externalCounterpartyRisk = routingDecision.ExternalCounterpartyRisk,
                 feature.NearbyMerchantOutflowCount,
                 feature.RepeatedSmallAuxiliaryOutflowPatternCount,
                 legacySignalSupportOnly = hasLegacySavingsMarker

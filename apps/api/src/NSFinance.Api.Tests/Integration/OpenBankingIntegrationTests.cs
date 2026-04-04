@@ -2276,7 +2276,272 @@ public class OpenBankingIntegrationTests
             row.DeterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule
             && row.DeterministicRelationshipType == "savings_transfer"
             && row.DeterministicLinkedTransactionId is null
-            && row.DeterministicReasonCode == DeterministicClassificationReasonCodes.MatchedSavingsContextualPattern);
+            && row.DeterministicReasonCode == DeterministicClassificationReasonCodes.SavingsContextNearbySpend);
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_SavingsContext_MainSpendPostedAfterCandidate_Classifies()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.savings-posting-order@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-savings-posting-order", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+
+        var savingsIds = new List<Guid>();
+        var baseDay = now.AddDays(-4).Date;
+        for (var i = 0; i < 2; i++)
+        {
+            var savingsId = Guid.NewGuid();
+            var merchantId = Guid.NewGuid();
+            savingsIds.Add(savingsId);
+            var day = baseDay.AddDays(i);
+
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = savingsId,
+                FinancialAccountId = accountId,
+                Amount = -0.60m,
+                Currency = "EUR",
+                Description = $"Aux jar sweep {i}",
+                BookedAtUtc = day.AddHours(10),
+                CreatedUtc = day.AddHours(10)
+            });
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = merchantId,
+                FinancialAccountId = accountId,
+                Amount = -14.20m,
+                Currency = "EUR",
+                Description = $"Main purchase {i}",
+                BookedAtUtc = day.AddHours(10).AddMinutes(6),
+                CreatedUtc = day.AddHours(10).AddMinutes(6)
+            });
+
+            harness.DbContext.NormalizedBankTransactions.Add(new NormalizedBankTransaction
+            {
+                Id = Guid.NewGuid(),
+                RawBankTransactionId = Guid.NewGuid(),
+                LinkedBankAccountId = linkedAccount.Id,
+                FinancialAccountId = accountId,
+                ProjectedTransactionId = savingsId,
+                DedupeKey = $"diag-savings-posting-order-{i}",
+                Amount = -0.60m,
+                Currency = "EUR",
+                BookedAtUtc = day.AddHours(10),
+                Description = $"Aux jar sweep {i}",
+                TransactionType = "DEBIT",
+                TransactionStatus = "booked",
+                ImportedUtc = now,
+                LastNormalizedUtc = now
+            });
+        }
+
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSyncAttemptedUtc = now.AddHours(-2);
+        connection.LastSuccessfulSyncUtc = now.AddHours(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var run = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            connection.Id,
+            trigger: "test_savings_posting_order_asymmetry",
+            cancellationToken: CancellationToken.None);
+        Assert.True(run.Succeeded);
+
+        var rows = await harness.DbContext.Transactions
+            .Where(x => savingsIds.Contains(x.Id))
+            .ToListAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, row =>
+        {
+            Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, row.DeterministicClassificationStatus);
+            Assert.Equal("savings_transfer", row.DeterministicRelationshipType);
+            Assert.Equal(DeterministicClassificationReasonCodes.SavingsContextNearbySpend, row.DeterministicReasonCode);
+        });
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_SavingsProviderStructuralLargeManualMove_Classifies()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.savings-large-manual@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-savings-large-manual", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+
+        var savingsId = Guid.NewGuid();
+        var booked = now.AddDays(-2).Date.AddHours(8);
+        harness.DbContext.Transactions.Add(new Transaction
+        {
+            Id = savingsId,
+            FinancialAccountId = accountId,
+            Amount = -185m,
+            Currency = "EUR",
+            Description = "Monthly vault transfer",
+            BookedAtUtc = booked,
+            CreatedUtc = booked
+        });
+        harness.DbContext.NormalizedBankTransactions.Add(new NormalizedBankTransaction
+        {
+            Id = Guid.NewGuid(),
+            RawBankTransactionId = Guid.NewGuid(),
+            LinkedBankAccountId = linkedAccount.Id,
+            FinancialAccountId = accountId,
+            ProjectedTransactionId = savingsId,
+            DedupeKey = "diag-savings-large-manual",
+            Amount = -185m,
+            Currency = "EUR",
+            BookedAtUtc = booked,
+            Description = "Monthly vault transfer",
+            TransactionType = "TRANSFER",
+            TransactionStatus = "booked",
+            ImportedUtc = now,
+            LastNormalizedUtc = now
+        });
+
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSyncAttemptedUtc = now.AddHours(-2);
+        connection.LastSuccessfulSyncUtc = now.AddHours(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var run = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            connection.Id,
+            trigger: "test_savings_large_manual_provider_structural",
+            cancellationToken: CancellationToken.None);
+        Assert.True(run.Succeeded);
+
+        var row = await harness.DbContext.Transactions.SingleAsync(x => x.Id == savingsId);
+        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, row.DeterministicClassificationStatus);
+        Assert.Equal("savings_transfer", row.DeterministicRelationshipType);
+        Assert.Equal(DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal, row.DeterministicReasonCode);
+
+        Assert.Contains("\"routingTier\":\"tier_a_provider_structural\"", row.DeterministicReasonDetailJson, StringComparison.Ordinal);
+        Assert.Contains("\"amountRiskModifier\":0", row.DeterministicReasonDetailJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_WeakGenericSavingsWordingPlusNearbyPurchase_DoesNotClassify()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.savings-weak-generic-nearby@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-savings-weak-generic-nearby", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections.SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+
+        var merchantId = Guid.NewGuid();
+        var weakId = Guid.NewGuid();
+        var booked = now.AddDays(-2).Date.AddHours(15);
+        harness.DbContext.Transactions.AddRange(
+            new Transaction
+            {
+                Id = merchantId,
+                FinancialAccountId = accountId,
+                Amount = -17.15m,
+                Currency = "EUR",
+                Description = "Main groceries",
+                BookedAtUtc = booked,
+                CreatedUtc = booked
+            },
+            new Transaction
+            {
+                Id = weakId,
+                FinancialAccountId = accountId,
+                Amount = -0.90m,
+                Currency = "EUR",
+                Description = "Cash fund move",
+                BookedAtUtc = booked.AddMinutes(4),
+                CreatedUtc = booked.AddMinutes(4)
+            });
+
+        harness.DbContext.NormalizedBankTransactions.Add(new NormalizedBankTransaction
+        {
+            Id = Guid.NewGuid(),
+            RawBankTransactionId = Guid.NewGuid(),
+            LinkedBankAccountId = linkedAccount.Id,
+            FinancialAccountId = accountId,
+            ProjectedTransactionId = weakId,
+            DedupeKey = "diag-savings-weak-generic-nearby",
+            Amount = -0.90m,
+            Currency = "EUR",
+            BookedAtUtc = booked.AddMinutes(4),
+            Description = "Cash fund move",
+            TransactionType = "DEBIT",
+            TransactionStatus = "booked",
+            ImportedUtc = now,
+            LastNormalizedUtc = now
+        });
+
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = null;
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentVersion = null;
+        connection.LastSyncAttemptedUtc = now.AddHours(-2);
+        connection.LastSuccessfulSyncUtc = now.AddHours(-2);
+        await harness.DbContext.SaveChangesAsync();
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var run = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            connection.Id,
+            trigger: "test_savings_weak_generic_nearby",
+            cancellationToken: CancellationToken.None);
+        Assert.True(run.Succeeded);
+
+        var row = await harness.DbContext.Transactions.SingleAsync(x => x.Id == weakId);
+        Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, row.DeterministicClassificationStatus);
+        Assert.NotEqual("savings_transfer", row.DeterministicRelationshipType);
     }
 
     [Fact]
@@ -5181,6 +5446,7 @@ public class OpenBankingIntegrationTests
             var normalizationService = new TransactionNormalizationService();
             var featureExtractor = new TransactionFeatureExtractor(normalizationService);
             var transferPairingEngine = new TransferPairingEngine();
+            var savingsRoutingPolicy = new SavingsRoutingPolicy();
             var savingsTransferClassifier = new SavingsTransferClassifier();
             var retryPlanner = new DeterministicClassificationRetryPlanner();
             var metrics = new DeterministicCategorizationMetrics();
@@ -5189,6 +5455,7 @@ public class OpenBankingIntegrationTests
                 normalizationService,
                 featureExtractor,
                 transferPairingEngine,
+                savingsRoutingPolicy,
                 savingsTransferClassifier,
                 retryPlanner,
                 metrics,

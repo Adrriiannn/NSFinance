@@ -12,6 +12,7 @@ public sealed class DeterministicClassificationPersistenceService(
     TransactionNormalizationService normalizationService,
     TransactionFeatureExtractor featureExtractor,
     TransferPairingEngine transferPairingEngine,
+    SavingsRoutingPolicy savingsRoutingPolicy,
     SavingsTransferClassifier savingsTransferClassifier,
     DeterministicClassificationRetryPlanner retryPlanner,
     DeterministicCategorizationMetrics metrics,
@@ -322,12 +323,13 @@ public sealed class DeterministicClassificationPersistenceService(
                 or TransactionTransferKind.SavingsManualDeposit
                 or TransactionTransferKind.SavingsManualWithdrawal;
 
-        var shouldEvaluateSavings = ShouldEvaluateSavingsClassifier(feature);
+        var savingsRoutingDecision = savingsRoutingPolicy.Evaluate(feature, legacySavings);
 
-        if (shouldEvaluateSavings)
+        if (savingsRoutingDecision.ShouldEvaluate)
         {
             var savingsOutcome = savingsTransferClassifier.Classify(
                 feature,
+                savingsRoutingDecision,
                 hasLegacySavingsMarker: legacySavings);
 
             if (savingsOutcome is not null)
@@ -341,7 +343,7 @@ public sealed class DeterministicClassificationPersistenceService(
             return BuildTransferPendingOutcome(pendingDecision!);
         }
 
-        if (shouldEvaluateSavings)
+        if (savingsRoutingDecision.ShouldEvaluate)
         {
             return new DeterministicClassificationOutcome(
                 DeterministicClassificationStatus.EvaluatedNoMatchingRule,
@@ -353,6 +355,17 @@ public sealed class DeterministicClassificationPersistenceService(
                 {
                     family = "savings_transfer",
                     routeDecision = DeterministicClassificationReasonCodes.SavingsRejectedInsufficientContext,
+                    savingsRoutingAllowed = savingsRoutingDecision.ShouldEvaluate,
+                    savingsRoutingTier = savingsRoutingDecision.RoutingTier,
+                    providerStructuralSupport = savingsRoutingDecision.ProviderStructuralSupport,
+                    contextualSupport = savingsRoutingDecision.ContextualSupport,
+                    repetitionStrength = savingsRoutingDecision.RepetitionStrength,
+                    strongPhraseSupport = savingsRoutingDecision.StrongPhraseSupport,
+                    weakSupportOnlySignalsPresent = savingsRoutingDecision.WeakSupportOnlySignalsPresent,
+                    legacySupportOnly = savingsRoutingDecision.LegacySupportOnly,
+                    amountRiskModifier = savingsRoutingDecision.AmountRiskModifier,
+                    externalCounterpartyRisk = savingsRoutingDecision.ExternalCounterpartyRisk,
+                    routingBlockedReason = savingsRoutingDecision.BlockedReason,
                     transferSignals = feature.HasTransferKeyword || feature.HasProviderTransferHint,
                     savingsSignals = feature.HasSavingsKeyword || feature.HasStrongSavingsKeyword,
                     feature.NearbyMerchantOutflowCount,
@@ -376,6 +389,17 @@ public sealed class DeterministicClassificationPersistenceService(
             EvidenceJson: JsonSerializer.Serialize(new
             {
                 family = "none",
+                savingsRoutingAllowed = savingsRoutingDecision.ShouldEvaluate,
+                savingsRoutingTier = savingsRoutingDecision.RoutingTier,
+                providerStructuralSupport = savingsRoutingDecision.ProviderStructuralSupport,
+                contextualSupport = savingsRoutingDecision.ContextualSupport,
+                repetitionStrength = savingsRoutingDecision.RepetitionStrength,
+                strongPhraseSupport = savingsRoutingDecision.StrongPhraseSupport,
+                weakSupportOnlySignalsPresent = savingsRoutingDecision.WeakSupportOnlySignalsPresent,
+                legacySupportOnly = savingsRoutingDecision.LegacySupportOnly,
+                amountRiskModifier = savingsRoutingDecision.AmountRiskModifier,
+                externalCounterpartyRisk = savingsRoutingDecision.ExternalCounterpartyRisk,
+                routingBlockedReason = savingsRoutingDecision.BlockedReason,
                 transferKeyword = feature.HasTransferKeyword,
                 savingsKeyword = feature.HasSavingsKeyword,
                 providerHint = feature.HasProviderTransferHint
@@ -386,41 +410,6 @@ public sealed class DeterministicClassificationPersistenceService(
             LinkedTransactionId: null,
             RelationshipType: null,
             RelationshipGroupId: null);
-    }
-
-    private static bool ShouldEvaluateSavingsClassifier(
-        DeterministicTransactionFeature feature)
-    {
-        if (feature.IsInflow || feature.LooksLikeExternalCounterparty)
-        {
-            return false;
-        }
-
-        if (feature.AbsoluteAmount > 50m)
-        {
-            return false;
-        }
-
-        if (feature.HasTransferKeyword
-            && !feature.HasStrongSavingsKeyword
-            && !feature.HasSavingsKeyword
-            && !feature.HasProviderTransferHint)
-        {
-            return false;
-        }
-
-        var providerStructuralSignal = feature.HasProviderTransferHint && feature.HasStrongSavingsKeyword;
-        var contextualSupportSignal = feature.NearbyMerchantOutflowCount > 0
-                                      && feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 2;
-        var repeatedAuxiliarySignal = feature.RepeatedSmallAuxiliaryOutflowPatternCount >= 3
-                                      && feature.NearbyMerchantOutflowCount > 0;
-        var strongPhraseWithSupportSignal = feature.HasStrongSavingsKeyword
-                                            && (feature.HasProviderTransferHint || contextualSupportSignal);
-
-        return providerStructuralSignal
-               || contextualSupportSignal
-               || repeatedAuxiliarySignal
-               || strongPhraseWithSupportSignal;
     }
 
     private static DeterministicClassificationOutcome BuildTransferPendingOutcome(TransferPendingDecision pending)

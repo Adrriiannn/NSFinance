@@ -20,11 +20,15 @@ public static class DeterministicClassificationReasonCodes
     public const string MatchedExactInverseAmount = TransferPairStrictMatch;
     public const string MatchedMutualBestCandidate = TransferPairMutualBest;
     public const string MatchedDuplicateClusterStablePairing = TransferPairDuplicateCluster;
+    [Obsolete("Use SavingsProviderStructuralSignal in new deterministic savings rules.", false)]
     public const string MatchedSavingsKeywordSignal = SavingsProviderStructuralSignal;
+    [Obsolete("Use SavingsProviderStructuralSignal in new deterministic savings rules.", false)]
     public const string MatchedSavingsOneSidedSignal = SavingsProviderStructuralSignal;
+    [Obsolete("Use SavingsContextNearbySpend in new deterministic savings rules.", false)]
     public const string MatchedSavingsContextualPattern = SavingsContextNearbySpend;
     public const string DeferredMissingCounterparty = "deferred_missing_counterparty";
     public const string DeferredPendingBookedContext = "deferred_pending_booked_context";
+    [Obsolete("Savings counterparty defer is deprecated for generic savings flow.", false)]
     public const string DeferredStrongSavingsMissingCounterparty = "deferred_strong_savings_missing_counterparty";
     public const string RejectedAmbiguousCandidates = TransferRejectedAmbiguous;
     public const string RejectedAmbiguousDuplicateCluster = TransferRejectedAmbiguousDuplicateCluster;

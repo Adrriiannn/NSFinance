@@ -286,6 +286,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TransactionNormalizationService>();
         services.AddScoped<TransactionFeatureExtractor>();
         services.AddScoped<TransferPairingEngine>();
+        services.AddScoped<SavingsRoutingPolicy>();
         services.AddScoped<SavingsTransferClassifier>();
         services.AddScoped<DeterministicClassificationRetryPlanner>();
         services.AddScoped<DeterministicClassificationPersistenceService>();

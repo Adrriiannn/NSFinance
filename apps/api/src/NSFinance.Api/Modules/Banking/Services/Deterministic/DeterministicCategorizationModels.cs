@@ -16,6 +16,7 @@ public sealed record DeterministicTransactionFeature(
     bool HasTransferKeyword,
     bool HasSavingsKeyword,
     bool HasStrongSavingsKeyword,
+    bool HasWeakSavingsSupportKeyword,
     string? AccountHint,
     bool IsBooked,
     bool IsPending,
