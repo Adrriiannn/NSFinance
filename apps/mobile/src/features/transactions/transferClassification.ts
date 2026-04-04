@@ -1,4 +1,5 @@
 import type { TransactionDto } from "../../types/api";
+import { resolveCanonicalTransactionSemantic } from "./semanticResolver";
 
 export type TransferPolicyKind =
   | "none"
@@ -115,8 +116,28 @@ export function isReportableIncomeTransaction(transaction: TransactionDto) {
 }
 
 export function getTransferPolicyWarning(evaluation: TransferPolicyEvaluation): string | null {
+  return getTransferPolicyWarningForSemantic(evaluation, null);
+}
+
+export function getTransferPolicyWarningForTransaction(transaction: TransactionDto): string | null {
+  const evaluation = getTransferPolicyEvaluation(transaction);
+  const semantic = resolveCanonicalTransactionSemantic(transaction);
+  return getTransferPolicyWarningForSemantic(evaluation, semantic.family);
+}
+
+function getTransferPolicyWarningForSemantic(
+  evaluation: TransferPolicyEvaluation,
+  semanticFamily: "none" | "internal_transfer" | "savings_transfer" | null): string | null {
   if (!evaluation.isTransferTransaction) {
     return null;
+  }
+
+  if (semanticFamily === "savings_transfer") {
+    return "Savings movement: visible in activity, excluded from overall income and expense totals.";
+  }
+
+  if (semanticFamily === "internal_transfer") {
+    return "Verified internal transfer: excluded from overall income and expense totals.";
   }
 
   if (evaluation.isGloballyNeutralized) {

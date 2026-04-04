@@ -519,7 +519,10 @@ public sealed class TransactionService(
             relationshipSummary?.AnalyticsTreatment,
             relationshipSummary?.VirtualDestinationLabel,
             relationshipSummary?.CounterpartyTransactionId,
-            ResolveDisplaySemantic(transaction, relationshipSummary),
+            TransactionSemanticResolver.ResolveDisplaySemantic(
+                transaction.DeterministicClassificationStatus,
+                transaction.DeterministicRelationshipType,
+                transaction.DeterministicReasonCode),
             MapTransferPolicyKind(transferPolicy.PolicyKind),
             transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
             transferPolicy.IsGloballyNeutralized,
@@ -529,26 +532,6 @@ public sealed class TransactionService(
             transaction.CreatedUtc,
             transaction.MetadataUpdatedUtc,
             transaction.Amount < 0 ? "Expense" : "Income");
-    }
-
-    private static string ResolveDisplaySemantic(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
-    {
-        if (transaction.DeterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule)
-        {
-            if (string.Equals(transaction.DeterministicRelationshipType, "savings_transfer", StringComparison.Ordinal))
-            {
-                return transaction.TransferKind == TransactionTransferKind.SavingsRoundup
-                    ? "savings_roundup"
-                    : "savings_manual_move";
-            }
-
-            if (string.Equals(transaction.DeterministicRelationshipType, "internal_transfer", StringComparison.Ordinal))
-            {
-                return "internal_transfer";
-            }
-        }
-
-        return "real_transaction";
     }
 
     private async Task<Dictionary<Guid, RelationshipSummary>> GetRelationshipSummariesByTransactionIdAsync(

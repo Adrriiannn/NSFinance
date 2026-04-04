@@ -192,7 +192,7 @@ public class TransactionServiceTests
         Assert.Null(merchant.RelationshipType);
         Assert.False(merchant.IsGloballyNeutralized);
 
-        Assert.Equal("savings_roundup", roundup.DisplaySemantic);
+        Assert.Equal("savings_manual_move", roundup.DisplaySemantic);
         Assert.Equal("savings_roundup", roundup.RelationshipType);
         Assert.True(roundup.IsGloballyNeutralized);
         Assert.Equal("savingsallocation", roundup.ReportingBucket);

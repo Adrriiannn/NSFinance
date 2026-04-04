@@ -6,10 +6,9 @@ import type { TransactionDto } from "../../../types/api";
 import { useThemeTokens } from "../../../theme/tokens";
 import {
   buildTransactionDetailDate,
-  buildTransactionMetaLine,
-  resolveCanonicalRelationshipBadge,
-  resolveCanonicalTransactionSemantic
+  buildTransactionMetaLine
 } from "../../../features/transactions/activityGrouping";
+import { resolveCanonicalTransactionSemantic } from "../../../features/transactions/semanticResolver";
 import { AmountText } from "../../ui/AmountText";
 import { useRowPresets } from "./row.presets";
 
@@ -61,9 +60,9 @@ export function TransactionRow({
   const semantic = resolveCanonicalTransactionSemantic(transaction);
   const metadata = metadataOverride ?? buildTransactionMetaLine(transaction);
   const timestamp = buildTransactionDetailDate(transaction);
-  const isSavingsMovement = semantic === "savings_transfer";
-  const isInternalTransfer = semantic === "internal_transfer";
-  const relationshipBadge = resolveCanonicalRelationshipBadge(transaction);
+  const isSavingsMovement = semantic.family === "savings_transfer";
+  const isInternalTransfer = semantic.family === "internal_transfer";
+  const relationshipBadge = semantic.badgeText;
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>

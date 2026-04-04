@@ -2275,6 +2275,7 @@ public class OpenBankingIntegrationTests
         Assert.Contains(rows, row =>
             row.DeterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule
             && row.DeterministicRelationshipType == "savings_transfer"
+            && row.DeterministicLinkedTransactionId is null
             && row.DeterministicReasonCode == DeterministicClassificationReasonCodes.MatchedSavingsContextualPattern);
     }
 

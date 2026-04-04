@@ -20,13 +20,17 @@ public sealed class TransactionNormalizationService
         "savings",
         "vault",
         "pocket",
+        "roundup",
+        "spare"
+    };
+
+    private static readonly HashSet<string> WeakSavingsSupportKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
         "pot",
         "round",
-        "roundup",
-        "spare",
-        "flexible",
         "cash",
-        "fund"
+        "fund",
+        "flexible"
     };
 
     private static readonly string[] StrongSavingsPhrases =
@@ -100,6 +104,11 @@ public sealed class TransactionNormalizationService
         }
 
         return tokens.Any(token => SavingsKeywords.Contains(token));
+    }
+
+    public bool HasWeakSavingsSupportKeyword(IReadOnlySet<string> tokens)
+    {
+        return tokens.Any(token => WeakSavingsSupportKeywords.Contains(token));
     }
 
     public bool HasStrongSavingsKeyword(string normalizedDescription)

@@ -1,5 +1,6 @@
 import type { TransactionDto } from "../../types/api";
 import { formatLongDate, formatTime } from "../../lib/format";
+import { resolveCanonicalTransactionSemantic } from "./semanticResolver";
 
 export type ActivityFilter =
   | "All"
@@ -12,11 +13,6 @@ export type GroupedActivity = {
   title: string;
   items: TransactionDto[];
 };
-
-export type CanonicalTransactionSemantic =
-  | "real_transaction"
-  | "internal_transfer"
-  | "savings_transfer";
 
 export function getTransactionChannelLabel(transaction: TransactionDto): "Online" | "In person" {
   const source = `${transaction.description} ${transaction.categoryName ?? ""}`.toLowerCase();
@@ -138,12 +134,8 @@ export function buildTransactionMetaLine(
 ): string {
   if (!categoryOverride) {
     const semantic = resolveCanonicalTransactionSemantic(transaction);
-    if (semantic === "internal_transfer") {
-      return "Bank account transfer";
-    }
-
-    if (semantic === "savings_transfer") {
-      return "Savings transfer";
+    if (semantic.displaySubtitle) {
+      return semantic.displaySubtitle;
     }
   }
 
@@ -159,39 +151,4 @@ export function buildTransactionMetaLine(
 
 export function buildTransactionDetailDate(transaction: TransactionDto): string {
   return `${formatLongDate(transaction.bookedAtUtc)} | ${formatTime(transaction.bookedAtUtc)}`;
-}
-
-export function resolveCanonicalTransactionSemantic(transaction: TransactionDto): CanonicalTransactionSemantic {
-  if (transaction.deterministicClassificationStatus === "classified_matched_rule") {
-    if (transaction.deterministicRelationshipType === "internal_transfer") {
-      return "internal_transfer";
-    }
-
-    if (transaction.deterministicRelationshipType === "savings_transfer") {
-      return "savings_transfer";
-    }
-  }
-
-  if (transaction.displaySemantic === "internal_transfer") {
-    return "internal_transfer";
-  }
-
-  if (transaction.displaySemantic === "savings_roundup" || transaction.displaySemantic === "savings_manual_move") {
-    return "savings_transfer";
-  }
-
-  return "real_transaction";
-}
-
-export function resolveCanonicalRelationshipBadge(transaction: TransactionDto): string | null {
-  const semantic = resolveCanonicalTransactionSemantic(transaction);
-  if (semantic === "internal_transfer") {
-    return "Linked transfer";
-  }
-
-  if (semantic === "savings_transfer") {
-    return "Savings transfer";
-  }
-
-  return null;
 }

@@ -3,6 +3,7 @@ using NSFinance.Api.Modules.Accounts.DTOs;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Insights.DTOs;
 using NSFinance.Api.Modules.Transactions.DTOs;
+using NSFinance.Api.Modules.Transactions.Services;
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Modules.Users.Services;
 using NSFinance.Api.Persistence;
@@ -168,11 +169,10 @@ public sealed class DashboardService(
                     relationshipSummary?.AnalyticsTreatment,
                     relationshipSummary?.VirtualDestinationLabel,
                     relationshipSummary?.CounterpartyTransactionId,
-                    ResolveDisplaySemantic(
-                        x.TransferKind,
-                        relationshipSummary,
+                    TransactionSemanticResolver.ResolveDisplaySemantic(
+                        x.DeterministicClassificationStatus,
                         x.DeterministicRelationshipType,
-                        x.DeterministicClassificationStatus),
+                        x.DeterministicReasonCode),
                     MapTransferPolicyKind(transferPolicy.PolicyKind),
                     transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
                     transferPolicy.IsGloballyNeutralized,
@@ -257,30 +257,6 @@ public sealed class DashboardService(
             TransactionRelationshipDirection.InflowFromSavings => "inflow_from_savings",
             _ => null
         };
-    }
-
-    private static string ResolveDisplaySemantic(
-        TransactionTransferKind? transferKind,
-        RelationshipSummary? relationshipSummary,
-        string? deterministicRelationshipType,
-        DeterministicClassificationStatus deterministicClassificationStatus)
-    {
-        if (deterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule)
-        {
-            if (string.Equals(deterministicRelationshipType, "savings_transfer", StringComparison.Ordinal))
-            {
-                return transferKind == TransactionTransferKind.SavingsRoundup
-                    ? "savings_roundup"
-                    : "savings_manual_move";
-            }
-
-            if (string.Equals(deterministicRelationshipType, "internal_transfer", StringComparison.Ordinal))
-            {
-                return "internal_transfer";
-            }
-        }
-
-        return "real_transaction";
     }
 
     private async Task<Dictionary<Guid, RelationshipSummary>> GetRelationshipSummariesByTransactionIdAsync(

@@ -28,6 +28,20 @@ public class DeterministicCategorizationEngineTests
         Assert.True(normalization.HasStrongSavingsKeyword(normalized));
     }
 
+    [Theory]
+    [InlineData("Cash move to somewhere")]
+    [InlineData("Flexible payment")]
+    [InlineData("Fund allocation")]
+    public void HasSavingsKeyword_GenericKeywordOnly_IsWeakSupportOnly(string description)
+    {
+        var normalization = new TransactionNormalizationService();
+        var normalized = normalization.NormalizeDescription(description);
+        var tokens = normalization.Tokenize(normalized);
+
+        Assert.False(normalization.HasSavingsKeyword(normalized, tokens));
+        Assert.True(normalization.HasWeakSavingsSupportKeyword(tokens));
+    }
+
     [Fact]
     public void ExtractAccountHint_ReturnsTrailingDigitsOnly()
     {
@@ -114,6 +128,27 @@ public class DeterministicCategorizationEngineTests
         Assert.Equal(DeterministicClassificationStatus.DeferredWaitingForMoreContext, decision.Status);
         Assert.Equal(DeterministicClassificationReasonCodes.DeferredPendingBookedContext, decision.ReasonCode);
         Assert.True(decision.RetryEligible);
+    }
+
+    [Fact]
+    public void TransferPairing_SavingsKeywordOnly_DoesNotEnterTransferFamily()
+    {
+        var engine = new TransferPairingEngine();
+        var feature = CreateFeature(
+            signedAmount: -8m,
+            hasTransferKeyword: false,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: false,
+            hasProviderTransferHint: false,
+            accountHint: null,
+            tokens: ["savings", "bucket"]);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature> { [feature.TransactionId] = feature },
+            new HashSet<Guid>());
+
+        Assert.Empty(analysis.PendingDecisions);
+        Assert.Empty(analysis.ResolvedPairDecisions);
     }
 
     [Fact]
