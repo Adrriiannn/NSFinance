@@ -52,6 +52,24 @@ export type TransactionDto = {
     | "savings_manual_withdrawal"
     | null;
   linkedTransferTransactionId?: string | null;
+  deterministicClassificationStatus:
+    | "not_evaluated"
+    | "evaluating"
+    | "classified_matched_rule"
+    | "evaluated_no_matching_rule"
+    | "deferred_waiting_for_counterparty"
+    | "deferred_waiting_for_more_context"
+    | "rejected_ambiguous_match"
+    | "superseded_recompute_required";
+  deterministicClassificationTerminal: boolean;
+  deterministicClassificationVersion?: number | null;
+  deterministicClassificationRuleKey?: string | null;
+  deterministicClassificationReasonCode?: string | null;
+  deterministicClassificationEvidenceJson?: string | null;
+  deterministicDeferredRetryEligible?: boolean;
+  deterministicLinkedTransactionId?: string | null;
+  deterministicRelationshipType?: "internal_transfer" | "savings_transfer" | null;
+  deterministicRelationshipGroupId?: string | null;
   relationshipType?:
     | "internal_account_transfer"
     | "savings_roundup"

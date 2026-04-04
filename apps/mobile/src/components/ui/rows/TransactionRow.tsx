@@ -59,11 +59,11 @@ export function TransactionRow({
   const metadata = metadataOverride ?? buildTransactionMetaLine(transaction);
   const timestamp = buildTransactionDetailDate(transaction);
   const isSavingsMovement =
-    transaction.displaySemantic === "savings_roundup"
-    || transaction.displaySemantic === "savings_manual_move"
-    || transaction.relationshipType === "savings_roundup"
-    || transaction.relationshipType === "savings_manual_deposit"
-    || transaction.relationshipType === "savings_manual_withdrawal";
+    transaction.deterministicClassificationStatus === "classified_matched_rule"
+    && transaction.deterministicRelationshipType === "savings_transfer";
+  const isInternalTransfer =
+    transaction.deterministicClassificationStatus === "classified_matched_rule"
+    && transaction.deterministicRelationshipType === "internal_transfer";
   const relationshipBadge = resolveRelationshipBadge(transaction);
 
   return (
@@ -100,7 +100,7 @@ export function TransactionRow({
           ]}
         >
           <Ionicons
-            name={transaction.direction === "Expense" ? "arrow-down" : "arrow-up"}
+            name={isInternalTransfer ? "swap-horizontal" : transaction.direction === "Expense" ? "arrow-down" : "arrow-up"}
             size={16}
             color={palette.textPrimary}
           />
@@ -130,20 +130,16 @@ export function TransactionRow({
 }
 
 function resolveRelationshipBadge(transaction: TransactionDto): string | null {
-  if (
-    transaction.relationshipType === "savings_manual_deposit"
-    || transaction.relationshipType === "savings_manual_withdrawal"
-    || transaction.transferKind === "savings_manual_deposit"
-    || transaction.transferKind === "savings_manual_withdrawal"
-  ) {
+  if (transaction.deterministicClassificationStatus !== "classified_matched_rule") {
     return null;
   }
 
-  if (
-    transaction.relationshipType === "savings_roundup"
-    || transaction.transferKind === "savings_roundup"
-  ) {
-    return null;
+  if (transaction.deterministicRelationshipType === "internal_transfer") {
+    return "Linked transfer";
+  }
+
+  if (transaction.deterministicRelationshipType === "savings_transfer") {
+    return "Savings transfer";
   }
 
   return null;

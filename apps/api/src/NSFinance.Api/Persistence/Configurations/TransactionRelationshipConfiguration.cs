@@ -20,6 +20,14 @@ public class TransactionRelationshipConfiguration : IEntityTypeConfiguration<Tra
         builder.Property(x => x.ProviderPolicyKey).HasMaxLength(64);
         builder.Property(x => x.AnalyticsTreatment).HasMaxLength(64);
         builder.Property(x => x.VirtualDestinationLabel).HasMaxLength(120);
+        builder.Property(x => x.RelationshipGroupId);
+        builder.Property(x => x.DeterministicRelationshipType).HasMaxLength(40);
+        builder.Property(x => x.PairingStatus).HasMaxLength(48);
+        builder.Property(x => x.PairedUtc);
+        builder.Property(x => x.PairingRuleKey).HasMaxLength(96);
+        builder.Property(x => x.PairingEvidenceJson).HasColumnType("jsonb");
+        builder.Property(x => x.SourceConnectionId);
+        builder.Property(x => x.TargetConnectionId);
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedUtc).HasDefaultValueSql("timezone('utc', now())");
 
@@ -28,6 +36,9 @@ public class TransactionRelationshipConfiguration : IEntityTypeConfiguration<Tra
         builder.HasIndex(x => x.TargetTransactionId);
         builder.HasIndex(x => x.RelationshipType);
         builder.HasIndex(x => x.RelationshipStatus);
+        builder.HasIndex(x => x.RelationshipGroupId);
+        builder.HasIndex(x => x.DeterministicRelationshipType);
+        builder.HasIndex(x => x.PairingStatus);
 
         builder.HasOne<Transaction>()
             .WithMany()
@@ -60,4 +71,3 @@ public class TransactionRelationshipConfiguration : IEntityTypeConfiguration<Tra
             .OnDelete(DeleteBehavior.SetNull);
     }
 }
-

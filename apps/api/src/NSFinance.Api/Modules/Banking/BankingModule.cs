@@ -22,6 +22,9 @@ public static class BankingModule
         protectedGroup.MapGet("/enrichment-progress", GetBankEnrichmentProgressEndpoint.HandleAsync)
             .WithName("GetBankEnrichmentProgress");
 
+        protectedGroup.MapGet("/connections/{connectionId:guid}/deterministic-diagnostics", GetDeterministicDiagnosticsEndpoint.HandleAsync)
+            .WithName("GetDeterministicDiagnostics");
+
         protectedGroup.MapGet("/connections/{connectionId:guid}", GetBankConnectionEndpoint.HandleAsync)
             .WithName("GetBankConnection");
 

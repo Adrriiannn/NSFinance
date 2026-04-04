@@ -140,6 +140,16 @@ public sealed class TransactionService(
                 TaxonomySubcategoryName: null,
                 TransferKind: null,
                 LinkedTransferTransactionId: null,
+                DeterministicClassificationStatus: "not_evaluated",
+                DeterministicClassificationTerminal: false,
+                DeterministicClassificationVersion: null,
+                DeterministicClassificationRuleKey: null,
+                DeterministicClassificationReasonCode: null,
+                DeterministicClassificationEvidenceJson: null,
+                DeterministicDeferredRetryEligible: false,
+                DeterministicLinkedTransactionId: null,
+                DeterministicRelationshipType: null,
+                DeterministicRelationshipGroupId: null,
                 TransferMatchConfidenceScore: null,
                 TransferMatchConfidenceTier: null,
                 TransferMatchReason: null,
@@ -244,6 +254,8 @@ public sealed class TransactionService(
             transaction.TransferMatchConfidenceTier = null;
             transaction.TransferMatchReason = null;
         }
+
+        transaction.NeedsDeterministicReclassification = true;
         transaction.MetadataUpdatedUtc = DateTime.UtcNow;
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -289,6 +301,7 @@ public sealed class TransactionService(
         counterpart.TransferMatchConfidenceScore = null;
         counterpart.TransferMatchConfidenceTier = null;
         counterpart.TransferMatchReason = null;
+        counterpart.NeedsDeterministicReclassification = true;
 
         if (counterpart.TransferKind == TransactionTransferKind.LinkedInternal)
         {
@@ -337,6 +350,7 @@ public sealed class TransactionService(
         transaction.TransferMatchConfidenceScore ??= 0;
         transaction.TransferMatchConfidenceTier ??= "manual_verified";
         transaction.TransferMatchReason ??= "manual_linked_pair";
+        transaction.NeedsDeterministicReclassification = true;
 
         counterpart.TransferKind = TransactionTransferKind.LinkedInternal;
         counterpart.LinkedTransferTransactionId = transaction.Id;
@@ -344,6 +358,7 @@ public sealed class TransactionService(
         counterpart.TransferMatchConfidenceScore ??= 0;
         counterpart.TransferMatchConfidenceTier ??= "manual_verified";
         counterpart.TransferMatchReason ??= "manual_linked_pair";
+        counterpart.NeedsDeterministicReclassification = true;
 
         var counterpartTaxonomyChanged =
             counterpart.TaxonomyDomainId != selectedDomainId
@@ -436,6 +451,22 @@ public sealed class TransactionService(
         };
     }
 
+    private static string MapDeterministicClassificationStatus(DeterministicClassificationStatus status)
+    {
+        return status switch
+        {
+            DeterministicClassificationStatus.NotEvaluated => "not_evaluated",
+            DeterministicClassificationStatus.Evaluating => "evaluating",
+            DeterministicClassificationStatus.ClassifiedMatchedRule => "classified_matched_rule",
+            DeterministicClassificationStatus.EvaluatedNoMatchingRule => "evaluated_no_matching_rule",
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty => "deferred_waiting_for_counterparty",
+            DeterministicClassificationStatus.DeferredWaitingForMoreContext => "deferred_waiting_for_more_context",
+            DeterministicClassificationStatus.RejectedAmbiguousMatch => "rejected_ambiguous_match",
+            DeterministicClassificationStatus.SupersededRecomputeRequired => "superseded_recompute_required",
+            _ => "not_evaluated"
+        };
+    }
+
     private TransactionDto MapToDto(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
     {
         var taxonomyDomainName = expenseTaxonomyService.GetDomainName(transaction.TaxonomyDomainId);
@@ -467,6 +498,16 @@ public sealed class TransactionService(
             taxonomySubcategoryName,
             MapTransferKind(transaction.TransferKind),
             transaction.LinkedTransferTransactionId,
+            MapDeterministicClassificationStatus(transaction.DeterministicClassificationStatus),
+            transaction.DeterministicClassificationTerminal,
+            transaction.DeterministicClassificationVersion,
+            transaction.DeterministicClassificationRuleKey,
+            transaction.DeterministicReasonCode,
+            transaction.DeterministicReasonDetailJson,
+            transaction.DeterministicDeferredRetryEligible,
+            transaction.DeterministicLinkedTransactionId,
+            transaction.DeterministicRelationshipType,
+            transaction.DeterministicRelationshipGroupId,
             transaction.TransferMatchConfidenceScore,
             transaction.TransferMatchConfidenceTier,
             transaction.TransferMatchReason,
@@ -492,27 +533,22 @@ public sealed class TransactionService(
 
     private static string ResolveDisplaySemantic(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
     {
-        if (relationshipSummary is not null)
+        if (transaction.DeterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule)
         {
-            return relationshipSummary.RelationshipType switch
+            if (string.Equals(transaction.DeterministicRelationshipType, "savings_transfer", StringComparison.Ordinal))
             {
-                TransactionRelationshipType.SavingsRoundup => "savings_roundup",
-                TransactionRelationshipType.SavingsManualDeposit => "savings_manual_move",
-                TransactionRelationshipType.SavingsManualWithdrawal => "savings_manual_move",
-                TransactionRelationshipType.InternalAccountTransfer => "internal_transfer",
-                _ => "real_transaction"
-            };
+                return transaction.TransferKind == TransactionTransferKind.SavingsRoundup
+                    ? "savings_roundup"
+                    : "savings_manual_move";
+            }
+
+            if (string.Equals(transaction.DeterministicRelationshipType, "internal_transfer", StringComparison.Ordinal))
+            {
+                return "internal_transfer";
+            }
         }
 
-        return transaction.TransferKind switch
-        {
-            TransactionTransferKind.LinkedInternal => "internal_transfer",
-            TransactionTransferKind.Manual => "internal_transfer",
-            TransactionTransferKind.SavingsRoundup => "savings_roundup",
-            TransactionTransferKind.SavingsManualDeposit => "savings_manual_move",
-            TransactionTransferKind.SavingsManualWithdrawal => "savings_manual_move",
-            _ => "real_transaction"
-        };
+        return "real_transaction";
     }
 
     private async Task<Dictionary<Guid, RelationshipSummary>> GetRelationshipSummariesByTransactionIdAsync(
@@ -602,6 +638,16 @@ public sealed class TransactionService(
             x.TaxonomySubcategoryId,
             x.TransferKind,
             x.LinkedTransferTransactionId,
+            x.DeterministicClassificationStatus,
+            x.DeterministicClassificationTerminal,
+            x.DeterministicClassificationVersion,
+            x.DeterministicClassificationRuleKey,
+            x.DeterministicReasonCode,
+            x.DeterministicReasonDetailJson,
+            x.DeterministicDeferredRetryEligible,
+            x.DeterministicLinkedTransactionId,
+            x.DeterministicRelationshipType,
+            x.DeterministicRelationshipGroupId,
             x.TransferMatchConfidenceScore,
             x.TransferMatchConfidenceTier,
             x.TransferMatchReason,
@@ -626,6 +672,16 @@ public sealed class TransactionService(
         int? TaxonomySubcategoryId,
         TransactionTransferKind? TransferKind,
         Guid? LinkedTransferTransactionId,
+        DeterministicClassificationStatus DeterministicClassificationStatus,
+        bool DeterministicClassificationTerminal,
+        int? DeterministicClassificationVersion,
+        string? DeterministicClassificationRuleKey,
+        string? DeterministicReasonCode,
+        string? DeterministicReasonDetailJson,
+        bool DeterministicDeferredRetryEligible,
+        Guid? DeterministicLinkedTransactionId,
+        string? DeterministicRelationshipType,
+        Guid? DeterministicRelationshipGroupId,
         int? TransferMatchConfidenceScore,
         string? TransferMatchConfidenceTier,
         string? TransferMatchReason,

@@ -19,7 +19,14 @@ public class TransactionRelationship
     public string? ProviderPolicyKey { get; set; }
     public string? AnalyticsTreatment { get; set; }
     public string? VirtualDestinationLabel { get; set; }
+    public Guid? RelationshipGroupId { get; set; }
+    public string? DeterministicRelationshipType { get; set; }
+    public string? PairingStatus { get; set; }
+    public DateTime? PairedUtc { get; set; }
+    public string? PairingRuleKey { get; set; }
+    public string? PairingEvidenceJson { get; set; }
+    public Guid? SourceConnectionId { get; set; }
+    public Guid? TargetConnectionId { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }
-

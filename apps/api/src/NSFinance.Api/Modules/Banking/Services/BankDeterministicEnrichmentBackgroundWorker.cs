@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
+using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Persistence;
 
 namespace NSFinance.Api.Modules.Banking.Services;
@@ -25,7 +26,7 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
 {
     private static readonly TimeSpan IdleDelay = TimeSpan.FromMilliseconds(800);
     private static readonly TimeSpan PendingSweepInterval = TimeSpan.FromSeconds(45);
-    private const int DeterministicEnrichmentCurrentVersion = 2;
+    private const int DeterministicEnrichmentCurrentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
     private readonly Channel<BankDeterministicEnrichmentWorkItem> _queue = Channel.CreateUnbounded<BankDeterministicEnrichmentWorkItem>(
         new UnboundedChannelOptions

@@ -149,13 +149,13 @@ function mapStageLabel(stage: string) {
     case "waiting_for_first_sync":
       return "Waiting for first sync";
     case "needs_reclassification":
-      return "Queued for organization";
-    case "historical_backfill":
-      return "Applying deterministic rules";
-    case "sync_stalled":
-      return "Sync stalled";
+      return "Needs deterministic reclassification";
+    case "categorizing":
+      return "Categorizing transactions";
+    case "waiting_for_counterparty":
+      return "Waiting for matching transaction";
     case "completed":
-      return "Completed";
+      return "Categorization complete";
     default:
       return "In progress";
   }
@@ -249,10 +249,10 @@ export function GlobalEnrichmentProgressDial() {
 
   const pendingStage = progress
     ? progress.stage === "queued_for_sync"
-      || progress.stage === "sync_stalled"
       || progress.stage === "needs_reclassification"
       || progress.stage === "waiting_for_first_sync"
-      || progress.stage === "historical_backfill"
+      || progress.stage === "categorizing"
+      || progress.stage === "waiting_for_counterparty"
     : false;
 
   const hasPendingConnection = Boolean(
@@ -260,10 +260,10 @@ export function GlobalEnrichmentProgressDial() {
       connection.inProgress
       || connection.remainingCount > 0
       || connection.stage === "queued_for_sync"
-      || connection.stage === "sync_stalled"
       || connection.stage === "needs_reclassification"
       || connection.stage === "waiting_for_first_sync"
-      || connection.stage === "historical_backfill")
+      || connection.stage === "categorizing"
+      || connection.stage === "waiting_for_counterparty")
   );
 
   const hasActiveWork = Boolean(

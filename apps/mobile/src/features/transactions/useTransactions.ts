@@ -179,10 +179,11 @@ export function useUpdateTransactionMetadataMutation() {
 
       let linkedCounterpartId: string | null = null;
       if (
-        transaction.transferKind === "linked_internal_transfer"
-        && transaction.linkedTransferTransactionId
+        transaction.deterministicClassificationStatus === "classified_matched_rule"
+        && transaction.deterministicRelationshipType === "internal_transfer"
+        && transaction.deterministicLinkedTransactionId
       ) {
-        linkedCounterpartId = transaction.linkedTransferTransactionId;
+        linkedCounterpartId = transaction.deterministicLinkedTransactionId;
         try {
           const counterpart = await getTransactionById(linkedCounterpartId);
           applyTransactionCacheUpdate(queryClient, counterpart);

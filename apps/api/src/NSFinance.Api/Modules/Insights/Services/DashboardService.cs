@@ -88,6 +88,16 @@ public sealed class DashboardService(
                 x.TaxonomySubcategoryId,
                 x.TransferKind,
                 x.LinkedTransferTransactionId,
+                x.DeterministicClassificationStatus,
+                x.DeterministicClassificationTerminal,
+                x.DeterministicClassificationVersion,
+                x.DeterministicClassificationRuleKey,
+                x.DeterministicReasonCode,
+                x.DeterministicReasonDetailJson,
+                x.DeterministicDeferredRetryEligible,
+                x.DeterministicLinkedTransactionId,
+                x.DeterministicRelationshipType,
+                x.DeterministicRelationshipGroupId,
                 x.TransferMatchConfidenceScore,
                 x.TransferMatchConfidenceTier,
                 x.TransferMatchReason,
@@ -137,6 +147,16 @@ public sealed class DashboardService(
                     taxonomySubcategoryName,
                     MapTransferKind(x.TransferKind),
                     x.LinkedTransferTransactionId,
+                    MapDeterministicClassificationStatus(x.DeterministicClassificationStatus),
+                    x.DeterministicClassificationTerminal,
+                    x.DeterministicClassificationVersion,
+                    x.DeterministicClassificationRuleKey,
+                    x.DeterministicReasonCode,
+                    x.DeterministicReasonDetailJson,
+                    x.DeterministicDeferredRetryEligible,
+                    x.DeterministicLinkedTransactionId,
+                    x.DeterministicRelationshipType,
+                    x.DeterministicRelationshipGroupId,
                     x.TransferMatchConfidenceScore,
                     x.TransferMatchConfidenceTier,
                     x.TransferMatchReason,
@@ -148,7 +168,11 @@ public sealed class DashboardService(
                     relationshipSummary?.AnalyticsTreatment,
                     relationshipSummary?.VirtualDestinationLabel,
                     relationshipSummary?.CounterpartyTransactionId,
-                    ResolveDisplaySemantic(x.TransferKind, relationshipSummary),
+                    ResolveDisplaySemantic(
+                        x.TransferKind,
+                        relationshipSummary,
+                        x.DeterministicRelationshipType,
+                        x.DeterministicClassificationStatus),
                     MapTransferPolicyKind(transferPolicy.PolicyKind),
                     transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
                     transferPolicy.IsGloballyNeutralized,
@@ -180,6 +204,22 @@ public sealed class DashboardService(
             TransactionTransferKind.SavingsManualDeposit => "savings_manual_deposit",
             TransactionTransferKind.SavingsManualWithdrawal => "savings_manual_withdrawal",
             _ => null
+        };
+    }
+
+    private static string MapDeterministicClassificationStatus(DeterministicClassificationStatus status)
+    {
+        return status switch
+        {
+            DeterministicClassificationStatus.NotEvaluated => "not_evaluated",
+            DeterministicClassificationStatus.Evaluating => "evaluating",
+            DeterministicClassificationStatus.ClassifiedMatchedRule => "classified_matched_rule",
+            DeterministicClassificationStatus.EvaluatedNoMatchingRule => "evaluated_no_matching_rule",
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty => "deferred_waiting_for_counterparty",
+            DeterministicClassificationStatus.DeferredWaitingForMoreContext => "deferred_waiting_for_more_context",
+            DeterministicClassificationStatus.RejectedAmbiguousMatch => "rejected_ambiguous_match",
+            DeterministicClassificationStatus.SupersededRecomputeRequired => "superseded_recompute_required",
+            _ => "not_evaluated"
         };
     }
 
@@ -221,29 +261,26 @@ public sealed class DashboardService(
 
     private static string ResolveDisplaySemantic(
         TransactionTransferKind? transferKind,
-        RelationshipSummary? relationshipSummary)
+        RelationshipSummary? relationshipSummary,
+        string? deterministicRelationshipType,
+        DeterministicClassificationStatus deterministicClassificationStatus)
     {
-        if (relationshipSummary is not null)
+        if (deterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule)
         {
-            return relationshipSummary.RelationshipType switch
+            if (string.Equals(deterministicRelationshipType, "savings_transfer", StringComparison.Ordinal))
             {
-                TransactionRelationshipType.SavingsRoundup => "savings_roundup",
-                TransactionRelationshipType.SavingsManualDeposit => "savings_manual_move",
-                TransactionRelationshipType.SavingsManualWithdrawal => "savings_manual_move",
-                TransactionRelationshipType.InternalAccountTransfer => "internal_transfer",
-                _ => "real_transaction"
-            };
+                return transferKind == TransactionTransferKind.SavingsRoundup
+                    ? "savings_roundup"
+                    : "savings_manual_move";
+            }
+
+            if (string.Equals(deterministicRelationshipType, "internal_transfer", StringComparison.Ordinal))
+            {
+                return "internal_transfer";
+            }
         }
 
-        return transferKind switch
-        {
-            TransactionTransferKind.LinkedInternal => "internal_transfer",
-            TransactionTransferKind.Manual => "internal_transfer",
-            TransactionTransferKind.SavingsRoundup => "savings_roundup",
-            TransactionTransferKind.SavingsManualDeposit => "savings_manual_move",
-            TransactionTransferKind.SavingsManualWithdrawal => "savings_manual_move",
-            _ => "real_transaction"
-        };
+        return "real_transaction";
     }
 
     private async Task<Dictionary<Guid, RelationshipSummary>> GetRelationshipSummariesByTransactionIdAsync(

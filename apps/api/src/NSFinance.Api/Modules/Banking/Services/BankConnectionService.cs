@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
+using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
@@ -31,7 +32,7 @@ public sealed class BankConnectionService(
         BankConnectionStatuses.DisconnectPending,
         BankConnectionStatuses.DisconnectFailed
     ];
-    private const int DeterministicEnrichmentCurrentVersion = 2;
+    private const int DeterministicEnrichmentCurrentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
     private sealed record EnrichmentConnectionRow(
         Guid Id,
@@ -50,6 +51,7 @@ public sealed class BankConnectionService(
         int TotalCount,
         int CurrentCount,
         int StaleCount,
+        int DeferredWaitingForCounterpartyCount,
         int CurrentEnrichedAfterStartCount,
         DateTime? LastUpdatedUtc);
     public async Task<OpenBankingConnection> CreateConnectionStartedAsync(
@@ -331,6 +333,9 @@ public sealed class BankConnectionService(
                 var totalRows = Math.Max(0, stats?.TotalCount ?? 0);
                 var staleCount = Math.Max(0, Math.Min(stats?.StaleCount ?? 0, totalRows));
                 var currentCount = Math.Max(0, Math.Min(stats?.CurrentCount ?? 0, totalRows));
+                var deferredWaitingForCounterpartyCount = Math.Max(
+                    0,
+                    Math.Min(stats?.DeferredWaitingForCounterpartyCount ?? 0, totalRows));
                 var currentEnrichedAfterStartCount = connection.HistoricalEnrichmentStartedUtc.HasValue
                     ? Math.Max(0, Math.Min(stats?.CurrentEnrichedAfterStartCount ?? 0, currentCount))
                     : 0;
@@ -369,6 +374,7 @@ public sealed class BankConnectionService(
                     required,
                     totalCount,
                     remainingCount,
+                    deferredWaitingForCounterpartyCount,
                     awaitingSync,
                     connection.LastSyncAttemptedUtc,
                     connection.LastSuccessfulSyncUtc,
@@ -401,10 +407,10 @@ public sealed class BankConnectionService(
             .Where(x =>
                 x.InProgress
                 || x.Stage is "queued_for_sync"
-                || x.Stage is "sync_stalled"
                 || x.Stage is "needs_reclassification"
                 || x.Stage is "waiting_for_first_sync"
-                || x.Stage is "historical_backfill")
+                || x.Stage is "waiting_for_counterparty"
+                || x.Stage is "categorizing")
             .ToList();
 
         var inProgressOverall = activeConnections.Count > 0;
@@ -438,6 +444,102 @@ public sealed class BankConnectionService(
             LastUpdatedUtc: lastUpdatedOverall == default ? null : lastUpdatedOverall,
             NewestFirst: true,
             Connections: connectionProgress);
+    }
+
+    public async Task<ServiceResult<DeterministicCategorizationDiagnosticsDto>> GetDeterministicCategorizationDiagnosticsAsync(
+        Guid userId,
+        Guid connectionId,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.ConnectionId == connectionId
+                && x.Connection != null
+                && x.Connection.UserId == userId
+                && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+
+        if (linkedFinancialAccountIds.Length == 0)
+        {
+            return ServiceResult<DeterministicCategorizationDiagnosticsDto>.Fail(
+                "Connection not found.",
+                "bank_connection_not_found",
+                StatusCodes.Status404NotFound);
+        }
+
+        var rows = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x => linkedFinancialAccountIds.Contains(x.FinancialAccountId))
+            .Select(x => new
+            {
+                x.Id,
+                x.FinancialAccountId,
+                x.Amount,
+                x.Currency,
+                x.BookedAtUtc,
+                x.DeterministicClassificationStatus,
+                x.DeterministicClassificationTerminal,
+                x.DeterministicDeferredRetryEligible,
+                x.DeterministicClassificationVersion,
+                x.DeterministicClassificationRuleKey,
+                x.DeterministicReasonCode,
+                x.DeterministicLinkedTransactionId,
+                x.DeterministicRelationshipType,
+                x.DeterministicRelationshipGroupId,
+                x.DeterministicMatchScore,
+                x.DeterministicClassificationEvaluatedUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        var statusCounts = rows
+            .GroupBy(x => x.DeterministicClassificationStatus)
+            .Select(group => new DeterministicCategorizationStatusCountDto(
+                MapDeterministicClassificationStatus(group.Key),
+                group.Count()))
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Status, StringComparer.Ordinal)
+            .ToList();
+
+        var sampleDecisions = rows
+            .OrderBy(x => x.DeterministicClassificationTerminal ? 1 : 0)
+            .ThenByDescending(x => x.DeterministicClassificationEvaluatedUtc)
+            .Take(120)
+            .Select(x => new DeterministicTransactionDecisionDto(
+                x.Id,
+                x.FinancialAccountId,
+                x.Amount,
+                x.Currency,
+                x.BookedAtUtc,
+                MapDeterministicClassificationStatus(x.DeterministicClassificationStatus),
+                x.DeterministicClassificationTerminal,
+                x.DeterministicDeferredRetryEligible,
+                x.DeterministicClassificationVersion,
+                x.DeterministicClassificationRuleKey,
+                x.DeterministicReasonCode,
+                x.DeterministicLinkedTransactionId,
+                x.DeterministicRelationshipType,
+                x.DeterministicRelationshipGroupId,
+                x.DeterministicMatchScore,
+                x.DeterministicClassificationEvaluatedUtc))
+            .ToList();
+
+        var terminalCount = rows.Count(x => x.DeterministicClassificationTerminal);
+        var deferredCounterpartyCount = rows.Count(x =>
+            x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty);
+
+        return ServiceResult<DeterministicCategorizationDiagnosticsDto>.Ok(
+            new DeterministicCategorizationDiagnosticsDto(
+                connectionId,
+                DeterministicEnrichmentCurrentVersion,
+                rows.Count,
+                terminalCount,
+                Math.Max(0, rows.Count - terminalCount),
+                deferredCounterpartyCount,
+                statusCounts,
+                sampleDecisions));
     }
 
     public async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsAsync(
@@ -2046,8 +2148,10 @@ public sealed class BankConnectionService(
             .Select(x => new
             {
                 x.FinancialAccountId,
-                x.DeterministicEnrichmentVersion,
-                x.LastDeterministicEnrichedUtc
+                x.DeterministicClassificationVersion,
+                x.DeterministicClassificationTerminal,
+                x.DeterministicClassificationStatus,
+                x.DeterministicClassificationEvaluatedUtc
             })
             .ToListAsync(cancellationToken);
 
@@ -2060,21 +2164,27 @@ public sealed class BankConnectionService(
                     var totalCount = group.Count();
                     var currentRows = group
                         .Where(x =>
-                            x.DeterministicEnrichmentVersion.HasValue
-                            && x.DeterministicEnrichmentVersion.Value >= DeterministicEnrichmentCurrentVersion)
+                            x.DeterministicClassificationVersion.HasValue
+                            && x.DeterministicClassificationVersion.Value >= DeterministicEnrichmentCurrentVersion
+                            && x.DeterministicClassificationTerminal)
                         .ToList();
+                    var deferredWaitingForCounterpartyCount = group.Count(x =>
+                        x.DeterministicClassificationVersion.HasValue
+                        && x.DeterministicClassificationVersion.Value >= DeterministicEnrichmentCurrentVersion
+                        && x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty);
 
                     return new
                     {
                         TotalCount = totalCount,
                         CurrentCount = currentRows.Count,
+                        DeferredWaitingForCounterpartyCount = deferredWaitingForCounterpartyCount,
                         CurrentEnrichedCountByStartUtc = currentRows
-                            .Where(x => x.LastDeterministicEnrichedUtc.HasValue)
-                            .Select(x => x.LastDeterministicEnrichedUtc!.Value)
+                            .Where(x => x.DeterministicClassificationEvaluatedUtc.HasValue)
+                            .Select(x => x.DeterministicClassificationEvaluatedUtc!.Value)
                             .ToList(),
                         LastUpdatedUtc = group
-                            .Where(x => x.LastDeterministicEnrichedUtc.HasValue)
-                            .Select(x => x.LastDeterministicEnrichedUtc)
+                            .Where(x => x.DeterministicClassificationEvaluatedUtc.HasValue)
+                            .Select(x => x.DeterministicClassificationEvaluatedUtc)
                             .Max()
                     };
                 });
@@ -2089,6 +2199,7 @@ public sealed class BankConnectionService(
                 {
                     var total = 0;
                     var current = 0;
+                    var deferredWaitingForCounterparty = 0;
                     var currentEnrichedAfterStart = 0;
                     DateTime? lastUpdatedUtc = null;
                     startedByConnectionId.TryGetValue(group.Key, out var startedUtc);
@@ -2102,6 +2213,7 @@ public sealed class BankConnectionService(
 
                         total += stats.TotalCount;
                         current += stats.CurrentCount;
+                        deferredWaitingForCounterparty += stats.DeferredWaitingForCounterpartyCount;
                         if (startedUtc.HasValue)
                         {
                             currentEnrichedAfterStart += stats.CurrentEnrichedCountByStartUtc.Count(x => x >= startedUtc.Value);
@@ -2117,6 +2229,7 @@ public sealed class BankConnectionService(
                         total,
                         current,
                         stale,
+                        deferredWaitingForCounterparty,
                         currentEnrichedAfterStart,
                         lastUpdatedUtc);
                 });
@@ -2180,16 +2293,17 @@ public sealed class BankConnectionService(
     }
 
     private static string ResolveHistoricalEnrichmentStage(
-        string connectionStatus,
+        string _connectionStatus,
         bool inProgress,
         bool completed,
         bool required,
         int totalCount,
         int remainingCount,
+        int deferredWaitingForCounterpartyCount,
         bool awaitingSync,
         DateTime? lastSyncAttemptedUtc,
         DateTime? lastSuccessfulSyncUtc,
-        DateTime updatedUtc)
+        DateTime _updatedUtc)
     {
         if (completed)
         {
@@ -2208,6 +2322,11 @@ public sealed class BankConnectionService(
             return "needs_reclassification";
         }
 
+        if (deferredWaitingForCounterpartyCount > 0 && remainingCount == deferredWaitingForCounterpartyCount)
+        {
+            return "waiting_for_counterparty";
+        }
+
         if (!inProgress)
         {
             return totalCount > 0 && remainingCount == 0 ? "completed" : "idle";
@@ -2215,18 +2334,15 @@ public sealed class BankConnectionService(
 
         if (awaitingSync)
         {
-            var isStalled = DateTime.UtcNow - updatedUtc > TimeSpan.FromMinutes(20);
-            return isStalled ? "sync_stalled" : "queued_for_sync";
+            return "queued_for_sync";
         }
 
-        if (connectionStatus is BankConnectionStatuses.ReauthRequired
-            or BankConnectionStatuses.Expired
-            or BankConnectionStatuses.Failed)
+        if (deferredWaitingForCounterpartyCount > 0)
         {
-            return "sync_stalled";
+            return "waiting_for_counterparty";
         }
 
-        return "historical_backfill";
+        return "categorizing";
     }
 
     private static string ResolveOverallHistoricalEnrichmentStage(
@@ -2244,11 +2360,6 @@ public sealed class BankConnectionService(
             return "idle";
         }
 
-        if (connections.Any(x => x.Stage == "sync_stalled"))
-        {
-            return "sync_stalled";
-        }
-
         if (connections.Any(x => x.Stage == "waiting_for_first_sync"))
         {
             return "waiting_for_first_sync";
@@ -2264,12 +2375,28 @@ public sealed class BankConnectionService(
             return "needs_reclassification";
         }
 
-        if (connections.Any(x => x.Stage == "historical_backfill"))
+        if (connections.Any(x => x.Stage == "waiting_for_counterparty"))
         {
-            return "historical_backfill";
+            return "waiting_for_counterparty";
         }
 
-        return "in_progress";
+        return "categorizing";
+    }
+
+    private static string MapDeterministicClassificationStatus(DeterministicClassificationStatus status)
+    {
+        return status switch
+        {
+            DeterministicClassificationStatus.NotEvaluated => "not_evaluated",
+            DeterministicClassificationStatus.Evaluating => "evaluating",
+            DeterministicClassificationStatus.ClassifiedMatchedRule => "classified_matched_rule",
+            DeterministicClassificationStatus.EvaluatedNoMatchingRule => "evaluated_no_matching_rule",
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty => "deferred_waiting_for_counterparty",
+            DeterministicClassificationStatus.DeferredWaitingForMoreContext => "deferred_waiting_for_more_context",
+            DeterministicClassificationStatus.RejectedAmbiguousMatch => "rejected_ambiguous_match",
+            DeterministicClassificationStatus.SupersededRecomputeRequired => "superseded_recompute_required",
+            _ => "not_evaluated"
+        };
     }
 
     private static DateTime? MaxUtc(DateTime? left, DateTime? right)

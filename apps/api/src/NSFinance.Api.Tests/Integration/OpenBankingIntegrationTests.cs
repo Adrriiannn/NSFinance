@@ -10,6 +10,7 @@ using NSFinance.Api.Infrastructure.RequestContext;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Services;
+using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Persistence;
@@ -760,6 +761,8 @@ public class OpenBankingIntegrationTests
     [Fact]
     public async Task GlobalSync_HistoricalDeterministicEnrichment_ProcessesInBatchesUntilCompleted()
     {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
         await using var harness = new OpenBankingTestHarness(
             options: ValidSandboxOptions(),
             httpHandler: SuccessfulFlowHandler());
@@ -827,7 +830,9 @@ public class OpenBankingIntegrationTests
         var staleAfterFirstRun = await harness.DbContext.Transactions
             .CountAsync(x =>
                 seededTransactionIds.Contains(x.Id)
-                && (!x.DeterministicEnrichmentVersion.HasValue || x.DeterministicEnrichmentVersion.Value < 2));
+                && (!x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < currentVersion
+                    || !x.DeterministicClassificationTerminal));
 
         Assert.Equal(20, staleAfterFirstRun);
 
@@ -848,7 +853,9 @@ public class OpenBankingIntegrationTests
         var staleAfterSecondRun = await harness.DbContext.Transactions
             .CountAsync(x =>
                 seededTransactionIds.Contains(x.Id)
-                && (!x.DeterministicEnrichmentVersion.HasValue || x.DeterministicEnrichmentVersion.Value < 2));
+                && (!x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < currentVersion
+                    || !x.DeterministicClassificationTerminal));
 
         Assert.Equal(0, staleAfterSecondRun);
 
@@ -861,13 +868,17 @@ public class OpenBankingIntegrationTests
         var overallStaleAfterSecondRun = await harness.DbContext.Transactions
             .CountAsync(x =>
                 linkedFinancialAccountIdsAfterSecondRun.Contains(x.FinancialAccountId)
-                && (!x.DeterministicEnrichmentVersion.HasValue || x.DeterministicEnrichmentVersion.Value < 2));
+                && (!x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < currentVersion
+                    || !x.DeterministicClassificationTerminal));
         Assert.Equal(0, overallStaleAfterSecondRun);
     }
 
     [Fact]
     public async Task GlobalSync_HistoricalDeterministicEnrichment_DoesNotPrematurelyComplete_WhenBatchRowsShareBookedTimestamp()
     {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
         await using var harness = new OpenBankingTestHarness(
             options: ValidSandboxOptions(),
             httpHandler: SuccessfulFlowHandler());
@@ -929,7 +940,9 @@ public class OpenBankingIntegrationTests
 
         var staleRows = await harness.DbContext.Transactions
             .CountAsync(x => x.FinancialAccountId == accountId
-                && (!x.DeterministicEnrichmentVersion.HasValue || x.DeterministicEnrichmentVersion.Value < 2));
+                && (!x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < currentVersion
+                    || !x.DeterministicClassificationTerminal));
         Assert.Equal(400, staleRows);
 
         connection = await harness.DbContext.OpenBankingConnections
@@ -939,7 +952,7 @@ public class OpenBankingIntegrationTests
 
         var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
         Assert.True(progress.InProgress);
-        Assert.Equal("historical_backfill", progress.Stage);
+        Assert.Equal("categorizing", progress.Stage);
         Assert.True(progress.TotalCount > 0);
         Assert.True(progress.ProcessedCount > 0);
         Assert.True(progress.RemainingCount > 0);
@@ -1044,6 +1057,8 @@ public class OpenBankingIntegrationTests
     [Fact]
     public async Task EnrichmentProgress_DoesNotCountCompletedConnections_WhenAnotherConnectionIsWaitingForFirstSync()
     {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
         await using var harness = new OpenBankingTestHarness(
             options: ValidSandboxOptions(),
             httpHandler: SuccessfulFlowHandler());
@@ -1065,7 +1080,7 @@ public class OpenBankingIntegrationTests
         completedConnection.NeedsHistoricalReclassification = false;
         completedConnection.HistoricalEnrichmentStartedUtc = seededNow.AddMinutes(-3);
         completedConnection.HistoricalEnrichmentCompletedUtc = seededNow.AddMinutes(-1);
-        completedConnection.HistoricalEnrichmentVersion = 2;
+        completedConnection.HistoricalEnrichmentVersion = currentVersion;
         completedConnection.LastSyncAttemptedUtc = seededNow.AddMinutes(-2);
         completedConnection.LastSuccessfulSyncUtc = seededNow.AddMinutes(-2);
 
@@ -1080,7 +1095,11 @@ public class OpenBankingIntegrationTests
 
         foreach (var transaction in completedTransactions)
         {
-            transaction.DeterministicEnrichmentVersion = 2;
+            transaction.DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+            transaction.DeterministicClassificationVersion = currentVersion;
+            transaction.DeterministicClassificationTerminal = true;
+            transaction.DeterministicClassificationEvaluatedUtc = seededNow.AddMinutes(-1);
+            transaction.DeterministicEnrichmentVersion = currentVersion;
             transaction.LastDeterministicEnrichedUtc = seededNow.AddMinutes(-1);
         }
 
@@ -1122,6 +1141,133 @@ public class OpenBankingIntegrationTests
             x.ConnectionId == waitingConnection.Id
             && x.Stage == "waiting_for_first_sync"
             && x.InProgress);
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_EvaluatedNoMatchingRuleCountsAsTerminalCompletion()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-terminal-no-match@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-enrichment-terminal-no-match", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.Status = BankConnectionStatuses.Synced;
+        connection.NeedsHistoricalReclassification = false;
+        connection.HistoricalEnrichmentStartedUtc = now.AddMinutes(-4);
+        connection.HistoricalEnrichmentCompletedUtc = now.AddMinutes(-1);
+        connection.HistoricalEnrichmentVersion = currentVersion;
+        connection.LastSyncAttemptedUtc = now.AddMinutes(-2);
+        connection.LastSuccessfulSyncUtc = now.AddMinutes(-2);
+
+        var linkedAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var transactions = await harness.DbContext.Transactions
+            .Where(x => linkedAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+        Assert.NotEmpty(transactions);
+
+        foreach (var transaction in transactions)
+        {
+            transaction.DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+            transaction.DeterministicClassificationVersion = currentVersion;
+            transaction.DeterministicClassificationTerminal = true;
+            transaction.DeterministicClassificationEvaluatedUtc = now.AddMinutes(-1);
+            transaction.DeterministicDeferredRetryEligible = false;
+            transaction.NeedsDeterministicReclassification = false;
+            transaction.DeterministicEnrichmentVersion = currentVersion;
+            transaction.LastDeterministicEnrichedUtc = now.AddMinutes(-1);
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+
+        Assert.False(progress.InProgress);
+        Assert.True(progress.Completed);
+        Assert.Equal("completed", progress.Stage);
+        Assert.Equal(transactions.Count, progress.TotalCount);
+        Assert.Equal(transactions.Count, progress.ProcessedCount);
+        Assert.Equal(0, progress.RemainingCount);
+        Assert.Equal(100d, progress.ProgressPercent);
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_DeferredCounterpartyStateRemainsWaitingForCounterparty()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-waiting-counterparty@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-enrichment-waiting-counterparty", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        connection.Status = BankConnectionStatuses.Synced;
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = now.AddMinutes(-5);
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentVersion = currentVersion - 1;
+        connection.LastSyncAttemptedUtc = now.AddMinutes(-2);
+        connection.LastSuccessfulSyncUtc = now.AddMinutes(-2);
+
+        var linkedAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var transactions = await harness.DbContext.Transactions
+            .Where(x => linkedAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+        Assert.NotEmpty(transactions);
+
+        foreach (var transaction in transactions)
+        {
+            transaction.DeterministicClassificationStatus = DeterministicClassificationStatus.DeferredWaitingForCounterparty;
+            transaction.DeterministicClassificationVersion = currentVersion;
+            transaction.DeterministicClassificationTerminal = false;
+            transaction.DeterministicClassificationEvaluatedUtc = now.AddMinutes(-1);
+            transaction.DeterministicDeferredRetryEligible = true;
+            transaction.NeedsDeterministicReclassification = false;
+            transaction.DeterministicEnrichmentVersion = currentVersion;
+            transaction.LastDeterministicEnrichedUtc = now.AddMinutes(-1);
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+
+        Assert.True(progress.InProgress);
+        Assert.False(progress.Completed);
+        Assert.Equal("waiting_for_counterparty", progress.Stage);
+        Assert.Equal(transactions.Count, progress.TotalCount);
+        Assert.Equal(0, progress.ProcessedCount);
+        Assert.Equal(transactions.Count, progress.RemainingCount);
     }
 
     [Fact]
@@ -3801,6 +3947,24 @@ public class OpenBankingIntegrationTests
             var dataService = new TrueLayerDataService(httpClient, NullLogger<TrueLayerDataService>.Instance);
             var connectionService = CreateConnectionService();
             var enrichmentQueue = new ImmediateBankDeterministicEnrichmentQueue();
+            var normalizationService = new TransactionNormalizationService();
+            var featureExtractor = new TransactionFeatureExtractor(normalizationService);
+            var transferPairingEngine = new TransferPairingEngine();
+            var savingsTransferClassifier = new SavingsTransferClassifier();
+            var retryPlanner = new DeterministicClassificationRetryPlanner();
+            var metrics = new DeterministicCategorizationMetrics();
+            var persistenceService = new DeterministicClassificationPersistenceService(
+                DbContext,
+                normalizationService,
+                featureExtractor,
+                transferPairingEngine,
+                savingsTransferClassifier,
+                retryPlanner,
+                metrics,
+                NullLogger<DeterministicClassificationPersistenceService>.Instance);
+            var categorizationService = new DeterministicTransactionCategorizationService(
+                persistenceService,
+                NullLogger<DeterministicTransactionCategorizationService>.Instance);
             var syncService = new BankSyncService(
                 DbContext,
                 connectionService,
@@ -3810,6 +3974,8 @@ public class OpenBankingIntegrationTests
                 new TestSecretProtector(),
                 _auditService,
                 enrichmentQueue,
+                categorizationService,
+                metrics,
                 NullLogger<BankSyncService>.Instance);
             enrichmentQueue.Attach(syncService);
             return syncService;

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.DTOs;
 using NSFinance.Api.Modules.Transactions.Services;
@@ -87,6 +88,7 @@ public class TransactionServiceTests
     public async Task GetTransactionsAsync_SavingsRoundupRelationship_RemainsSourceSideOnly()
     {
         await using var dbContext = CreateDbContext();
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
         var now = DateTime.UtcNow;
         var userId = Guid.NewGuid();
         var accountId = Guid.NewGuid();
@@ -144,7 +146,15 @@ public class TransactionServiceTests
                 TransferKind = TransactionTransferKind.SavingsRoundup,
                 TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId,
                 TaxonomyCategoryId = 92010,
-                TaxonomySubcategoryId = 920102
+                TaxonomySubcategoryId = 920102,
+                DeterministicClassificationStatus = DeterministicClassificationStatus.ClassifiedMatchedRule,
+                DeterministicClassificationVersion = currentVersion,
+                DeterministicClassificationRuleKey = "savings_transfer.paired_signal_v3",
+                DeterministicClassificationCategoryId = 92010,
+                DeterministicClassificationSubcategoryId = 920102,
+                DeterministicRelationshipType = "savings_transfer",
+                DeterministicClassificationTerminal = true,
+                DeterministicClassificationEvaluatedUtc = now.AddMinutes(-1)
             });
 
         dbContext.TransactionRelationships.Add(new TransactionRelationship

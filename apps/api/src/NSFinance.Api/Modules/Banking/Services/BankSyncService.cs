@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
+using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Modules.Banking.Services.Models;
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Persistence;
@@ -20,6 +21,8 @@ public sealed class BankSyncService(
     ISecretProtector secretProtector,
     IAuditService auditService,
     IBankDeterministicEnrichmentQueue enrichmentQueue,
+    DeterministicTransactionCategorizationService deterministicCategorizationService,
+    DeterministicCategorizationMetrics deterministicMetrics,
     ILogger<BankSyncService> logger)
 {
     private const int InternalTransferMatchLookbackDays = 21;
@@ -32,9 +35,9 @@ public sealed class BankSyncService(
     private const int InternalTransferSequenceTieBreakBoost = 2;
     private const int InternalTransferAmbiguityMaxScoreGap = 1;
     private const int SavingsRelationshipLookbackDays = 35;
-    private const int SavingsTransferSubcategoryId = 920102;
-    private const int DeterministicEnrichmentCurrentVersion = 2;
-    private const int DeterministicEnrichmentIncrementalLookbackDays = 35;
+    private const int SavingsTransferSubcategoryId = DeterministicCategorizationConstants.SavingsTransferSubcategoryId;
+    private const int DeterministicEnrichmentCurrentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+    private const int DeterministicEnrichmentIncrementalLookbackDays = DeterministicCategorizationConstants.IncrementalLookbackDays;
     private const int DeterministicEnrichmentHistoricalBatchSize = 600;
     private const int DeterministicEnrichmentHistoricalContextPaddingDays = 4;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
@@ -2847,6 +2850,16 @@ public sealed class BankSyncService(
         CancellationToken cancellationToken)
     {
         EnsureDeterministicEnrichmentState(connection);
+        var requiresHistoricalReclassification = connection.NeedsHistoricalReclassification
+            || (connection.HistoricalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion;
+        var shouldMarkTransactionsForReclassification = requiresHistoricalReclassification
+            && !connection.HistoricalEnrichmentStartedUtc.HasValue;
+        if (shouldMarkTransactionsForReclassification)
+        {
+            await MarkTransactionsForDeterministicReclassificationAsync(
+                connection.UserId,
+                cancellationToken);
+        }
 
         var modeParts = new List<string>();
         var linkedTransfersMatched = 0;
@@ -2885,25 +2898,31 @@ public sealed class BankSyncService(
                 incrementalContextStartUtc,
                 incrementalContextEndUtc,
                 cancellationToken);
-            var incrementalRowsMarkedCurrent = await MarkDeterministicEnrichmentVersionAsync(
+            var incrementalCategorization = await deterministicCategorizationService.CategorizeWindowAsync(
                 connection.UserId,
                 incrementalWindowStartUtc,
                 now,
+                incrementalContextStartUtc,
+                incrementalContextEndUtc,
                 now,
                 cancellationToken);
+            if (hasTransferLinkIntegrityDrift && incrementalMatched > 0)
+            {
+                deterministicMetrics.FalsePositiveCorrectionTotal.Add(incrementalMatched);
+            }
 
             linkedTransfersMatched += incrementalMatched;
-            relationshipRowsUpserted += incrementalRelationships;
-            rowsEvaluated += incrementalRowsMarkedCurrent;
+            relationshipRowsUpserted += incrementalRelationships + incrementalCategorization.RelationshipRowsUpserted;
+            rowsEvaluated += incrementalCategorization.RowsEvaluated;
             batchesProcessed++;
             modeParts.Add("incremental_recent");
             hasChanges = hasChanges
                 || incrementalMatched > 0
                 || incrementalRelationships > 0
-                || incrementalRowsMarkedCurrent > 0;
+                || incrementalCategorization.HasChanges;
 
             logger.LogInformation(
-                "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsMarkedCurrent={RowsMarkedCurrent} hasStaleRows={HasStaleRows} hasTransferLinkIntegrityDrift={HasTransferLinkIntegrityDrift}",
+                "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsEvaluated={RowsEvaluated} rowsTerminal={RowsTerminal} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsRejectedAmbiguous={RowsRejectedAmbiguous} hasStaleRows={HasStaleRows} hasTransferLinkIntegrityDrift={HasTransferLinkIntegrityDrift}",
                 connection.Id,
                 connection.UserId,
                 "incremental_recent",
@@ -2912,8 +2931,11 @@ public sealed class BankSyncService(
                 incrementalContextStartUtc,
                 incrementalContextEndUtc,
                 incrementalMatched,
-                incrementalRelationships,
-                incrementalRowsMarkedCurrent,
+                incrementalRelationships + incrementalCategorization.RelationshipRowsUpserted,
+                incrementalCategorization.RowsEvaluated,
+                incrementalCategorization.RowsTerminal,
+                incrementalCategorization.RowsDeferredCounterparty,
+                incrementalCategorization.RowsRejectedAmbiguous,
                 hasStaleIncrementalRows,
                 hasTransferLinkIntegrityDrift);
         }
@@ -2980,20 +3002,23 @@ public sealed class BankSyncService(
                     historicalContextStartUtc,
                     historicalContextEndUtc,
                     cancellationToken);
-                var historicalRowsMarkedCurrent = await MarkDeterministicEnrichmentVersionForIdsAsync(
+                var historicalCategorization = await deterministicCategorizationService.CategorizeTransactionsAsync(
+                    connection.UserId,
                     historicalBatch.Select(x => x.TransactionId).ToArray(),
+                    historicalContextStartUtc,
+                    historicalContextEndUtc,
                     now,
                     cancellationToken);
 
                 linkedTransfersMatched += historicalMatched;
-                relationshipRowsUpserted += historicalRelationships;
-                rowsEvaluated += historicalRowsMarkedCurrent;
+                relationshipRowsUpserted += historicalRelationships + historicalCategorization.RelationshipRowsUpserted;
+                rowsEvaluated += historicalCategorization.RowsEvaluated;
                 batchesProcessed++;
                 modeParts.Add("historical_backfill_batch");
                 hasChanges = hasChanges
                     || historicalMatched > 0
                     || historicalRelationships > 0
-                    || historicalRowsMarkedCurrent > 0;
+                    || historicalCategorization.HasChanges;
 
                 rowsRemaining = await CountAllStaleDeterministicRowsAsync(connection.UserId, cancellationToken);
                 connection.HistoricalEnrichmentCheckpointUtc = rowsRemaining == 0
@@ -3011,7 +3036,7 @@ public sealed class BankSyncService(
                 }
 
                 logger.LogInformation(
-                    "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsMarkedCurrent={RowsMarkedCurrent} rowsRemaining={RowsRemaining}",
+                    "Deterministic enrichment batch completed connectionId={ConnectionId} userId={UserId} mode={Mode} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsEvaluated={RowsEvaluated} rowsTerminal={RowsTerminal} rowsNoMatch={RowsNoMatch} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsRemaining={RowsRemaining}",
                     connection.Id,
                     connection.UserId,
                     "historical_backfill_batch",
@@ -3020,8 +3045,12 @@ public sealed class BankSyncService(
                     historicalContextStartUtc,
                     historicalContextEndUtc,
                     historicalMatched,
-                    historicalRelationships,
-                    historicalRowsMarkedCurrent,
+                    historicalRelationships + historicalCategorization.RelationshipRowsUpserted,
+                    historicalCategorization.RowsEvaluated,
+                    historicalCategorization.RowsTerminal,
+                    historicalCategorization.RowsNoMatch,
+                    historicalCategorization.RowsDeferredCounterparty,
+                    historicalCategorization.RowsRejectedAmbiguous,
                     rowsRemaining);
             }
         }
@@ -3092,6 +3121,33 @@ public sealed class BankSyncService(
         connection.NeedsHistoricalReclassification = true;
     }
 
+    private async Task MarkTransactionsForDeterministicReclassificationAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return;
+        }
+
+        var rows = await dbContext.Transactions
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                && !x.NeedsDeterministicReclassification)
+            .ToListAsync(cancellationToken);
+
+        foreach (var row in rows)
+        {
+            row.NeedsDeterministicReclassification = true;
+        }
+
+        if (rows.Count > 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
     private async Task<bool> HasStaleDeterministicRowsInWindowAsync(
         Guid userId,
         DateTime windowStartUtc,
@@ -3111,8 +3167,11 @@ public sealed class BankSyncService(
                     linkedFinancialAccountIds.Contains(x.FinancialAccountId)
                     && x.BookedAtUtc >= windowStartUtc
                     && x.BookedAtUtc <= windowEndUtc
-                    && (!x.DeterministicEnrichmentVersion.HasValue
-                        || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion),
+                    && (x.NeedsDeterministicReclassification
+                        || !x.DeterministicClassificationVersion.HasValue
+                        || x.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion
+                        || !x.DeterministicClassificationTerminal
+                        || x.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired),
                 cancellationToken);
     }
 
@@ -3197,8 +3256,11 @@ public sealed class BankSyncService(
             .AsNoTracking()
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                && (!x.DeterministicEnrichmentVersion.HasValue
-                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+                && (x.NeedsDeterministicReclassification
+                    || !x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion
+                    || !x.DeterministicClassificationTerminal
+                    || x.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired))
             .OrderByDescending(x => x.BookedAtUtc)
             .ThenByDescending(x => x.CreatedUtc)
             .Select(x => new StaleDeterministicTransactionBatchRow(x.Id, x.BookedAtUtc))
@@ -3220,8 +3282,11 @@ public sealed class BankSyncService(
             .AsNoTracking()
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                && (!x.DeterministicEnrichmentVersion.HasValue
-                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+                && (x.NeedsDeterministicReclassification
+                    || !x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion
+                    || !x.DeterministicClassificationTerminal
+                    || x.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired))
             .Select(x => (DateTime?)x.BookedAtUtc)
             .MinAsync(cancellationToken);
     }
@@ -3240,76 +3305,12 @@ public sealed class BankSyncService(
             .AsNoTracking()
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                && (!x.DeterministicEnrichmentVersion.HasValue
-                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
+                && (x.NeedsDeterministicReclassification
+                    || !x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion
+                    || !x.DeterministicClassificationTerminal
+                    || x.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired))
             .CountAsync(cancellationToken);
-    }
-
-    private async Task<int> MarkDeterministicEnrichmentVersionAsync(
-        Guid userId,
-        DateTime windowStartUtc,
-        DateTime windowEndUtc,
-        DateTime now,
-        CancellationToken cancellationToken)
-    {
-        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
-        if (linkedFinancialAccountIds.Count == 0)
-        {
-            return 0;
-        }
-
-        var candidates = await dbContext.Transactions
-            .Where(x =>
-                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                && x.BookedAtUtc >= windowStartUtc
-                && x.BookedAtUtc <= windowEndUtc
-                && (!x.DeterministicEnrichmentVersion.HasValue
-                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
-            .ToListAsync(cancellationToken);
-
-        if (candidates.Count == 0)
-        {
-            return 0;
-        }
-
-        foreach (var transaction in candidates)
-        {
-            transaction.DeterministicEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
-            transaction.LastDeterministicEnrichedUtc = now;
-        }
-
-        return candidates.Count;
-    }
-
-    private async Task<int> MarkDeterministicEnrichmentVersionForIdsAsync(
-        IReadOnlyCollection<Guid> transactionIds,
-        DateTime now,
-        CancellationToken cancellationToken)
-    {
-        if (transactionIds.Count == 0)
-        {
-            return 0;
-        }
-
-        var candidates = await dbContext.Transactions
-            .Where(x =>
-                transactionIds.Contains(x.Id)
-                && (!x.DeterministicEnrichmentVersion.HasValue
-                    || x.DeterministicEnrichmentVersion.Value < DeterministicEnrichmentCurrentVersion))
-            .ToListAsync(cancellationToken);
-
-        if (candidates.Count == 0)
-        {
-            return 0;
-        }
-
-        foreach (var transaction in candidates)
-        {
-            transaction.DeterministicEnrichmentVersion = DeterministicEnrichmentCurrentVersion;
-            transaction.LastDeterministicEnrichedUtc = now;
-        }
-
-        return candidates.Count;
     }
 
     private async Task<List<Guid>> LoadLinkedFinancialAccountIdsAsync(Guid userId, CancellationToken cancellationToken)
@@ -3354,8 +3355,9 @@ public sealed class BankSyncService(
             .AsNoTracking()
             .CountAsync(
                 x => linkedFinancialAccountIds.Contains(x.FinancialAccountId)
-                     && x.DeterministicEnrichmentVersion.HasValue
-                     && x.DeterministicEnrichmentVersion.Value >= DeterministicEnrichmentCurrentVersion,
+                     && x.DeterministicClassificationVersion.HasValue
+                     && x.DeterministicClassificationVersion.Value >= DeterministicEnrichmentCurrentVersion
+                     && x.DeterministicClassificationTerminal,
                 cancellationToken);
 
         var percent = Math.Clamp((currentCount / (double)totalCount) * 100d, 0d, 99.5d);
