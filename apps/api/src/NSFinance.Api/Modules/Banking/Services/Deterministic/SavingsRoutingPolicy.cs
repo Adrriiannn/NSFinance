@@ -4,13 +4,18 @@ public sealed record SavingsRoutingDecision(
     bool ShouldEvaluate,
     string RoutingTier,
     bool ProviderStructuralSupport,
+    bool ProviderProductSupport,
     bool ContextualSupport,
     int RepetitionStrength,
     bool StrongPhraseSupport,
+    bool PositiveSavingsEvidence,
     bool WeakSupportOnlySignalsPresent,
     bool LegacySupportOnly,
     bool ExternalCounterpartyRisk,
     int AmountRiskModifier,
+    int MerchantLikelihoodScore,
+    bool MerchantLikelihoodVeto,
+    bool MerchantVetoOverridden,
     string? BlockedReason);
 
 public sealed class SavingsRoutingPolicy
@@ -29,25 +34,58 @@ public sealed class SavingsRoutingPolicy
             return BuildBlockedDecision(feature, "external_counterparty_risk", hasLegacySavingsMarker);
         }
 
-        var providerStructuralSupport = feature.HasProviderTransferHint && feature.HasStrongSavingsKeyword;
+        var repetitionStrength = ResolveRepetitionStrength(feature.RepeatedSmallAuxiliaryOutflowPatternCount);
         var contextualSupport = feature.NearbyMerchantOutflowCount > 0
                                 && feature.AbsoluteAmount <= 25m
                                 && !feature.HasTransferKeyword;
-        var repetitionStrength = ResolveRepetitionStrength(feature.RepeatedSmallAuxiliaryOutflowPatternCount);
+        var providerStructuralSupport = feature.HasProviderTransferHint
+                                        && (feature.HasStrongSavingsKeyword
+                                            || feature.HasProviderSpecificTransferMarker);
+        var providerProductSupport = providerStructuralSupport
+                                     || (feature.HasStrongSavingsKeyword
+                                         && (feature.HasProviderTransferHint
+                                             || feature.HasProviderSpecificTransferMarker
+                                             || repetitionStrength >= 1))
+                                     || (feature.HasSavingsKeyword && feature.HasProviderSpecificTransferMarker);
         var strongPhraseSupport = feature.HasStrongSavingsKeyword
-                                  && (feature.HasProviderTransferHint || feature.NearbyMerchantOutflowCount > 0 || repetitionStrength > 0);
+                                  && (providerProductSupport
+                                      || contextualSupport
+                                      || repetitionStrength >= 1);
+        var positiveSavingsEvidence = providerProductSupport
+                                      || strongPhraseSupport
+                                      || (repetitionStrength >= 2 && feature.HasSavingsKeyword);
         var weakSupportOnlySignalsPresent = feature.HasWeakSavingsSupportKeyword
                                             || (feature.HasSavingsKeyword && !feature.HasStrongSavingsKeyword)
                                             || feature.AbsoluteAmount <= 5m
                                             || feature.NearbyMerchantOutflowCount == 1
                                             || hasLegacySavingsMarker;
 
+        var merchantLikelihoodVeto = feature.MerchantLikelihoodVeto;
+        var merchantVetoOverridden = merchantLikelihoodVeto
+                                     && (providerStructuralSupport
+                                         || (feature.HasStrongSavingsKeyword
+                                             && feature.HasProviderTransferHint
+                                             && (contextualSupport || repetitionStrength >= 2)));
+        if (merchantLikelihoodVeto && !merchantVetoOverridden)
+        {
+            return BuildBlockedDecision(
+                feature,
+                "merchant_likelihood_veto",
+                hasLegacySavingsMarker,
+                providerStructuralSupport,
+                providerProductSupport,
+                contextualSupport,
+                repetitionStrength,
+                strongPhraseSupport,
+                positiveSavingsEvidence,
+                weakSupportOnlySignalsPresent,
+                merchantVetoOverridden);
+        }
+
         var transferContradiction = feature.HasTransferKeyword
             && feature.HasCounterpartyAccounts
-            && !feature.HasStrongSavingsKeyword
-            && !contextualSupport
-            && !providerStructuralSupport
-            && !strongPhraseSupport;
+            && !providerProductSupport
+            && !contextualSupport;
         if (transferContradiction)
         {
             return BuildBlockedDecision(
@@ -55,27 +93,25 @@ public sealed class SavingsRoutingPolicy
                 "blocked_transfer_like_signal",
                 hasLegacySavingsMarker,
                 providerStructuralSupport,
+                providerProductSupport,
                 contextualSupport,
                 repetitionStrength,
                 strongPhraseSupport,
-                weakSupportOnlySignalsPresent);
+                positiveSavingsEvidence,
+                weakSupportOnlySignalsPresent,
+                merchantVetoOverridden);
         }
 
         var tierAProvider = providerStructuralSupport;
-        var tierARepetition = repetitionStrength >= 2;
+        var tierARepetition = repetitionStrength >= 2 && providerProductSupport;
         var tierAContextual = contextualSupport
-                              && (feature.HasProviderTransferHint
-                                  || repetitionStrength >= 1
-                                  || strongPhraseSupport);
-        var tierAStrongPhrase = strongPhraseSupport
-                                && (contextualSupport
-                                    || providerStructuralSupport
-                                    || repetitionStrength >= 1);
-
+                              && positiveSavingsEvidence;
+        var tierAStrongPhrase = strongPhraseSupport && providerProductSupport;
         var shouldEvaluate = tierAProvider || tierARepetition || tierAContextual || tierAStrongPhrase;
         var routingTier = ResolveRoutingTier(tierAProvider, tierARepetition, tierAContextual, tierAStrongPhrase);
         var legacySupportOnly = hasLegacySavingsMarker
                                 && !providerStructuralSupport
+                                && !providerProductSupport
                                 && !contextualSupport
                                 && repetitionStrength == 0
                                 && !strongPhraseSupport;
@@ -84,13 +120,18 @@ public sealed class SavingsRoutingPolicy
             ShouldEvaluate: shouldEvaluate,
             RoutingTier: routingTier,
             ProviderStructuralSupport: providerStructuralSupport,
+            ProviderProductSupport: providerProductSupport,
             ContextualSupport: contextualSupport,
             RepetitionStrength: repetitionStrength,
             StrongPhraseSupport: strongPhraseSupport,
+            PositiveSavingsEvidence: positiveSavingsEvidence,
             WeakSupportOnlySignalsPresent: weakSupportOnlySignalsPresent,
             LegacySupportOnly: legacySupportOnly,
             ExternalCounterpartyRisk: feature.LooksLikeExternalCounterparty,
             AmountRiskModifier: ResolveAmountRiskModifier(feature.AbsoluteAmount),
+            MerchantLikelihoodScore: feature.MerchantLikelihoodScore,
+            MerchantLikelihoodVeto: merchantLikelihoodVeto,
+            MerchantVetoOverridden: merchantVetoOverridden,
             BlockedReason: shouldEvaluate ? null : "insufficient_savings_routing_evidence");
     }
 
@@ -99,22 +140,30 @@ public sealed class SavingsRoutingPolicy
         string blockedReason,
         bool hasLegacySavingsMarker,
         bool providerStructuralSupport = false,
+        bool providerProductSupport = false,
         bool contextualSupport = false,
         int repetitionStrength = 0,
         bool strongPhraseSupport = false,
-        bool weakSupportOnlySignalsPresent = false)
+        bool positiveSavingsEvidence = false,
+        bool weakSupportOnlySignalsPresent = false,
+        bool merchantVetoOverridden = false)
     {
         return new SavingsRoutingDecision(
             ShouldEvaluate: false,
             RoutingTier: "none",
             ProviderStructuralSupport: providerStructuralSupport,
+            ProviderProductSupport: providerProductSupport,
             ContextualSupport: contextualSupport,
             RepetitionStrength: repetitionStrength,
             StrongPhraseSupport: strongPhraseSupport,
+            PositiveSavingsEvidence: positiveSavingsEvidence,
             WeakSupportOnlySignalsPresent: weakSupportOnlySignalsPresent || hasLegacySavingsMarker,
             LegacySupportOnly: hasLegacySavingsMarker,
             ExternalCounterpartyRisk: feature.LooksLikeExternalCounterparty,
             AmountRiskModifier: ResolveAmountRiskModifier(feature.AbsoluteAmount),
+            MerchantLikelihoodScore: feature.MerchantLikelihoodScore,
+            MerchantLikelihoodVeto: feature.MerchantLikelihoodVeto,
+            MerchantVetoOverridden: merchantVetoOverridden,
             BlockedReason: blockedReason);
     }
 

@@ -86,7 +86,7 @@ public sealed class DeterministicClassificationPersistenceService(
     }
 
     private async Task<DeterministicCategorizationSummary> EvaluateInternalAsync(
-        IReadOnlyDictionary<Guid, Guid> accountToConnectionId,
+        IReadOnlyDictionary<Guid, LinkedAccountDeterministicContext> linkedAccountsByFinancialAccountId,
         IReadOnlyList<Transaction> contextRows,
         IReadOnlyCollection<Guid> targetTransactionIds,
         DateTime now,
@@ -101,6 +101,12 @@ public sealed class DeterministicClassificationPersistenceService(
 
         var allTransactionIds = contextRows.Select(x => x.Id).ToArray();
         var normalizedByTransactionId = await LoadNormalizedContextAsync(allTransactionIds, cancellationToken);
+        var stableSequenceByTransactionId = contextRows
+            .OrderBy(x => x.BookedAtUtc)
+            .ThenBy(x => x.CreatedUtc)
+            .ThenBy(x => x.Id)
+            .Select((row, index) => new { row.Id, StableSequence = (long)index + 1L })
+            .ToDictionary(x => x.Id, x => x.StableSequence);
         var accountIds = contextRows.Select(x => x.FinancialAccountId).Distinct().ToArray();
         var hasCounterpartyByAccountId = accountIds.ToDictionary(
             accountId => accountId,
@@ -110,17 +116,22 @@ public sealed class DeterministicClassificationPersistenceService(
             .Select(row =>
             {
                 normalizedByTransactionId.TryGetValue(row.Id, out var normalized);
+                linkedAccountsByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var providerContext);
                 return new TransactionFeatureExtractor.TransactionFeatureInputRow(
                     row.Id,
                     row.FinancialAccountId,
                     row.Amount,
                     row.Currency,
                     row.BookedAtUtc,
+                    row.CreatedUtc,
                     row.Description,
+                    providerContext?.ProviderId,
+                    providerContext?.ProviderDisplayName,
                     normalized?.TransactionType,
                     normalized?.TransactionStatus,
                     HasProviderTransferHint(normalized?.TransactionType),
-                    hasCounterpartyByAccountId.TryGetValue(row.FinancialAccountId, out var hasCounterparty) && hasCounterparty);
+                    hasCounterpartyByAccountId.TryGetValue(row.FinancialAccountId, out var hasCounterparty) && hasCounterparty,
+                    stableSequenceByTransactionId.TryGetValue(row.Id, out var stableSequence) ? stableSequence : 0L);
             })
             .ToList();
         var featuresById = featureExtractor.BuildFeatures(featureInputs);
@@ -217,7 +228,7 @@ public sealed class DeterministicClassificationPersistenceService(
 
         var relationshipRowsUpserted = await ApplyRelationshipMetadataAsync(
             outcomesByTransactionId,
-            accountToConnectionId,
+            linkedAccountsByFinancialAccountId.ToDictionary(x => x.Key, x => x.Value.ConnectionId),
             now,
             cancellationToken);
 
@@ -343,13 +354,59 @@ public sealed class DeterministicClassificationPersistenceService(
             return BuildTransferPendingOutcome(pendingDecision!);
         }
 
+        if (!savingsRoutingDecision.ShouldEvaluate
+            && string.Equals(savingsRoutingDecision.BlockedReason, "merchant_likelihood_veto", StringComparison.Ordinal))
+        {
+            return new DeterministicClassificationOutcome(
+                DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+                Terminal: true,
+                RetryEligible: false,
+                RuleKey: "savings_transfer.rejected_merchant_veto_v5",
+                ReasonCode: DeterministicClassificationReasonCodes.SavingsRejectedMerchantLikelihoodVeto,
+                EvidenceJson: JsonSerializer.Serialize(new
+                {
+                    family = "savings_transfer",
+                    routeDecision = DeterministicClassificationReasonCodes.SavingsRejectedMerchantLikelihoodVeto,
+                    savingsRoutingAllowed = savingsRoutingDecision.ShouldEvaluate,
+                    savingsRoutingTier = savingsRoutingDecision.RoutingTier,
+                    providerStructuralSupport = savingsRoutingDecision.ProviderStructuralSupport,
+                    providerProductSupport = savingsRoutingDecision.ProviderProductSupport,
+                    contextualSupport = savingsRoutingDecision.ContextualSupport,
+                    positiveSavingsEvidence = savingsRoutingDecision.PositiveSavingsEvidence,
+                    repetitionStrength = savingsRoutingDecision.RepetitionStrength,
+                    strongPhraseSupport = savingsRoutingDecision.StrongPhraseSupport,
+                    weakSupportOnlySignalsPresent = savingsRoutingDecision.WeakSupportOnlySignalsPresent,
+                    legacySupportOnly = savingsRoutingDecision.LegacySupportOnly,
+                    merchantLikelihoodScore = savingsRoutingDecision.MerchantLikelihoodScore,
+                    merchantLikelihoodVeto = savingsRoutingDecision.MerchantLikelihoodVeto,
+                    merchantVetoOverridden = savingsRoutingDecision.MerchantVetoOverridden,
+                    amountRiskModifier = savingsRoutingDecision.AmountRiskModifier,
+                    externalCounterpartyRisk = savingsRoutingDecision.ExternalCounterpartyRisk,
+                    routingBlockedReason = savingsRoutingDecision.BlockedReason,
+                    transferSignals = feature.HasTransferKeyword || feature.HasProviderTransferHint,
+                    savingsSignals = feature.HasSavingsKeyword || feature.HasStrongSavingsKeyword,
+                    feature.NearbyMerchantOutflowCount,
+                    feature.RepeatedSmallAuxiliaryOutflowPatternCount,
+                    providerSpecificReferenceTokenCount = feature.NarrativeSignals.ProviderSpecificReferenceTokens.Count,
+                    paymentSystemMarkerCount = feature.NarrativeSignals.PaymentSystemMarkers.Count,
+                    merchantLikeTokenCount = feature.NarrativeSignals.MerchantLikeTokens.Count,
+                    legacySignalSupportOnly = legacySavings
+                }),
+                MatchScore: null,
+                ClassificationCategoryId: null,
+                ClassificationSubcategoryId: null,
+                LinkedTransactionId: null,
+                RelationshipType: null,
+                RelationshipGroupId: null);
+        }
+
         if (savingsRoutingDecision.ShouldEvaluate)
         {
             return new DeterministicClassificationOutcome(
                 DeterministicClassificationStatus.EvaluatedNoMatchingRule,
                 Terminal: true,
                 RetryEligible: false,
-                RuleKey: "savings_transfer.rejected_insufficient_context_v4",
+                RuleKey: "savings_transfer.rejected_insufficient_context_v5",
                 ReasonCode: DeterministicClassificationReasonCodes.SavingsRejectedInsufficientContext,
                 EvidenceJson: JsonSerializer.Serialize(new
                 {
@@ -358,11 +415,16 @@ public sealed class DeterministicClassificationPersistenceService(
                     savingsRoutingAllowed = savingsRoutingDecision.ShouldEvaluate,
                     savingsRoutingTier = savingsRoutingDecision.RoutingTier,
                     providerStructuralSupport = savingsRoutingDecision.ProviderStructuralSupport,
+                    providerProductSupport = savingsRoutingDecision.ProviderProductSupport,
                     contextualSupport = savingsRoutingDecision.ContextualSupport,
+                    positiveSavingsEvidence = savingsRoutingDecision.PositiveSavingsEvidence,
                     repetitionStrength = savingsRoutingDecision.RepetitionStrength,
                     strongPhraseSupport = savingsRoutingDecision.StrongPhraseSupport,
                     weakSupportOnlySignalsPresent = savingsRoutingDecision.WeakSupportOnlySignalsPresent,
                     legacySupportOnly = savingsRoutingDecision.LegacySupportOnly,
+                    merchantLikelihoodScore = savingsRoutingDecision.MerchantLikelihoodScore,
+                    merchantLikelihoodVeto = savingsRoutingDecision.MerchantLikelihoodVeto,
+                    merchantVetoOverridden = savingsRoutingDecision.MerchantVetoOverridden,
                     amountRiskModifier = savingsRoutingDecision.AmountRiskModifier,
                     externalCounterpartyRisk = savingsRoutingDecision.ExternalCounterpartyRisk,
                     routingBlockedReason = savingsRoutingDecision.BlockedReason,
@@ -370,6 +432,9 @@ public sealed class DeterministicClassificationPersistenceService(
                     savingsSignals = feature.HasSavingsKeyword || feature.HasStrongSavingsKeyword,
                     feature.NearbyMerchantOutflowCount,
                     feature.RepeatedSmallAuxiliaryOutflowPatternCount,
+                    providerSpecificReferenceTokenCount = feature.NarrativeSignals.ProviderSpecificReferenceTokens.Count,
+                    paymentSystemMarkerCount = feature.NarrativeSignals.PaymentSystemMarkers.Count,
+                    merchantLikeTokenCount = feature.NarrativeSignals.MerchantLikeTokens.Count,
                     legacySignalSupportOnly = legacySavings
                 }),
                 MatchScore: null,
@@ -392,17 +457,25 @@ public sealed class DeterministicClassificationPersistenceService(
                 savingsRoutingAllowed = savingsRoutingDecision.ShouldEvaluate,
                 savingsRoutingTier = savingsRoutingDecision.RoutingTier,
                 providerStructuralSupport = savingsRoutingDecision.ProviderStructuralSupport,
+                providerProductSupport = savingsRoutingDecision.ProviderProductSupport,
                 contextualSupport = savingsRoutingDecision.ContextualSupport,
+                positiveSavingsEvidence = savingsRoutingDecision.PositiveSavingsEvidence,
                 repetitionStrength = savingsRoutingDecision.RepetitionStrength,
                 strongPhraseSupport = savingsRoutingDecision.StrongPhraseSupport,
                 weakSupportOnlySignalsPresent = savingsRoutingDecision.WeakSupportOnlySignalsPresent,
                 legacySupportOnly = savingsRoutingDecision.LegacySupportOnly,
+                merchantLikelihoodScore = savingsRoutingDecision.MerchantLikelihoodScore,
+                merchantLikelihoodVeto = savingsRoutingDecision.MerchantLikelihoodVeto,
+                merchantVetoOverridden = savingsRoutingDecision.MerchantVetoOverridden,
                 amountRiskModifier = savingsRoutingDecision.AmountRiskModifier,
                 externalCounterpartyRisk = savingsRoutingDecision.ExternalCounterpartyRisk,
                 routingBlockedReason = savingsRoutingDecision.BlockedReason,
                 transferKeyword = feature.HasTransferKeyword,
                 savingsKeyword = feature.HasSavingsKeyword,
-                providerHint = feature.HasProviderTransferHint
+                providerHint = feature.HasProviderTransferHint,
+                providerSpecificReferenceTokenCount = feature.NarrativeSignals.ProviderSpecificReferenceTokens.Count,
+                paymentSystemMarkerCount = feature.NarrativeSignals.PaymentSystemMarkers.Count,
+                merchantLikeTokenCount = feature.NarrativeSignals.MerchantLikeTokens.Count
             }),
             MatchScore: null,
             ClassificationCategoryId: null,
@@ -700,7 +773,14 @@ public sealed class DeterministicClassificationPersistenceService(
         }
     }
 
-    private async Task<Dictionary<Guid, Guid>> LoadLinkedAccountScopeAsync(Guid userId, CancellationToken cancellationToken)
+    private sealed record LinkedAccountDeterministicContext(
+        Guid ConnectionId,
+        string? ProviderId,
+        string? ProviderDisplayName);
+
+    private async Task<Dictionary<Guid, LinkedAccountDeterministicContext>> LoadLinkedAccountScopeAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
     {
         return await dbContext.LinkedBankAccounts
             .AsNoTracking()
@@ -711,10 +791,18 @@ public sealed class DeterministicClassificationPersistenceService(
             .Select(x => new
             {
                 FinancialAccountId = x.FinancialAccountId!.Value,
-                x.ConnectionId
+                x.ConnectionId,
+                ProviderId = x.Connection != null ? x.Connection.ProviderId : null,
+                ProviderDisplayName = x.Connection != null ? x.Connection.ProviderDisplayName : null
             })
             .Distinct()
-            .ToDictionaryAsync(x => x.FinancialAccountId, x => x.ConnectionId, cancellationToken);
+            .ToDictionaryAsync(
+                x => x.FinancialAccountId,
+                x => new LinkedAccountDeterministicContext(
+                    x.ConnectionId,
+                    x.ProviderId,
+                    x.ProviderDisplayName),
+                cancellationToken);
     }
 
     private async Task<List<Transaction>> LoadTransactionsWithContextAsync(

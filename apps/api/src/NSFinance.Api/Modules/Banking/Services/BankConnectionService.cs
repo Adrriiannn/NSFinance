@@ -502,6 +502,8 @@ public sealed class BankConnectionService(
                 x.Currency,
                 x.BookedAtUtc,
                 x.Description,
+                x.TaxonomyCategoryId,
+                x.TaxonomySubcategoryId,
                 x.DeterministicClassificationStatus,
                 x.DeterministicClassificationTerminal,
                 x.DeterministicDeferredRetryEligible,
@@ -544,6 +546,12 @@ public sealed class BankConnectionService(
                 var normalizedDescription = NormalizeDeterministicDescriptionForDiagnostics(row.Description);
                 var direction = ResolveDeterministicDirection(row.Amount);
                 var amountBucket = ResolveDeterministicAmountBucket(row.Amount);
+                var deterministicSemanticFamily = ResolveDeterministicSemanticFamily(
+                    row.DeterministicClassificationStatus,
+                    row.DeterministicRelationshipType);
+                var stylingFromDeterministicSemantic = !string.Equals(deterministicSemanticFamily, "none", StringComparison.Ordinal);
+                var taxonomyFallbackUsed = !stylingFromDeterministicSemantic
+                    && (row.TaxonomyCategoryId.HasValue || row.TaxonomySubcategoryId.HasValue);
                 var amountKey = $"{Math.Abs(row.Amount):0.00}|{row.Currency.Trim().ToUpperInvariant()}|{row.BookedAtUtc:yyyy-MM-dd}";
                 duplicateClusterStats.TryGetValue(amountKey, out var duplicateClusterStat);
                 var duplicateClusterMember = duplicateClusterStat is not null
@@ -591,7 +599,10 @@ public sealed class BankConnectionService(
                     row.Currency,
                     row.BookedAtUtc,
                     NormalizedDescription = normalizedDescription,
+                    row.DeterministicReasonDetailJson,
                     Provider = provider,
+                    row.TaxonomyCategoryId,
+                    row.TaxonomySubcategoryId,
                     row.DeterministicClassificationStatus,
                     row.DeterministicClassificationTerminal,
                     row.DeterministicDeferredRetryEligible,
@@ -625,7 +636,12 @@ public sealed class BankConnectionService(
                     SavingsRepetitionStrength = evidence.SavingsRepetitionStrength,
                     SavingsExternalCounterpartyRisk = evidence.SavingsExternalCounterpartyRisk,
                     SavingsAmountRiskModifier = evidence.SavingsAmountRiskModifier,
-                    SavingsEvaluationOutcome = savingsEvaluationOutcome
+                    SavingsEvaluationOutcome = savingsEvaluationOutcome,
+                    TransferTimePrecisionMode = evidence.TransferTimePrecisionMode,
+                    TransferStableOrderingUsed = evidence.TransferStableOrderingUsed,
+                    DeterministicSemanticFamily = deterministicSemanticFamily,
+                    StylingFromDeterministicSemantic = stylingFromDeterministicSemantic,
+                    TaxonomyFallbackUsed = taxonomyFallbackUsed
                 };
             })
             .ToList();
@@ -732,6 +748,14 @@ public sealed class BankConnectionService(
                 x.SavingsExternalCounterpartyRisk,
                 x.SavingsAmountRiskModifier,
                 x.SavingsEvaluationOutcome,
+                x.TransferTimePrecisionMode,
+                x.TransferStableOrderingUsed,
+                x.DeterministicSemanticFamily,
+                x.StylingFromDeterministicSemantic,
+                x.TaxonomyFallbackUsed,
+                x.TaxonomyCategoryId,
+                x.TaxonomySubcategoryId,
+                x.DeterministicReasonDetailJson,
                 x.DeterministicLinkedTransactionId,
                 x.DeterministicRelationshipType,
                 x.DeterministicRelationshipGroupId,
@@ -2651,6 +2675,8 @@ public sealed class BankConnectionService(
         int? TopCandidateScore,
         bool HasTransferSignals,
         bool HasSavingsSignals,
+        string? TransferTimePrecisionMode,
+        bool TransferStableOrderingUsed,
         bool SavingsRoutingAllowed,
         string? SavingsRoutingTier,
         bool SavingsProviderStructuralSupport,
@@ -2663,7 +2689,7 @@ public sealed class BankConnectionService(
     {
         if (string.IsNullOrWhiteSpace(evidenceJson))
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, false, null, false, false, 0, false, 0);
         }
 
         try
@@ -2688,6 +2714,8 @@ public sealed class BankConnectionService(
             var savingsSignals = TryReadDiagnosticsJsonBool(root, "savingsKeyword")
                 || TryReadDiagnosticsJsonBool(root, "strongSignal")
                 || string.Equals(family, "savings_transfer", StringComparison.Ordinal);
+            var transferTimePrecisionMode = TryReadDiagnosticsJsonString(root, "timePrecisionMode");
+            var transferStableOrderingUsed = TryReadDiagnosticsJsonBool(root, "stableOrderingUsed");
             var savingsRoutingAllowed = TryReadDiagnosticsJsonBool(root, "savingsRoutingAllowed");
             var savingsRoutingTier = TryReadDiagnosticsJsonString(root, "savingsRoutingTier");
             var savingsProviderStructuralSupport = TryReadDiagnosticsJsonBool(root, "providerStructuralSupport");
@@ -2702,6 +2730,8 @@ public sealed class BankConnectionService(
                 topCandidateScore,
                 transferSignals,
                 savingsSignals,
+                transferTimePrecisionMode,
+                transferStableOrderingUsed,
                 savingsRoutingAllowed,
                 savingsRoutingTier,
                 savingsProviderStructuralSupport,
@@ -2712,7 +2742,7 @@ public sealed class BankConnectionService(
         }
         catch (JsonException)
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, false, null, false, false, 0, false, 0);
         }
     }
 
@@ -2738,6 +2768,28 @@ public sealed class BankConnectionService(
             || normalizedRuleKey.Contains("internal_transfer", StringComparison.Ordinal))
         {
             return "bank_account_transfer";
+        }
+
+        return "none";
+    }
+
+    private static string ResolveDeterministicSemanticFamily(
+        DeterministicClassificationStatus status,
+        string? deterministicRelationshipType)
+    {
+        if (status != DeterministicClassificationStatus.ClassifiedMatchedRule)
+        {
+            return "none";
+        }
+
+        if (string.Equals(deterministicRelationshipType, "internal_transfer", StringComparison.Ordinal))
+        {
+            return "internal_transfer";
+        }
+
+        if (string.Equals(deterministicRelationshipType, "savings_transfer", StringComparison.Ordinal))
+        {
+            return "savings_transfer";
         }
 
         return "none";

@@ -14,6 +14,7 @@ public static class DeterministicClassificationReasonCodes
     public const string SavingsRepeatedAuxiliaryPattern = "savings_repeated_auxiliary_pattern";
     public const string SavingsRejectedTransferTakesPrecedence = "savings_rejected_transfer_takes_precedence";
     public const string SavingsRejectedInsufficientContext = "savings_rejected_insufficient_context";
+    public const string SavingsRejectedMerchantLikelihoodVeto = "savings_rejected_merchant_likelihood_veto";
     public const string LegacySignalSupportOnly = "legacy_signal_support_only";
 
     // Compatibility aliases retained for existing tests and historical evidence references.

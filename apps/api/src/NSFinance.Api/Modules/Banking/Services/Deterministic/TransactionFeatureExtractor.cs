@@ -1,6 +1,9 @@
 namespace NSFinance.Api.Modules.Banking.Services.Deterministic;
 
-public sealed class TransactionFeatureExtractor(TransactionNormalizationService normalizationService)
+public sealed class TransactionFeatureExtractor(
+    TransactionNormalizationService normalizationService,
+    ProviderCapabilityRegistry providerCapabilityRegistry,
+    NarrativeSignalExtractor narrativeSignalExtractor)
 {
     public sealed record TransactionFeatureInputRow(
         Guid TransactionId,
@@ -8,11 +11,15 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
         decimal Amount,
         string Currency,
         DateTime BookedAtUtc,
+        DateTime CreatedUtc,
         string Description,
+        string? ProviderId,
+        string? ProviderDisplayName,
         string? TransactionType,
         string? TransactionStatus,
         bool HasProviderTransferHint,
-        bool HasCounterpartyAccounts);
+        bool HasCounterpartyAccounts,
+        long StableSequence);
 
     public IReadOnlyDictionary<Guid, DeterministicTransactionFeature> BuildFeatures(
         IReadOnlyList<TransactionFeatureInputRow> rows)
@@ -25,16 +32,31 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
         var normalizedRows = rows
             .Select(row =>
             {
+                var providerCapabilities = providerCapabilityRegistry.Resolve(row.ProviderId, row.ProviderDisplayName);
                 var normalizedDescription = normalizationService.NormalizeDescription(row.Description);
                 var tokens = normalizationService.Tokenize(normalizedDescription);
+                var narrativeSignals = narrativeSignalExtractor.Extract(
+                    row.Description,
+                    normalizedDescription,
+                    providerCapabilities);
                 var transferKeyword = normalizationService.HasTransferKeyword(normalizedDescription, tokens);
                 var savingsKeyword = normalizationService.HasSavingsKeyword(normalizedDescription, tokens);
+                var providerTransferHint = row.HasProviderTransferHint
+                                           || (providerCapabilities.SupportsProviderSpecificTransferMarkers
+                                               && (narrativeSignals.ProviderSpecificReferenceTokens.Count > 0
+                                                   || narrativeSignals.PaymentSystemMarkers.Count > 0));
+                var merchantLikelihoodScore = ComputeMerchantLikelihoodScore(
+                    normalizedDescription,
+                    narrativeSignals,
+                    providerCapabilities);
 
                 return new
                 {
                     Row = row,
+                    ProviderCapabilities = providerCapabilities,
                     NormalizedDescription = normalizedDescription,
                     Tokens = tokens,
+                    NarrativeSignals = narrativeSignals,
                     HasTransferKeyword = transferKeyword,
                     HasSavingsKeyword = savingsKeyword,
                     HasStrongSavingsKeyword = normalizationService.HasStrongSavingsKeyword(normalizedDescription),
@@ -44,7 +66,9 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                     IsPending = IsPending(row.TransactionStatus),
                     DayKey = $"{Math.Abs(row.Amount):0.00}|{row.Currency.ToUpperInvariant()}|{row.BookedAtUtc:yyyy-MM-dd}",
                     IsOutflow = row.Amount < 0m,
-                    IsInflow = row.Amount > 0m
+                    IsInflow = row.Amount > 0m,
+                    HasProviderTransferHint = providerTransferHint,
+                    MerchantLikelihoodScore = merchantLikelihoodScore
                 };
             })
             .ToList();
@@ -73,6 +97,7 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                 && !mainSpend.HasSavingsKeyword
                 && !mainSpend.HasStrongSavingsKeyword
                 && !mainSpend.LooksLikeExternalCounterparty
+                && mainSpend.MerchantLikelihoodScore >= 2
                 && Math.Abs(mainSpend.Row.Amount) > Math.Max(1m, Math.Abs(candidate.Row.Amount))
                 && Math.Abs((mainSpend.Row.BookedAtUtc - candidate.Row.BookedAtUtc).TotalHours) <= 6d));
 
@@ -89,6 +114,7 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                 && candidate.Row.FinancialAccountId == row.FinancialAccountId
                 && candidate.IsOutflow
                 && Math.Abs((candidate.Row.BookedAtUtc - row.BookedAtUtc).TotalHours) <= 6d
+                && candidate.MerchantLikelihoodScore >= 2
                 && !candidate.HasTransferKeyword
                 && !candidate.HasSavingsKeyword
                 && !candidate.HasStrongSavingsKeyword
@@ -103,9 +129,20 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                 && Math.Abs((candidate.Row.BookedAtUtc - row.BookedAtUtc).TotalDays) <= 45d
                 && !candidate.HasTransferKeyword
                 && !candidate.LooksLikeExternalCounterparty
-                && (hasNearbyLikelyMainSpendByTransactionId.TryGetValue(candidate.Row.TransactionId, out var hasNearbyMainSpend) && hasNearbyMainSpend
+                && (
+                    hasNearbyLikelyMainSpendByTransactionId.TryGetValue(candidate.Row.TransactionId, out var hasNearbyMainSpend)
+                    && hasNearbyMainSpend
                     || candidate.HasStrongSavingsKeyword
-                    || candidate.Row.HasProviderTransferHint));
+                    || candidate.HasProviderTransferHint
+                    || candidate.NarrativeSignals.ProviderSpecificReferenceTokens.Count > 0));
+
+            var accountHint = ResolveAccountHint(current.NarrativeSignals, current.NormalizedDescription);
+            var hasHighConfidenceReferenceSignals = current.NarrativeSignals.HighConfidenceTokens.Count > 0;
+            var hasMediumConfidenceReferenceSignals = current.NarrativeSignals.SignalConfidenceMap
+                .Any(x => x.Value == NarrativeSignalConfidenceTier.MediumConfidence);
+            var hasProviderSpecificTransferMarker = current.NarrativeSignals.ProviderSpecificReferenceTokens.Count > 0
+                                                    || current.NarrativeSignals.PaymentSystemMarkers.Count > 0;
+            var merchantLikelihoodVeto = current.MerchantLikelihoodScore >= 4;
 
             features[row.TransactionId] = new DeterministicTransactionFeature(
                 row.TransactionId,
@@ -122,10 +159,23 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
                 current.HasSavingsKeyword,
                 current.HasStrongSavingsKeyword,
                 current.HasWeakSavingsSupportKeyword,
-                normalizationService.ExtractAccountHint(current.NormalizedDescription),
+                accountHint,
                 current.IsBooked,
                 current.IsPending,
-                row.HasProviderTransferHint,
+                current.HasProviderTransferHint,
+                current.ProviderCapabilities.ProviderKey,
+                current.ProviderCapabilities.TimestampPrecision,
+                current.ProviderCapabilities.SupportsMachineReferenceTokens,
+                current.ProviderCapabilities.SupportsPaymentSystemMarkers,
+                current.ProviderCapabilities.SupportsReliableCounterpartyReferenceFragments,
+                current.ProviderCapabilities.SupportsProviderSpecificTransferMarkers,
+                current.NarrativeSignals,
+                hasHighConfidenceReferenceSignals,
+                hasMediumConfidenceReferenceSignals,
+                hasProviderSpecificTransferMarker,
+                current.MerchantLikelihoodScore,
+                merchantLikelihoodVeto,
+                row.StableSequence,
                 Math.Max(0, nearbyCount - 1),
                 Math.Max(0, nearbyOutflowCount - 1),
                 Math.Max(0, nearbyInflowCount - 1),
@@ -138,6 +188,72 @@ public sealed class TransactionFeatureExtractor(TransactionNormalizationService 
         }
 
         return features;
+    }
+
+    private static int ComputeMerchantLikelihoodScore(
+        string normalizedDescription,
+        NarrativeSignalSet narrativeSignals,
+        DeterministicProviderCapabilities providerCapabilities)
+    {
+        var score = 0;
+        score += narrativeSignals.MerchantLikeTokens.Count switch
+        {
+            >= 4 => 4,
+            3 => 3,
+            2 => 2,
+            1 => 1,
+            _ => 0
+        };
+
+        if (normalizedDescription.Contains(" card ", StringComparison.Ordinal)
+            || normalizedDescription.Contains(" contactless ", StringComparison.Ordinal)
+            || normalizedDescription.Contains(" pos ", StringComparison.Ordinal)
+            || normalizedDescription.Contains(" purchase ", StringComparison.Ordinal))
+        {
+            score += 2;
+        }
+
+        if (narrativeSignals.HighConfidenceTokens.Count == 0
+            && narrativeSignals.ProviderSpecificReferenceTokens.Count == 0
+            && narrativeSignals.PaymentSystemMarkers.Count == 0)
+        {
+            score += 1;
+        }
+
+        score += providerCapabilities.MerchantDescriptorReliability switch
+        {
+            DeterministicMerchantDescriptorReliability.High => 1,
+            DeterministicMerchantDescriptorReliability.Low => -1,
+            _ => 0
+        };
+
+        return Math.Max(0, score);
+    }
+
+    private static string? ResolveAccountHint(
+        NarrativeSignalSet narrativeSignals,
+        string normalizedDescription)
+    {
+        var accountLike = narrativeSignals.AccountLikeTokens
+            .Where(token => token.Any(char.IsDigit))
+            .OrderByDescending(token => token.Length)
+            .FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(accountLike))
+        {
+            var digits = new string(accountLike.Where(char.IsDigit).ToArray());
+            if (digits.Length >= 4)
+            {
+                return digits[^4..];
+            }
+        }
+
+        var fallbackDigits = new string(normalizedDescription.Where(char.IsDigit).ToArray());
+        if (fallbackDigits.Length >= 4)
+        {
+            return fallbackDigits[^4..];
+        }
+
+        return null;
     }
 
     private static bool IsBooked(string? status)

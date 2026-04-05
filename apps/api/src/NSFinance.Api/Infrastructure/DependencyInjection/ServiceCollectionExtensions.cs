@@ -283,6 +283,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TrueLayerDataService>();
         services.AddScoped<BankConnectionService>();
         services.AddSingleton<DeterministicCategorizationMetrics>();
+        services.AddScoped<ProviderCapabilityRegistry>();
+        services.AddScoped<NarrativeSignalExtractor>();
         services.AddScoped<TransactionNormalizationService>();
         services.AddScoped<TransactionFeatureExtractor>();
         services.AddScoped<TransferPairingEngine>();

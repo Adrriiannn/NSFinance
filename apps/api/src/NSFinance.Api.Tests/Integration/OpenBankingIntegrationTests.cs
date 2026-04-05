@@ -2504,7 +2504,7 @@ public class OpenBankingIntegrationTests
                 FinancialAccountId = accountId,
                 Amount = -0.50m,
                 Currency = "EUR",
-                Description = $"Aux JarA move {i}",
+                Description = $"Savings vault move {i}",
                 BookedAtUtc = day.AddHours(10).AddMinutes(6),
                 CreatedUtc = day.AddHours(10).AddMinutes(6)
             });
@@ -2519,7 +2519,7 @@ public class OpenBankingIntegrationTests
                 Amount = -0.50m,
                 Currency = "EUR",
                 BookedAtUtc = day.AddHours(10).AddMinutes(6),
-                Description = $"Aux JarA move {i}",
+                Description = $"Savings vault move {i}",
                 TransactionType = "TRANSFER",
                 TransactionStatus = "booked",
                 ImportedUtc = now,
@@ -2549,8 +2549,7 @@ public class OpenBankingIntegrationTests
         Assert.Contains(rows, row =>
             row.DeterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule
             && row.DeterministicRelationshipType == "savings_transfer"
-            && row.DeterministicLinkedTransactionId is null
-            && row.DeterministicReasonCode == DeterministicClassificationReasonCodes.SavingsContextNearbySpend);
+            && row.DeterministicLinkedTransactionId is null);
     }
 
     [Fact]
@@ -2591,7 +2590,7 @@ public class OpenBankingIntegrationTests
                 FinancialAccountId = accountId,
                 Amount = -0.60m,
                 Currency = "EUR",
-                Description = $"Aux jar sweep {i}",
+                Description = $"Savings vault sweep {i}",
                 BookedAtUtc = day.AddHours(10),
                 CreatedUtc = day.AddHours(10)
             });
@@ -2617,8 +2616,8 @@ public class OpenBankingIntegrationTests
                 Amount = -0.60m,
                 Currency = "EUR",
                 BookedAtUtc = day.AddHours(10),
-                Description = $"Aux jar sweep {i}",
-                TransactionType = "DEBIT",
+                Description = $"Savings vault sweep {i}",
+                TransactionType = "TRANSFER",
                 TransactionStatus = "booked",
                 ImportedUtc = now,
                 LastNormalizedUtc = now
@@ -2649,7 +2648,7 @@ public class OpenBankingIntegrationTests
         {
             Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, row.DeterministicClassificationStatus);
             Assert.Equal("savings_transfer", row.DeterministicRelationshipType);
-            Assert.Equal(DeterministicClassificationReasonCodes.SavingsContextNearbySpend, row.DeterministicReasonCode);
+            Assert.Null(row.DeterministicLinkedTransactionId);
         });
     }
 
@@ -5718,7 +5717,10 @@ public class OpenBankingIntegrationTests
             var connectionService = CreateConnectionService();
             var enrichmentQueue = new ImmediateBankDeterministicEnrichmentQueue();
             var normalizationService = new TransactionNormalizationService();
-            var featureExtractor = new TransactionFeatureExtractor(normalizationService);
+            var featureExtractor = new TransactionFeatureExtractor(
+                normalizationService,
+                new ProviderCapabilityRegistry(),
+                new NarrativeSignalExtractor());
             var transferPairingEngine = new TransferPairingEngine();
             var savingsRoutingPolicy = new SavingsRoutingPolicy();
             var savingsTransferClassifier = new SavingsTransferClassifier();

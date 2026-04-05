@@ -6,7 +6,7 @@ namespace NSFinance.Api.Modules.Banking.Services.Deterministic;
 public sealed class TransferPairingEngine
 {
     private const int MinScoreForPairing = 8;
-    private const int MinScoreForStrongDeferredCounterparty = 9;
+    private const int MinScoreForStrongDeferredCounterparty = 10;
     private const int MutualBestMinimumMargin = 2;
     private const int AmbiguityMaxScoreGap = 1;
     private const int MaxClusterRowsPerSide = 8;
@@ -33,8 +33,8 @@ public sealed class TransferPairingEngine
                 0);
         }
 
-        var groupStatsByAmountCurrency = transferLikeFeatures
-            .GroupBy(CreateAmountCurrencyKey)
+        var groupStatsByAmountCurrencyDay = transferLikeFeatures
+            .GroupBy(CreateAmountCurrencyDayKey)
             .ToDictionary(
                 group => group.Key,
                 group => new
@@ -55,8 +55,8 @@ public sealed class TransferPairingEngine
                 continue;
             }
 
-            var amountKey = CreateAmountCurrencyKey(source);
-            groupStatsByAmountCurrency.TryGetValue(amountKey, out var groupStats);
+            var amountDayKey = CreateAmountCurrencyDayKey(source);
+            groupStatsByAmountCurrencyDay.TryGetValue(amountDayKey, out var groupStats);
             var duplicateClusterMember = groupStats is not null && groupStats.OutflowCount > 1 && groupStats.InflowCount > 1;
             var duplicateClusterSize = groupStats?.Total ?? 0;
 
@@ -69,16 +69,23 @@ public sealed class TransferPairingEngine
                     && candidate.AbsoluteAmount == source.AbsoluteAmount
                     && candidate.IsOutflow != source.IsOutflow
                     && Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalHours) <= DeterministicCategorizationConstants.TransferCandidateWindowHours)
-                .Select(candidate => new CandidateEdge(
-                    Source: source,
-                    Candidate: candidate,
-                    Score: ScoreCandidate(source, candidate),
-                    WindowHours: Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalHours),
-                    IsDuplicateClusterMember: duplicateClusterMember,
-                    DuplicateClusterSize: duplicateClusterSize))
+                .Select(candidate => BuildCandidateEdge(
+                    source,
+                    candidate,
+                    duplicateClusterMember,
+                    duplicateClusterSize))
                 .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.ReferenceOverlapScore)
+                .ThenByDescending(x => x.HighConfidenceReferenceOverlap)
+                .ThenByDescending(x => x.ProviderSpecificReferenceOverlap)
+                .ThenByDescending(x => x.AccountReferenceOverlap)
+                .ThenByDescending(x => x.PaymentMarkerOverlap)
+                .ThenByDescending(x => x.MediumConfidenceOverlap)
                 .ThenBy(x => x.WindowHours)
+                .ThenBy(x => x.StableOrderDistance)
+                .ThenBy(x => x.Candidate.StableSequence)
                 .ThenBy(x => x.Candidate.BookedAtUtc)
+                .ThenBy(x => x.Candidate.TransactionId)
                 .ToList();
 
             candidatesBySourceId[source.TransactionId] = candidates;
@@ -145,10 +152,14 @@ public sealed class TransferPairingEngine
                     EvidenceJson: JsonSerializer.Serialize(new
                     {
                         family = "bank_account_transfer",
-                        pass = "defer_not_fail",
+                        resolutionOutcome = "no_candidate",
+                        providerCapabilities = BuildProviderCapabilitySummary(feature),
+                        narrativeSignals = BuildNarrativeSignalSummary(feature),
+                        hasExplicitCounterpartyExpectation,
                         candidateCount = 0,
                         duplicateClusterMember,
                         duplicateClusterSize,
+                        timePrecisionMode = feature.ProviderTimestampPrecision.ToString().ToLowerInvariant(),
                         feature.HasTransferKeyword,
                         feature.HasProviderTransferHint,
                         feature.AccountHint,
@@ -174,20 +185,23 @@ public sealed class TransferPairingEngine
                     EvidenceJson: JsonSerializer.Serialize(new
                     {
                         family = "bank_account_transfer",
-                        pass = "duplicate_cluster_conflict_resolution",
+                        resolutionOutcome = "ambiguous_duplicate_cluster",
                         candidateCount = candidates.Count,
                         duplicateClusterSize,
                         topCandidateId = topCandidate?.Candidate.TransactionId,
-                        topCandidateScore = topCandidate?.Score
+                        topCandidateScore = topCandidate?.Score,
+                        topCandidateReferenceOverlap = topCandidate?.ReferenceOverlapScore,
+                        topCandidateTimePrecisionMode = topCandidate?.TimePrecisionMode,
+                        stableOrderingUsed = false
                     }));
                 continue;
             }
 
             if (candidates.Count > 1)
             {
-                var bestScore = candidates[0].Score;
-                var nextScore = candidates[1].Score;
-                if ((bestScore - nextScore) <= AmbiguityMaxScoreGap)
+                var best = candidates[0];
+                var next = candidates[1];
+                if (MateriallyEquivalent(best, next) || (best.Score - next.Score) <= AmbiguityMaxScoreGap)
                 {
                     ambiguousCount++;
                     pending[feature.TransactionId] = new TransferPendingDecision(
@@ -197,26 +211,30 @@ public sealed class TransferPairingEngine
                         false,
                         CandidateFamily: "bank_account_transfer",
                         CandidateCount: candidates.Count,
-                        TopCandidateTransactionId: candidates[0].Candidate.TransactionId,
-                        TopCandidateScore: candidates[0].Score,
+                        TopCandidateTransactionId: best.Candidate.TransactionId,
+                        TopCandidateScore: best.Score,
                         IsDuplicateClusterMember: false,
                         DuplicateClusterSize: duplicateClusterSize,
                         EvidenceJson: JsonSerializer.Serialize(new
                         {
                             family = "bank_account_transfer",
-                            pass = "conflict_resolution",
+                            resolutionOutcome = "ambiguous_candidate_scores",
                             candidateCount = candidates.Count,
-                            bestScore,
-                            nextScore
+                            bestScore = best.Score,
+                            nextScore = next.Score,
+                            bestReferenceOverlap = best.ReferenceOverlapScore,
+                            nextReferenceOverlap = next.ReferenceOverlapScore,
+                            bestTimePrecisionMode = best.TimePrecisionMode,
+                            nextTimePrecisionMode = next.TimePrecisionMode
                         }));
                     continue;
                 }
             }
 
-            var best = candidates[0];
-            var bestScoreStrongEnough = best.Score >= MinScoreForStrongDeferredCounterparty;
+            var bestCandidate = candidates[0];
+            var bestScoreStrongEnough = bestCandidate.Score >= MinScoreForStrongDeferredCounterparty;
             var explicitCounterpartyExpectation = HasExplicitCounterpartyExpectation(feature, duplicateClusterMember);
-            if (!feature.IsBooked || !best.Candidate.IsBooked || feature.IsPending || best.Candidate.IsPending)
+            if (!feature.IsBooked || !bestCandidate.Candidate.IsBooked || feature.IsPending || bestCandidate.Candidate.IsPending)
             {
                 pending[feature.TransactionId] = new TransferPendingDecision(
                     feature.TransactionId,
@@ -225,17 +243,19 @@ public sealed class TransferPairingEngine
                     true,
                     CandidateFamily: "bank_account_transfer",
                     CandidateCount: candidates.Count,
-                    TopCandidateTransactionId: best.Candidate.TransactionId,
-                    TopCandidateScore: best.Score,
+                    TopCandidateTransactionId: bestCandidate.Candidate.TransactionId,
+                    TopCandidateScore: bestCandidate.Score,
                     IsDuplicateClusterMember: duplicateClusterMember,
                     DuplicateClusterSize: duplicateClusterSize,
                     EvidenceJson: JsonSerializer.Serialize(new
                     {
                         family = "bank_account_transfer",
-                        pass = "defer_not_fail",
-                        candidateId = best.Candidate.TransactionId,
+                        resolutionOutcome = "deferred_pending_context",
+                        candidateId = bestCandidate.Candidate.TransactionId,
                         candidateCount = candidates.Count,
-                        bestScore = best.Score
+                        bestScore = bestCandidate.Score,
+                        referenceOverlap = bestCandidate.ReferenceOverlapScore,
+                        timePrecisionMode = bestCandidate.TimePrecisionMode
                     }));
                 continue;
             }
@@ -249,17 +269,18 @@ public sealed class TransferPairingEngine
                     false,
                     CandidateFamily: "bank_account_transfer",
                     CandidateCount: candidates.Count,
-                    TopCandidateTransactionId: best.Candidate.TransactionId,
-                    TopCandidateScore: best.Score,
+                    TopCandidateTransactionId: bestCandidate.Candidate.TransactionId,
+                    TopCandidateScore: bestCandidate.Score,
                     IsDuplicateClusterMember: duplicateClusterMember,
                     DuplicateClusterSize: duplicateClusterSize,
                     EvidenceJson: JsonSerializer.Serialize(new
                     {
                         family = "bank_account_transfer",
-                        pass = "defer_not_fail",
-                        candidateId = best.Candidate.TransactionId,
+                        resolutionOutcome = "insufficient_pairing_confidence",
+                        candidateId = bestCandidate.Candidate.TransactionId,
                         candidateCount = candidates.Count,
-                        bestScore = best.Score,
+                        bestScore = bestCandidate.Score,
+                        bestReferenceOverlap = bestCandidate.ReferenceOverlapScore,
                         explicitCounterpartyExpectation,
                         duplicateClusterMember
                     }));
@@ -273,17 +294,19 @@ public sealed class TransferPairingEngine
                 true,
                 CandidateFamily: "bank_account_transfer",
                 CandidateCount: candidates.Count,
-                TopCandidateTransactionId: best.Candidate.TransactionId,
-                TopCandidateScore: best.Score,
+                TopCandidateTransactionId: bestCandidate.Candidate.TransactionId,
+                TopCandidateScore: bestCandidate.Score,
                 IsDuplicateClusterMember: duplicateClusterMember,
                 DuplicateClusterSize: duplicateClusterSize,
                 EvidenceJson: JsonSerializer.Serialize(new
                 {
                     family = "bank_account_transfer",
-                    pass = "mutual_best_resolution",
-                    candidateId = best.Candidate.TransactionId,
+                    resolutionOutcome = "deferred_missing_counterparty",
+                    candidateId = bestCandidate.Candidate.TransactionId,
                     candidateCount = candidates.Count,
-                    bestScore = best.Score
+                    bestScore = bestCandidate.Score,
+                    bestReferenceOverlap = bestCandidate.ReferenceOverlapScore,
+                    bestTimePrecisionMode = bestCandidate.TimePrecisionMode
                 }));
         }
 
@@ -302,8 +325,11 @@ public sealed class TransferPairingEngine
         var resolved = new Dictionary<Guid, TransferPairDecision>();
         var claimed = prePaired.ToHashSet();
 
-        // Pass T1: unique clear pair.
-        foreach (var source in transferLikeFeatures.Where(x => x.IsOutflow))
+        foreach (var source in transferLikeFeatures
+                     .Where(x => x.IsOutflow)
+                     .OrderBy(x => x.StableSequence)
+                     .ThenBy(x => x.BookedAtUtc)
+                     .ThenBy(x => x.TransactionId))
         {
             if (claimed.Contains(source.TransactionId)
                 || !candidatesBySourceId.TryGetValue(source.TransactionId, out var sourceCandidates))
@@ -322,7 +348,8 @@ public sealed class TransferPairingEngine
             var candidate = availableSourceCandidates[0];
             if (candidate.Score < MinScoreForPairing
                 || !source.IsBooked
-                || !candidate.Candidate.IsBooked)
+                || !candidate.Candidate.IsBooked
+                || claimed.Contains(candidate.Candidate.TransactionId))
             {
                 continue;
             }
@@ -343,16 +370,19 @@ public sealed class TransferPairingEngine
             ApplyPair(
                 resolved,
                 claimed,
-                source,
-                candidate.Candidate,
-                "bank_transfer.strict_unique_pair_v3",
+                candidate,
+                "bank_transfer.strict_unique_pair_v5",
                 DeterministicClassificationReasonCodes.TransferPairStrictMatch,
-                candidate.Score,
-                pass: "strict_unique_pair");
+                pass: "strict_unique_pair",
+                stableOrderingUsed: false,
+                clusterSize: candidate.DuplicateClusterSize);
         }
 
-        // Pass T2: mutual best resolution.
-        foreach (var source in transferLikeFeatures.Where(x => x.IsOutflow))
+        foreach (var source in transferLikeFeatures
+                     .Where(x => x.IsOutflow)
+                     .OrderBy(x => x.StableSequence)
+                     .ThenBy(x => x.BookedAtUtc)
+                     .ThenBy(x => x.TransactionId))
         {
             if (claimed.Contains(source.TransactionId)
                 || !candidatesBySourceId.TryGetValue(source.TransactionId, out var sourceCandidates))
@@ -388,13 +418,18 @@ public sealed class TransferPairingEngine
                 continue;
             }
 
-            var sourceMargin = best.Score - (availableSourceCandidates.Count > 1 ? availableSourceCandidates[1].Score : best.Score - MutualBestMinimumMargin);
-            var reciprocalMargin = reciprocalBest.Score - (reciprocalAvailable.Count > 1 ? reciprocalAvailable[1].Score : reciprocalBest.Score - MutualBestMinimumMargin);
+            var sourceMargin = best.Score - (availableSourceCandidates.Count > 1
+                ? availableSourceCandidates[1].Score
+                : best.Score - MutualBestMinimumMargin);
+            var reciprocalMargin = reciprocalBest.Score - (reciprocalAvailable.Count > 1
+                ? reciprocalAvailable[1].Score
+                : reciprocalBest.Score - MutualBestMinimumMargin);
             if (best.Score < MinScoreForStrongDeferredCounterparty
                 || sourceMargin < MutualBestMinimumMargin
                 || reciprocalMargin < MutualBestMinimumMargin
                 || !source.IsBooked
-                || !best.Candidate.IsBooked)
+                || !best.Candidate.IsBooked
+                || claimed.Contains(best.Candidate.TransactionId))
             {
                 continue;
             }
@@ -402,33 +437,34 @@ public sealed class TransferPairingEngine
             ApplyPair(
                 resolved,
                 claimed,
-                source,
-                best.Candidate,
-                "bank_transfer.mutual_best_pair_v3",
+                best,
+                "bank_transfer.mutual_best_pair_v5",
                 DeterministicClassificationReasonCodes.TransferPairMutualBest,
-                best.Score,
-                pass: "mutual_best_pair");
+                pass: "mutual_best_pair",
+                stableOrderingUsed: false,
+                clusterSize: best.DuplicateClusterSize);
         }
 
-        // Pass T3: duplicate-cluster nearest-neighbor resolution.
         var unresolved = transferLikeFeatures
             .Where(x => !claimed.Contains(x.TransactionId))
             .ToList();
         var clusterGroups = unresolved
-            .GroupBy(CreateAmountCurrencyKey)
+            .GroupBy(CreateAmountCurrencyDayKey)
             .Where(group => group.Count(x => x.IsOutflow) > 1 && group.Count(x => x.IsInflow) > 1)
             .ToList();
 
         foreach (var clusterGroup in clusterGroups)
         {
             var outflows = clusterGroup
-                .Where(x => x.IsOutflow)
-                .OrderBy(x => x.BookedAtUtc)
+                .Where(x => x.IsOutflow && !claimed.Contains(x.TransactionId))
+                .OrderBy(x => x.StableSequence)
+                .ThenBy(x => x.BookedAtUtc)
                 .ThenBy(x => x.TransactionId)
                 .ToList();
             var inflows = clusterGroup
-                .Where(x => x.IsInflow)
-                .OrderBy(x => x.BookedAtUtc)
+                .Where(x => x.IsInflow && !claimed.Contains(x.TransactionId))
+                .OrderBy(x => x.StableSequence)
+                .ThenBy(x => x.BookedAtUtc)
                 .ThenBy(x => x.TransactionId)
                 .ToList();
 
@@ -440,101 +476,238 @@ public sealed class TransferPairingEngine
                 continue;
             }
 
-            var selected = new List<(DeterministicTransactionFeature Debit, DeterministicTransactionFeature Credit, int Score)>(outflows.Count);
-            var availableInflows = inflows.ToDictionary(x => x.TransactionId, x => x);
-            var monotonicCreditTime = DateTime.MinValue;
+            var inflowsById = inflows.ToDictionary(x => x.TransactionId, x => x);
+            var candidatesByOutflowId = new Dictionary<Guid, List<CandidateEdge>>();
             var clusterRejected = false;
 
-            foreach (var debit in outflows)
+            foreach (var outflow in outflows)
             {
-                if (!candidatesBySourceId.TryGetValue(debit.TransactionId, out var debitCandidates))
+                if (!candidatesBySourceId.TryGetValue(outflow.TransactionId, out var sourceCandidates))
                 {
                     clusterRejected = true;
                     break;
                 }
 
-                var candidate = debitCandidates
-                    .Where(x => availableInflows.ContainsKey(x.Candidate.TransactionId))
-                    .Where(x => x.Score >= MinScoreForPairing)
-                    .OrderByDescending(x => x.Score)
-                    .ThenBy(x => x.WindowHours)
-                    .FirstOrDefault();
-
-                if (candidate is null)
+                var filtered = sourceCandidates
+                    .Where(edge => inflowsById.ContainsKey(edge.Candidate.TransactionId))
+                    .Where(edge => edge.Score >= MinScoreForPairing)
+                    .ToList();
+                if (filtered.Count == 0)
                 {
                     clusterRejected = true;
                     break;
                 }
 
-                if (candidate.Candidate.BookedAtUtc < monotonicCreditTime)
-                {
-                    clusterRejected = true;
-                    break;
-                }
-
-                if (Math.Abs((candidate.Candidate.BookedAtUtc - debit.BookedAtUtc).TotalHours) > 24)
-                {
-                    clusterRejected = true;
-                    break;
-                }
-
-                if (!debit.IsBooked || !candidate.Candidate.IsBooked)
-                {
-                    clusterRejected = true;
-                    break;
-                }
-
-                selected.Add((debit, candidate.Candidate, candidate.Score));
-                availableInflows.Remove(candidate.Candidate.TransactionId);
-                monotonicCreditTime = candidate.Candidate.BookedAtUtc;
+                candidatesByOutflowId[outflow.TransactionId] = filtered;
             }
 
-            if (clusterRejected || selected.Count != outflows.Count)
+            if (clusterRejected)
             {
                 continue;
             }
 
-            foreach (var selectedPair in selected)
+            var assignments = BuildClusterAssignments(
+                outflows,
+                candidatesByOutflowId);
+            if (assignments.Count == 0)
+            {
+                continue;
+            }
+
+            var bestCore = assignments
+                .OrderByDescending(x => x.CoreScore.TotalScore)
+                .ThenByDescending(x => x.CoreScore.HighConfidenceReferenceOverlap)
+                .ThenByDescending(x => x.CoreScore.ProviderSpecificReferenceOverlap)
+                .ThenByDescending(x => x.CoreScore.AccountReferenceOverlap)
+                .ThenByDescending(x => x.CoreScore.PaymentMarkerOverlap)
+                .ThenByDescending(x => x.CoreScore.MediumConfidenceOverlap)
+                .ThenBy(x => x.CoreScore.TotalWindowMinutes)
+                .First();
+
+            var contenders = assignments
+                .Where(assignment => assignment.CoreScore == bestCore.CoreScore)
+                .ToList();
+            var stableOrderingUsed = contenders.Count > 1;
+            var chosen = contenders
+                .OrderBy(x => x.StableOrderDistanceSum)
+                .ThenBy(x => x.StableOrderCrossingPenalty)
+                .ThenBy(x => x.EdgeCount)
+                .First();
+
+            foreach (var edge in chosen.Edges)
+            {
+                if (claimed.Contains(edge.Source.TransactionId) || claimed.Contains(edge.Candidate.TransactionId))
+                {
+                    clusterRejected = true;
+                    break;
+                }
+            }
+
+            if (clusterRejected)
+            {
+                continue;
+            }
+
+            foreach (var edge in chosen.Edges)
             {
                 ApplyPair(
                     resolved,
                     claimed,
-                    selectedPair.Debit,
-                    selectedPair.Credit,
-                    "bank_transfer.duplicate_cluster_pair_v3",
+                    edge,
+                    "bank_transfer.duplicate_cluster_one_to_one_v5",
                     DeterministicClassificationReasonCodes.TransferPairDuplicateCluster,
-                    selectedPair.Score,
-                    pass: "duplicate_cluster_nearest_neighbor");
+                    pass: "duplicate_cluster_one_to_one",
+                    stableOrderingUsed,
+                    clusterSize: outflows.Count + inflows.Count);
             }
         }
 
         return resolved;
     }
 
+    private static List<ClusterAssignment> BuildClusterAssignments(
+        IReadOnlyList<DeterministicTransactionFeature> outflows,
+        IReadOnlyDictionary<Guid, List<CandidateEdge>> candidatesByOutflowId)
+    {
+        var assignments = new List<ClusterAssignment>();
+        var usedInflows = new HashSet<Guid>();
+        var selectedEdges = new List<CandidateEdge>();
+
+        void Explore(
+            int index,
+            int totalScore,
+            int highOverlap,
+            int providerOverlap,
+            int accountOverlap,
+            int paymentOverlap,
+            int mediumOverlap,
+            int windowMinutes,
+            long stableDistance,
+            int stableCrossingPenalty)
+        {
+            if (index >= outflows.Count)
+            {
+                assignments.Add(new ClusterAssignment(
+                    selectedEdges.ToArray(),
+                    selectedEdges.Count,
+                    new CoreClusterScore(
+                        totalScore,
+                        highOverlap,
+                        providerOverlap,
+                        accountOverlap,
+                        paymentOverlap,
+                        mediumOverlap,
+                        windowMinutes),
+                    stableDistance,
+                    stableCrossingPenalty));
+                return;
+            }
+
+            var outflow = outflows[index];
+            if (!candidatesByOutflowId.TryGetValue(outflow.TransactionId, out var candidates))
+            {
+                return;
+            }
+
+            foreach (var edge in candidates)
+            {
+                var inflowId = edge.Candidate.TransactionId;
+                if (!usedInflows.Add(inflowId))
+                {
+                    continue;
+                }
+
+                selectedEdges.Add(edge);
+                var crossingPenalty = edge.Candidate.StableSequence < edge.Source.StableSequence ? 1 : 0;
+                Explore(
+                    index + 1,
+                    totalScore + edge.Score,
+                    highOverlap + edge.HighConfidenceReferenceOverlap,
+                    providerOverlap + edge.ProviderSpecificReferenceOverlap,
+                    accountOverlap + edge.AccountReferenceOverlap,
+                    paymentOverlap + edge.PaymentMarkerOverlap,
+                    mediumOverlap + edge.MediumConfidenceOverlap,
+                    windowMinutes + (int)Math.Round(edge.WindowHours * 60d, MidpointRounding.AwayFromZero),
+                    stableDistance + edge.StableOrderDistance,
+                    stableCrossingPenalty + crossingPenalty);
+                selectedEdges.RemoveAt(selectedEdges.Count - 1);
+                usedInflows.Remove(inflowId);
+            }
+        }
+
+        Explore(
+            0,
+            totalScore: 0,
+            highOverlap: 0,
+            providerOverlap: 0,
+            accountOverlap: 0,
+            paymentOverlap: 0,
+            mediumOverlap: 0,
+            windowMinutes: 0,
+            stableDistance: 0,
+            stableCrossingPenalty: 0);
+
+        return assignments;
+    }
+
     private static void ApplyPair(
         Dictionary<Guid, TransferPairDecision> resolved,
         HashSet<Guid> claimed,
-        DeterministicTransactionFeature debit,
-        DeterministicTransactionFeature credit,
+        CandidateEdge edge,
         string ruleKey,
         string reasonCode,
-        int score,
-        string pass)
+        string pass,
+        bool stableOrderingUsed,
+        int clusterSize)
     {
+        var debit = edge.Source.IsOutflow ? edge.Source : edge.Candidate;
+        var credit = edge.Source.IsInflow ? edge.Source : edge.Candidate;
         var evidence = JsonSerializer.Serialize(new
         {
             family = "bank_account_transfer",
+            resolutionOutcome = "paired",
             pass,
             debitId = debit.TransactionId,
             creditId = credit.TransactionId,
-            score
+            score = edge.Score,
+            candidateEdgeCount = 1,
+            clusterMembership = new
+            {
+                isDuplicateClusterMember = edge.IsDuplicateClusterMember,
+                clusterSize
+            },
+            providerCapabilities = new
+            {
+                debit = BuildProviderCapabilitySummary(debit),
+                credit = BuildProviderCapabilitySummary(credit)
+            },
+            extractedNarrativeSignals = new
+            {
+                debit = BuildNarrativeSignalSummary(debit),
+                credit = BuildNarrativeSignalSummary(credit)
+            },
+            referenceOverlapSummary = new
+            {
+                highConfidence = edge.HighConfidenceReferenceOverlap,
+                providerSpecific = edge.ProviderSpecificReferenceOverlap,
+                accountFragments = edge.AccountReferenceOverlap,
+                paymentMarkers = edge.PaymentMarkerOverlap,
+                mediumConfidence = edge.MediumConfidenceOverlap,
+                lowConfidence = edge.LowConfidenceOverlap,
+                weightedReferenceScore = edge.ReferenceOverlapScore
+            },
+            timePrecisionMode = edge.TimePrecisionMode,
+            timeDistanceHours = Math.Round(edge.WindowHours, 3, MidpointRounding.AwayFromZero),
+            stableOrderingUsed,
+            stableOrderDistance = edge.StableOrderDistance
         });
+
         var decision = new TransferPairDecision(
             DebitTransactionId: debit.TransactionId,
             CreditTransactionId: credit.TransactionId,
             RuleKey: ruleKey,
             ReasonCode: reasonCode,
-            Score: score,
+            Score: edge.Score,
             EvidenceJson: evidence);
 
         resolved[debit.TransactionId] = decision;
@@ -550,51 +723,113 @@ public sealed class TransferPairingEngine
             return false;
         }
 
-        return feature.HasTransferKeyword
-               || feature.HasProviderTransferHint
-               || feature.AccountHint is not null;
+        if (feature.HasTransferKeyword
+            || feature.HasProviderTransferHint
+            || feature.AccountHint is not null)
+        {
+            return true;
+        }
+
+        if (feature.HasCounterpartyAccounts
+            && (feature.HasHighConfidenceReferenceSignals || feature.HasProviderSpecificTransferMarker))
+        {
+            return true;
+        }
+
+        return false;
     }
 
-    private static string CreateAmountCurrencyKey(DeterministicTransactionFeature feature)
+    private static string CreateAmountCurrencyDayKey(DeterministicTransactionFeature feature)
     {
-        return $"{feature.AbsoluteAmount:0.00}|{feature.Currency}";
+        return $"{feature.AbsoluteAmount:0.00}|{feature.Currency}|{feature.BookedAtUtc:yyyy-MM-dd}";
     }
 
-    private static int ScoreCandidate(
+    private static CandidateEdge BuildCandidateEdge(
+        DeterministicTransactionFeature source,
+        DeterministicTransactionFeature candidate,
+        bool duplicateClusterMember,
+        int duplicateClusterSize)
+    {
+        var scoring = ScoreCandidate(source, candidate);
+        return new CandidateEdge(
+            Source: source,
+            Candidate: candidate,
+            Score: scoring.Score,
+            TimeScore: scoring.TimeScore,
+            WindowHours: scoring.WindowHours,
+            TimePrecisionMode: scoring.TimePrecisionMode,
+            HighConfidenceReferenceOverlap: scoring.HighConfidenceReferenceOverlap,
+            ProviderSpecificReferenceOverlap: scoring.ProviderSpecificReferenceOverlap,
+            AccountReferenceOverlap: scoring.AccountReferenceOverlap,
+            PaymentMarkerOverlap: scoring.PaymentMarkerOverlap,
+            MediumConfidenceOverlap: scoring.MediumConfidenceOverlap,
+            LowConfidenceOverlap: scoring.LowConfidenceOverlap,
+            ReferenceOverlapScore: scoring.ReferenceOverlapScore,
+            StableOrderDistance: Math.Abs(source.StableSequence - candidate.StableSequence),
+            NamesOnlyOverlapPenaltyApplied: scoring.NamesOnlyOverlapPenaltyApplied,
+            IsDuplicateClusterMember: duplicateClusterMember,
+            DuplicateClusterSize: duplicateClusterSize);
+    }
+
+    private static CandidateScore ScoreCandidate(
         DeterministicTransactionFeature source,
         DeterministicTransactionFeature candidate)
     {
-        var score = 0;
+        var windowHours = Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalHours);
+        var timePrecisionMode = ResolveTimePrecisionMode(source.ProviderTimestampPrecision, candidate.ProviderTimestampPrecision);
+        var timeScore = ResolveTimeScore(timePrecisionMode, windowHours);
 
-        var absoluteHourDistance = Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalHours);
-        if (absoluteHourDistance <= 3d)
-        {
-            score += 5;
-        }
-        else if (absoluteHourDistance <= 24d)
-        {
-            score += 3;
-        }
-        else
-        {
-            score += 1;
-        }
+        var highConfidenceReferenceOverlap = CountOverlap(
+            source.NarrativeSignals.HighConfidenceTokens,
+            candidate.NarrativeSignals.HighConfidenceTokens);
+        var providerSpecificReferenceOverlap = CountOverlap(
+            source.NarrativeSignals.ProviderSpecificReferenceTokens,
+            candidate.NarrativeSignals.ProviderSpecificReferenceTokens);
+        var accountReferenceOverlap = CountOverlap(
+            source.NarrativeSignals.AccountLikeTokens,
+            candidate.NarrativeSignals.AccountLikeTokens);
+        var paymentMarkerOverlap = CountOverlap(
+            source.NarrativeSignals.PaymentSystemMarkers,
+            candidate.NarrativeSignals.PaymentSystemMarkers);
+        var mediumConfidenceOverlap = CountOverlap(
+            source.NarrativeSignals.MediumConfidenceTokens,
+            candidate.NarrativeSignals.MediumConfidenceTokens);
+        var lowConfidenceOverlap = CountOverlap(
+            source.NarrativeSignals.LowConfidenceTokens,
+            candidate.NarrativeSignals.LowConfidenceTokens);
+
+        var referenceOverlapScore =
+            (highConfidenceReferenceOverlap * 4)
+            + (providerSpecificReferenceOverlap * 4)
+            + (accountReferenceOverlap * 3)
+            + (paymentMarkerOverlap * 3)
+            + mediumConfidenceOverlap
+            + Math.Min(1, lowConfidenceOverlap);
+
+        var score = timeScore;
+        score += highConfidenceReferenceOverlap * 6;
+        score += providerSpecificReferenceOverlap * 4;
+        score += accountReferenceOverlap * 4;
+        score += paymentMarkerOverlap * 3;
+        score += mediumConfidenceOverlap * 2;
+        score += Math.Min(1, lowConfidenceOverlap);
 
         var tokenOverlap = source.Tokens.Count == 0
             ? 0d
             : source.Tokens.Intersect(candidate.Tokens, StringComparer.OrdinalIgnoreCase).Count() / (double)source.Tokens.Count;
         if (tokenOverlap >= 0.4d)
         {
-            score += 3;
+            score += 2;
         }
         else if (tokenOverlap >= 0.2d)
         {
-            score += 2;
+            score += 1;
         }
 
         if (source.AccountHint is not null && candidate.AccountHint is not null && source.AccountHint == candidate.AccountHint)
         {
             score += 3;
+            accountReferenceOverlap += 1;
         }
 
         if (source.HasTransferKeyword || candidate.HasTransferKeyword || source.HasProviderTransferHint || candidate.HasProviderTransferHint)
@@ -609,10 +844,103 @@ public sealed class TransferPairingEngine
 
         if (source.LooksLikeExternalCounterparty || candidate.LooksLikeExternalCounterparty)
         {
-            score -= 4;
+            score -= 6;
         }
 
-        return score;
+        var namesOnlyOverlap = mediumConfidenceOverlap > 0
+                               && highConfidenceReferenceOverlap == 0
+                               && providerSpecificReferenceOverlap == 0
+                               && accountReferenceOverlap == 0
+                               && paymentMarkerOverlap == 0
+                               && lowConfidenceOverlap <= 1;
+        if (namesOnlyOverlap)
+        {
+            score -= 4;
+            score = Math.Min(score, MinScoreForPairing - 1);
+        }
+
+        return new CandidateScore(
+            Score: score,
+            TimeScore: timeScore,
+            WindowHours: windowHours,
+            TimePrecisionMode: timePrecisionMode,
+            HighConfidenceReferenceOverlap: highConfidenceReferenceOverlap,
+            ProviderSpecificReferenceOverlap: providerSpecificReferenceOverlap,
+            AccountReferenceOverlap: accountReferenceOverlap,
+            PaymentMarkerOverlap: paymentMarkerOverlap,
+            MediumConfidenceOverlap: mediumConfidenceOverlap,
+            LowConfidenceOverlap: lowConfidenceOverlap,
+            ReferenceOverlapScore: referenceOverlapScore,
+            NamesOnlyOverlapPenaltyApplied: namesOnlyOverlap);
+    }
+
+    private static bool MateriallyEquivalent(CandidateEdge best, CandidateEdge next)
+    {
+        return best.Score == next.Score
+               && best.ReferenceOverlapScore == next.ReferenceOverlapScore
+               && best.HighConfidenceReferenceOverlap == next.HighConfidenceReferenceOverlap
+               && best.ProviderSpecificReferenceOverlap == next.ProviderSpecificReferenceOverlap
+               && best.AccountReferenceOverlap == next.AccountReferenceOverlap
+               && best.PaymentMarkerOverlap == next.PaymentMarkerOverlap
+               && best.MediumConfidenceOverlap == next.MediumConfidenceOverlap
+               && string.Equals(best.TimePrecisionMode, next.TimePrecisionMode, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveTimePrecisionMode(
+        DeterministicProviderTimestampPrecision left,
+        DeterministicProviderTimestampPrecision right)
+    {
+        if (left == DeterministicProviderTimestampPrecision.DateOnly
+            || right == DeterministicProviderTimestampPrecision.DateOnly)
+        {
+            return "date_only";
+        }
+
+        if (left == DeterministicProviderTimestampPrecision.CoarseDateTime
+            || right == DeterministicProviderTimestampPrecision.CoarseDateTime)
+        {
+            return "coarse";
+        }
+
+        if (left == DeterministicProviderTimestampPrecision.PreciseDateTime
+            && right == DeterministicProviderTimestampPrecision.PreciseDateTime)
+        {
+            return "precise";
+        }
+
+        return "unknown";
+    }
+
+    private static int ResolveTimeScore(string timePrecisionMode, double windowHours)
+    {
+        return timePrecisionMode switch
+        {
+            "date_only" or "coarse" => windowHours <= 24d
+                ? 2
+                : windowHours <= 72d
+                    ? 1
+                    : 0,
+            "precise" => windowHours <= 3d
+                ? 5
+                : windowHours <= 24d
+                    ? 3
+                    : 1,
+            _ => windowHours <= 12d
+                ? 3
+                : windowHours <= 48d
+                    ? 2
+                    : 1
+        };
+    }
+
+    private static int CountOverlap(IReadOnlySet<string> left, IReadOnlySet<string> right)
+    {
+        if (left.Count == 0 || right.Count == 0)
+        {
+            return 0;
+        }
+
+        return left.Intersect(right, StringComparer.OrdinalIgnoreCase).Count();
     }
 
     private static bool HasExplicitCounterpartyExpectation(
@@ -624,12 +952,25 @@ public sealed class TransferPairingEngine
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(feature.AccountHint))
+        if (feature.HasHighConfidenceReferenceSignals)
         {
             return true;
         }
 
-        if (feature.HasTransferKeyword && feature.HasProviderTransferHint && feature.ReferenceEntropy >= 0.35d)
+        if (!string.IsNullOrWhiteSpace(feature.AccountHint)
+            && (feature.HasProviderTransferHint || feature.HasTransferKeyword))
+        {
+            return true;
+        }
+
+        if (feature.HasTransferKeyword
+            && feature.HasProviderTransferHint
+            && feature.ReferenceEntropy >= 0.35d)
+        {
+            return true;
+        }
+
+        if (feature.HasProviderSpecificTransferMarker && feature.HasMediumConfidenceReferenceSignals)
         {
             return true;
         }
@@ -644,11 +985,108 @@ public sealed class TransferPairingEngine
         return false;
     }
 
+    private static ProviderCapabilitySummary BuildProviderCapabilitySummary(DeterministicTransactionFeature feature)
+    {
+        return new ProviderCapabilitySummary(
+            feature.ProviderKey,
+            feature.ProviderTimestampPrecision.ToString().ToLowerInvariant(),
+            feature.ProviderSupportsMachineReferenceTokens,
+            feature.ProviderSupportsPaymentSystemMarkers,
+            feature.ProviderSupportsReliableCounterpartyReferenceFragments,
+            feature.ProviderSupportsProviderSpecificTransferMarkers);
+    }
+
+    private static NarrativeSignalSummary BuildNarrativeSignalSummary(DeterministicTransactionFeature feature)
+    {
+        return new NarrativeSignalSummary(
+            MachineReferenceTokens: feature.NarrativeSignals.MachineReferenceTokens.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            AccountLikeTokens: feature.NarrativeSignals.AccountLikeTokens.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            IbanLikeFragments: feature.NarrativeSignals.IbanLikeFragments.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            PaymentSystemMarkers: feature.NarrativeSignals.PaymentSystemMarkers.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            BeneficiaryNameTokens: feature.NarrativeSignals.BeneficiaryNameTokens.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            OriginatorNameTokens: feature.NarrativeSignals.OriginatorNameTokens.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            FreeTextReferenceTokens: feature.NarrativeSignals.FreeTextReferenceTokens.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            ProviderSpecificReferenceTokens: feature.NarrativeSignals.ProviderSpecificReferenceTokens.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            MerchantLikeTokens: feature.NarrativeSignals.MerchantLikeTokens.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+            SignalConfidenceMap: feature.NarrativeSignals.SignalConfidenceMap
+                .OrderBy(x => x.Key, StringComparer.Ordinal)
+                .ToDictionary(
+                    x => x.Key,
+                    x => x.Value switch
+                    {
+                        NarrativeSignalConfidenceTier.HighConfidence => "high_confidence",
+                        NarrativeSignalConfidenceTier.MediumConfidence => "medium_confidence",
+                        _ => "low_confidence"
+                    },
+                    StringComparer.OrdinalIgnoreCase));
+    }
+
     private sealed record CandidateEdge(
         DeterministicTransactionFeature Source,
         DeterministicTransactionFeature Candidate,
         int Score,
+        int TimeScore,
         double WindowHours,
+        string TimePrecisionMode,
+        int HighConfidenceReferenceOverlap,
+        int ProviderSpecificReferenceOverlap,
+        int AccountReferenceOverlap,
+        int PaymentMarkerOverlap,
+        int MediumConfidenceOverlap,
+        int LowConfidenceOverlap,
+        int ReferenceOverlapScore,
+        long StableOrderDistance,
+        bool NamesOnlyOverlapPenaltyApplied,
         bool IsDuplicateClusterMember,
         int DuplicateClusterSize);
+
+    private sealed record CandidateScore(
+        int Score,
+        int TimeScore,
+        double WindowHours,
+        string TimePrecisionMode,
+        int HighConfidenceReferenceOverlap,
+        int ProviderSpecificReferenceOverlap,
+        int AccountReferenceOverlap,
+        int PaymentMarkerOverlap,
+        int MediumConfidenceOverlap,
+        int LowConfidenceOverlap,
+        int ReferenceOverlapScore,
+        bool NamesOnlyOverlapPenaltyApplied);
+
+    private sealed record ClusterAssignment(
+        IReadOnlyList<CandidateEdge> Edges,
+        int EdgeCount,
+        CoreClusterScore CoreScore,
+        long StableOrderDistanceSum,
+        int StableOrderCrossingPenalty);
+
+    private sealed record CoreClusterScore(
+        int TotalScore,
+        int HighConfidenceReferenceOverlap,
+        int ProviderSpecificReferenceOverlap,
+        int AccountReferenceOverlap,
+        int PaymentMarkerOverlap,
+        int MediumConfidenceOverlap,
+        int TotalWindowMinutes);
+
+    private sealed record ProviderCapabilitySummary(
+        string ProviderKey,
+        string TimestampPrecision,
+        bool SupportsMachineReferenceTokens,
+        bool SupportsPaymentSystemMarkers,
+        bool SupportsReliableCounterpartyReferenceFragments,
+        bool SupportsProviderSpecificTransferMarkers);
+
+    private sealed record NarrativeSignalSummary(
+        IReadOnlyList<string> MachineReferenceTokens,
+        IReadOnlyList<string> AccountLikeTokens,
+        IReadOnlyList<string> IbanLikeFragments,
+        IReadOnlyList<string> PaymentSystemMarkers,
+        IReadOnlyList<string> BeneficiaryNameTokens,
+        IReadOnlyList<string> OriginatorNameTokens,
+        IReadOnlyList<string> FreeTextReferenceTokens,
+        IReadOnlyList<string> ProviderSpecificReferenceTokens,
+        IReadOnlyList<string> MerchantLikeTokens,
+        IReadOnlyDictionary<string, string> SignalConfidenceMap);
 }

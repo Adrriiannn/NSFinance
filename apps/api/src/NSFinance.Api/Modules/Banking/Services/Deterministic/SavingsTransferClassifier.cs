@@ -26,7 +26,13 @@ public sealed class SavingsTransferClassifier
             return null;
         }
 
+        if (routingDecision.MerchantLikelihoodVeto && !routingDecision.MerchantVetoOverridden)
+        {
+            return null;
+        }
+
         var providerStructuralSignal = routingDecision.ProviderStructuralSupport;
+        var providerProductSignal = routingDecision.ProviderProductSupport;
         var contextualSupportSignal = routingDecision.ContextualSupport;
         var repeatedBehaviorSignal = routingDecision.RepetitionStrength >= 2;
         var strongPhraseWithSupportSignal = routingDecision.StrongPhraseSupport;
@@ -38,15 +44,21 @@ public sealed class SavingsTransferClassifier
             2 => 2,
             _ => 3
         };
+
         var score = 0;
         if (providerStructuralSignal)
         {
             score += 4;
         }
 
+        if (providerProductSignal)
+        {
+            score += 3;
+        }
+
         if (contextualSupportSignal)
         {
-            score += 2;
+            score += 1;
         }
 
         score += repetitionScore;
@@ -56,7 +68,7 @@ public sealed class SavingsTransferClassifier
         }
 
         if (hasLegacySavingsMarker
-            && (providerStructuralSignal || contextualSupportSignal || routingDecision.RepetitionStrength > 0))
+            && (providerStructuralSignal || providerProductSignal || contextualSupportSignal || routingDecision.RepetitionStrength > 0))
         {
             score += 1;
         }
@@ -65,7 +77,7 @@ public sealed class SavingsTransferClassifier
 
         if (feature.HasTransferKeyword && feature.HasCounterpartyAccounts && feature.AccountHint is not null)
         {
-            score -= 2;
+            score -= 3;
         }
 
         if (feature.LooksLikeExternalCounterparty)
@@ -73,21 +85,22 @@ public sealed class SavingsTransferClassifier
             score -= 5;
         }
 
-        var meetsProviderThreshold = providerStructuralSignal && score >= 4;
-        var meetsContextThreshold = contextualSupportSignal && (routingDecision.RepetitionStrength >= 1 || strongPhraseWithSupportSignal) && score >= 5;
-        var meetsRepetitionThreshold = repeatedBehaviorSignal && score >= 5;
-        var meetsStrongPhraseThreshold = strongPhraseWithSupportSignal && score >= 5;
+        var meetsProviderThreshold = providerStructuralSignal && score >= 5;
+        var meetsContextThreshold = contextualSupportSignal && providerProductSignal && score >= 6;
+        var meetsRepetitionThreshold = repeatedBehaviorSignal && providerProductSignal && score >= 6;
+        var meetsStrongPhraseThreshold = strongPhraseWithSupportSignal && providerProductSignal && score >= 6;
 
         if (meetsProviderThreshold)
         {
             return BuildSavingsOutcome(
-                ruleKey: "savings_transfer.provider_structural_v4",
+                ruleKey: "savings_transfer.provider_structural_v5",
                 reasonCode: DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal,
                 score,
                 feature,
                 evidenceClass: "provider_structural_signal",
                 routingDecision,
                 providerStructuralSignal,
+                providerProductSignal,
                 contextualSupportSignal,
                 repeatedBehaviorSignal,
                 hasLegacySavingsMarker);
@@ -96,13 +109,14 @@ public sealed class SavingsTransferClassifier
         if (meetsContextThreshold)
         {
             return BuildSavingsOutcome(
-                ruleKey: "savings_transfer.contextual_pattern_v4",
+                ruleKey: "savings_transfer.contextual_pattern_v5",
                 reasonCode: DeterministicClassificationReasonCodes.SavingsContextNearbySpend,
                 score,
                 feature,
-                evidenceClass: "contextual_nearby_spend",
+                evidenceClass: "contextual_nearby_spend_with_positive_support",
                 routingDecision,
                 providerStructuralSignal,
+                providerProductSignal,
                 contextualSupportSignal,
                 repeatedBehaviorSignal,
                 hasLegacySavingsMarker);
@@ -111,13 +125,14 @@ public sealed class SavingsTransferClassifier
         if (meetsRepetitionThreshold)
         {
             return BuildSavingsOutcome(
-                ruleKey: "savings_transfer.repeated_auxiliary_pattern_v4",
+                ruleKey: "savings_transfer.repeated_auxiliary_pattern_v5",
                 reasonCode: DeterministicClassificationReasonCodes.SavingsRepeatedAuxiliaryPattern,
                 score,
                 feature,
                 evidenceClass: "repeated_auxiliary_pattern",
                 routingDecision,
                 providerStructuralSignal,
+                providerProductSignal,
                 contextualSupportSignal,
                 repeatedBehaviorSignal,
                 hasLegacySavingsMarker);
@@ -126,13 +141,14 @@ public sealed class SavingsTransferClassifier
         if (meetsStrongPhraseThreshold)
         {
             return BuildSavingsOutcome(
-                ruleKey: "savings_transfer.strong_phrase_support_v4",
+                ruleKey: "savings_transfer.strong_phrase_support_v5",
                 reasonCode: DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal,
                 score,
                 feature,
                 evidenceClass: "strong_phrase_with_support_signal",
                 routingDecision,
                 providerStructuralSignal,
+                providerProductSignal,
                 contextualSupportSignal,
                 repeatedBehaviorSignal,
                 hasLegacySavingsMarker);
@@ -149,6 +165,7 @@ public sealed class SavingsTransferClassifier
         string evidenceClass,
         SavingsRoutingDecision routingDecision,
         bool providerStructuralSignal,
+        bool providerProductSignal,
         bool contextualSupportSignal,
         bool repeatedBehaviorSignal,
         bool hasLegacySavingsMarker)
@@ -165,15 +182,24 @@ public sealed class SavingsTransferClassifier
                 evidenceClass,
                 paired = false,
                 routingTier = routingDecision.RoutingTier,
+                providerKey = feature.ProviderKey,
+                merchantLikelihoodScore = routingDecision.MerchantLikelihoodScore,
+                merchantLikelihoodVeto = routingDecision.MerchantLikelihoodVeto,
+                merchantVetoOverridden = routingDecision.MerchantVetoOverridden,
                 providerStructuralSignal,
+                providerProductSignal,
                 contextualSupportSignal,
                 repeatedBehaviorSignal,
+                positiveSavingsEvidence = routingDecision.PositiveSavingsEvidence,
                 repetitionStrength = routingDecision.RepetitionStrength,
                 amountRiskModifier = routingDecision.AmountRiskModifier,
                 weakSupportOnlySignalsPresent = routingDecision.WeakSupportOnlySignalsPresent,
                 externalCounterpartyRisk = routingDecision.ExternalCounterpartyRisk,
                 feature.NearbyMerchantOutflowCount,
                 feature.RepeatedSmallAuxiliaryOutflowPatternCount,
+                providerSpecificReferenceTokenCount = feature.NarrativeSignals.ProviderSpecificReferenceTokens.Count,
+                paymentSystemMarkerCount = feature.NarrativeSignals.PaymentSystemMarkers.Count,
+                merchantLikeTokenCount = feature.NarrativeSignals.MerchantLikeTokens.Count,
                 legacySignalSupportOnly = hasLegacySavingsMarker
             }),
             MatchScore: score,
