@@ -16,6 +16,8 @@ public sealed record SavingsRoutingDecision(
     int MerchantLikelihoodScore,
     bool MerchantLikelihoodVeto,
     bool MerchantVetoOverridden,
+    IReadOnlyList<string> MerchantEvidenceClasses,
+    IReadOnlyList<string> PositiveEvidenceClasses,
     string? BlockedReason);
 
 public sealed class SavingsRoutingPolicy
@@ -59,6 +61,17 @@ public sealed class SavingsRoutingPolicy
                                             || feature.AbsoluteAmount <= 5m
                                             || feature.NearbyMerchantOutflowCount == 1
                                             || hasLegacySavingsMarker;
+        var merchantEvidenceClasses = feature.NarrativeSignals.MerchantLikeTokens
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
+        var positiveEvidenceClasses = BuildPositiveEvidenceClasses(
+            feature,
+            hasLegacySavingsMarker,
+            providerStructuralSupport,
+            providerProductSupport,
+            contextualSupport,
+            repetitionStrength,
+            strongPhraseSupport);
 
         var merchantLikelihoodVeto = feature.MerchantLikelihoodVeto;
         var merchantVetoOverridden = merchantLikelihoodVeto
@@ -79,7 +92,9 @@ public sealed class SavingsRoutingPolicy
                 strongPhraseSupport,
                 positiveSavingsEvidence,
                 weakSupportOnlySignalsPresent,
-                merchantVetoOverridden);
+                merchantVetoOverridden,
+                merchantEvidenceClasses,
+                positiveEvidenceClasses);
         }
 
         var transferContradiction = feature.HasTransferKeyword
@@ -99,7 +114,9 @@ public sealed class SavingsRoutingPolicy
                 strongPhraseSupport,
                 positiveSavingsEvidence,
                 weakSupportOnlySignalsPresent,
-                merchantVetoOverridden);
+                merchantVetoOverridden,
+                merchantEvidenceClasses,
+                positiveEvidenceClasses);
         }
 
         var tierAProvider = providerStructuralSupport;
@@ -132,6 +149,8 @@ public sealed class SavingsRoutingPolicy
             MerchantLikelihoodScore: feature.MerchantLikelihoodScore,
             MerchantLikelihoodVeto: merchantLikelihoodVeto,
             MerchantVetoOverridden: merchantVetoOverridden,
+            MerchantEvidenceClasses: merchantEvidenceClasses,
+            PositiveEvidenceClasses: positiveEvidenceClasses,
             BlockedReason: shouldEvaluate ? null : "insufficient_savings_routing_evidence");
     }
 
@@ -146,7 +165,9 @@ public sealed class SavingsRoutingPolicy
         bool strongPhraseSupport = false,
         bool positiveSavingsEvidence = false,
         bool weakSupportOnlySignalsPresent = false,
-        bool merchantVetoOverridden = false)
+        bool merchantVetoOverridden = false,
+        IReadOnlyList<string>? merchantEvidenceClasses = null,
+        IReadOnlyList<string>? positiveEvidenceClasses = null)
     {
         return new SavingsRoutingDecision(
             ShouldEvaluate: false,
@@ -164,7 +185,65 @@ public sealed class SavingsRoutingPolicy
             MerchantLikelihoodScore: feature.MerchantLikelihoodScore,
             MerchantLikelihoodVeto: feature.MerchantLikelihoodVeto,
             MerchantVetoOverridden: merchantVetoOverridden,
+            MerchantEvidenceClasses: merchantEvidenceClasses ?? [],
+            PositiveEvidenceClasses: positiveEvidenceClasses ?? [],
             BlockedReason: blockedReason);
+    }
+
+    private static IReadOnlyList<string> BuildPositiveEvidenceClasses(
+        DeterministicTransactionFeature feature,
+        bool hasLegacySavingsMarker,
+        bool providerStructuralSupport,
+        bool providerProductSupport,
+        bool contextualSupport,
+        int repetitionStrength,
+        bool strongPhraseSupport)
+    {
+        var classes = new List<string>(8);
+        if (providerStructuralSupport)
+        {
+            classes.Add("provider_structural_support");
+        }
+
+        if (providerProductSupport)
+        {
+            classes.Add("provider_product_support");
+        }
+
+        if (contextualSupport)
+        {
+            classes.Add("contextual_support");
+        }
+
+        if (repetitionStrength > 0)
+        {
+            classes.Add("repetition_support");
+        }
+
+        if (strongPhraseSupport)
+        {
+            classes.Add("strong_phrase_support");
+        }
+
+        if (feature.HasStrongSavingsKeyword)
+        {
+            classes.Add("strong_savings_keyword");
+        }
+
+        if (feature.NarrativeSignals.ProviderSpecificReferenceTokens.Count > 0)
+        {
+            classes.Add("provider_specific_reference_token");
+        }
+
+        if (hasLegacySavingsMarker)
+        {
+            classes.Add("legacy_savings_marker");
+        }
+
+        return classes
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static int ResolveRepetitionStrength(int repeatedPatternCount)

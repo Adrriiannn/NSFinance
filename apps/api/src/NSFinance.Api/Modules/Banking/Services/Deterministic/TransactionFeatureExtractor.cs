@@ -196,24 +196,40 @@ public sealed class TransactionFeatureExtractor(
         DeterministicProviderCapabilities providerCapabilities)
     {
         var score = 0;
-        score += narrativeSignals.MerchantLikeTokens.Count switch
+        var merchantSignals = narrativeSignals.MerchantLikeTokens;
+        foreach (var signal in merchantSignals)
         {
-            >= 4 => 4,
-            3 => 3,
-            2 => 2,
-            1 => 1,
-            _ => 0
-        };
-
-        if (normalizedDescription.Contains(" card ", StringComparison.Ordinal)
-            || normalizedDescription.Contains(" contactless ", StringComparison.Ordinal)
-            || normalizedDescription.Contains(" pos ", StringComparison.Ordinal)
-            || normalizedDescription.Contains(" purchase ", StringComparison.Ordinal))
-        {
-            score += 2;
+            score += signal switch
+            {
+                "merchant_processor_shape" => 3,
+                "merchant_card_present_shape" => 3,
+                "merchant_subscription_company_shape" => 3,
+                "merchant_retail_descriptor_shape" => 2,
+                "merchant_company_suffix_shape" => 2,
+                "merchant_uppercase_descriptor_shape" => 2,
+                "merchant_spend_descriptor" => 1,
+                _ => 1
+            };
         }
 
-        if (narrativeSignals.HighConfidenceTokens.Count == 0
+        if ((merchantSignals.Contains("merchant_processor_shape")
+             || merchantSignals.Contains("merchant_card_present_shape"))
+            && (merchantSignals.Contains("merchant_retail_descriptor_shape")
+                || merchantSignals.Contains("merchant_subscription_company_shape")))
+        {
+            score += 1;
+        }
+
+        if (ContainsWord(normalizedDescription, "card")
+            || ContainsWord(normalizedDescription, "contactless")
+            || ContainsWord(normalizedDescription, "pos")
+            || ContainsWord(normalizedDescription, "terminal"))
+        {
+            score += 1;
+        }
+
+        if (merchantSignals.Count > 0
+            && narrativeSignals.HighConfidenceTokens.Count == 0
             && narrativeSignals.ProviderSpecificReferenceTokens.Count == 0
             && narrativeSignals.PaymentSystemMarkers.Count == 0)
         {
@@ -228,6 +244,19 @@ public sealed class TransactionFeatureExtractor(
         };
 
         return Math.Max(0, score);
+    }
+
+    private static bool ContainsWord(string haystack, string needle)
+    {
+        if (string.IsNullOrWhiteSpace(haystack) || string.IsNullOrWhiteSpace(needle))
+        {
+            return false;
+        }
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            haystack,
+            $@"\b{System.Text.RegularExpressions.Regex.Escape(needle)}\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     }
 
     private static string? ResolveAccountHint(

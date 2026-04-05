@@ -101,6 +101,34 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void NarrativeSignalExtractor_MerchantSignals_DoNotOverfireOnGenericFormatting()
+    {
+        var extractor = new NarrativeSignalExtractor();
+        var capabilities = new ProviderCapabilityRegistry().Resolve("ob-generic", "Generic Bank");
+        var raw = "Alex / transfer note";
+        var normalized = "alex transfer note";
+
+        var signals = extractor.Extract(raw, normalized, capabilities);
+
+        Assert.Empty(signals.MerchantLikeTokens);
+    }
+
+    [Fact]
+    public void NarrativeSignalExtractor_MerchantSignals_RequireStructuredMerchantShape()
+    {
+        var extractor = new NarrativeSignalExtractor();
+        var capabilities = new ProviderCapabilityRegistry().Resolve("ob-revolut", "Revolut");
+        var raw = "CARD PURCHASE GROCERY STORE/TERM9981";
+        var normalized = "card purchase grocery store term9981";
+
+        var signals = extractor.Extract(raw, normalized, capabilities);
+
+        Assert.Contains("merchant_processor_shape", signals.MerchantLikeTokens);
+        Assert.Contains("merchant_card_present_shape", signals.MerchantLikeTokens);
+        Assert.Contains("merchant_retail_descriptor_shape", signals.MerchantLikeTokens);
+    }
+
+    [Fact]
     public void FeatureExtractor_ComputesDirectionStatusCurrencyAndNearbyCounts()
     {
         var extractor = new TransactionFeatureExtractor(
@@ -917,6 +945,18 @@ public class DeterministicCategorizationEngineTests
         Assert.Equal(4, analysis.ResolvedPairDecisions.Count);
         Assert.Equal(creditA.TransactionId, analysis.ResolvedPairDecisions[debitA.TransactionId].CreditTransactionId);
         Assert.Equal(creditB.TransactionId, analysis.ResolvedPairDecisions[debitB.TransactionId].CreditTransactionId);
+
+        using var debitAEvidence = JsonDocument.Parse(analysis.ResolvedPairDecisions[debitA.TransactionId].EvidenceJson);
+        Assert.Equal(
+            "high_confidence_reference_overlap",
+            debitAEvidence.RootElement.GetProperty("finalTieBreakReason").GetString());
+        Assert.False(debitAEvidence.RootElement.GetProperty("stableOrderingUsed").GetBoolean());
+        Assert.Equal(
+            "high_confidence",
+            debitAEvidence.RootElement
+                .GetProperty("referenceOverlapSummary")
+                .GetProperty("referenceConfidenceBand")
+                .GetString());
     }
 
     [Fact]
@@ -967,6 +1007,9 @@ public class DeterministicCategorizationEngineTests
         using var evidence = JsonDocument.Parse(evidenceJson);
         Assert.True(evidence.RootElement.TryGetProperty("stableOrderingUsed", out var stableOrderingNode));
         Assert.True(stableOrderingNode.GetBoolean());
+        Assert.Equal(
+            "stable_order_fallback_after_reference_tie",
+            evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
     }
 
     [Fact]
@@ -1003,6 +1046,56 @@ public class DeterministicCategorizationEngineTests
         Assert.Equal(
             DeterministicClassificationStatus.EvaluatedNoMatchingRule,
             analysis.PendingDecisions[source.TransactionId].Status);
+    }
+
+    [Fact]
+    public void TransferPairing_DuplicateCluster_NameOnlyOverlap_DoesNotOvermatch()
+    {
+        var engine = new TransferPairingEngine();
+        var baseUtc = new DateTime(2026, 03, 20, 8, 0, 0, DateTimeKind.Utc);
+        var debitA = CreateFeature(
+            signedAmount: -10m,
+            bookedAtUtc: baseUtc,
+            hasTransferKeyword: true,
+            narrativeSignals: CreateNarrativeSignals(beneficiaryNameTokens: ["john", "smith"]),
+            hasMediumConfidenceReferenceSignals: true,
+            stableSequence: 1L);
+        var debitB = CreateFeature(
+            signedAmount: -10m,
+            bookedAtUtc: baseUtc,
+            hasTransferKeyword: true,
+            narrativeSignals: CreateNarrativeSignals(beneficiaryNameTokens: ["john", "smith"]),
+            hasMediumConfidenceReferenceSignals: true,
+            stableSequence: 2L);
+        var creditA = CreateFeature(
+            signedAmount: 10m,
+            bookedAtUtc: baseUtc,
+            hasTransferKeyword: true,
+            narrativeSignals: CreateNarrativeSignals(beneficiaryNameTokens: ["john", "smith"]),
+            hasMediumConfidenceReferenceSignals: true,
+            stableSequence: 3L);
+        var creditB = CreateFeature(
+            signedAmount: 10m,
+            bookedAtUtc: baseUtc,
+            hasTransferKeyword: true,
+            narrativeSignals: CreateNarrativeSignals(beneficiaryNameTokens: ["john", "smith"]),
+            hasMediumConfidenceReferenceSignals: true,
+            stableSequence: 4L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [debitA.TransactionId] = debitA,
+                [debitB.TransactionId] = debitB,
+                [creditA.TransactionId] = creditA,
+                [creditB.TransactionId] = creditB
+            },
+            new HashSet<Guid>());
+
+        Assert.Empty(analysis.ResolvedPairDecisions);
+        Assert.True(analysis.PendingDecisions.Values.All(x =>
+            x.Status is DeterministicClassificationStatus.EvaluatedNoMatchingRule
+                or DeterministicClassificationStatus.RejectedAmbiguousMatch));
     }
 
     [Fact]
@@ -1199,6 +1292,28 @@ public class DeterministicCategorizationEngineTests
 
         Assert.Empty(analysis.ResolvedPairDecisions);
         Assert.True(analysis.PendingDecisions.Values.Any(x => x.Status == DeterministicClassificationStatus.RejectedAmbiguousMatch));
+    }
+
+    [Theory]
+    [InlineData("CARD PURCHASE RETAIL STORE/TERM9981")]
+    [InlineData("PHARMACY POS/TERM7782 CARD")]
+    [InlineData("STREAMING SUBSCRIPTION BILLING LTD/7788")]
+    [InlineData("MONTHLY SOFTWARE RENEWAL COMPANY LTD/8899")]
+    [InlineData("GROCERY STORE CONTACTLESS POS 445566")]
+    public void SavingsClassifier_MerchantShapedSpendRows_DoNotClassifyAsSavings(string description)
+    {
+        var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
+        var feature = BuildFeatureFromDescription(description, -1.49m);
+
+        var decision = policy.Evaluate(feature, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(feature, decision, hasLegacySavingsMarker: false);
+
+        Assert.True(feature.MerchantLikelihoodScore >= 4);
+        Assert.True(decision.MerchantLikelihoodVeto);
+        Assert.Equal("merchant_likelihood_veto", decision.BlockedReason);
+        Assert.NotEmpty(decision.MerchantEvidenceClasses);
+        Assert.Null(outcome);
     }
 
     [Fact]
@@ -1581,6 +1696,43 @@ public class DeterministicCategorizationEngineTests
             retryPlanner,
             metrics,
             NullLogger<DeterministicClassificationPersistenceService>.Instance);
+    }
+
+    private static DeterministicTransactionFeature BuildFeatureFromDescription(
+        string description,
+        decimal signedAmount,
+        string providerId = "ob-revolut",
+        string providerDisplayName = "Revolut")
+    {
+        var extractor = new TransactionFeatureExtractor(
+            new TransactionNormalizationService(),
+            new ProviderCapabilityRegistry(),
+            new NarrativeSignalExtractor());
+
+        var transactionId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var bookedAtUtc = new DateTime(2026, 03, 30, 10, 0, 0, DateTimeKind.Utc);
+        var rows = new List<TransactionFeatureExtractor.TransactionFeatureInputRow>
+        {
+            new(
+                transactionId,
+                accountId,
+                signedAmount,
+                "EUR",
+                bookedAtUtc,
+                bookedAtUtc,
+                description,
+                providerId,
+                providerDisplayName,
+                "DEBIT",
+                "booked",
+                HasProviderTransferHint: false,
+                HasCounterpartyAccounts: true,
+                StableSequence: 1L)
+        };
+
+        var features = extractor.BuildFeatures(rows);
+        return features[transactionId];
     }
 
     private static NarrativeSignalSet CreateNarrativeSignals(

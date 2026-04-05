@@ -63,6 +63,7 @@ public sealed record DeterministicTransactionDecisionDto(
     string SavingsEvaluationOutcome,
     string? TransferTimePrecisionMode,
     bool TransferStableOrderingUsed,
+    string? TransferTieBreakReason,
     string DeterministicSemanticFamily,
     bool StylingFromDeterministicSemantic,
     bool TaxonomyFallbackUsed,

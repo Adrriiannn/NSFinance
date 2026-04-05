@@ -2344,6 +2344,58 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task CallbackFlow_AibRevolutDuplicateCluster_HighConfidenceReferencesDrivePairing()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: AibRevolutHighConfidenceDuplicateClusterFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.duplicate-cluster-high-ref@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-duplicate-cluster-high-ref", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var clusterRows = await harness.DbContext.Transactions
+            .Where(x => x.Currency == "EUR" && Math.Abs(x.Amount) == 1.00m)
+            .OrderBy(x => x.Amount)
+            .ThenBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        Assert.Equal(4, clusterRows.Count);
+        var outflows = clusterRows.Where(x => x.Amount < 0m).ToList();
+        var inflows = clusterRows.Where(x => x.Amount > 0m).ToList();
+        Assert.Equal(2, outflows.Count);
+        Assert.Equal(2, inflows.Count);
+
+        foreach (var row in clusterRows)
+        {
+            Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, row.DeterministicClassificationStatus);
+            Assert.Equal("internal_transfer", row.DeterministicRelationshipType);
+            Assert.True(row.DeterministicLinkedTransactionId.HasValue);
+        }
+
+        foreach (var outflow in outflows)
+        {
+            var linkedInflow = inflows.Single(x => x.Id == outflow.DeterministicLinkedTransactionId);
+            var outRef = outflow.Description.Contains("ieaa771122", StringComparison.OrdinalIgnoreCase)
+                ? "ieaa771122"
+                : "iebb773344";
+            Assert.Contains(outRef, linkedInflow.Description, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var evidenceJson = outflows[0].DeterministicReasonDetailJson;
+        Assert.False(string.IsNullOrWhiteSpace(evidenceJson));
+        using var evidence = JsonDocument.Parse(evidenceJson!);
+        Assert.Equal("high_confidence_reference_overlap", evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
+        Assert.False(evidence.RootElement.GetProperty("stableOrderingUsed").GetBoolean());
+    }
+
+    [Fact]
     public async Task DeterministicEnrichment_DuplicateClusterAmbiguous_IsNotForcePaired()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -4572,6 +4624,118 @@ public class OpenBankingIntegrationTests
                     .AddPreciseOutbound("tx-chain-outbound-c", "norm-chain-outbound-c", -1.00m, day3.AddHours(9).AddMinutes(7), "LEG-C")
                     .AddPreciseOutbound("tx-chain-outbound-d", "norm-chain-outbound-d", -1.00m, day4.AddHours(7).AddMinutes(26), "LEG-D")
                     .AddSavingsOutflow("tx-chain-savings-a", "norm-chain-savings-a", -1.00m, day2.AddHours(21).AddMinutes(37));
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler AibRevolutHighConfidenceDuplicateClusterFlowHandler()
+    {
+        var baseDateUtc = new DateTime(2026, 4, 4, 0, 0, 0, DateTimeKind.Utc);
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-duplicate-cluster-high-ref",
+                      "refresh_token":"refresh-token-duplicate-cluster-high-ref",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-high-ref-001",
+                          "display_name": "AIB Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-aib",
+                            "display_name": "AIB"
+                          }
+                        },
+                        {
+                          "account_id": "acc-revolut-high-ref-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-high-ref-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1200.00,
+                          "current": 1200.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-04T00:10:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-high-ref-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1200.00,
+                          "current": 1200.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-04T08:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-high-ref-001/transactions", StringComparison.Ordinal))
+            {
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddDateOnlyInbound("tx-high-ref-inbound-a", "norm-high-ref-inbound-a", 1.00m, baseDateUtc, "IEAA771122 JOHN")
+                    .AddDateOnlyInbound("tx-high-ref-inbound-b", "norm-high-ref-inbound-b", 1.00m, baseDateUtc, "IEBB773344 JOHN");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-high-ref-001/transactions", StringComparison.Ordinal))
+            {
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddPreciseOutbound("tx-high-ref-outbound-a", "norm-high-ref-outbound-a", -1.00m, baseDateUtc.AddHours(7).AddMinutes(11), "JOHN IEAA771122")
+                    .AddPreciseOutbound("tx-high-ref-outbound-b", "norm-high-ref-outbound-b", -1.00m, baseDateUtc.AddHours(7).AddMinutes(18), "JOHN IEBB773344");
 
                 return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }

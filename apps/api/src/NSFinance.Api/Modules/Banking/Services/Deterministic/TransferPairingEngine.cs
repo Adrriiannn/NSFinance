@@ -74,13 +74,14 @@ public sealed class TransferPairingEngine
                     candidate,
                     duplicateClusterMember,
                     duplicateClusterSize))
-                .OrderByDescending(x => x.Score)
+                .OrderByDescending(x => x.ReferenceConfidenceRank)
                 .ThenByDescending(x => x.ReferenceOverlapScore)
                 .ThenByDescending(x => x.HighConfidenceReferenceOverlap)
                 .ThenByDescending(x => x.ProviderSpecificReferenceOverlap)
                 .ThenByDescending(x => x.AccountReferenceOverlap)
                 .ThenByDescending(x => x.PaymentMarkerOverlap)
                 .ThenByDescending(x => x.MediumConfidenceOverlap)
+                .ThenByDescending(x => x.Score)
                 .ThenBy(x => x.WindowHours)
                 .ThenBy(x => x.StableOrderDistance)
                 .ThenBy(x => x.Candidate.StableSequence)
@@ -190,7 +191,9 @@ public sealed class TransferPairingEngine
                         duplicateClusterSize,
                         topCandidateId = topCandidate?.Candidate.TransactionId,
                         topCandidateScore = topCandidate?.Score,
+                        topCandidateReferenceConfidenceBand = topCandidate?.ReferenceConfidenceBand,
                         topCandidateReferenceOverlap = topCandidate?.ReferenceOverlapScore,
+                        topCandidateWeakNamesOnlySupport = topCandidate?.NamesOnlyOverlapPenaltyApplied,
                         topCandidateTimePrecisionMode = topCandidate?.TimePrecisionMode,
                         stableOrderingUsed = false
                     }));
@@ -224,6 +227,10 @@ public sealed class TransferPairingEngine
                             nextScore = next.Score,
                             bestReferenceOverlap = best.ReferenceOverlapScore,
                             nextReferenceOverlap = next.ReferenceOverlapScore,
+                            bestReferenceConfidenceBand = best.ReferenceConfidenceBand,
+                            nextReferenceConfidenceBand = next.ReferenceConfidenceBand,
+                            bestWeakNamesOnlySupport = best.NamesOnlyOverlapPenaltyApplied,
+                            nextWeakNamesOnlySupport = next.NamesOnlyOverlapPenaltyApplied,
                             bestTimePrecisionMode = best.TimePrecisionMode,
                             nextTimePrecisionMode = next.TimePrecisionMode
                         }));
@@ -375,7 +382,12 @@ public sealed class TransferPairingEngine
                 DeterministicClassificationReasonCodes.TransferPairStrictMatch,
                 pass: "strict_unique_pair",
                 stableOrderingUsed: false,
-                clusterSize: candidate.DuplicateClusterSize);
+                clusterSize: candidate.DuplicateClusterSize,
+                tieBreakReason: "strict_unique_pair",
+                clusterTimePrecisionMode: candidate.TimePrecisionMode,
+                clusterCandidateEdgeCount: 1,
+                clusterAssignmentCount: 1,
+                namesOnlyWeakSupport: candidate.NamesOnlyOverlapPenaltyApplied);
         }
 
         foreach (var source in transferLikeFeatures
@@ -399,6 +411,13 @@ public sealed class TransferPairingEngine
             }
 
             var best = availableSourceCandidates[0];
+            if (best.IsDuplicateClusterMember)
+            {
+                // Duplicate clusters are resolved in the dedicated one-to-one cluster pass so
+                // reference-confidence ranking and fallback rules are applied consistently.
+                continue;
+            }
+
             if (!candidatesBySourceId.TryGetValue(best.Candidate.TransactionId, out var reciprocalCandidates))
             {
                 continue;
@@ -442,7 +461,12 @@ public sealed class TransferPairingEngine
                 DeterministicClassificationReasonCodes.TransferPairMutualBest,
                 pass: "mutual_best_pair",
                 stableOrderingUsed: false,
-                clusterSize: best.DuplicateClusterSize);
+                clusterSize: best.DuplicateClusterSize,
+                tieBreakReason: "mutual_best_pair",
+                clusterTimePrecisionMode: best.TimePrecisionMode,
+                clusterCandidateEdgeCount: 1,
+                clusterAssignmentCount: 1,
+                namesOnlyWeakSupport: best.NamesOnlyOverlapPenaltyApplied);
         }
 
         var unresolved = transferLikeFeatures
@@ -515,24 +539,46 @@ public sealed class TransferPairingEngine
             }
 
             var bestCore = assignments
-                .OrderByDescending(x => x.CoreScore.TotalScore)
-                .ThenByDescending(x => x.CoreScore.HighConfidenceReferenceOverlap)
+                .OrderByDescending(x => x.CoreScore.HighConfidenceReferenceOverlap)
                 .ThenByDescending(x => x.CoreScore.ProviderSpecificReferenceOverlap)
                 .ThenByDescending(x => x.CoreScore.AccountReferenceOverlap)
                 .ThenByDescending(x => x.CoreScore.PaymentMarkerOverlap)
                 .ThenByDescending(x => x.CoreScore.MediumConfidenceOverlap)
+                .ThenByDescending(x => x.CoreScore.ReferenceOverlapScore)
+                .ThenByDescending(x => x.CoreScore.TotalScore)
                 .ThenBy(x => x.CoreScore.TotalWindowMinutes)
                 .First();
 
             var contenders = assignments
                 .Where(assignment => assignment.CoreScore == bestCore.CoreScore)
                 .ToList();
-            var stableOrderingUsed = contenders.Count > 1;
-            var chosen = contenders
-                .OrderBy(x => x.StableOrderDistanceSum)
-                .ThenBy(x => x.StableOrderCrossingPenalty)
-                .ThenBy(x => x.EdgeCount)
-                .First();
+            var clusterTimePrecisionMode = ResolveClusterTimePrecisionMode(contenders);
+            var stableOrderingUsed = false;
+            var tieBreakReason = ResolveClusterTieBreakReason(bestCore.CoreScore);
+            ClusterAssignment chosen;
+            if (contenders.Count == 1)
+            {
+                chosen = contenders[0];
+            }
+            else
+            {
+                var stableOrderFallbackAllowed = CanUseStableOrderFallback(
+                    contenders,
+                    clusterTimePrecisionMode);
+                if (!stableOrderFallbackAllowed)
+                {
+                    continue;
+                }
+
+                stableOrderingUsed = true;
+                tieBreakReason = "stable_order_fallback_after_reference_tie";
+                chosen = contenders
+                    .OrderBy(x => x.StableOrderDistanceSum)
+                    .ThenBy(x => x.StableOrderCrossingPenalty)
+                    .ThenBy(x => x.EdgeCount)
+                    .ThenBy(x => string.Join("|", x.Edges.Select(edge => edge.Candidate.TransactionId.ToString("N"))), StringComparer.Ordinal)
+                    .First();
+            }
 
             foreach (var edge in chosen.Edges)
             {
@@ -548,6 +594,8 @@ public sealed class TransferPairingEngine
                 continue;
             }
 
+            var clusterCandidateEdgeCount = candidatesByOutflowId.Sum(entry => entry.Value.Count);
+            var namesOnlyWeakSupport = chosen.Edges.All(edge => edge.NamesOnlyOverlapPenaltyApplied);
             foreach (var edge in chosen.Edges)
             {
                 ApplyPair(
@@ -558,7 +606,12 @@ public sealed class TransferPairingEngine
                     DeterministicClassificationReasonCodes.TransferPairDuplicateCluster,
                     pass: "duplicate_cluster_one_to_one",
                     stableOrderingUsed,
-                    clusterSize: outflows.Count + inflows.Count);
+                    clusterSize: outflows.Count + inflows.Count,
+                    tieBreakReason,
+                    clusterTimePrecisionMode,
+                    clusterCandidateEdgeCount,
+                    assignments.Count,
+                    namesOnlyWeakSupport);
             }
         }
 
@@ -581,6 +634,7 @@ public sealed class TransferPairingEngine
             int accountOverlap,
             int paymentOverlap,
             int mediumOverlap,
+            int referenceOverlapScore,
             int windowMinutes,
             long stableDistance,
             int stableCrossingPenalty)
@@ -597,6 +651,7 @@ public sealed class TransferPairingEngine
                         accountOverlap,
                         paymentOverlap,
                         mediumOverlap,
+                        referenceOverlapScore,
                         windowMinutes),
                     stableDistance,
                     stableCrossingPenalty));
@@ -627,6 +682,7 @@ public sealed class TransferPairingEngine
                     accountOverlap + edge.AccountReferenceOverlap,
                     paymentOverlap + edge.PaymentMarkerOverlap,
                     mediumOverlap + edge.MediumConfidenceOverlap,
+                    referenceOverlapScore + edge.ReferenceOverlapScore,
                     windowMinutes + (int)Math.Round(edge.WindowHours * 60d, MidpointRounding.AwayFromZero),
                     stableDistance + edge.StableOrderDistance,
                     stableCrossingPenalty + crossingPenalty);
@@ -643,6 +699,7 @@ public sealed class TransferPairingEngine
             accountOverlap: 0,
             paymentOverlap: 0,
             mediumOverlap: 0,
+            referenceOverlapScore: 0,
             windowMinutes: 0,
             stableDistance: 0,
             stableCrossingPenalty: 0);
@@ -658,7 +715,12 @@ public sealed class TransferPairingEngine
         string reasonCode,
         string pass,
         bool stableOrderingUsed,
-        int clusterSize)
+        int clusterSize,
+        string tieBreakReason,
+        string clusterTimePrecisionMode,
+        int clusterCandidateEdgeCount,
+        int clusterAssignmentCount,
+        bool namesOnlyWeakSupport)
     {
         var debit = edge.Source.IsOutflow ? edge.Source : edge.Candidate;
         var credit = edge.Source.IsInflow ? edge.Source : edge.Candidate;
@@ -670,7 +732,8 @@ public sealed class TransferPairingEngine
             debitId = debit.TransactionId,
             creditId = credit.TransactionId,
             score = edge.Score,
-            candidateEdgeCount = 1,
+            candidateEdgeCount = clusterCandidateEdgeCount,
+            clusterAssignmentCount,
             clusterMembership = new
             {
                 isDuplicateClusterMember = edge.IsDuplicateClusterMember,
@@ -694,12 +757,16 @@ public sealed class TransferPairingEngine
                 paymentMarkers = edge.PaymentMarkerOverlap,
                 mediumConfidence = edge.MediumConfidenceOverlap,
                 lowConfidence = edge.LowConfidenceOverlap,
-                weightedReferenceScore = edge.ReferenceOverlapScore
+                weightedReferenceScore = edge.ReferenceOverlapScore,
+                referenceConfidenceBand = edge.ReferenceConfidenceBand,
+                namesOnlyWeakSupport = edge.NamesOnlyOverlapPenaltyApplied
             },
-            timePrecisionMode = edge.TimePrecisionMode,
+            timePrecisionMode = clusterTimePrecisionMode,
             timeDistanceHours = Math.Round(edge.WindowHours, 3, MidpointRounding.AwayFromZero),
             stableOrderingUsed,
-            stableOrderDistance = edge.StableOrderDistance
+            stableOrderDistance = edge.StableOrderDistance,
+            weakNameSupportOnly = namesOnlyWeakSupport,
+            finalTieBreakReason = tieBreakReason
         });
 
         var decision = new TransferPairDecision(
@@ -765,6 +832,8 @@ public sealed class TransferPairingEngine
             MediumConfidenceOverlap: scoring.MediumConfidenceOverlap,
             LowConfidenceOverlap: scoring.LowConfidenceOverlap,
             ReferenceOverlapScore: scoring.ReferenceOverlapScore,
+            ReferenceConfidenceBand: scoring.ReferenceConfidenceBand,
+            ReferenceConfidenceRank: scoring.ReferenceConfidenceRank,
             StableOrderDistance: Math.Abs(source.StableSequence - candidate.StableSequence),
             NamesOnlyOverlapPenaltyApplied: scoring.NamesOnlyOverlapPenaltyApplied,
             IsDuplicateClusterMember: duplicateClusterMember,
@@ -799,18 +868,18 @@ public sealed class TransferPairingEngine
             candidate.NarrativeSignals.LowConfidenceTokens);
 
         var referenceOverlapScore =
-            (highConfidenceReferenceOverlap * 4)
-            + (providerSpecificReferenceOverlap * 4)
-            + (accountReferenceOverlap * 3)
-            + (paymentMarkerOverlap * 3)
-            + mediumConfidenceOverlap
+            (highConfidenceReferenceOverlap * 8)
+            + (providerSpecificReferenceOverlap * 7)
+            + (accountReferenceOverlap * 6)
+            + (paymentMarkerOverlap * 5)
+            + (mediumConfidenceOverlap * 3)
             + Math.Min(1, lowConfidenceOverlap);
 
         var score = timeScore;
-        score += highConfidenceReferenceOverlap * 6;
-        score += providerSpecificReferenceOverlap * 4;
-        score += accountReferenceOverlap * 4;
-        score += paymentMarkerOverlap * 3;
+        score += highConfidenceReferenceOverlap * 8;
+        score += providerSpecificReferenceOverlap * 7;
+        score += accountReferenceOverlap * 6;
+        score += paymentMarkerOverlap * 5;
         score += mediumConfidenceOverlap * 2;
         score += Math.Min(1, lowConfidenceOverlap);
 
@@ -859,6 +928,21 @@ public sealed class TransferPairingEngine
             score = Math.Min(score, MinScoreForPairing - 1);
         }
 
+        var referenceConfidenceBand = ResolveReferenceConfidenceBand(
+            highConfidenceReferenceOverlap,
+            providerSpecificReferenceOverlap,
+            accountReferenceOverlap,
+            paymentMarkerOverlap,
+            mediumConfidenceOverlap,
+            lowConfidenceOverlap);
+        var referenceConfidenceRank = referenceConfidenceBand switch
+        {
+            "high_confidence" => 3,
+            "medium_confidence" => 2,
+            "low_confidence" => 1,
+            _ => 0
+        };
+
         return new CandidateScore(
             Score: score,
             TimeScore: timeScore,
@@ -871,6 +955,8 @@ public sealed class TransferPairingEngine
             MediumConfidenceOverlap: mediumConfidenceOverlap,
             LowConfidenceOverlap: lowConfidenceOverlap,
             ReferenceOverlapScore: referenceOverlapScore,
+            ReferenceConfidenceBand: referenceConfidenceBand,
+            ReferenceConfidenceRank: referenceConfidenceRank,
             NamesOnlyOverlapPenaltyApplied: namesOnlyOverlap);
     }
 
@@ -878,12 +964,42 @@ public sealed class TransferPairingEngine
     {
         return best.Score == next.Score
                && best.ReferenceOverlapScore == next.ReferenceOverlapScore
+               && best.ReferenceConfidenceRank == next.ReferenceConfidenceRank
                && best.HighConfidenceReferenceOverlap == next.HighConfidenceReferenceOverlap
                && best.ProviderSpecificReferenceOverlap == next.ProviderSpecificReferenceOverlap
                && best.AccountReferenceOverlap == next.AccountReferenceOverlap
                && best.PaymentMarkerOverlap == next.PaymentMarkerOverlap
                && best.MediumConfidenceOverlap == next.MediumConfidenceOverlap
                && string.Equals(best.TimePrecisionMode, next.TimePrecisionMode, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveReferenceConfidenceBand(
+        int highConfidenceReferenceOverlap,
+        int providerSpecificReferenceOverlap,
+        int accountReferenceOverlap,
+        int paymentMarkerOverlap,
+        int mediumConfidenceOverlap,
+        int lowConfidenceOverlap)
+    {
+        if (highConfidenceReferenceOverlap > 0
+            || providerSpecificReferenceOverlap > 0
+            || accountReferenceOverlap > 0
+            || paymentMarkerOverlap > 0)
+        {
+            return "high_confidence";
+        }
+
+        if (mediumConfidenceOverlap > 0)
+        {
+            return "medium_confidence";
+        }
+
+        if (lowConfidenceOverlap > 0)
+        {
+            return "low_confidence";
+        }
+
+        return "none";
     }
 
     private static string ResolveTimePrecisionMode(
@@ -931,6 +1047,103 @@ public sealed class TransferPairingEngine
                     ? 2
                     : 1
         };
+    }
+
+    private static string ResolveClusterTimePrecisionMode(IReadOnlyList<ClusterAssignment> contenders)
+    {
+        var precisionModes = contenders
+            .SelectMany(assignment => assignment.Edges.Select(edge => edge.TimePrecisionMode))
+            .Where(mode => !string.IsNullOrWhiteSpace(mode))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (precisionModes.Contains("date_only", StringComparer.OrdinalIgnoreCase))
+        {
+            return "date_only";
+        }
+
+        if (precisionModes.Contains("coarse", StringComparer.OrdinalIgnoreCase))
+        {
+            return "coarse";
+        }
+
+        if (precisionModes.Contains("precise", StringComparer.OrdinalIgnoreCase)
+            && precisionModes.All(mode => string.Equals(mode, "precise", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "precise";
+        }
+
+        return "unknown";
+    }
+
+    private static bool CanUseStableOrderFallback(
+        IReadOnlyList<ClusterAssignment> contenders,
+        string clusterTimePrecisionMode)
+    {
+        if (contenders.Count <= 1)
+        {
+            return false;
+        }
+
+        var highConfidenceTied = contenders
+            .Select(x => x.CoreScore.HighConfidenceReferenceOverlap)
+            .Distinct()
+            .Count() == 1;
+        var providerSpecificTied = contenders
+            .Select(x => x.CoreScore.ProviderSpecificReferenceOverlap)
+            .Distinct()
+            .Count() == 1;
+        var accountTied = contenders
+            .Select(x => x.CoreScore.AccountReferenceOverlap)
+            .Distinct()
+            .Count() == 1;
+        var paymentTied = contenders
+            .Select(x => x.CoreScore.PaymentMarkerOverlap)
+            .Distinct()
+            .Count() == 1;
+        var mediumStructuredTied = contenders
+            .Select(x => x.CoreScore.MediumConfidenceOverlap)
+            .Distinct()
+            .Count() == 1;
+        if (!highConfidenceTied
+            || !providerSpecificTied
+            || !accountTied
+            || !paymentTied
+            || !mediumStructuredTied)
+        {
+            return false;
+        }
+
+        var coarsePrecision = clusterTimePrecisionMode is "date_only" or "coarse" or "unknown";
+        var nonDiscriminatingTime = contenders
+            .Select(x => x.CoreScore.TotalWindowMinutes)
+            .Distinct()
+            .Count() == 1;
+
+        return coarsePrecision || nonDiscriminatingTime;
+    }
+
+    private static string ResolveClusterTieBreakReason(CoreClusterScore coreScore)
+    {
+        if (coreScore.HighConfidenceReferenceOverlap > 0
+            || coreScore.ProviderSpecificReferenceOverlap > 0
+            || coreScore.AccountReferenceOverlap > 0
+            || coreScore.PaymentMarkerOverlap > 0)
+        {
+            return "high_confidence_reference_overlap";
+        }
+
+        if (coreScore.MediumConfidenceOverlap > 0)
+        {
+            return "medium_confidence_structured_overlap";
+        }
+
+        if (coreScore.TotalWindowMinutes > 0)
+        {
+            return "time_proximity";
+        }
+
+        return "score_rank";
     }
 
     private static int CountOverlap(IReadOnlySet<string> left, IReadOnlySet<string> right)
@@ -1035,6 +1248,8 @@ public sealed class TransferPairingEngine
         int MediumConfidenceOverlap,
         int LowConfidenceOverlap,
         int ReferenceOverlapScore,
+        string ReferenceConfidenceBand,
+        int ReferenceConfidenceRank,
         long StableOrderDistance,
         bool NamesOnlyOverlapPenaltyApplied,
         bool IsDuplicateClusterMember,
@@ -1052,6 +1267,8 @@ public sealed class TransferPairingEngine
         int MediumConfidenceOverlap,
         int LowConfidenceOverlap,
         int ReferenceOverlapScore,
+        string ReferenceConfidenceBand,
+        int ReferenceConfidenceRank,
         bool NamesOnlyOverlapPenaltyApplied);
 
     private sealed record ClusterAssignment(
@@ -1068,6 +1285,7 @@ public sealed class TransferPairingEngine
         int AccountReferenceOverlap,
         int PaymentMarkerOverlap,
         int MediumConfidenceOverlap,
+        int ReferenceOverlapScore,
         int TotalWindowMinutes);
 
     private sealed record ProviderCapabilitySummary(

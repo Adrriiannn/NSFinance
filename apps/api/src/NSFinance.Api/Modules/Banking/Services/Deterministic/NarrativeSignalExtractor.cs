@@ -80,6 +80,15 @@ public sealed class NarrativeSignalExtractor
     private static readonly Regex GenericLongOpaqueRegex = new(
         @"\b[a-z0-9]{10,}\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex MerchantWordRegex = new(
+        @"\b[a-z][a-z0-9&'.-]{2,}\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex MerchantTerminalFragmentRegex = new(
+        @"\b(?:term(?:inal)?|till|store|pos)\s*\d{2,}\b|\b[a-z]{2,}\d{3,}\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex MerchantSeparatorShapeRegex = new(
+        @"[*/]",
+        RegexOptions.Compiled);
 
     private static readonly HashSet<string> PaymentSystemMarkers = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -96,21 +105,18 @@ public sealed class NarrativeSignalExtractor
 
     private static readonly HashSet<string> MerchantDescriptorKeywords = new(StringComparer.OrdinalIgnoreCase)
     {
-        "subscription",
-        "monthly",
-        "billing",
-        "software",
-        "services",
-        "pharmacy",
         "retail",
         "store",
-        "card",
-        "contactless",
-        "pos",
-        "purchase",
-        "terminal",
-        "online",
-        "renewal"
+        "merchant",
+        "pharmacy",
+        "grocery",
+        "supermarket",
+        "streaming",
+        "software",
+        "subscription",
+        "billing",
+        "renewal",
+        "marketplace"
     };
 
     private static readonly HashSet<string> CompanyShapeTokens = new(StringComparer.OrdinalIgnoreCase)
@@ -270,28 +276,37 @@ public sealed class NarrativeSignalExtractor
         ISet<string> merchantLikeTokens,
         IDictionary<string, NarrativeSignalConfidenceTier> confidenceMap)
     {
-        if (rawDescription.Contains('*', StringComparison.Ordinal)
-            || rawDescription.Contains('/', StringComparison.Ordinal)
-            || rawDescription.Contains("  ", StringComparison.Ordinal))
+        var hasSeparatorShape = HasMerchantSeparatorShape(rawDescription);
+        var hasTerminalFragment = MerchantTerminalFragmentRegex.IsMatch(rawDescription);
+        var hasCompanyShape = ContainsAnyWord(normalizedDescription, CompanyShapeTokens);
+        var hasMerchantDescriptor = ContainsAnyWord(normalizedDescription, MerchantDescriptorKeywords);
+        var hasCardPresentLexeme = ContainsAnyWord(normalizedDescription, ["card", "contactless", "pos", "purchase", "terminal"]);
+        var hasSubscriptionLexeme = ContainsAnyWord(normalizedDescription, ["subscription", "billing", "renewal", "streaming"]);
+        var hasRawDigits = rawDescription.Any(char.IsDigit);
+
+        if (hasSeparatorShape && (hasRawDigits || hasTerminalFragment || hasCardPresentLexeme))
         {
-            AddToken(merchantLikeTokens, confidenceMap, "processor_separator", NarrativeSignalConfidenceTier.MediumConfidence);
+            AddToken(merchantLikeTokens, confidenceMap, "merchant_processor_shape", NarrativeSignalConfidenceTier.MediumConfidence);
         }
 
-        foreach (var keyword in MerchantDescriptorKeywords)
+        if (hasCardPresentLexeme && (hasSeparatorShape || hasTerminalFragment || hasRawDigits))
         {
-            if (normalizedDescription.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-            {
-                AddToken(merchantLikeTokens, confidenceMap, keyword, NarrativeSignalConfidenceTier.MediumConfidence);
-            }
+            AddToken(merchantLikeTokens, confidenceMap, "merchant_card_present_shape", NarrativeSignalConfidenceTier.MediumConfidence);
         }
 
-        foreach (var companyToken in CompanyShapeTokens)
+        if (hasSubscriptionLexeme && (hasCompanyShape || hasSeparatorShape || hasTerminalFragment))
         {
-            if (normalizedDescription.Contains($" {companyToken} ", StringComparison.OrdinalIgnoreCase)
-                || normalizedDescription.EndsWith($" {companyToken}", StringComparison.OrdinalIgnoreCase))
-            {
-                AddToken(merchantLikeTokens, confidenceMap, companyToken, NarrativeSignalConfidenceTier.MediumConfidence);
-            }
+            AddToken(merchantLikeTokens, confidenceMap, "merchant_subscription_company_shape", NarrativeSignalConfidenceTier.MediumConfidence);
+        }
+
+        if (hasMerchantDescriptor && (hasCompanyShape || hasSeparatorShape || hasTerminalFragment || hasCardPresentLexeme))
+        {
+            AddToken(merchantLikeTokens, confidenceMap, "merchant_retail_descriptor_shape", NarrativeSignalConfidenceTier.MediumConfidence);
+        }
+
+        if (hasCompanyShape && (hasMerchantDescriptor || hasSeparatorShape || hasSubscriptionLexeme))
+        {
+            AddToken(merchantLikeTokens, confidenceMap, "merchant_company_suffix_shape", NarrativeSignalConfidenceTier.MediumConfidence);
         }
 
         var words = rawDescription
@@ -300,10 +315,69 @@ public sealed class NarrativeSignalExtractor
             word.Length >= 5
             && word.All(char.IsLetter)
             && word.ToUpperInvariant() == word);
-        if (uppercaseDenseWordCount >= 2)
+        if (uppercaseDenseWordCount >= 2
+            && (hasSeparatorShape || hasRawDigits || hasMerchantDescriptor || hasCompanyShape))
         {
-            AddToken(merchantLikeTokens, confidenceMap, "uppercase_company_shape", NarrativeSignalConfidenceTier.MediumConfidence);
+            AddToken(merchantLikeTokens, confidenceMap, "merchant_uppercase_descriptor_shape", NarrativeSignalConfidenceTier.MediumConfidence);
         }
+
+        // Purchase-like descriptors are common in spend rows, but they are only medium-strength
+        // merchant evidence when they appear as complete words, not from formatting alone.
+        if (ContainsAnyWord(normalizedDescription, ["purchase", "payment", "debit", "transaction"]))
+        {
+            AddToken(merchantLikeTokens, confidenceMap, "merchant_spend_descriptor", NarrativeSignalConfidenceTier.LowConfidence);
+        }
+    }
+
+    private static bool HasMerchantSeparatorShape(string rawDescription)
+    {
+        if (string.IsNullOrWhiteSpace(rawDescription))
+        {
+            return false;
+        }
+
+        if (!MerchantSeparatorShapeRegex.IsMatch(rawDescription))
+        {
+            return false;
+        }
+
+        var tokens = MerchantWordRegex.Matches(rawDescription)
+            .Select(match => match.Value)
+            .ToArray();
+        if (tokens.Length < 2)
+        {
+            return false;
+        }
+
+        var alphaTokens = tokens.Count(token => token.Any(char.IsLetter));
+        var digitTokens = tokens.Count(token => token.Any(char.IsDigit));
+        return alphaTokens >= 2 && (digitTokens >= 1 || rawDescription.Any(char.IsDigit));
+    }
+
+    private static bool ContainsAnyWord(string normalizedDescription, IEnumerable<string> words)
+    {
+        foreach (var word in words)
+        {
+            if (ContainsWord(normalizedDescription, word))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsWord(string haystack, string needle)
+    {
+        if (string.IsNullOrWhiteSpace(haystack) || string.IsNullOrWhiteSpace(needle))
+        {
+            return false;
+        }
+
+        return Regex.IsMatch(
+            haystack,
+            $@"\b{Regex.Escape(needle)}\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static void AddNameTokens(

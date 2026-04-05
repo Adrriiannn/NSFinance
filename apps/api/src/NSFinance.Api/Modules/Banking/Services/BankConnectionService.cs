@@ -639,6 +639,7 @@ public sealed class BankConnectionService(
                     SavingsEvaluationOutcome = savingsEvaluationOutcome,
                     TransferTimePrecisionMode = evidence.TransferTimePrecisionMode,
                     TransferStableOrderingUsed = evidence.TransferStableOrderingUsed,
+                    TransferTieBreakReason = evidence.TransferTieBreakReason,
                     DeterministicSemanticFamily = deterministicSemanticFamily,
                     StylingFromDeterministicSemantic = stylingFromDeterministicSemantic,
                     TaxonomyFallbackUsed = taxonomyFallbackUsed
@@ -750,6 +751,7 @@ public sealed class BankConnectionService(
                 x.SavingsEvaluationOutcome,
                 x.TransferTimePrecisionMode,
                 x.TransferStableOrderingUsed,
+                x.TransferTieBreakReason,
                 x.DeterministicSemanticFamily,
                 x.StylingFromDeterministicSemantic,
                 x.TaxonomyFallbackUsed,
@@ -2677,6 +2679,7 @@ public sealed class BankConnectionService(
         bool HasSavingsSignals,
         string? TransferTimePrecisionMode,
         bool TransferStableOrderingUsed,
+        string? TransferTieBreakReason,
         bool SavingsRoutingAllowed,
         string? SavingsRoutingTier,
         bool SavingsProviderStructuralSupport,
@@ -2689,7 +2692,7 @@ public sealed class BankConnectionService(
     {
         if (string.IsNullOrWhiteSpace(evidenceJson))
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, null, false, false, 0, false, 0);
         }
 
         try
@@ -2716,6 +2719,8 @@ public sealed class BankConnectionService(
                 || string.Equals(family, "savings_transfer", StringComparison.Ordinal);
             var transferTimePrecisionMode = TryReadDiagnosticsJsonString(root, "timePrecisionMode");
             var transferStableOrderingUsed = TryReadDiagnosticsJsonBool(root, "stableOrderingUsed");
+            var transferTieBreakReason = TryReadDiagnosticsJsonString(root, "finalTieBreakReason")
+                                         ?? TryReadDiagnosticsJsonString(root, "tieBreakReason");
             var savingsRoutingAllowed = TryReadDiagnosticsJsonBool(root, "savingsRoutingAllowed");
             var savingsRoutingTier = TryReadDiagnosticsJsonString(root, "savingsRoutingTier");
             var savingsProviderStructuralSupport = TryReadDiagnosticsJsonBool(root, "providerStructuralSupport");
@@ -2732,6 +2737,7 @@ public sealed class BankConnectionService(
                 savingsSignals,
                 transferTimePrecisionMode,
                 transferStableOrderingUsed,
+                transferTieBreakReason,
                 savingsRoutingAllowed,
                 savingsRoutingTier,
                 savingsProviderStructuralSupport,
@@ -2742,7 +2748,7 @@ public sealed class BankConnectionService(
         }
         catch (JsonException)
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, null, false, false, 0, false, 0);
         }
     }
 
