@@ -640,6 +640,8 @@ public sealed class BankConnectionService(
                     TransferTimePrecisionMode = evidence.TransferTimePrecisionMode,
                     TransferStableOrderingUsed = evidence.TransferStableOrderingUsed,
                     TransferTieBreakReason = evidence.TransferTieBreakReason,
+                    TransferHasHighConfidenceReferenceOverlap = evidence.TransferHasHighConfidenceReferenceOverlap,
+                    TransferNamesOnlyWeakSupport = evidence.TransferNamesOnlyWeakSupport,
                     DeterministicSemanticFamily = deterministicSemanticFamily,
                     StylingFromDeterministicSemantic = stylingFromDeterministicSemantic,
                     TaxonomyFallbackUsed = taxonomyFallbackUsed
@@ -752,6 +754,8 @@ public sealed class BankConnectionService(
                 x.TransferTimePrecisionMode,
                 x.TransferStableOrderingUsed,
                 x.TransferTieBreakReason,
+                x.TransferHasHighConfidenceReferenceOverlap,
+                x.TransferNamesOnlyWeakSupport,
                 x.DeterministicSemanticFamily,
                 x.StylingFromDeterministicSemantic,
                 x.TaxonomyFallbackUsed,
@@ -2680,6 +2684,8 @@ public sealed class BankConnectionService(
         string? TransferTimePrecisionMode,
         bool TransferStableOrderingUsed,
         string? TransferTieBreakReason,
+        bool TransferHasHighConfidenceReferenceOverlap,
+        bool TransferNamesOnlyWeakSupport,
         bool SavingsRoutingAllowed,
         string? SavingsRoutingTier,
         bool SavingsProviderStructuralSupport,
@@ -2692,7 +2698,7 @@ public sealed class BankConnectionService(
     {
         if (string.IsNullOrWhiteSpace(evidenceJson))
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, false, false, null, false, false, 0, false, 0);
         }
 
         try
@@ -2721,6 +2727,13 @@ public sealed class BankConnectionService(
             var transferStableOrderingUsed = TryReadDiagnosticsJsonBool(root, "stableOrderingUsed");
             var transferTieBreakReason = TryReadDiagnosticsJsonString(root, "finalTieBreakReason")
                                          ?? TryReadDiagnosticsJsonString(root, "tieBreakReason");
+            var transferHighConfidenceOverlap = (TryReadDiagnosticsJsonInt(root, "topCandidateReferenceOverlap") ?? 0) > 0
+                                                || (TryReadDiagnosticsJsonInt(root, "bestReferenceOverlap") ?? 0) > 0
+                                                || (TryReadNestedDiagnosticsJsonInt(root, "referenceOverlapSummary", "highConfidence") ?? 0) > 0;
+            var transferNamesOnlyWeakSupport = TryReadDiagnosticsJsonBool(root, "topCandidateWeakNamesOnlySupport")
+                                               || TryReadDiagnosticsJsonBool(root, "bestWeakNamesOnlySupport")
+                                               || TryReadDiagnosticsJsonBool(root, "weakNameSupportOnly")
+                                               || TryReadNestedDiagnosticsJsonBool(root, "referenceOverlapSummary", "namesOnlyWeakSupport");
             var savingsRoutingAllowed = TryReadDiagnosticsJsonBool(root, "savingsRoutingAllowed");
             var savingsRoutingTier = TryReadDiagnosticsJsonString(root, "savingsRoutingTier");
             var savingsProviderStructuralSupport = TryReadDiagnosticsJsonBool(root, "providerStructuralSupport");
@@ -2738,6 +2751,8 @@ public sealed class BankConnectionService(
                 transferTimePrecisionMode,
                 transferStableOrderingUsed,
                 transferTieBreakReason,
+                transferHighConfidenceOverlap,
+                transferNamesOnlyWeakSupport,
                 savingsRoutingAllowed,
                 savingsRoutingTier,
                 savingsProviderStructuralSupport,
@@ -2748,7 +2763,7 @@ public sealed class BankConnectionService(
         }
         catch (JsonException)
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, false, false, null, false, false, 0, false, 0);
         }
     }
 
@@ -2951,6 +2966,24 @@ public sealed class BankConnectionService(
         return null;
     }
 
+    private static int? TryReadNestedDiagnosticsJsonInt(JsonElement element, string parentPropertyName, string childPropertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(parentPropertyName, out var parent)
+            || parent.ValueKind != JsonValueKind.Object
+            || !parent.TryGetProperty(childPropertyName, out var child))
+        {
+            return null;
+        }
+
+        if (child.ValueKind == JsonValueKind.Number && child.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        return null;
+    }
+
     private static bool TryReadDiagnosticsJsonBool(JsonElement element, string propertyName)
     {
         if (element.ValueKind != JsonValueKind.Object
@@ -2964,6 +2997,25 @@ public sealed class BankConnectionService(
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.String => bool.TryParse(property.GetString(), out var parsed) && parsed,
+            _ => false
+        };
+    }
+
+    private static bool TryReadNestedDiagnosticsJsonBool(JsonElement element, string parentPropertyName, string childPropertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(parentPropertyName, out var parent)
+            || parent.ValueKind != JsonValueKind.Object
+            || !parent.TryGetProperty(childPropertyName, out var child))
+        {
+            return false;
+        }
+
+        return child.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => bool.TryParse(child.GetString(), out var parsed) && parsed,
             _ => false
         };
     }

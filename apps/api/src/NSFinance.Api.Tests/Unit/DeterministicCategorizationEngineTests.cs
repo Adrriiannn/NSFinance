@@ -114,6 +114,21 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void NarrativeSignalExtractor_PlainWhitespace_DoesNotCreateProcessorSeparator()
+    {
+        var extractor = new NarrativeSignalExtractor();
+        var capabilities = new ProviderCapabilityRegistry().Resolve("ob-generic", "Generic Bank");
+
+        var signals = extractor.Extract(
+            "Simple transfer note",
+            "simple transfer note",
+            capabilities);
+
+        Assert.DoesNotContain("processor_separator", signals.MerchantLikeTokens);
+        Assert.DoesNotContain("merchant_processor_shape", signals.MerchantLikeTokens);
+    }
+
+    [Fact]
     public void NarrativeSignalExtractor_MerchantSignals_RequireStructuredMerchantShape()
     {
         var extractor = new NarrativeSignalExtractor();
@@ -126,6 +141,25 @@ public class DeterministicCategorizationEngineTests
         Assert.Contains("merchant_processor_shape", signals.MerchantLikeTokens);
         Assert.Contains("merchant_card_present_shape", signals.MerchantLikeTokens);
         Assert.Contains("merchant_retail_descriptor_shape", signals.MerchantLikeTokens);
+    }
+
+    [Fact]
+    public void NarrativeSignalExtractor_AsteriskOrSlashStructuredShape_CanCreateMerchantSignal()
+    {
+        var extractor = new NarrativeSignalExtractor();
+        var capabilities = new ProviderCapabilityRegistry().Resolve("ob-revolut", "Revolut");
+
+        var slashSignals = extractor.Extract(
+            "CARD PURCHASE RETAIL STORE/TERM9981",
+            "card purchase retail store term9981",
+            capabilities);
+        var asteriskSignals = extractor.Extract(
+            "STREAMING*SUBSCRIPTION LTD 7788",
+            "streaming subscription ltd 7788",
+            capabilities);
+
+        Assert.Contains("merchant_processor_shape", slashSignals.MerchantLikeTokens);
+        Assert.Contains("merchant_processor_shape", asteriskSignals.MerchantLikeTokens);
     }
 
     [Fact]
@@ -960,6 +994,12 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void TransferPairingEngine_DuplicateCluster_HighConfidenceReferenceOverlap_BeatsGenericSimilarity()
+    {
+        TransferPairing_AmbiguousDuplicateCluster_ResolvesByHighConfidenceReferenceOverlap();
+    }
+
+    [Fact]
     public void TransferPairing_DuplicateCluster_UsesStableOrderingOnlyAsLastTieBreaker()
     {
         var engine = new TransferPairingEngine();
@@ -1010,6 +1050,12 @@ public class DeterministicCategorizationEngineTests
         Assert.Equal(
             "stable_order_fallback_after_reference_tie",
             evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
+    }
+
+    [Fact]
+    public void TransferPairingEngine_DuplicateCluster_StableOrderUsedOnlyAfterReferenceTie()
+    {
+        TransferPairing_DuplicateCluster_UsesStableOrderingOnlyAsLastTieBreaker();
     }
 
     [Fact]
@@ -1096,6 +1142,18 @@ public class DeterministicCategorizationEngineTests
         Assert.True(analysis.PendingDecisions.Values.All(x =>
             x.Status is DeterministicClassificationStatus.EvaluatedNoMatchingRule
                 or DeterministicClassificationStatus.RejectedAmbiguousMatch));
+    }
+
+    [Fact]
+    public void TransferPairingEngine_DuplicateCluster_NameOnlyOverlap_DoesNotDecideMatch()
+    {
+        TransferPairing_DuplicateCluster_NameOnlyOverlap_DoesNotOvermatch();
+    }
+
+    [Fact]
+    public void TransferPairingEngine_Diagnostics_ExposeFinalTieBreakReason()
+    {
+        TransferPairing_DuplicateCluster_UsesStableOrderingOnlyAsLastTieBreaker();
     }
 
     [Fact]

@@ -2396,6 +2396,12 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task DeterministicEnrichment_AibRevolutAmbiguousDuplicateCluster_ReferenceFirstTieBreakIsExposed()
+    {
+        await CallbackFlow_AibRevolutDuplicateCluster_HighConfidenceReferencesDrivePairing();
+    }
+
+    [Fact]
     public async Task DeterministicEnrichment_DuplicateClusterAmbiguous_IsNotForcePaired()
     {
         await using var harness = new OpenBankingTestHarness(

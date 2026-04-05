@@ -64,6 +64,8 @@ public sealed record DeterministicTransactionDecisionDto(
     string? TransferTimePrecisionMode,
     bool TransferStableOrderingUsed,
     string? TransferTieBreakReason,
+    bool TransferHasHighConfidenceReferenceOverlap,
+    bool TransferNamesOnlyWeakSupport,
     string DeterministicSemanticFamily,
     bool StylingFromDeterministicSemantic,
     bool TaxonomyFallbackUsed,
