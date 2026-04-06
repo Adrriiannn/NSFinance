@@ -1184,28 +1184,6 @@ public sealed class BankSyncService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var deterministicEnrichmentSummary = await RunDeterministicEnrichmentPassAsync(
-            connection,
-            now,
-            isInitialBackfill,
-            includeHistorical: false,
-            cancellationToken);
-        linkedTransfersMatched = deterministicEnrichmentSummary.LinkedTransfersMatched;
-        relationshipRowsUpserted = deterministicEnrichmentSummary.RelationshipRowsUpserted;
-        historicalEnrichmentInProgress = deterministicEnrichmentSummary.HistoricalEnrichmentInProgress;
-        historicalEnrichmentCompleted = deterministicEnrichmentSummary.HistoricalEnrichmentCompleted;
-        historicalEnrichmentProgressPercent = deterministicEnrichmentSummary.HistoricalEnrichmentProgressPercent;
-        historicalEnrichmentCheckpointUtc = deterministicEnrichmentSummary.HistoricalEnrichmentCheckpointUtc;
-        deterministicEnrichmentRowsEvaluated = deterministicEnrichmentSummary.RowsEvaluated;
-        deterministicEnrichmentRowsRemaining = deterministicEnrichmentSummary.RowsRemaining;
-        deterministicEnrichmentBatchesProcessed = deterministicEnrichmentSummary.BatchesProcessed;
-        deterministicEnrichmentMode = deterministicEnrichmentSummary.Mode;
-
-        if (deterministicEnrichmentSummary.HasChanges || dbContext.ChangeTracker.HasChanges())
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
         var dataChanged =
             transactionsImported > 0
             || cardTransactionsImported > 0
@@ -1214,8 +1192,7 @@ public sealed class BankSyncService(
             || balancesSynced > 0
             || cardBalancesSynced > 0
             || linkedTransfersMatched > 0
-            || relationshipRowsUpserted > 0
-            || deterministicEnrichmentSummary.HasChanges;
+            || relationshipRowsUpserted > 0;
 
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
@@ -1224,20 +1201,37 @@ public sealed class BankSyncService(
             errorReason: null,
             cancellationToken);
 
-        try
+        var queueAccepted = TryQueueDeterministicEnrichmentNonBlocking(
+            connection.UserId,
+            connection.Id,
+            "post_sync_enqueue");
+
+        if (queueAccepted)
         {
-            await enrichmentQueue.QueueConnectionAsync(
-                connection.UserId,
-                connection.Id,
-                "post_sync_enqueue",
-                CancellationToken.None);
+            deterministicEnrichmentMode = "queued_post_sync";
         }
-        catch (Exception queueException)
+        else
         {
-            logger.LogWarning(
-                queueException,
-                "Unable to enqueue deterministic enrichment after sync connectionId={ConnectionId}",
-                connection.Id);
+            deterministicEnrichmentMode = "queue_enqueue_failed";
+        }
+
+        historicalEnrichmentCheckpointUtc = connection.HistoricalEnrichmentCheckpointUtc;
+        historicalEnrichmentCompleted = connection.HistoricalEnrichmentCompletedUtc.HasValue
+            && (connection.HistoricalEnrichmentVersion ?? 0) >= DeterministicEnrichmentCurrentVersion
+            && !connection.NeedsHistoricalReclassification;
+
+        if (!historicalEnrichmentCompleted)
+        {
+            historicalEnrichmentInProgress =
+                queueAccepted
+                || connection.NeedsHistoricalReclassification
+                || !connection.HistoricalEnrichmentCompletedUtc.HasValue;
+            historicalEnrichmentProgressPercent = historicalEnrichmentInProgress ? 0d : null;
+        }
+        else
+        {
+            historicalEnrichmentInProgress = false;
+            historicalEnrichmentProgressPercent = 100d;
         }
 
         await auditService.WriteEventAsync(
@@ -4964,6 +4958,17 @@ public sealed class BankSyncService(
         var existingByKey = await dbContext.TransactionRelationships
             .Where(x => relationshipKeys.Contains(x.RelationshipKey))
             .ToDictionaryAsync(x => x.RelationshipKey, StringComparer.Ordinal, cancellationToken);
+        var relationshipKeySet = relationshipKeys.ToHashSet(StringComparer.Ordinal);
+        foreach (var trackedRelationship in dbContext.TransactionRelationships.Local)
+        {
+            if (dbContext.Entry(trackedRelationship).State == EntityState.Deleted
+                || !relationshipKeySet.Contains(trackedRelationship.RelationshipKey))
+            {
+                continue;
+            }
+
+            existingByKey[trackedRelationship.RelationshipKey] = trackedRelationship;
+        }
 
         var touched = 0;
         foreach (var linked in linkedRows)
@@ -5058,6 +5063,21 @@ public sealed class BankSyncService(
                     || x.RelationshipType == TransactionRelationshipType.PossibleSavingsSuggestion))
             .ToListAsync(cancellationToken);
         var existingByKey = relevantExisting.ToDictionary(x => x.RelationshipKey, StringComparer.Ordinal);
+        var sourceTransactionIdSet = transactionIds.ToHashSet();
+        foreach (var trackedRelationship in dbContext.TransactionRelationships.Local)
+        {
+            if (dbContext.Entry(trackedRelationship).State == EntityState.Deleted
+                || !sourceTransactionIdSet.Contains(trackedRelationship.SourceTransactionId)
+                || (trackedRelationship.RelationshipType != TransactionRelationshipType.SavingsRoundup
+                    && trackedRelationship.RelationshipType != TransactionRelationshipType.SavingsManualDeposit
+                    && trackedRelationship.RelationshipType != TransactionRelationshipType.SavingsManualWithdrawal
+                    && trackedRelationship.RelationshipType != TransactionRelationshipType.PossibleSavingsSuggestion))
+            {
+                continue;
+            }
+
+            existingByKey[trackedRelationship.RelationshipKey] = trackedRelationship;
+        }
         var selectedRelationshipKeys = new HashSet<string>(StringComparer.Ordinal);
 
         var touched = 0;
@@ -7546,6 +7566,56 @@ public sealed class BankSyncService(
         }
 
         return left.Value >= right.Value ? left : right;
+    }
+
+    private bool TryQueueDeterministicEnrichmentNonBlocking(
+        Guid userId,
+        Guid connectionId,
+        string reason)
+    {
+        try
+        {
+            var queueTask = enrichmentQueue.QueueConnectionAsync(
+                userId,
+                connectionId,
+                reason,
+                CancellationToken.None);
+
+            if (!queueTask.IsCompletedSuccessfully)
+            {
+                _ = ObserveQueueCompletionAsync(queueTask, connectionId, reason);
+            }
+
+            return true;
+        }
+        catch (Exception queueException)
+        {
+            logger.LogWarning(
+                queueException,
+                "Unable to enqueue deterministic enrichment after sync connectionId={ConnectionId} reason={Reason}",
+                connectionId,
+                reason);
+            return false;
+        }
+    }
+
+    private async Task ObserveQueueCompletionAsync(
+        ValueTask queueTask,
+        Guid connectionId,
+        string reason)
+    {
+        try
+        {
+            await queueTask;
+        }
+        catch (Exception queueException)
+        {
+            logger.LogWarning(
+                queueException,
+                "Deterministic enrichment enqueue completed with failure connectionId={ConnectionId} reason={Reason}",
+                connectionId,
+                reason);
+        }
     }
 }
 

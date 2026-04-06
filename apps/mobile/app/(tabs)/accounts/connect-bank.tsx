@@ -11,6 +11,7 @@ import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import {
+  useBankEnrichmentProgressQuery,
   useBankConnectionQuery,
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
@@ -76,11 +77,21 @@ const aggressivePollDurationMs = 15_000;
 const aggressivePollIntervalMs = 1_500;
 const steadyPollIntervalMs = 5_000;
 const refreshCoalesceWindowMs = 750;
+const syncingStaleThresholdMs = 12 * 60 * 1000;
 const BANKING_ONGOING_LOG_THROTTLE_MS = 5 * 60 * 1000;
 const BANKING_ONGOING_LOG_EVENTS = new Set([
   "poll_tick",
   "refresh_joined",
   "refresh_coalesced"
+]);
+const queuedEnrichmentStages = new Set([
+  "queued_for_sync",
+  "needs_reclassification",
+  "waiting_for_first_sync"
+]);
+const organizingEnrichmentStages = new Set([
+  "categorizing",
+  "waiting_for_counterparty"
 ]);
 const BANKING_ONGOING_REFRESH_REASONS = new Set([
   "poll",
@@ -95,6 +106,16 @@ type PendingConsentLink = {
 };
 
 type BrowserPhase = "idle" | "opening_bank" | "awaiting_consent";
+
+type UiPhaseEvidence = {
+  linkedAccountCount: number;
+  importedTransactionCount: number;
+  enrichmentStage: string | null;
+  syncLifecyclePhase: string | null;
+  lastSyncAttemptedUtc: string | null;
+  lastSuccessfulSyncUtc: string | null;
+  updatedUtc: string | null;
+};
 
 function shouldThrottleBankingLog(event: string, metadata?: Record<string, unknown>) {
   if (BANKING_ONGOING_LOG_EVENTS.has(event)) {
@@ -276,12 +297,116 @@ function isLinkStillValid(link: PendingConsentLink | null, nowMs: number) {
   return expiresAtMs > nowMs + 10_000;
 }
 
+function mapSyncLifecyclePhaseToUiState(syncLifecyclePhase?: string | null): ConnectionStatus | null {
+  switch (syncLifecyclePhase) {
+    case "connecting":
+      return "awaiting_consent";
+    case "importing_bank_data":
+      return "syncing_data";
+    case "import_complete_enrichment_queued":
+      return "import_complete_enrichment_queued";
+    case "organizing_transactions":
+      return "organizing_transactions";
+    case "completed":
+      return "synced";
+    case "sync_taking_longer_than_expected":
+      return "sync_taking_longer_than_expected";
+    case "attention_required":
+      return "reauth_required";
+    default:
+      return null;
+  }
+}
+
+function parseIsoUtcToMs(value?: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function derivePostImportUiStateFromEvidence(
+  connection: BankConnectionDto,
+  evidence: UiPhaseEvidence
+): ConnectionStatus | null {
+  const stage = evidence.enrichmentStage?.trim().toLowerCase() ?? null;
+  const hasLinkedAccounts = evidence.linkedAccountCount > 0;
+  const importedTransactionCount = Math.max(0, evidence.importedTransactionCount);
+  const hasImportedTransactions = importedTransactionCount > 0;
+  const hasSyncEvidence = Boolean(evidence.lastSuccessfulSyncUtc || evidence.lastSyncAttemptedUtc);
+  const hasPostImportEvidence = hasLinkedAccounts && (hasImportedTransactions || hasSyncEvidence);
+  const statusIsSyncingLike =
+    connection.status === "connected_pending_sync"
+    || connection.status === "connected"
+    || connection.status === "sync_pending";
+
+  if (stage === "completed") {
+    return "synced";
+  }
+
+  if (stage && organizingEnrichmentStages.has(stage) && hasPostImportEvidence) {
+    return "organizing_transactions";
+  }
+
+  if (stage && queuedEnrichmentStages.has(stage) && hasPostImportEvidence) {
+    return "import_complete_enrichment_queued";
+  }
+
+  if (!statusIsSyncingLike) {
+    return null;
+  }
+
+  const syncEvidenceMs =
+    parseIsoUtcToMs(evidence.lastSuccessfulSyncUtc)
+    ?? parseIsoUtcToMs(evidence.lastSyncAttemptedUtc)
+    ?? parseIsoUtcToMs(evidence.updatedUtc);
+  const staleSyncing = syncEvidenceMs !== null && Date.now() - syncEvidenceMs >= syncingStaleThresholdMs;
+
+  if (hasPostImportEvidence) {
+    return "import_complete_enrichment_queued";
+  }
+
+  if (staleSyncing) {
+    return "sync_taking_longer_than_expected";
+  }
+
+  return null;
+}
+
 function deriveUiState(
   browserPhase: BrowserPhase,
   awaitingConsentReturn: boolean,
   connection: BankConnectionDto | null,
-  consentTimedOut: boolean
+  consentTimedOut: boolean,
+  evidence: UiPhaseEvidence | null
 ): ConnectionStatus {
+  if (browserPhase === "opening_bank") {
+    return "opening_bank";
+  }
+
+  const pendingOrMissing = !connection || pendingActionStatuses.has(connection.status);
+  if (awaitingConsentReturn && (browserPhase === "awaiting_consent" || pendingOrMissing)) {
+    return "awaiting_consent";
+  }
+
+  if (consentTimedOut && pendingOrMissing) {
+    return "awaiting_consent";
+  }
+
+  if (connection && evidence) {
+    const phaseMappedState = mapSyncLifecyclePhaseToUiState(evidence.syncLifecyclePhase);
+    if (phaseMappedState) {
+      return phaseMappedState;
+    }
+
+    const reconciledState = derivePostImportUiStateFromEvidence(connection, evidence);
+    if (reconciledState) {
+      return reconciledState;
+    }
+  }
+
   switch (connection?.status) {
     case "connected_pending_sync":
     case "connected":
@@ -295,19 +420,6 @@ function deriveUiState(
     case "expired":
     case "revoked":
       return "reauth_required";
-  }
-
-  if (browserPhase === "opening_bank") {
-    return "opening_bank";
-  }
-
-  const pendingOrMissing = !connection || pendingActionStatuses.has(connection.status);
-  if (awaitingConsentReturn && (browserPhase === "awaiting_consent" || pendingOrMissing)) {
-    return "awaiting_consent";
-  }
-
-  if (consentTimedOut && pendingOrMissing) {
-    return "awaiting_consent";
   }
 
   switch (connection?.status) {
@@ -347,6 +459,7 @@ export default function AddAccountModalScreen() {
 
   const connectionsQuery = useBankConnectionsQuery(!pendingConnectionId && !forceNewConnectionFlow);
   const activeConnectionQuery = useBankConnectionQuery(pendingConnectionId);
+  const enrichmentProgressQuery = useBankEnrichmentProgressQuery(isAuthenticated && !isBootstrapping);
   const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
   const linkedBankCardsQuery = useLinkedBankCardsQuery();
   const startLinkMutation = useStartTrueLayerLinkMutation();
@@ -425,6 +538,46 @@ export default function AddAccountModalScreen() {
       : null;
   }, [activeConnection, forceNewConnectionFlow]);
 
+  const activeLinkedAccountCount = useMemo(() => {
+    if (!activeConnection || (forceNewConnectionFlow && !pendingConnectionId)) {
+      return 0;
+    }
+
+    const accounts = linkedBankAccountsQuery.data ?? [];
+    return accounts.filter((account) => account.connectionId === activeConnection.id).length;
+  }, [
+    activeConnection,
+    forceNewConnectionFlow,
+    linkedBankAccountsQuery.data,
+    pendingConnectionId
+  ]);
+
+  const activeConnectionEnrichment = useMemo(() => {
+    if (!activeConnection) {
+      return null;
+    }
+
+    const perConnection = enrichmentProgressQuery.data?.connections ?? [];
+    return perConnection.find((entry) => entry.connectionId === activeConnection.id) ?? null;
+  }, [activeConnection, enrichmentProgressQuery.data?.connections]);
+
+  const uiPhaseEvidence = useMemo<UiPhaseEvidence | null>(() => {
+    if (!activeConnection) {
+      return null;
+    }
+
+    return {
+      linkedAccountCount: activeConnection.linkedAccountCount ?? activeLinkedAccountCount,
+      importedTransactionCount:
+        activeConnection.importedTransactionCount ?? activeConnectionEnrichment?.totalCount ?? 0,
+      enrichmentStage: activeConnection.syncEnrichmentStage ?? activeConnectionEnrichment?.stage ?? null,
+      syncLifecyclePhase: activeConnection.syncLifecyclePhase ?? null,
+      lastSyncAttemptedUtc: activeConnection.lastSyncAttemptedUtc ?? null,
+      lastSuccessfulSyncUtc: activeConnection.lastSuccessfulSyncUtc ?? null,
+      updatedUtc: activeConnection.updatedUtc ?? null
+    };
+  }, [activeConnection, activeConnectionEnrichment, activeLinkedAccountCount]);
+
   const linkedAccountNames = useMemo(() => {
     if (forceNewConnectionFlow && !pendingConnectionId) {
       return [];
@@ -470,15 +623,18 @@ export default function AddAccountModalScreen() {
   );
 
   const uiState = useMemo(
-    () => deriveUiState(browserPhase, awaitingConsentReturn, activeConnection, consentTimedOut),
-    [activeConnection, awaitingConsentReturn, browserPhase, consentTimedOut]
+    () => deriveUiState(browserPhase, awaitingConsentReturn, activeConnection, consentTimedOut, uiPhaseEvidence),
+    [activeConnection, awaitingConsentReturn, browserPhase, consentTimedOut, uiPhaseEvidence]
   );
 
   const shouldPoll =
     Boolean(pendingConnectionId) &&
     (uiState === "awaiting_consent" ||
       uiState === "connected_pending_sync" ||
-      uiState === "syncing_data");
+      uiState === "syncing_data" ||
+      uiState === "import_complete_enrichment_queued" ||
+      uiState === "organizing_transactions" ||
+      uiState === "sync_taking_longer_than_expected");
 
   const refreshBankingState = useCallback(
     async (reason: string, options?: { fullInvalidate?: boolean; force?: boolean }) => {
@@ -519,6 +675,7 @@ export default function AddAccountModalScreen() {
 
         await Promise.all([
           connectionRefresh,
+          enrichmentProgressQuery.refetch(),
           linkedBankAccountsQuery.refetch(),
           linkedBankCardsQuery.refetch()
         ]);
@@ -546,6 +703,7 @@ export default function AddAccountModalScreen() {
     [
       activeConnectionQuery,
       connectionsQuery,
+      enrichmentProgressQuery,
       invalidatePortfolioQueries,
       linkedBankAccountsQuery,
       linkedBankCardsQuery,
@@ -889,7 +1047,10 @@ export default function AddAccountModalScreen() {
   const showRefreshAction =
     uiState === "awaiting_consent" ||
     uiState === "connected_pending_sync" ||
-    uiState === "syncing_data";
+    uiState === "syncing_data" ||
+    uiState === "import_complete_enrichment_queued" ||
+    uiState === "organizing_transactions" ||
+    uiState === "sync_taking_longer_than_expected";
   const isSyncingInProgress = uiState === "connected_pending_sync" || uiState === "syncing_data";
   const isCompletedSynced = activeConnection?.status === "synced";
   const primaryActionLabel = isCompletedSynced
@@ -906,6 +1067,12 @@ export default function AddAccountModalScreen() {
           ? "Finish the bank consent flow in your browser. As soon as you return, we will start checking the saved connection."
         : uiState === "connected_pending_sync" || uiState === "syncing_data"
           ? "We are currently syncing your data. Please wait as this may take a while."
+          : uiState === "import_complete_enrichment_queued"
+            ? "Bank data import is complete. Transaction organization is queued and will continue automatically."
+            : uiState === "organizing_transactions"
+              ? "Bank data import is complete. We are organizing and categorizing transactions now."
+              : uiState === "sync_taking_longer_than_expected"
+                ? "Sync is taking longer than expected. Tap Refresh to reconcile status. If import already completed, organization will continue in the background."
               : uiState === "failed"
                 ? "The bank connection exists, but data sync failed. Retry from the Accounts or Activity sync icon without reconnecting."
                 : uiState === "reauth_required"
@@ -1039,13 +1206,26 @@ export default function AddAccountModalScreen() {
                 ? "The bank connection is confirmed. Tap Refresh if you want to check the projected accounts and balances now."
                 : uiState === "syncing_data"
                   ? "We are still syncing your bank data. You can keep waiting or tap Refresh to reconcile now."
-                  : consentTimedOut
-                    ? "If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
-                    : "If you already finished in the browser, tap Refresh to check the latest bank connection status."}
+                  : uiState === "import_complete_enrichment_queued"
+                    ? "Bank data is already imported and enrichment is queued. Tap Refresh to check organization progress."
+                    : uiState === "organizing_transactions"
+                      ? "Your bank data is imported and transactions are being organized. You can keep using the app while this runs."
+                      : uiState === "sync_taking_longer_than_expected"
+                        ? "Sync has taken longer than expected. Tap Refresh to reconcile status and continue."
+                    : consentTimedOut
+                      ? "If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
+                      : "If you already finished in the browser, tap Refresh to check the latest bank connection status."}
             </Text>
             <View style={styles.resumeActions}>
               <SecondaryButton
-                label={uiState === "syncing_data" ? "Refresh sync status" : "Refresh status"}
+                label={
+                  uiState === "syncing_data"
+                  || uiState === "import_complete_enrichment_queued"
+                  || uiState === "organizing_transactions"
+                  || uiState === "sync_taking_longer_than_expected"
+                    ? "Refresh sync status"
+                    : "Refresh status"
+                }
                 onPress={() => {
                   void handleManualRefresh();
                 }}

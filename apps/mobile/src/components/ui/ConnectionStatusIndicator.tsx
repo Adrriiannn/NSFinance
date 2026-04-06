@@ -8,6 +8,9 @@ export type ConnectionStatus =
   | "awaiting_consent"
   | "connected_pending_sync"
   | "syncing_data"
+  | "import_complete_enrichment_queued"
+  | "organizing_transactions"
+  | "sync_taking_longer_than_expected"
   | "synced"
   | "failed"
   | "reauth_required";
@@ -46,6 +49,21 @@ const statusConfig: Record<
     color: palette.success,
     helper: "Your bank is connected. We are importing account details and transactions now."
   },
+  import_complete_enrichment_queued: {
+    label: "Import complete",
+    color: palette.success,
+    helper: "Bank data is imported. Transaction organization is queued."
+  },
+  organizing_transactions: {
+    label: "Organizing transactions",
+    color: palette.success,
+    helper: "Bank data is imported. We are categorizing and linking transactions now."
+  },
+  sync_taking_longer_than_expected: {
+    label: "Sync taking longer",
+    color: palette.caution,
+    helper: "Status reconciliation is in progress. Tap Refresh to update now."
+  },
   synced: {
     label: "Synced",
     color: palette.success,
@@ -66,7 +84,8 @@ const statusConfig: Record<
 const animatedStatuses = new Set<ConnectionStatus>([
   "opening_bank",
   "awaiting_consent",
-  "syncing_data"
+  "syncing_data",
+  "organizing_transactions"
 ]);
 
 export function ConnectionStatusIndicator({ status, helperText }: ConnectionStatusIndicatorProps) {

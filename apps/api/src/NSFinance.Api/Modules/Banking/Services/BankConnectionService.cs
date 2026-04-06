@@ -33,6 +33,15 @@ public sealed class BankConnectionService(
         BankConnectionStatuses.DisconnectFailed
     ];
     private const int DeterministicEnrichmentCurrentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+    private static readonly TimeSpan SyncingStaleThreshold = TimeSpan.FromMinutes(12);
+
+    private const string SyncLifecyclePhaseConnecting = "connecting";
+    private const string SyncLifecyclePhaseImportingBankData = "importing_bank_data";
+    private const string SyncLifecyclePhaseImportCompleteEnrichmentQueued = "import_complete_enrichment_queued";
+    private const string SyncLifecyclePhaseOrganizingTransactions = "organizing_transactions";
+    private const string SyncLifecyclePhaseCompleted = "completed";
+    private const string SyncLifecyclePhaseSyncTakingLongerThanExpected = "sync_taking_longer_than_expected";
+    private const string SyncLifecyclePhaseAttentionRequired = "attention_required";
 
     private sealed record EnrichmentConnectionRow(
         Guid Id,
@@ -54,6 +63,12 @@ public sealed class BankConnectionService(
         int DeferredWaitingForCounterpartyCount,
         int CurrentEnrichedAfterStartCount,
         DateTime? LastUpdatedUtc);
+
+    private sealed record ConnectionSyncLifecycleResolution(
+        string Phase,
+        string Reason,
+        bool Reconciled,
+        bool StaleProtectionApplied);
     public async Task<OpenBankingConnection> CreateConnectionStartedAsync(
         Guid userId,
         string providerName,
@@ -214,9 +229,10 @@ public sealed class BankConnectionService(
         Guid userId,
         CancellationToken cancellationToken)
     {
+        IReadOnlyList<BankConnectionDto> connections;
         try
         {
-            return await ListConnectionsWithBrandingAsync(userId, cancellationToken);
+            connections = await ListConnectionsWithBrandingAsync(userId, cancellationToken);
         }
         catch (Exception ex) when (IsProviderBrandingSchemaMissing(ex))
         {
@@ -225,8 +241,10 @@ public sealed class BankConnectionService(
                 "Provider branding columns are missing from OpenBankingConnections. Falling back to legacy projection without branding metadata for userId={UserId}.",
                 userId);
 
-            return await ListConnectionsWithoutBrandingAsync(userId, cancellationToken);
+            connections = await ListConnectionsWithoutBrandingAsync(userId, cancellationToken);
         }
+
+        return await EnrichConnectionSyncLifecycleAsync(userId, connections, cancellationToken);
     }
 
     public async Task<BankConnectionDto?> GetConnectionSummaryAsync(
@@ -234,9 +252,10 @@ public sealed class BankConnectionService(
         Guid connectionId,
         CancellationToken cancellationToken)
     {
+        BankConnectionDto? summary;
         try
         {
-            return await GetConnectionSummaryWithBrandingAsync(userId, connectionId, cancellationToken);
+            summary = await GetConnectionSummaryWithBrandingAsync(userId, connectionId, cancellationToken);
         }
         catch (Exception ex) when (IsProviderBrandingSchemaMissing(ex))
         {
@@ -246,17 +265,26 @@ public sealed class BankConnectionService(
                 userId,
                 connectionId);
 
-            return await GetConnectionSummaryWithoutBrandingAsync(userId, connectionId, cancellationToken);
+            summary = await GetConnectionSummaryWithoutBrandingAsync(userId, connectionId, cancellationToken);
         }
+
+        if (summary is null)
+        {
+            return null;
+        }
+
+        var enriched = await EnrichConnectionSyncLifecycleAsync(userId, [summary], cancellationToken);
+        return enriched.Count == 0 ? null : enriched[0];
     }
 
     public async Task<ConnectedBanksOverviewDto> ListUserVisibleConnectionsAsync(
         Guid userId,
         CancellationToken cancellationToken)
     {
+        ConnectedBanksOverviewDto overview;
         try
         {
-            return await ListUserVisibleConnectionsWithBrandingAsync(userId, cancellationToken);
+            overview = await ListUserVisibleConnectionsWithBrandingAsync(userId, cancellationToken);
         }
         catch (Exception ex) when (IsProviderBrandingSchemaMissing(ex))
         {
@@ -265,8 +293,21 @@ public sealed class BankConnectionService(
                 "Provider branding columns are missing from OpenBankingConnections. Falling back to legacy connected-banks projection for userId={UserId}.",
                 userId);
 
-            return await ListUserVisibleConnectionsWithoutBrandingAsync(userId, cancellationToken);
+            overview = await ListUserVisibleConnectionsWithoutBrandingAsync(userId, cancellationToken);
         }
+
+        var combined = overview.ActiveConnections.Concat(overview.AttentionConnections).ToList();
+        var enriched = await EnrichConnectionSyncLifecycleAsync(userId, combined, cancellationToken);
+        var enrichedById = enriched.ToDictionary(x => x.Id);
+
+        var active = overview.ActiveConnections
+            .Select(x => enrichedById.TryGetValue(x.Id, out var mapped) ? mapped : x)
+            .ToList();
+        var attention = overview.AttentionConnections
+            .Select(x => enrichedById.TryGetValue(x.Id, out var mapped) ? mapped : x)
+            .ToList();
+
+        return new ConnectedBanksOverviewDto(active, attention);
     }
 
     public async Task<BankEnrichmentProgressDto> GetEnrichmentProgressAsync(
@@ -1792,6 +1833,237 @@ public sealed class BankConnectionService(
                 && !activeKeys.Contains(BuildUserVisibleDedupKey(x))));
 
         return new ConnectedBanksOverviewDto(active, attention);
+    }
+
+    private async Task<IReadOnlyList<BankConnectionDto>> EnrichConnectionSyncLifecycleAsync(
+        Guid userId,
+        IReadOnlyList<BankConnectionDto> connections,
+        CancellationToken cancellationToken)
+    {
+        if (connections.Count == 0)
+        {
+            return connections;
+        }
+
+        var connectionIds = connections
+            .Select(x => x.Id)
+            .Distinct()
+            .ToArray();
+
+        var linkedAccountCounts = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x => connectionIds.Contains(x.ConnectionId))
+            .GroupBy(x => x.ConnectionId)
+            .Select(group => new
+            {
+                ConnectionId = group.Key,
+                Count = group.Count()
+            })
+            .ToDictionaryAsync(x => x.ConnectionId, x => x.Count, cancellationToken);
+
+        var linkedFinancialAccountRows = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x => connectionIds.Contains(x.ConnectionId) && x.FinancialAccountId.HasValue)
+            .Select(x => new
+            {
+                x.ConnectionId,
+                FinancialAccountId = x.FinancialAccountId!.Value
+            })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var importedTransactionCountByConnectionId = new Dictionary<Guid, int>();
+        if (linkedFinancialAccountRows.Count > 0)
+        {
+            var financialAccountIds = linkedFinancialAccountRows
+                .Select(x => x.FinancialAccountId)
+                .Distinct()
+                .ToArray();
+
+            var transactionCountByFinancialAccountId = await dbContext.Transactions
+                .AsNoTracking()
+                .Where(x => financialAccountIds.Contains(x.FinancialAccountId))
+                .GroupBy(x => x.FinancialAccountId)
+                .Select(group => new
+                {
+                    FinancialAccountId = group.Key,
+                    Count = group.Count()
+                })
+                .ToDictionaryAsync(x => x.FinancialAccountId, x => x.Count, cancellationToken);
+
+            importedTransactionCountByConnectionId = linkedFinancialAccountRows
+                .GroupBy(x => x.ConnectionId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Sum(linked =>
+                        transactionCountByFinancialAccountId.TryGetValue(linked.FinancialAccountId, out var count)
+                            ? count
+                            : 0));
+        }
+
+        var enrichmentProgress = await GetEnrichmentProgressAsync(userId, cancellationToken);
+        var enrichmentByConnectionId = enrichmentProgress.Connections
+            .ToDictionary(x => x.ConnectionId);
+
+        var nowUtc = DateTime.UtcNow;
+
+        return connections
+            .Select(connection =>
+            {
+                linkedAccountCounts.TryGetValue(connection.Id, out var linkedAccountCount);
+                enrichmentByConnectionId.TryGetValue(connection.Id, out var enrichment);
+                importedTransactionCountByConnectionId.TryGetValue(connection.Id, out var importedTransactionCount);
+
+                var enrichmentStage = enrichment?.Stage;
+                var resolution = ResolveConnectionSyncLifecyclePhase(
+                    connection.Status,
+                    connection.LastSyncAttemptedUtc,
+                    connection.LastSuccessfulSyncUtc,
+                    connection.UpdatedUtc,
+                    linkedAccountCount,
+                    importedTransactionCount,
+                    enrichmentStage,
+                    nowUtc);
+
+                return connection with
+                {
+                    SyncLifecyclePhase = resolution.Phase,
+                    SyncLifecycleReason = resolution.Reason,
+                    SyncEnrichmentStage = enrichmentStage,
+                    LinkedAccountCount = linkedAccountCount,
+                    ImportedTransactionCount = importedTransactionCount,
+                    SyncStateReconciled = resolution.Reconciled,
+                    SyncStateStaleProtectionApplied = resolution.StaleProtectionApplied
+                };
+            })
+            .ToList();
+    }
+
+    private static ConnectionSyncLifecycleResolution ResolveConnectionSyncLifecyclePhase(
+        string status,
+        DateTime? lastSyncAttemptedUtc,
+        DateTime? lastSuccessfulSyncUtc,
+        DateTime connectionUpdatedUtc,
+        int linkedAccountCount,
+        int importedTransactionCount,
+        string? enrichmentStage,
+        DateTime nowUtc)
+    {
+        var normalizedStage = string.IsNullOrWhiteSpace(enrichmentStage)
+            ? null
+            : enrichmentStage.Trim().ToLowerInvariant();
+        var hasLinkedAccounts = linkedAccountCount > 0;
+        var hasImportedTransactions = importedTransactionCount > 0;
+        var hasAnySyncEvidence = lastSyncAttemptedUtc.HasValue || lastSuccessfulSyncUtc.HasValue;
+        var hasPostImportEvidence = hasLinkedAccounts && (hasImportedTransactions || hasAnySyncEvidence);
+
+        var stageIsQueued = normalizedStage is "queued_for_sync" or "needs_reclassification" or "waiting_for_first_sync";
+        var stageIsOrganizing = normalizedStage is "categorizing" or "waiting_for_counterparty";
+        var stageIsCompleted = normalizedStage is "completed";
+
+        var statusIsSyncingLike = status is BankConnectionStatuses.ConnectedPendingSync
+            or BankConnectionStatuses.SyncPending
+            or BankConnectionStatuses.Connected;
+
+        var syncReferenceUtc = MaxUtc(MaxUtc(lastSuccessfulSyncUtc, lastSyncAttemptedUtc), connectionUpdatedUtc);
+        var staleSyncPending =
+            statusIsSyncingLike
+            && syncReferenceUtc.HasValue
+            && nowUtc - syncReferenceUtc.Value >= SyncingStaleThreshold;
+
+        if (status is BankConnectionStatuses.ConnectionStarted or BankConnectionStatuses.ConsentInProgress)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseConnecting,
+                "connection_authorization_in_progress",
+                Reconciled: false,
+                StaleProtectionApplied: false);
+        }
+
+        if (status is BankConnectionStatuses.ReauthRequired
+            or BankConnectionStatuses.Expired
+            or BankConnectionStatuses.Revoked
+            or BankConnectionStatuses.DisconnectFailed
+            or BankConnectionStatuses.DisconnectPending
+            or BankConnectionStatuses.Failed)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseAttentionRequired,
+                "connection_requires_attention",
+                Reconciled: false,
+                StaleProtectionApplied: false);
+        }
+
+        if (stageIsCompleted || status == BankConnectionStatuses.Synced)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseCompleted,
+                stageIsCompleted ? "enrichment_stage_completed" : "connection_status_synced",
+                Reconciled: statusIsSyncingLike && status != BankConnectionStatuses.Synced,
+                StaleProtectionApplied: staleSyncPending);
+        }
+
+        if (stageIsOrganizing && hasPostImportEvidence)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseOrganizingTransactions,
+                $"enrichment_stage_{normalizedStage}",
+                Reconciled: statusIsSyncingLike,
+                StaleProtectionApplied: staleSyncPending);
+        }
+
+        if (stageIsQueued && hasPostImportEvidence)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseImportCompleteEnrichmentQueued,
+                $"enrichment_stage_{normalizedStage}",
+                Reconciled: statusIsSyncingLike,
+                StaleProtectionApplied: staleSyncPending);
+        }
+
+        if (statusIsSyncingLike)
+        {
+            if (hasPostImportEvidence)
+            {
+                return new ConnectionSyncLifecycleResolution(
+                    SyncLifecyclePhaseImportCompleteEnrichmentQueued,
+                    staleSyncPending
+                        ? "stale_sync_status_reconciled_post_import"
+                        : "import_evidence_present_waiting_for_enrichment",
+                    Reconciled: true,
+                    StaleProtectionApplied: staleSyncPending);
+            }
+
+            if (staleSyncPending)
+            {
+                return new ConnectionSyncLifecycleResolution(
+                    SyncLifecyclePhaseSyncTakingLongerThanExpected,
+                    "stale_sync_without_import_evidence",
+                    Reconciled: true,
+                    StaleProtectionApplied: true);
+            }
+
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseImportingBankData,
+                "awaiting_initial_import",
+                Reconciled: false,
+                StaleProtectionApplied: false);
+        }
+
+        if (hasPostImportEvidence)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseCompleted,
+                "post_import_evidence_without_syncing_status",
+                Reconciled: false,
+                StaleProtectionApplied: false);
+        }
+
+        return new ConnectionSyncLifecycleResolution(
+            SyncLifecyclePhaseConnecting,
+            "default_connecting_fallback",
+            Reconciled: false,
+            StaleProtectionApplied: false);
     }
 
     private async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsWithBrandingAsync(

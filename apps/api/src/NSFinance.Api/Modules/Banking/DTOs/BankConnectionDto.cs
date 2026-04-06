@@ -22,4 +22,11 @@ public sealed record BankConnectionDto(
     bool? SupportsDirectDebits = null,
     bool? SupportsStandingOrders = null,
     string? ConnectedFullName = null,
-    DateTime? IdentityFetchedUtc = null);
+    DateTime? IdentityFetchedUtc = null,
+    string? SyncLifecyclePhase = null,
+    string? SyncLifecycleReason = null,
+    string? SyncEnrichmentStage = null,
+    int? LinkedAccountCount = null,
+    int? ImportedTransactionCount = null,
+    bool? SyncStateReconciled = null,
+    bool? SyncStateStaleProtectionApplied = null);

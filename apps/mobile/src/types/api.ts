@@ -601,6 +601,21 @@ export type BankConnectionDto = {
   supportsStandingOrders: boolean | null;
   connectedFullName: string | null;
   identityFetchedUtc: string | null;
+  syncLifecyclePhase?:
+    | "connecting"
+    | "importing_bank_data"
+    | "import_complete_enrichment_queued"
+    | "organizing_transactions"
+    | "completed"
+    | "sync_taking_longer_than_expected"
+    | "attention_required"
+    | null;
+  syncLifecycleReason?: string | null;
+  syncEnrichmentStage?: string | null;
+  linkedAccountCount?: number | null;
+  importedTransactionCount?: number | null;
+  syncStateReconciled?: boolean | null;
+  syncStateStaleProtectionApplied?: boolean | null;
   historicalEnrichmentInProgress?: boolean | null;
   historicalEnrichmentCompleted?: boolean | null;
   historicalEnrichmentProgressPercent?: number | null;
