@@ -464,6 +464,7 @@ public sealed class BankSyncService(
         var now = DateTime.UtcNow;
         var isInitialBackfill = await IsInitialBackfillPendingAsync(connection, now, cancellationToken);
         var transactionSyncMode = isInitialBackfill ? "initial_backfill" : "incremental_sync";
+        var sameUserUniverseSizeBeforeSync = (await LoadLinkedFinancialAccountIdsAsync(connection.UserId, cancellationToken)).Count;
 
         if (isInitialBackfill && !connection.InitialBackfillStartedUtc.HasValue)
         {
@@ -545,6 +546,7 @@ public sealed class BankSyncService(
         var projectedBackfillRowsEvaluated = 0;
         var projectedBackfillRowsDeferred = 0;
         var projectedCandidatePoolSize = 0;
+        var projectedTransactionIdsPendingDeterministicReclassification = new HashSet<Guid>();
         var directDebitsSynced = 0;
         var standingOrdersSynced = 0;
         var identityInfoSynced = false;
@@ -844,6 +846,8 @@ public sealed class BankSyncService(
             projectedBackfillRowsEvaluated += transactionUpsert.ProjectedBackfillRowsEvaluated;
             projectedBackfillRowsDeferred += transactionUpsert.ProjectedBackfillRowsDeferred;
             projectedCandidatePoolSize += transactionUpsert.ProjectedCandidatePoolSize;
+            projectedTransactionIdsPendingDeterministicReclassification.UnionWith(
+                transactionUpsert.ProjectedTransactionIdsForDeterministicReclassification);
 
             logger.LogInformation(
                 "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} fetched={Fetched} rawInserted={RawInserted} rawUpdated={RawUpdated} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedFromStatusTransition={ProjectedFromStatusTransition} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbookedFetched={ProjectedSkippedUnbookedFetched} projectedSkippedUnbookedBackfill={ProjectedSkippedUnbookedBackfill} projectedSkippedDuplicate={ProjectedSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} fetchElapsedMs={FetchElapsedMs} upsertElapsedMs={UpsertElapsedMs}",
@@ -1184,6 +1188,26 @@ public sealed class BankSyncService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        var sameUserUniverseSizeAfterSync = (await LoadLinkedFinancialAccountIdsAsync(connection.UserId, cancellationToken)).Count;
+        var sameUserUniverseExpanded = sameUserUniverseSizeAfterSync > sameUserUniverseSizeBeforeSync;
+        var newlyImportedRowsMarkedForDeterministicReclassification =
+            await MarkSpecificTransactionsForDeterministicReclassificationAsync(
+                projectedTransactionIdsPendingDeterministicReclassification,
+                now,
+                cancellationToken);
+        var universeExpansionRowsInvalidated = sameUserUniverseExpanded
+            ? await InvalidateTransferRowsForSameUserUniverseExpansionAsync(connection.UserId, now, cancellationToken)
+            : 0;
+
+        if (newlyImportedRowsMarkedForDeterministicReclassification > 0 || universeExpansionRowsInvalidated > 0)
+        {
+            connection.NeedsHistoricalReclassification = true;
+            connection.HistoricalEnrichmentStartedUtc = null;
+            connection.HistoricalEnrichmentCompletedUtc = null;
+            connection.HistoricalEnrichmentCheckpointUtc = null;
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
         var dataChanged =
             transactionsImported > 0
             || cardTransactionsImported > 0
@@ -1192,7 +1216,9 @@ public sealed class BankSyncService(
             || balancesSynced > 0
             || cardBalancesSynced > 0
             || linkedTransfersMatched > 0
-            || relationshipRowsUpserted > 0;
+            || relationshipRowsUpserted > 0
+            || newlyImportedRowsMarkedForDeterministicReclassification > 0
+            || universeExpansionRowsInvalidated > 0;
 
         await bankConnectionService.MarkConnectionStateAsync(
             connection,
@@ -1257,6 +1283,11 @@ public sealed class BankSyncService(
                 projectedBackfillRowsEvaluated,
                 projectedBackfillRowsDeferred,
                 projectedCandidatePoolSize,
+                sameUserUniverseSizeBeforeSync,
+                sameUserUniverseSizeAfterSync,
+                sameUserUniverseExpanded,
+                newlyImportedRowsMarkedForDeterministicReclassification,
+                universeExpansionRowsInvalidated,
                 cardsSynced,
                 cardBalancesSynced,
                 cardTransactionsImported,
@@ -1582,7 +1613,18 @@ public sealed class BankSyncService(
         var projectedBackfillRowsEvaluated = 0;
         var projectedBackfillRowsDeferred = 0;
         var projectedCandidatePoolSize = 0;
+        var projectedTransactionIdsForDeterministicReclassification = new HashSet<Guid>();
         ProjectionReconciliationState? projectionState = null;
+
+        static void MarkProjectedForDeterministicReclassification(
+            HashSet<Guid> target,
+            Guid? projectedTransactionId)
+        {
+            if (projectedTransactionId.HasValue)
+            {
+                target.Add(projectedTransactionId.Value);
+            }
+        }
 
         if (linkedAccount.FinancialAccountId.HasValue)
         {
@@ -1646,6 +1688,9 @@ public sealed class BankSyncService(
                         row.Currency,
                         row.BookedAtUtc,
                         row.Description);
+                    MarkProjectedForDeterministicReclassification(
+                        projectedTransactionIdsForDeterministicReclassification,
+                        row.ProjectedTransactionId);
                     continue;
                 }
 
@@ -1660,6 +1705,9 @@ public sealed class BankSyncService(
                 dbContext.Transactions.Add(projected);
                 row.ProjectedTransactionId = projected.Id;
                 projectionState.KnownProjectedTransactionIds.Add(projected.Id);
+                MarkProjectedForDeterministicReclassification(
+                    projectedTransactionIdsForDeterministicReclassification,
+                    projected.Id);
                 projectedBackfilled++;
             }
 
@@ -1763,6 +1811,9 @@ public sealed class BankSyncService(
                 if (changed)
                 {
                     rawUpdated++;
+                    MarkProjectedForDeterministicReclassification(
+                        projectedTransactionIdsForDeterministicReclassification,
+                        existingRaw.ProjectedTransactionId);
                 }
                 else if (matchedByProviderId)
                 {
@@ -1862,6 +1913,9 @@ public sealed class BankSyncService(
                                 existingRaw.Currency,
                                 existingRaw.BookedAtUtc,
                                 existingRaw.Description);
+                            MarkProjectedForDeterministicReclassification(
+                                projectedTransactionIdsForDeterministicReclassification,
+                                existingRaw.ProjectedTransactionId);
                         }
                         else
                         {
@@ -1876,6 +1930,9 @@ public sealed class BankSyncService(
                             dbContext.Transactions.Add(projected);
                             existingRaw.ProjectedTransactionId = projected.Id;
                             projectionState.KnownProjectedTransactionIds.Add(projected.Id);
+                            MarkProjectedForDeterministicReclassification(
+                                projectedTransactionIdsForDeterministicReclassification,
+                                projected.Id);
 
                             if (!wasBooked && isNowBooked)
                             {
@@ -2007,6 +2064,9 @@ public sealed class BankSyncService(
                             providerTransaction.Currency,
                             providerTransaction.BookedAtUtc,
                             providerTransaction.Description);
+                        MarkProjectedForDeterministicReclassification(
+                            projectedTransactionIdsForDeterministicReclassification,
+                            rawTransaction.ProjectedTransactionId);
                     }
                     else
                     {
@@ -2021,6 +2081,9 @@ public sealed class BankSyncService(
                         dbContext.Transactions.Add(projected);
                         rawTransaction.ProjectedTransactionId = projected.Id;
                         projectionState.KnownProjectedTransactionIds.Add(projected.Id);
+                        MarkProjectedForDeterministicReclassification(
+                            projectedTransactionIdsForDeterministicReclassification,
+                            projected.Id);
                         projectedFromNewRaw++;
                         logger.LogDebug(
                             "Bank transaction projected from new raw row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey}",
@@ -2085,7 +2148,8 @@ public sealed class BankSyncService(
             projectedDuplicateCheckAttempts,
             projectedBackfillRowsEvaluated,
             projectedBackfillRowsDeferred,
-            projectedCandidatePoolSize);
+            projectedCandidatePoolSize,
+            projectedTransactionIdsForDeterministicReclassification.ToArray());
     }
 
     private async Task<ProjectionReconciliationState> BuildProjectionReconciliationStateAsync(
@@ -2737,7 +2801,8 @@ public sealed class BankSyncService(
         int ProjectedDuplicateCheckAttempts,
         int ProjectedBackfillRowsEvaluated,
         int ProjectedBackfillRowsDeferred,
-        int ProjectedCandidatePoolSize);
+        int ProjectedCandidatePoolSize,
+        IReadOnlyCollection<Guid> ProjectedTransactionIdsForDeterministicReclassification);
 
     private sealed record AccountTransactionFetchResult(
         IReadOnlyList<TrueLayerTransactionRecord> Transactions,
@@ -3230,6 +3295,236 @@ public sealed class BankSyncService(
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private async Task<int> MarkSpecificTransactionsForDeterministicReclassificationAsync(
+        IReadOnlyCollection<Guid> transactionIds,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (transactionIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var remainingIds = transactionIds.ToHashSet();
+        var touched = 0;
+
+        foreach (var trackedEntry in dbContext.ChangeTracker.Entries<Transaction>())
+        {
+            if (trackedEntry.State == EntityState.Deleted)
+            {
+                continue;
+            }
+
+            var row = trackedEntry.Entity;
+            if (!remainingIds.Contains(row.Id))
+            {
+                continue;
+            }
+
+            touched += MarkTransactionForDeterministicReclassification(row, now);
+            remainingIds.Remove(row.Id);
+        }
+
+        if (remainingIds.Count == 0)
+        {
+            return touched;
+        }
+
+        var persistedRows = await dbContext.Transactions
+            .Where(x => remainingIds.Contains(x.Id))
+            .ToListAsync(cancellationToken);
+
+        foreach (var row in persistedRows)
+        {
+            touched += MarkTransactionForDeterministicReclassification(row, now);
+        }
+
+        return touched;
+    }
+
+    private async Task<int> InvalidateTransferRowsForSameUserUniverseExpansionAsync(
+        Guid userId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count < 2)
+        {
+            return 0;
+        }
+
+        var candidateRows = await dbContext.Transactions
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                && x.DeterministicClassificationTerminal
+                && !x.NeedsDeterministicReclassification
+                && x.DeterministicClassificationVersion.HasValue
+                && x.DeterministicClassificationVersion.Value >= DeterministicEnrichmentCurrentVersion)
+            .ToListAsync(cancellationToken);
+
+        var touched = 0;
+        foreach (var row in candidateRows)
+        {
+            if (!ShouldInvalidateTransferRowForSameUserUniverseExpansion(row))
+            {
+                continue;
+            }
+
+            touched += MarkTransactionForDeterministicReclassification(row, now);
+        }
+
+        return touched;
+    }
+
+    private static int MarkTransactionForDeterministicReclassification(Transaction row, DateTime now)
+    {
+        var changed = false;
+        if (!row.NeedsDeterministicReclassification)
+        {
+            row.NeedsDeterministicReclassification = true;
+            changed = true;
+        }
+
+        var shouldSupersedeExistingResult = row.DeterministicClassificationVersion.HasValue
+            || row.DeterministicClassificationTerminal
+            || row.DeterministicClassificationStatus != DeterministicClassificationStatus.NotEvaluated;
+        if (shouldSupersedeExistingResult)
+        {
+            if (row.DeterministicClassificationStatus != DeterministicClassificationStatus.SupersededRecomputeRequired)
+            {
+                row.DeterministicClassificationStatus = DeterministicClassificationStatus.SupersededRecomputeRequired;
+                changed = true;
+            }
+
+            if (row.DeterministicClassificationTerminal)
+            {
+                row.DeterministicClassificationTerminal = false;
+                changed = true;
+            }
+
+            if (!row.DeterministicDeferredRetryEligible)
+            {
+                row.DeterministicDeferredRetryEligible = true;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            row.DeterministicLastRetryConsideredUtc = now;
+        }
+
+        return changed ? 1 : 0;
+    }
+
+    private static bool ShouldInvalidateTransferRowForSameUserUniverseExpansion(Transaction row)
+    {
+        if (!IsTransferFamilyRow(row))
+        {
+            return false;
+        }
+
+        if (!IsNoCounterpartTerminalOutcome(row))
+        {
+            return false;
+        }
+
+        return EvidenceShowsIncompleteSameUserUniverse(row.DeterministicReasonDetailJson);
+    }
+
+    private static bool IsTransferFamilyRow(Transaction row)
+    {
+        if (!string.IsNullOrWhiteSpace(row.DeterministicClassificationRuleKey)
+            && row.DeterministicClassificationRuleKey.Contains("bank_transfer", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var evidenceFamily = TryReadEvidenceFamily(row.DeterministicReasonDetailJson);
+        return string.Equals(evidenceFamily, "bank_account_transfer", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNoCounterpartTerminalOutcome(Transaction row)
+    {
+        return string.Equals(row.DeterministicReasonCode, DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart, StringComparison.Ordinal)
+               || string.Equals(row.DeterministicReasonCode, DeterministicClassificationReasonCodes.TransferDeferredExpiredNoCounterpart, StringComparison.Ordinal);
+    }
+
+    private static bool EvidenceShowsIncompleteSameUserUniverse(string? evidenceJson)
+    {
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(evidenceJson);
+            return EvidenceShowsIncompleteSameUserUniverse(document.RootElement, depth: 0);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool EvidenceShowsIncompleteSameUserUniverse(JsonElement element, int depth)
+    {
+        if (element.ValueKind != JsonValueKind.Object || depth > 3)
+        {
+            return false;
+        }
+
+        if (element.TryGetProperty("sameUserCandidateUniverseSize", out var universeSizeElement)
+            && universeSizeElement.ValueKind == JsonValueKind.Number
+            && universeSizeElement.TryGetInt32(out var universeSize)
+            && universeSize <= 1)
+        {
+            return true;
+        }
+
+        if (element.TryGetProperty("hasPlausibleSameUserCandidateUniverse", out var plausibleUniverseElement)
+            && plausibleUniverseElement.ValueKind == JsonValueKind.False)
+        {
+            return true;
+        }
+
+        if (element.TryGetProperty("fullCounterpartyUniversePresent", out var fullUniverseElement)
+            && fullUniverseElement.ValueKind == JsonValueKind.False)
+        {
+            return true;
+        }
+
+        if (element.TryGetProperty("hasCounterpartyAccounts", out var hasCounterpartyAccountsElement)
+            && hasCounterpartyAccountsElement.ValueKind == JsonValueKind.False)
+        {
+            return true;
+        }
+
+        if (element.TryGetProperty("pendingEvidence", out var pendingEvidenceElement)
+            && pendingEvidenceElement.ValueKind == JsonValueKind.String)
+        {
+            var nested = pendingEvidenceElement.GetString();
+            if (!string.IsNullOrWhiteSpace(nested))
+            {
+                try
+                {
+                    using var nestedDocument = JsonDocument.Parse(nested);
+                    if (EvidenceShowsIncompleteSameUserUniverse(nestedDocument.RootElement, depth + 1))
+                    {
+                        return true;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Ignore malformed nested evidence payloads.
+                }
+            }
+        }
+
+        return false;
     }
 
     private async Task<bool> HasStaleDeterministicRowsInWindowAsync(
@@ -7580,6 +7875,24 @@ public sealed class BankSyncService(
                 connectionId,
                 reason,
                 CancellationToken.None);
+
+            if (queueTask.IsCompleted)
+            {
+                try
+                {
+                    queueTask.GetAwaiter().GetResult();
+                    return true;
+                }
+                catch (Exception queueException)
+                {
+                    logger.LogWarning(
+                        queueException,
+                        "Unable to enqueue deterministic enrichment after sync connectionId={ConnectionId} reason={Reason}",
+                        connectionId,
+                        reason);
+                    return false;
+                }
+            }
 
             if (!queueTask.IsCompletedSuccessfully)
             {

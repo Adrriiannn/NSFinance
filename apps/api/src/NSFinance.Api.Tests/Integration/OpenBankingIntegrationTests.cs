@@ -214,6 +214,66 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task CallbackFlow_SecondAccountImport_ReprocessesTerminalNoCounterpartTransfers_WhenSameUserUniverseExpands()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SequentialUniverseExpansionTransferFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.second-account-universe-expansion@test.local");
+
+        var firstStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(firstStart.Succeeded);
+        var firstState = GetQueryValue(firstStart.Value!.AuthorizationUrl, "state");
+        var firstCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-a", firstState, null, null),
+            CancellationToken.None);
+        Assert.True(firstCallback.Succeeded);
+
+        var firstOnlyRows = await harness.DbContext.Transactions
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+        Assert.Single(firstOnlyRows);
+        var firstOnlyRow = firstOnlyRows[0];
+        Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, firstOnlyRow.DeterministicClassificationStatus);
+        Assert.Equal(DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart, firstOnlyRow.DeterministicReasonCode);
+        Assert.Contains("\"sameUserCandidateUniverseSize\":1", firstOnlyRow.DeterministicReasonDetailJson ?? string.Empty, StringComparison.Ordinal);
+
+        var secondStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(secondStart.Succeeded);
+        var secondState = GetQueryValue(secondStart.Value!.AuthorizationUrl, "state");
+        var secondCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-b", secondState, null, null),
+            CancellationToken.None);
+        Assert.True(secondCallback.Succeeded);
+
+        var rows = await harness.DbContext.Transactions
+            .OrderBy(x => x.Amount)
+            .ThenBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        Assert.Equal(2, rows.Count);
+        var debit = rows.Single(x => x.Amount < 0m);
+        var credit = rows.Single(x => x.Amount > 0m);
+
+        Assert.All(rows, row =>
+        {
+            Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, row.DeterministicClassificationStatus);
+            Assert.True(row.DeterministicClassificationVersion.HasValue);
+            Assert.False(string.IsNullOrWhiteSpace(row.DeterministicReasonCode));
+            Assert.False(string.IsNullOrWhiteSpace(row.DeterministicReasonDetailJson));
+            Assert.Equal("internal_transfer", row.DeterministicRelationshipType);
+            Assert.True(row.DeterministicLinkedTransactionId.HasValue);
+        });
+
+        Assert.Equal(credit.Id, debit.DeterministicLinkedTransactionId);
+        Assert.Equal(debit.Id, credit.DeterministicLinkedTransactionId);
+        Assert.Equal(TransactionTransferKind.LinkedInternal, debit.TransferKind);
+        Assert.Equal(TransactionTransferKind.LinkedInternal, credit.TransferKind);
+        Assert.NotEqual(DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart, debit.DeterministicReasonCode);
+    }
+
+    [Fact]
     public async Task GlobalSync_DeterministicOrganization_ReappliesLinkedTransferAndSavingsClassification_InSinglePipeline()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -5371,6 +5431,178 @@ public class OpenBankingIntegrationTests
             }
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler SequentialUniverseExpansionTransferFlowHandler()
+    {
+        var baseDateUtc = new DateTime(2026, 3, 30, 0, 0, 0, DateTimeKind.Utc);
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                var body = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync();
+                if (body.Contains("sequential-universe-a", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Json(HttpStatusCode.OK,
+                        """
+                        {
+                          "access_token":"access-token-sequential-universe-a",
+                          "refresh_token":"refresh-token-sequential-universe-a",
+                          "expires_in":1800,
+                          "scope":"accounts balance transactions offline_access"
+                        }
+                        """);
+                }
+
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-sequential-universe-b",
+                      "refresh_token":"refresh-token-sequential-universe-b",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            var accessToken = request.Headers.Authorization?.Parameter;
+            var firstImport = string.Equals(accessToken, "access-token-sequential-universe-a", StringComparison.Ordinal);
+            var secondImport = string.Equals(accessToken, "access-token-sequential-universe-b", StringComparison.Ordinal);
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                if (firstImport)
+                {
+                    return Json(HttpStatusCode.OK,
+                        """
+                        {
+                          "results": [
+                            {
+                              "account_id": "acc-sequential-universe-a",
+                              "display_name": "Primary Checking",
+                              "currency": "EUR",
+                              "account_type": "TRANSACTION",
+                              "provider": {
+                                "provider_id": "ob-provider-alpha",
+                                "display_name": "Provider Alpha"
+                              }
+                            }
+                          ]
+                        }
+                        """);
+                }
+
+                if (secondImport)
+                {
+                    return Json(HttpStatusCode.OK,
+                        """
+                        {
+                          "results": [
+                            {
+                              "account_id": "acc-sequential-universe-b",
+                              "display_name": "Secondary Spending",
+                              "currency": "EUR",
+                              "account_type": "TRANSACTION",
+                              "provider": {
+                                "provider_id": "ob-provider-beta",
+                                "display_name": "Provider Beta"
+                              }
+                            }
+                          ]
+                        }
+                        """);
+                }
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-sequential-universe-a/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 2500.00,
+                          "current": 2500.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T08:55:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-sequential-universe-b/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1600.00,
+                          "current": 1600.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T09:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-sequential-universe-a/transactions", StringComparison.Ordinal))
+            {
+                var debitTimestamp = baseDateUtc.AddHours(9).ToString("O");
+                return Json(HttpStatusCode.OK,
+                    $$"""
+                      {
+                        "results": [
+                          {
+                            "transaction_id":"tx-sequential-universe-debit-001",
+                            "normalised_provider_transaction_id":"norm-sequential-universe-debit-001",
+                            "amount":-1.00,
+                            "currency":"EUR",
+                            "timestamp":"{{debitTimestamp}}",
+                            "description":"Outbound Transfer Holder Alpha",
+                            "transaction_type":"TRANSFER",
+                            "status":"booked"
+                          }
+                        ]
+                      }
+                      """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-sequential-universe-b/transactions", StringComparison.Ordinal))
+            {
+                var creditTimestamp = baseDateUtc.AddHours(9).AddMinutes(6).ToString("O");
+                return Json(HttpStatusCode.OK,
+                    $$"""
+                      {
+                        "results": [
+                          {
+                            "transaction_id":"tx-sequential-universe-credit-001",
+                            "normalised_provider_transaction_id":"norm-sequential-universe-credit-001",
+                            "amount":1.00,
+                            "currency":"EUR",
+                            "timestamp":"{{creditTimestamp}}",
+                            "description":"Inbound Transfer Holder Alpha",
+                            "transaction_type":"TRANSFER",
+                            "status":"booked"
+                          }
+                        ]
+                      }
+                      """);
+            }
+
+            if (request.Method == HttpMethod.Get
+                && (path.EndsWith("/data/v1/accounts/acc-sequential-universe-a/transactions/pending", StringComparison.Ordinal)
+                    || path.EndsWith("/data/v1/accounts/acc-sequential-universe-b/transactions/pending", StringComparison.Ordinal)))
             {
                 return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }
