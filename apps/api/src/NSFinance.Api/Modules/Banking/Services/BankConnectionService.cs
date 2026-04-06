@@ -666,6 +666,9 @@ public sealed class BankConnectionService(
                     TransferTieBreakReason = evidence.TransferTieBreakReason,
                     TransferHasHighConfidenceReferenceOverlap = evidence.TransferHasHighConfidenceReferenceOverlap,
                     TransferNamesOnlyWeakSupport = evidence.TransferNamesOnlyWeakSupport,
+                    TransferRoutingInitiallyBlockedExternalCounterpartyRisk = evidence.TransferRoutingInitiallyBlockedExternalCounterpartyRisk,
+                    TransferSameUserCandidateUniverseOverrideApplied = evidence.TransferSameUserCandidateUniverseOverrideApplied,
+                    TransferHighConfidenceInboundReferencesPresent = evidence.TransferHighConfidenceInboundReferencesPresent,
                     WaitingForFutureDataPlausible = waitingForFutureDataPlausible,
                     NonTerminalExplanation = nonTerminalExplanation,
                     DeterministicSemanticFamily = deterministicSemanticFamily,
@@ -737,7 +740,15 @@ public sealed class BankConnectionService(
             .ThenBy(x => x.CandidateFamily, StringComparer.Ordinal)
             .ToList();
 
-        var sampleDecisions = unresolvedRows
+        var sampleRows = enrichedRows
+            .Where(x =>
+                !x.DeterministicClassificationTerminal
+                || x.DeterministicClassificationStatus == DeterministicClassificationStatus.RejectedAmbiguousMatch
+                || string.Equals(x.CandidateFamily, "bank_account_transfer", StringComparison.Ordinal)
+                || string.Equals(x.DeterministicRelationshipType, "internal_transfer", StringComparison.Ordinal))
+            .ToList();
+
+        var sampleDecisions = sampleRows
             .OrderByDescending(x => x.DeterministicClassificationEvaluatedUtc)
             .ThenByDescending(x => x.CandidateCounterpartCount)
             .Take(120)
@@ -783,6 +794,9 @@ public sealed class BankConnectionService(
                 x.TransferTieBreakReason,
                 x.TransferHasHighConfidenceReferenceOverlap,
                 x.TransferNamesOnlyWeakSupport,
+                x.TransferRoutingInitiallyBlockedExternalCounterpartyRisk,
+                x.TransferSameUserCandidateUniverseOverrideApplied,
+                x.TransferHighConfidenceInboundReferencesPresent,
                 x.WaitingForFutureDataPlausible,
                 x.NonTerminalExplanation,
                 x.DeterministicSemanticFamily,
@@ -2787,6 +2801,9 @@ public sealed class BankConnectionService(
         string? TransferTieBreakReason,
         bool TransferHasHighConfidenceReferenceOverlap,
         bool TransferNamesOnlyWeakSupport,
+        bool TransferRoutingInitiallyBlockedExternalCounterpartyRisk,
+        bool TransferSameUserCandidateUniverseOverrideApplied,
+        bool TransferHighConfidenceInboundReferencesPresent,
         bool SavingsRoutingAllowed,
         string? SavingsRoutingTier,
         bool SavingsProviderStructuralSupport,
@@ -2799,7 +2816,7 @@ public sealed class BankConnectionService(
     {
         if (string.IsNullOrWhiteSpace(evidenceJson))
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, false, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, false, false, false, false, false, null, false, false, 0, false, 0);
         }
 
         try
@@ -2835,6 +2852,12 @@ public sealed class BankConnectionService(
                                                || TryReadDiagnosticsJsonBool(root, "bestWeakNamesOnlySupport")
                                                || TryReadDiagnosticsJsonBool(root, "weakNameSupportOnly")
                                                || TryReadNestedDiagnosticsJsonBool(root, "referenceOverlapSummary", "namesOnlyWeakSupport");
+            var transferRoutingInitiallyBlockedExternalCounterpartyRisk =
+                TryReadDiagnosticsJsonBool(root, "routingInitiallyBlockedExternalCounterpartyRisk");
+            var transferSameUserCandidateUniverseOverrideApplied =
+                TryReadDiagnosticsJsonBool(root, "sameUserCandidateUniverseOverrideApplied");
+            var transferHighConfidenceInboundReferencesPresent =
+                TryReadDiagnosticsJsonBool(root, "highConfidenceInboundReferencesPresent");
             var savingsRoutingAllowed = TryReadDiagnosticsJsonBool(root, "savingsRoutingAllowed");
             var savingsRoutingTier = TryReadDiagnosticsJsonString(root, "savingsRoutingTier");
             var savingsProviderStructuralSupport = TryReadDiagnosticsJsonBool(root, "providerStructuralSupport");
@@ -2854,6 +2877,9 @@ public sealed class BankConnectionService(
                 transferTieBreakReason,
                 transferHighConfidenceOverlap,
                 transferNamesOnlyWeakSupport,
+                transferRoutingInitiallyBlockedExternalCounterpartyRisk,
+                transferSameUserCandidateUniverseOverrideApplied,
+                transferHighConfidenceInboundReferencesPresent,
                 savingsRoutingAllowed,
                 savingsRoutingTier,
                 savingsProviderStructuralSupport,
@@ -2864,7 +2890,7 @@ public sealed class BankConnectionService(
         }
         catch (JsonException)
         {
-            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, false, false, null, false, false, 0, false, 0);
+            return new DeterministicEvidenceParseResult(null, null, null, false, false, null, false, null, false, false, false, false, false, false, null, false, false, 0, false, 0);
         }
     }
 

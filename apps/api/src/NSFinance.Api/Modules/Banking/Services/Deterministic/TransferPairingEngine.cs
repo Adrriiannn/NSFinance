@@ -10,6 +10,9 @@ public sealed class TransferPairingEngine
     private const int MutualBestMinimumMargin = 2;
     private const int AmbiguityMaxScoreGap = 1;
     private const int MaxClusterRowsPerSide = 8;
+    private const int ExternalCounterpartyPenalty = 6;
+    private const int ExternalCounterpartyPenaltyWithSameUserOverride = 1;
+    private const int SameUserUniverseOverrideScoreBoost = 8;
 
     public sealed record TransferPairingAnalysis(
         IReadOnlyDictionary<Guid, TransferPendingDecision> PendingDecisions,
@@ -21,8 +24,11 @@ public sealed class TransferPairingEngine
         IReadOnlyDictionary<Guid, DeterministicTransactionFeature> featuresById,
         IReadOnlySet<Guid> pairedTransactionIds)
     {
+        var routingDecisionsById = BuildRoutingDecisions(featuresById.Values.ToList());
         var transferLikeFeatures = featuresById.Values
-            .Where(LooksTransferLike)
+            .Where(feature =>
+                routingDecisionsById.TryGetValue(feature.TransactionId, out var routing)
+                && routing.IncludeInTransferMatching)
             .ToList();
         if (transferLikeFeatures.Count == 0)
         {
@@ -73,7 +79,9 @@ public sealed class TransferPairingEngine
                     source,
                     candidate,
                     duplicateClusterMember,
-                    duplicateClusterSize))
+                    duplicateClusterSize,
+                    routingDecisionsById[source.TransactionId],
+                    routingDecisionsById[candidate.TransactionId]))
                 .OrderByDescending(x => x.ReferenceConfidenceRank)
                 .ThenByDescending(x => x.ReferenceOverlapScore)
                 .ThenByDescending(x => x.HighConfidenceReferenceOverlap)
@@ -124,7 +132,11 @@ public sealed class TransferPairingEngine
 
             if (candidates.Count == 0)
             {
-                var hasExplicitCounterpartyExpectation = HasExplicitCounterpartyExpectation(feature, duplicateClusterMember);
+                var routingDecision = routingDecisionsById[feature.TransactionId];
+                var hasExplicitCounterpartyExpectation = HasExplicitCounterpartyExpectation(
+                    feature,
+                    duplicateClusterMember,
+                    routingDecision.SameUserCandidateUniverseOverrideApplied);
                 var status = feature.IsPending
                     ? DeterministicClassificationStatus.DeferredWaitingForMoreContext
                     : feature.HasCounterpartyAccounts && hasExplicitCounterpartyExpectation
@@ -164,7 +176,12 @@ public sealed class TransferPairingEngine
                         feature.HasTransferKeyword,
                         feature.HasProviderTransferHint,
                         feature.AccountHint,
-                        feature.NearbySameAmountCount
+                        feature.NearbySameAmountCount,
+                        routingInitiallyBlockedExternalCounterpartyRisk = routingDecision.InitiallyBlockedByExternalCounterpartyRisk,
+                        sameUserCandidateUniverseOverrideApplied = routingDecision.SameUserCandidateUniverseOverrideApplied,
+                        hasPlausibleOppositeDirectionUniverse = routingDecision.HasPlausibleOppositeDirectionUniverse,
+                        strongOppositeStructuredEvidencePresent = routingDecision.HasStrongOppositeStructuredEvidence,
+                        sameUserCandidateUniverseSize = routingDecision.SameUserCandidateUniverseSize
                     }));
                 continue;
             }
@@ -195,7 +212,9 @@ public sealed class TransferPairingEngine
                         topCandidateReferenceOverlap = topCandidate?.ReferenceOverlapScore,
                         topCandidateWeakNamesOnlySupport = topCandidate?.NamesOnlyOverlapPenaltyApplied,
                         topCandidateTimePrecisionMode = topCandidate?.TimePrecisionMode,
-                        stableOrderingUsed = false
+                        stableOrderingUsed = false,
+                        routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionsById[feature.TransactionId].InitiallyBlockedByExternalCounterpartyRisk,
+                        sameUserCandidateUniverseOverrideApplied = routingDecisionsById[feature.TransactionId].SameUserCandidateUniverseOverrideApplied
                     }));
                 continue;
             }
@@ -232,7 +251,9 @@ public sealed class TransferPairingEngine
                             bestWeakNamesOnlySupport = best.NamesOnlyOverlapPenaltyApplied,
                             nextWeakNamesOnlySupport = next.NamesOnlyOverlapPenaltyApplied,
                             bestTimePrecisionMode = best.TimePrecisionMode,
-                            nextTimePrecisionMode = next.TimePrecisionMode
+                            nextTimePrecisionMode = next.TimePrecisionMode,
+                            routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionsById[feature.TransactionId].InitiallyBlockedByExternalCounterpartyRisk,
+                            sameUserCandidateUniverseOverrideApplied = routingDecisionsById[feature.TransactionId].SameUserCandidateUniverseOverrideApplied
                         }));
                     continue;
                 }
@@ -240,7 +261,11 @@ public sealed class TransferPairingEngine
 
             var bestCandidate = candidates[0];
             var bestScoreStrongEnough = bestCandidate.Score >= MinScoreForStrongDeferredCounterparty;
-            var explicitCounterpartyExpectation = HasExplicitCounterpartyExpectation(feature, duplicateClusterMember);
+            var routingDecisionForFeature = routingDecisionsById[feature.TransactionId];
+            var explicitCounterpartyExpectation = HasExplicitCounterpartyExpectation(
+                feature,
+                duplicateClusterMember,
+                routingDecisionForFeature.SameUserCandidateUniverseOverrideApplied);
             if (!feature.IsBooked || !bestCandidate.Candidate.IsBooked || feature.IsPending || bestCandidate.Candidate.IsPending)
             {
                 pending[feature.TransactionId] = new TransferPendingDecision(
@@ -262,7 +287,9 @@ public sealed class TransferPairingEngine
                         candidateCount = candidates.Count,
                         bestScore = bestCandidate.Score,
                         referenceOverlap = bestCandidate.ReferenceOverlapScore,
-                        timePrecisionMode = bestCandidate.TimePrecisionMode
+                        timePrecisionMode = bestCandidate.TimePrecisionMode,
+                        routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionForFeature.InitiallyBlockedByExternalCounterpartyRisk,
+                        sameUserCandidateUniverseOverrideApplied = routingDecisionForFeature.SameUserCandidateUniverseOverrideApplied
                     }));
                 continue;
             }
@@ -289,7 +316,9 @@ public sealed class TransferPairingEngine
                         bestScore = bestCandidate.Score,
                         bestReferenceOverlap = bestCandidate.ReferenceOverlapScore,
                         explicitCounterpartyExpectation,
-                        duplicateClusterMember
+                        duplicateClusterMember,
+                        routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionForFeature.InitiallyBlockedByExternalCounterpartyRisk,
+                        sameUserCandidateUniverseOverrideApplied = routingDecisionForFeature.SameUserCandidateUniverseOverrideApplied
                     }));
                 continue;
             }
@@ -310,10 +339,12 @@ public sealed class TransferPairingEngine
                     family = "bank_account_transfer",
                     resolutionOutcome = "deferred_missing_counterparty",
                     candidateId = bestCandidate.Candidate.TransactionId,
-                    candidateCount = candidates.Count,
-                    bestScore = bestCandidate.Score,
-                    bestReferenceOverlap = bestCandidate.ReferenceOverlapScore,
-                    bestTimePrecisionMode = bestCandidate.TimePrecisionMode
+                        candidateCount = candidates.Count,
+                        bestScore = bestCandidate.Score,
+                        bestReferenceOverlap = bestCandidate.ReferenceOverlapScore,
+                        bestTimePrecisionMode = bestCandidate.TimePrecisionMode,
+                        routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionForFeature.InitiallyBlockedByExternalCounterpartyRisk,
+                        sameUserCandidateUniverseOverrideApplied = routingDecisionForFeature.SameUserCandidateUniverseOverrideApplied
                 }));
         }
 
@@ -724,6 +755,9 @@ public sealed class TransferPairingEngine
     {
         var debit = edge.Source.IsOutflow ? edge.Source : edge.Candidate;
         var credit = edge.Source.IsInflow ? edge.Source : edge.Candidate;
+        var highConfidenceInboundReferencesPresent =
+            (edge.Source.IsInflow && edge.Source.HasHighConfidenceReferenceSignals)
+            || (edge.Candidate.IsInflow && edge.Candidate.HasHighConfidenceReferenceSignals);
         var evidence = JsonSerializer.Serialize(new
         {
             family = "bank_account_transfer",
@@ -766,7 +800,15 @@ public sealed class TransferPairingEngine
             stableOrderingUsed,
             stableOrderDistance = edge.StableOrderDistance,
             weakNameSupportOnly = namesOnlyWeakSupport,
-            finalTieBreakReason = tieBreakReason
+            finalTieBreakReason = tieBreakReason,
+            routingInitiallyBlockedExternalCounterpartyRisk =
+                edge.SourceInitiallyBlockedExternalCounterpartyRisk
+                || edge.CandidateInitiallyBlockedExternalCounterpartyRisk,
+            sameUserCandidateUniverseOverrideApplied = edge.SameUserCandidateUniverseOverrideApplied,
+            hasPlausibleSameUserCandidateUniverse = edge.SameUserCandidateUniverseSize > 1,
+            strongOppositeStructuredEvidencePresent = edge.StrongOppositeStructuredEvidencePresent,
+            sameUserCandidateUniverseSize = edge.SameUserCandidateUniverseSize,
+            highConfidenceInboundReferencesPresent
         });
 
         var decision = new TransferPairDecision(
@@ -783,13 +825,93 @@ public sealed class TransferPairingEngine
         claimed.Add(credit.TransactionId);
     }
 
-    private static bool LooksTransferLike(DeterministicTransactionFeature feature)
+    private static Dictionary<Guid, TransferRoutingDecision> BuildRoutingDecisions(
+        IReadOnlyList<DeterministicTransactionFeature> features)
     {
-        if (feature.LooksLikeExternalCounterparty)
+        var decisions = new Dictionary<Guid, TransferRoutingDecision>(features.Count);
+        var sameUserCandidateUniverseSize = features
+            .Select(x => x.FinancialAccountId)
+            .Distinct()
+            .Count();
+
+        foreach (var feature in features)
         {
-            return false;
+            var initiallyBlockedByExternalCounterpartyRisk = feature.LooksLikeExternalCounterparty;
+            var includeByBaseSignals = LooksTransferLikeWithoutExternalBlock(feature);
+            var overrideDecision = EvaluateSameUserCandidateUniverseOverride(
+                feature,
+                features,
+                sameUserCandidateUniverseSize);
+            var includeInTransferMatching = initiallyBlockedByExternalCounterpartyRisk
+                ? overrideDecision.OverrideApplied
+                : includeByBaseSignals;
+
+            decisions[feature.TransactionId] = new TransferRoutingDecision(
+                IncludeInTransferMatching: includeInTransferMatching,
+                InitiallyBlockedByExternalCounterpartyRisk: initiallyBlockedByExternalCounterpartyRisk,
+                SameUserCandidateUniverseOverrideApplied: overrideDecision.OverrideApplied,
+                HasPlausibleOppositeDirectionUniverse: overrideDecision.HasPlausibleOppositeDirectionUniverse,
+                HasStrongOppositeStructuredEvidence: overrideDecision.HasStrongOppositeStructuredEvidence,
+                SameUserCandidateUniverseSize: sameUserCandidateUniverseSize);
         }
 
+        return decisions;
+    }
+
+    private static SameUserOverrideEvaluation EvaluateSameUserCandidateUniverseOverride(
+        DeterministicTransactionFeature source,
+        IReadOnlyList<DeterministicTransactionFeature> allFeatures,
+        int sameUserCandidateUniverseSize)
+    {
+        if (!source.LooksLikeExternalCounterparty
+            || !source.HasCounterpartyAccounts
+            || sameUserCandidateUniverseSize < 2)
+        {
+            return new SameUserOverrideEvaluation(
+                OverrideApplied: false,
+                HasPlausibleOppositeDirectionUniverse: false,
+                HasStrongOppositeStructuredEvidence: false);
+        }
+
+        var oppositeCandidates = allFeatures
+            .Where(candidate =>
+                candidate.TransactionId != source.TransactionId
+                && candidate.FinancialAccountId != source.FinancialAccountId
+                && candidate.Currency == source.Currency
+                && candidate.AbsoluteAmount == source.AbsoluteAmount
+                && candidate.IsOutflow != source.IsOutflow
+                && Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalHours) <= DeterministicCategorizationConstants.TransferCandidateWindowHours)
+            .ToList();
+        var hasPlausibleOppositeDirectionUniverse = oppositeCandidates.Count > 0;
+        if (!hasPlausibleOppositeDirectionUniverse)
+        {
+            return new SameUserOverrideEvaluation(
+                OverrideApplied: false,
+                HasPlausibleOppositeDirectionUniverse: false,
+                HasStrongOppositeStructuredEvidence: false);
+        }
+
+        var hasStrongOppositeStructuredEvidence = oppositeCandidates.Any(IsStrongStructuredTransferEvidence);
+        var oppositeSideTransferPlausible = oppositeCandidates.Any(LooksTransferLikeWithoutExternalBlock);
+        var overrideApplied = hasStrongOppositeStructuredEvidence && oppositeSideTransferPlausible;
+
+        return new SameUserOverrideEvaluation(
+            OverrideApplied: overrideApplied,
+            HasPlausibleOppositeDirectionUniverse: hasPlausibleOppositeDirectionUniverse,
+            HasStrongOppositeStructuredEvidence: hasStrongOppositeStructuredEvidence);
+    }
+
+    private static bool IsStrongStructuredTransferEvidence(DeterministicTransactionFeature feature)
+    {
+        return feature.HasHighConfidenceReferenceSignals
+               || feature.HasProviderSpecificTransferMarker
+               || feature.NarrativeSignals.MachineReferenceTokens.Count > 0
+               || feature.NarrativeSignals.ProviderSpecificReferenceTokens.Count > 0
+               || feature.NarrativeSignals.PaymentSystemMarkers.Count > 0;
+    }
+
+    private static bool LooksTransferLikeWithoutExternalBlock(DeterministicTransactionFeature feature)
+    {
         if (feature.HasTransferKeyword
             || feature.HasProviderTransferHint
             || feature.AccountHint is not null)
@@ -815,9 +937,13 @@ public sealed class TransferPairingEngine
         DeterministicTransactionFeature source,
         DeterministicTransactionFeature candidate,
         bool duplicateClusterMember,
-        int duplicateClusterSize)
+        int duplicateClusterSize,
+        TransferRoutingDecision sourceRoutingDecision,
+        TransferRoutingDecision candidateRoutingDecision)
     {
-        var scoring = ScoreCandidate(source, candidate);
+        var scoring = ScoreCandidate(source, candidate, sourceRoutingDecision, candidateRoutingDecision);
+        var sameUserOverrideApplied = sourceRoutingDecision.SameUserCandidateUniverseOverrideApplied
+                                      || candidateRoutingDecision.SameUserCandidateUniverseOverrideApplied;
         return new CandidateEdge(
             Source: source,
             Candidate: candidate,
@@ -836,17 +962,29 @@ public sealed class TransferPairingEngine
             ReferenceConfidenceRank: scoring.ReferenceConfidenceRank,
             StableOrderDistance: Math.Abs(source.StableSequence - candidate.StableSequence),
             NamesOnlyOverlapPenaltyApplied: scoring.NamesOnlyOverlapPenaltyApplied,
+            SourceInitiallyBlockedExternalCounterpartyRisk: sourceRoutingDecision.InitiallyBlockedByExternalCounterpartyRisk,
+            CandidateInitiallyBlockedExternalCounterpartyRisk: candidateRoutingDecision.InitiallyBlockedByExternalCounterpartyRisk,
+            SameUserCandidateUniverseOverrideApplied: sameUserOverrideApplied,
+            StrongOppositeStructuredEvidencePresent: sourceRoutingDecision.HasStrongOppositeStructuredEvidence
+                                                    || candidateRoutingDecision.HasStrongOppositeStructuredEvidence,
+            SameUserCandidateUniverseSize: Math.Max(
+                sourceRoutingDecision.SameUserCandidateUniverseSize,
+                candidateRoutingDecision.SameUserCandidateUniverseSize),
             IsDuplicateClusterMember: duplicateClusterMember,
             DuplicateClusterSize: duplicateClusterSize);
     }
 
     private static CandidateScore ScoreCandidate(
         DeterministicTransactionFeature source,
-        DeterministicTransactionFeature candidate)
+        DeterministicTransactionFeature candidate,
+        TransferRoutingDecision sourceRoutingDecision,
+        TransferRoutingDecision candidateRoutingDecision)
     {
         var windowHours = Math.Abs((candidate.BookedAtUtc - source.BookedAtUtc).TotalHours);
         var timePrecisionMode = ResolveTimePrecisionMode(source.ProviderTimestampPrecision, candidate.ProviderTimestampPrecision);
         var timeScore = ResolveTimeScore(timePrecisionMode, windowHours);
+        var sameUserOverrideApplied = sourceRoutingDecision.SameUserCandidateUniverseOverrideApplied
+                                      || candidateRoutingDecision.SameUserCandidateUniverseOverrideApplied;
 
         var highConfidenceReferenceOverlap = CountOverlap(
             source.NarrativeSignals.HighConfidenceTokens,
@@ -913,7 +1051,14 @@ public sealed class TransferPairingEngine
 
         if (source.LooksLikeExternalCounterparty || candidate.LooksLikeExternalCounterparty)
         {
-            score -= 6;
+            score -= sameUserOverrideApplied
+                ? ExternalCounterpartyPenaltyWithSameUserOverride
+                : ExternalCounterpartyPenalty;
+        }
+
+        if (sameUserOverrideApplied)
+        {
+            score += SameUserUniverseOverrideScoreBoost;
         }
 
         var namesOnlyOverlap = mediumConfidenceOverlap > 0
@@ -1158,9 +1303,15 @@ public sealed class TransferPairingEngine
 
     private static bool HasExplicitCounterpartyExpectation(
         DeterministicTransactionFeature feature,
-        bool isDuplicateClusterMember)
+        bool isDuplicateClusterMember,
+        bool sameUserCandidateUniverseOverrideApplied)
     {
-        if (!feature.HasCounterpartyAccounts || feature.LooksLikeExternalCounterparty)
+        if (!feature.HasCounterpartyAccounts)
+        {
+            return false;
+        }
+
+        if (feature.LooksLikeExternalCounterparty && !sameUserCandidateUniverseOverrideApplied)
         {
             return false;
         }
@@ -1252,6 +1403,11 @@ public sealed class TransferPairingEngine
         int ReferenceConfidenceRank,
         long StableOrderDistance,
         bool NamesOnlyOverlapPenaltyApplied,
+        bool SourceInitiallyBlockedExternalCounterpartyRisk,
+        bool CandidateInitiallyBlockedExternalCounterpartyRisk,
+        bool SameUserCandidateUniverseOverrideApplied,
+        bool StrongOppositeStructuredEvidencePresent,
+        int SameUserCandidateUniverseSize,
         bool IsDuplicateClusterMember,
         int DuplicateClusterSize);
 
@@ -1287,6 +1443,19 @@ public sealed class TransferPairingEngine
         int MediumConfidenceOverlap,
         int ReferenceOverlapScore,
         int TotalWindowMinutes);
+
+    private sealed record TransferRoutingDecision(
+        bool IncludeInTransferMatching,
+        bool InitiallyBlockedByExternalCounterpartyRisk,
+        bool SameUserCandidateUniverseOverrideApplied,
+        bool HasPlausibleOppositeDirectionUniverse,
+        bool HasStrongOppositeStructuredEvidence,
+        int SameUserCandidateUniverseSize);
+
+    private sealed record SameUserOverrideEvaluation(
+        bool OverrideApplied,
+        bool HasPlausibleOppositeDirectionUniverse,
+        bool HasStrongOppositeStructuredEvidence);
 
     private sealed record ProviderCapabilitySummary(
         string ProviderKey,

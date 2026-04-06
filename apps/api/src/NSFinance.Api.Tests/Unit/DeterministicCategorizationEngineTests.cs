@@ -1157,6 +1157,251 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void TransferRouting_WeakNameOutgoing_NotHardBlocked_WhenStrongSameUserCandidateUniverseExists()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var weakOutgoing = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(11),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 1L);
+        var strongInbound = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080917464"],
+                providerSpecificReferenceTokens: ["ie26033080917464"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 2L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [weakOutgoing.TransactionId] = weakOutgoing,
+                [strongInbound.TransactionId] = strongInbound
+            },
+            new HashSet<Guid>());
+
+        Assert.True(analysis.ResolvedPairDecisions.ContainsKey(weakOutgoing.TransactionId));
+        using var evidence = JsonDocument.Parse(analysis.ResolvedPairDecisions[weakOutgoing.TransactionId].EvidenceJson);
+        Assert.True(evidence.RootElement.GetProperty("routingInitiallyBlockedExternalCounterpartyRisk").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("sameUserCandidateUniverseOverrideApplied").GetBoolean());
+    }
+
+    [Fact]
+    public void TransferRouting_WeakNameOutgoing_StillBlocked_WithoutSameUserUniverse()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var weakOutgoing = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(11),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: false,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 1L);
+        var strongInbound = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080917464"],
+                providerSpecificReferenceTokens: ["ie26033080917464"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 2L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [weakOutgoing.TransactionId] = weakOutgoing,
+                [strongInbound.TransactionId] = strongInbound
+            },
+            new HashSet<Guid>());
+
+        Assert.False(analysis.ResolvedPairDecisions.ContainsKey(weakOutgoing.TransactionId));
+        Assert.False(analysis.PendingDecisions.ContainsKey(weakOutgoing.TransactionId));
+    }
+
+    [Fact]
+    public void DuplicateCluster_AibStructuredInboundReferences_PreventZeroCandidateCollapse()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var outboundA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(11),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 10L);
+        var outboundB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(18),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 20L);
+        var inboundA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080917464"],
+                providerSpecificReferenceTokens: ["ie26033080917464"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 30L);
+        var inboundB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080924925"],
+                providerSpecificReferenceTokens: ["ie26033080924925"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 40L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [outboundA.TransactionId] = outboundA,
+                [outboundB.TransactionId] = outboundB,
+                [inboundA.TransactionId] = inboundA,
+                [inboundB.TransactionId] = inboundB
+            },
+            new HashSet<Guid>());
+
+        Assert.Equal(4, analysis.ResolvedPairDecisions.Count);
+        Assert.Contains(inboundA.TransactionId, analysis.ResolvedPairDecisions.Keys);
+        Assert.Contains(inboundB.TransactionId, analysis.ResolvedPairDecisions.Keys);
+    }
+
+    [Fact]
+    public void DuplicateCluster_CoarseTimestamp_UsesStableSequenceOnlyAfterHigherSignals()
+    {
+        TransferPairing_DuplicateCluster_UsesStableOrderingOnlyAsLastTieBreaker();
+    }
+
+    [Fact]
+    public void TransferMatcher_NameOnlyEvidence_DoesNotForceMatch()
+    {
+        TransferPairing_PersonalNameOnlyOverlap_DoesNotProveSameAccountTransfer();
+    }
+
+    [Fact]
+    public void TransferDiagnostics_SameUserOverride_AndFinalTieBreak_AreExposed()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var outboundA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(11),
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 10L);
+        var outboundB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(18),
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 20L);
+        var inboundA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080917464"],
+                providerSpecificReferenceTokens: ["ie26033080917464"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 30L);
+        var inboundB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080924925"],
+                providerSpecificReferenceTokens: ["ie26033080924925"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 40L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [outboundA.TransactionId] = outboundA,
+                [outboundB.TransactionId] = outboundB,
+                [inboundA.TransactionId] = inboundA,
+                [inboundB.TransactionId] = inboundB
+            },
+            new HashSet<Guid>());
+
+        var evidenceJson = analysis.ResolvedPairDecisions[outboundA.TransactionId].EvidenceJson;
+        using var evidence = JsonDocument.Parse(evidenceJson);
+        Assert.True(evidence.RootElement.GetProperty("routingInitiallyBlockedExternalCounterpartyRisk").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("sameUserCandidateUniverseOverrideApplied").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("stableOrderingUsed").GetBoolean());
+        Assert.Equal(
+            "stable_order_fallback_after_reference_tie",
+            evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
+    }
+
+    [Fact]
     public void TransferPairing_MachineReferenceOverlap_OutweighsNearerTimeCandidate()
     {
         var engine = new TransferPairingEngine();
