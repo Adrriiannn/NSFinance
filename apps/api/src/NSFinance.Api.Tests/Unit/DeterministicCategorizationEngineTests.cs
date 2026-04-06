@@ -1349,7 +1349,9 @@ public class DeterministicCategorizationEngineTests
             new HashSet<Guid>());
 
         Assert.Empty(analysis.ResolvedPairDecisions);
-        Assert.True(analysis.PendingDecisions.Values.Any(x => x.Status == DeterministicClassificationStatus.RejectedAmbiguousMatch));
+        Assert.Contains(
+            analysis.PendingDecisions.Values,
+            x => x.Status == DeterministicClassificationStatus.RejectedAmbiguousMatch);
     }
 
     [Theory]
@@ -1645,6 +1647,108 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void DeferredRow_WithFullyPresentCounterpartyUniverse_DowngradesToTerminalState()
+    {
+        using var dbContext = CreateDbContext();
+        var service = CreatePersistenceService(dbContext);
+        var bookedAt = new DateTime(2026, 03, 10, 9, 0, 0, DateTimeKind.Utc);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = Guid.NewGuid(),
+            Amount = -15.25m,
+            Currency = "EUR",
+            Description = "Transfer style memo",
+            BookedAtUtc = bookedAt,
+            CreatedUtc = bookedAt
+        };
+        var feature = CreateFeature(
+            signedAmount: -15.25m,
+            hasTransferKeyword: true,
+            hasProviderTransferHint: true,
+            hasCounterpartyAccounts: true,
+            tokens: ["transfer", "memo"]);
+        var pending = new TransferPendingDecision(
+            transaction.Id,
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty,
+            DeterministicClassificationReasonCodes.DeferredMissingCounterparty,
+            RetryEligible: true,
+            CandidateFamily: "bank_account_transfer",
+            CandidateCount: 0,
+            TopCandidateTransactionId: null,
+            TopCandidateScore: null,
+            IsDuplicateClusterMember: false,
+            DuplicateClusterSize: 0,
+            EvidenceJson: "{}");
+
+        var outcome = InvokeBuildOutcome(
+            service,
+            transaction,
+            feature,
+            linkedPairs: new Dictionary<Guid, Guid>(),
+            resolvedPairDecisions: new Dictionary<Guid, TransferPairDecision>(),
+            pendingDecisions: new Dictionary<Guid, TransferPendingDecision> { [transaction.Id] = pending },
+            now: bookedAt.AddHours(2),
+            hasFullSameUserCounterpartyUniverse: true);
+
+        Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, outcome.Status);
+        Assert.True(outcome.Terminal);
+        Assert.False(outcome.RetryEligible);
+        Assert.Equal(DeterministicClassificationReasonCodes.TransferDeferredExpiredNoCounterpart, outcome.ReasonCode);
+    }
+
+    [Fact]
+    public void DeferredRow_WithNoRealFutureEvidence_DoesNotRemainDeferred()
+    {
+        using var dbContext = CreateDbContext();
+        var service = CreatePersistenceService(dbContext);
+        var bookedAt = new DateTime(2026, 03, 12, 11, 0, 0, DateTimeKind.Utc);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = Guid.NewGuid(),
+            Amount = -8.15m,
+            Currency = "EUR",
+            Description = "Transfer pending context",
+            BookedAtUtc = bookedAt,
+            CreatedUtc = bookedAt
+        };
+        var feature = CreateFeature(
+            signedAmount: -8.15m,
+            hasTransferKeyword: true,
+            hasProviderTransferHint: true,
+            hasCounterpartyAccounts: true,
+            tokens: ["transfer", "context"]);
+        var pending = new TransferPendingDecision(
+            transaction.Id,
+            DeterministicClassificationStatus.DeferredWaitingForMoreContext,
+            DeterministicClassificationReasonCodes.DeferredPendingBookedContext,
+            RetryEligible: true,
+            CandidateFamily: "bank_account_transfer",
+            CandidateCount: 2,
+            TopCandidateTransactionId: Guid.NewGuid(),
+            TopCandidateScore: 12,
+            IsDuplicateClusterMember: true,
+            DuplicateClusterSize: 4,
+            EvidenceJson: "{}");
+
+        var outcome = InvokeBuildOutcome(
+            service,
+            transaction,
+            feature,
+            linkedPairs: new Dictionary<Guid, Guid>(),
+            resolvedPairDecisions: new Dictionary<Guid, TransferPairDecision>(),
+            pendingDecisions: new Dictionary<Guid, TransferPendingDecision> { [transaction.Id] = pending },
+            now: bookedAt.AddHours(30),
+            hasFullSameUserCounterpartyUniverse: false);
+
+        Assert.Equal(DeterministicClassificationStatus.RejectedAmbiguousMatch, outcome.Status);
+        Assert.True(outcome.Terminal);
+        Assert.False(outcome.RetryEligible);
+        Assert.Equal(DeterministicClassificationReasonCodes.TransferDeferredExpiredAmbiguous, outcome.ReasonCode);
+    }
+
+    [Fact]
     public void BuildOutcome_LegacySavings_DoesNotForceSavingsRouting()
     {
         using var dbContext = CreateDbContext();
@@ -1708,14 +1812,19 @@ public class DeterministicCategorizationEngineTests
         DeterministicTransactionFeature feature,
         IReadOnlyDictionary<Guid, Guid> linkedPairs,
         IReadOnlyDictionary<Guid, TransferPairDecision> resolvedPairDecisions,
-        IReadOnlyDictionary<Guid, TransferPendingDecision> pendingDecisions)
+        IReadOnlyDictionary<Guid, TransferPendingDecision> pendingDecisions,
+        DateTime? now = null,
+        bool hasFullSameUserCounterpartyUniverse = false)
     {
         var method = typeof(DeterministicClassificationPersistenceService).GetMethod(
             "BuildOutcome",
             BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
 
-        var result = method!.Invoke(service, [transaction, feature, linkedPairs, resolvedPairDecisions, pendingDecisions]);
+        var evaluationNow = now ?? transaction.BookedAtUtc.AddHours(1);
+        var result = method!.Invoke(
+            service,
+            [transaction, feature, linkedPairs, resolvedPairDecisions, pendingDecisions, evaluationNow, hasFullSameUserCounterpartyUniverse]);
         Assert.NotNull(result);
         return Assert.IsType<DeterministicClassificationOutcome>(result);
     }

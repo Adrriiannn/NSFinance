@@ -40,6 +40,8 @@ public sealed class BankSyncService(
     private const int DeterministicEnrichmentIncrementalLookbackDays = DeterministicCategorizationConstants.IncrementalLookbackDays;
     private const int DeterministicEnrichmentHistoricalBatchSize = 600;
     private const int DeterministicEnrichmentHistoricalContextPaddingDays = 4;
+    private const int DeferredCounterpartyExpiryHours = 48;
+    private const int DeferredMoreContextExpiryHours = 24;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
@@ -116,13 +118,21 @@ public sealed class BankSyncService(
         int RowsEvaluated,
         int RowsRemaining,
         int RowsActionableRemaining,
+        int RowsDeferredRemaining,
         int RowsDeferredWaitingForCounterparty,
         int RowsDeferredWaitingForMoreContext,
+        int RowsDeferredLegitimateWaiting,
+        int RowsDeferredReadyForTerminalization,
+        int RowsRejectedAmbiguous,
+        int RowsEvaluatedNoMatchingRule,
         int RowsNotEvaluated,
         int RowsEvaluating,
         int RowsVersionBehind,
         int RowsMarkedForReclassification,
         int RowsSupersededRecomputeRequired,
+        bool FullSameUserCounterpartyUniversePresent,
+        string DeferredReasonBreakdown,
+        string DeferredFamilyBreakdown,
         int BatchesProcessed,
         string Mode,
         bool HasChanges);
@@ -393,7 +403,7 @@ public sealed class BankSyncService(
         }
 
         logger.LogInformation(
-            "Deterministic enrichment run completed connectionId={ConnectionId} trigger={Trigger} mode={Mode} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} progressPercent={ProgressPercent} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext}",
+            "Deterministic enrichment run completed connectionId={ConnectionId} trigger={Trigger} mode={Mode} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} progressPercent={ProgressPercent} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredRemaining={RowsDeferredRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext} rowsDeferredLegitimateWaiting={RowsDeferredLegitimateWaiting} rowsDeferredReadyForTerminalization={RowsDeferredReadyForTerminalization} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsEvaluatedNoMatch={RowsEvaluatedNoMatch} fullCounterpartyUniversePresent={FullCounterpartyUniversePresent} deferredReasonBreakdown={DeferredReasonBreakdown} deferredFamilyBreakdown={DeferredFamilyBreakdown}",
             connection.Id,
             trigger,
             summary.Mode,
@@ -403,8 +413,16 @@ public sealed class BankSyncService(
             summary.RowsEvaluated,
             summary.RowsRemaining,
             summary.RemainingWorkSnapshot.RowsActionableRemaining,
+            summary.RemainingWorkSnapshot.RowsDeferredRemaining,
             summary.RemainingWorkSnapshot.RowsDeferredWaitingForCounterparty,
-            summary.RemainingWorkSnapshot.RowsDeferredWaitingForMoreContext);
+            summary.RemainingWorkSnapshot.RowsDeferredWaitingForMoreContext,
+            summary.RemainingWorkSnapshot.RowsDeferredLegitimateWaiting,
+            summary.RemainingWorkSnapshot.RowsDeferredReadyForTerminalization,
+            summary.RemainingWorkSnapshot.RowsRejectedAmbiguous,
+            summary.RemainingWorkSnapshot.RowsEvaluatedNoMatchingRule,
+            summary.RemainingWorkSnapshot.FullSameUserCounterpartyUniversePresent,
+            summary.RemainingWorkSnapshot.DeferredReasonBreakdown,
+            summary.RemainingWorkSnapshot.DeferredFamilyBreakdown);
 
         return ServiceResult<DeterministicEnrichmentRunResult>.Ok(
             new DeterministicEnrichmentRunResult(
@@ -416,13 +434,21 @@ public sealed class BankSyncService(
                 summary.RowsEvaluated,
                 summary.RowsRemaining,
                 summary.RemainingWorkSnapshot.RowsActionableRemaining,
+                summary.RemainingWorkSnapshot.RowsDeferredRemaining,
                 summary.RemainingWorkSnapshot.RowsDeferredWaitingForCounterparty,
                 summary.RemainingWorkSnapshot.RowsDeferredWaitingForMoreContext,
+                summary.RemainingWorkSnapshot.RowsDeferredLegitimateWaiting,
+                summary.RemainingWorkSnapshot.RowsDeferredReadyForTerminalization,
+                summary.RemainingWorkSnapshot.RowsRejectedAmbiguous,
+                summary.RemainingWorkSnapshot.RowsEvaluatedNoMatchingRule,
                 summary.RemainingWorkSnapshot.RowsNotEvaluated,
                 summary.RemainingWorkSnapshot.RowsEvaluating,
                 summary.RemainingWorkSnapshot.RowsVersionBehind,
                 summary.RemainingWorkSnapshot.RowsMarkedForReclassification,
                 summary.RemainingWorkSnapshot.RowsSupersededRecomputeRequired,
+                summary.RemainingWorkSnapshot.FullSameUserCounterpartyUniversePresent,
+                summary.RemainingWorkSnapshot.DeferredReasonBreakdown,
+                summary.RemainingWorkSnapshot.DeferredFamilyBreakdown,
                 summary.BatchesProcessed,
                 summary.Mode,
                 summary.HasChanges));
@@ -3123,7 +3149,7 @@ public sealed class BankSyncService(
             cancellationToken);
 
         logger.LogInformation(
-            "Deterministic enrichment summary connectionId={ConnectionId} userId={UserId} mode={Mode} batchesProcessed={BatchesProcessed} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} deferredCounterparty={DeferredCounterparty} deferredMoreContext={DeferredMoreContext} notEvaluated={NotEvaluated} evaluating={Evaluating} versionBehind={VersionBehind} markedForReclassification={MarkedForReclassification} superseded={Superseded} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} checkpointUtc={CheckpointUtc} progressPercent={ProgressPercent}",
+            "Deterministic enrichment summary connectionId={ConnectionId} userId={UserId} mode={Mode} batchesProcessed={BatchesProcessed} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredRemaining={RowsDeferredRemaining} deferredCounterparty={DeferredCounterparty} deferredMoreContext={DeferredMoreContext} deferredLegitimateWaiting={DeferredLegitimateWaiting} deferredReadyForTerminalization={DeferredReadyForTerminalization} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsEvaluatedNoMatch={RowsEvaluatedNoMatch} notEvaluated={NotEvaluated} evaluating={Evaluating} versionBehind={VersionBehind} markedForReclassification={MarkedForReclassification} superseded={Superseded} fullCounterpartyUniversePresent={FullCounterpartyUniversePresent} deferredReasonBreakdown={DeferredReasonBreakdown} deferredFamilyBreakdown={DeferredFamilyBreakdown} historicalInProgress={HistoricalInProgress} historicalCompleted={HistoricalCompleted} checkpointUtc={CheckpointUtc} progressPercent={ProgressPercent}",
             connection.Id,
             connection.UserId,
             modeParts.Count == 0 ? "none" : string.Join("+", modeParts),
@@ -3131,13 +3157,21 @@ public sealed class BankSyncService(
             rowsEvaluated,
             rowsRemaining,
             rowsActionableRemaining,
+            remainingWorkSnapshot.RowsDeferredRemaining,
             remainingWorkSnapshot.RowsDeferredWaitingForCounterparty,
             remainingWorkSnapshot.RowsDeferredWaitingForMoreContext,
+            remainingWorkSnapshot.RowsDeferredLegitimateWaiting,
+            remainingWorkSnapshot.RowsDeferredReadyForTerminalization,
+            remainingWorkSnapshot.RowsRejectedAmbiguous,
+            remainingWorkSnapshot.RowsEvaluatedNoMatchingRule,
             remainingWorkSnapshot.RowsNotEvaluated,
             remainingWorkSnapshot.RowsEvaluating,
             remainingWorkSnapshot.RowsVersionBehind,
             remainingWorkSnapshot.RowsMarkedForReclassification,
             remainingWorkSnapshot.RowsSupersededRecomputeRequired,
+            remainingWorkSnapshot.FullSameUserCounterpartyUniversePresent,
+            remainingWorkSnapshot.DeferredReasonBreakdown,
+            remainingWorkSnapshot.DeferredFamilyBreakdown,
             historicalInProgress,
             historicalCompleted,
             connection.HistoricalEnrichmentCheckpointUtc,
@@ -3363,10 +3397,14 @@ public sealed class BankSyncService(
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId))
             .Select(x => new
             {
+                x.BookedAtUtc,
                 x.NeedsDeterministicReclassification,
                 x.DeterministicClassificationVersion,
                 x.DeterministicClassificationTerminal,
-                x.DeterministicClassificationStatus
+                x.DeterministicClassificationStatus,
+                x.DeterministicReasonCode,
+                x.DeterministicClassificationRuleKey,
+                x.DeterministicReasonDetailJson
             })
             .ToListAsync(cancellationToken);
 
@@ -3377,14 +3415,23 @@ public sealed class BankSyncService(
 
         var rowsTerminalCurrentVersion = 0;
         var rowsRemaining = 0;
+        var rowsDeferredRemaining = 0;
         var rowsDeferredWaitingForCounterparty = 0;
         var rowsDeferredWaitingForMoreContext = 0;
+        var rowsDeferredLegitimateWaiting = 0;
+        var rowsDeferredReadyForTerminalization = 0;
+        var rowsRejectedAmbiguous = 0;
+        var rowsEvaluatedNoMatchingRule = 0;
         var rowsNotEvaluated = 0;
         var rowsEvaluating = 0;
         var rowsVersionBehind = 0;
         var rowsMarkedForReclassification = 0;
         var rowsSupersededRecomputeRequired = 0;
         var rowsActionableRemaining = 0;
+        var deferredReasonCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var deferredFamilyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var now = DateTime.UtcNow;
+        var fullSameUserCounterpartyUniversePresent = linkedFinancialAccountIds.Count > 1;
 
         foreach (var row in rows)
         {
@@ -3427,6 +3474,14 @@ public sealed class BankSyncService(
             {
                 rowsEvaluating++;
             }
+            else if (row.DeterministicClassificationStatus == DeterministicClassificationStatus.RejectedAmbiguousMatch)
+            {
+                rowsRejectedAmbiguous++;
+            }
+            else if (row.DeterministicClassificationStatus == DeterministicClassificationStatus.EvaluatedNoMatchingRule)
+            {
+                rowsEvaluatedNoMatchingRule++;
+            }
 
             if (remaining)
             {
@@ -3441,15 +3496,51 @@ public sealed class BankSyncService(
 
                 if (deferredCounterpartyCurrentVersion)
                 {
+                    rowsDeferredRemaining++;
                     rowsDeferredWaitingForCounterparty++;
+                    IncrementCount(
+                        deferredReasonCounts,
+                        string.IsNullOrWhiteSpace(row.DeterministicReasonCode)
+                            ? "unknown_reason"
+                            : row.DeterministicReasonCode);
+                    IncrementCount(
+                        deferredFamilyCounts,
+                        ResolveDeferredFamily(row.DeterministicClassificationRuleKey, row.DeterministicReasonDetailJson));
                 }
 
                 if (deferredMoreContextCurrentVersion)
                 {
+                    rowsDeferredRemaining++;
                     rowsDeferredWaitingForMoreContext++;
+                    IncrementCount(
+                        deferredReasonCounts,
+                        string.IsNullOrWhiteSpace(row.DeterministicReasonCode)
+                            ? "unknown_reason"
+                            : row.DeterministicReasonCode);
+                    IncrementCount(
+                        deferredFamilyCounts,
+                        ResolveDeferredFamily(row.DeterministicClassificationRuleKey, row.DeterministicReasonDetailJson));
                 }
 
-                if (!deferredCounterpartyCurrentVersion && !deferredMoreContextCurrentVersion)
+                if (deferredCounterpartyCurrentVersion || deferredMoreContextCurrentVersion)
+                {
+                    var deferredStillLegitimate = IsLegitimateDeferredRow(
+                        row.DeterministicClassificationStatus,
+                        row.DeterministicReasonCode,
+                        row.BookedAtUtc,
+                        now,
+                        fullSameUserCounterpartyUniversePresent);
+                    if (deferredStillLegitimate)
+                    {
+                        rowsDeferredLegitimateWaiting++;
+                    }
+                    else
+                    {
+                        rowsDeferredReadyForTerminalization++;
+                        rowsActionableRemaining++;
+                    }
+                }
+                else
                 {
                     rowsActionableRemaining++;
                 }
@@ -3461,13 +3552,129 @@ public sealed class BankSyncService(
             RowsTerminalCurrentVersion: rowsTerminalCurrentVersion,
             RowsRemaining: rowsRemaining,
             RowsActionableRemaining: rowsActionableRemaining,
+            RowsDeferredRemaining: rowsDeferredRemaining,
             RowsDeferredWaitingForCounterparty: rowsDeferredWaitingForCounterparty,
             RowsDeferredWaitingForMoreContext: rowsDeferredWaitingForMoreContext,
+            RowsDeferredLegitimateWaiting: rowsDeferredLegitimateWaiting,
+            RowsDeferredReadyForTerminalization: rowsDeferredReadyForTerminalization,
+            RowsRejectedAmbiguous: rowsRejectedAmbiguous,
+            RowsEvaluatedNoMatchingRule: rowsEvaluatedNoMatchingRule,
             RowsNotEvaluated: rowsNotEvaluated,
             RowsEvaluating: rowsEvaluating,
             RowsVersionBehind: rowsVersionBehind,
             RowsMarkedForReclassification: rowsMarkedForReclassification,
-            RowsSupersededRecomputeRequired: rowsSupersededRecomputeRequired);
+            RowsSupersededRecomputeRequired: rowsSupersededRecomputeRequired,
+            FullSameUserCounterpartyUniversePresent: fullSameUserCounterpartyUniversePresent,
+            DeferredReasonBreakdown: FormatTopCounts(deferredReasonCounts),
+            DeferredFamilyBreakdown: FormatTopCounts(deferredFamilyCounts));
+    }
+
+    private static bool IsLegitimateDeferredRow(
+        DeterministicClassificationStatus status,
+        string? reasonCode,
+        DateTime bookedAtUtc,
+        DateTime nowUtc,
+        bool fullSameUserCounterpartyUniversePresent)
+    {
+        var ageHours = Math.Max(0d, (nowUtc - bookedAtUtc).TotalHours);
+        return status switch
+        {
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty =>
+                !fullSameUserCounterpartyUniversePresent
+                && ageHours < DeferredCounterpartyExpiryHours
+                && string.Equals(
+                    reasonCode,
+                    DeterministicClassificationReasonCodes.DeferredMissingCounterparty,
+                    StringComparison.Ordinal),
+            DeterministicClassificationStatus.DeferredWaitingForMoreContext =>
+                ageHours < DeferredMoreContextExpiryHours
+                && string.Equals(
+                    reasonCode,
+                    DeterministicClassificationReasonCodes.DeferredPendingBookedContext,
+                    StringComparison.Ordinal),
+            _ => false
+        };
+    }
+
+    private static void IncrementCount(Dictionary<string, int> counts, string key)
+    {
+        if (counts.TryGetValue(key, out var current))
+        {
+            counts[key] = current + 1;
+            return;
+        }
+
+        counts[key] = 1;
+    }
+
+    private static string ResolveDeferredFamily(string? ruleKey, string? evidenceJson)
+    {
+        var family = TryReadEvidenceFamily(evidenceJson);
+        if (!string.IsNullOrWhiteSpace(family))
+        {
+            return family!;
+        }
+
+        var normalizedRuleKey = ruleKey?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedRuleKey))
+        {
+            return "unknown_family";
+        }
+
+        if (normalizedRuleKey.Contains("savings_transfer", StringComparison.Ordinal))
+        {
+            return "savings_transfer";
+        }
+
+        if (normalizedRuleKey.Contains("bank_transfer", StringComparison.Ordinal)
+            || normalizedRuleKey.Contains("internal_transfer", StringComparison.Ordinal))
+        {
+            return "bank_account_transfer";
+        }
+
+        return "unknown_family";
+    }
+
+    private static string? TryReadEvidenceFamily(string? evidenceJson)
+    {
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(evidenceJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("family", out var familyElement))
+            {
+                return null;
+            }
+
+            return familyElement.ValueKind == JsonValueKind.String
+                ? familyElement.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string FormatTopCounts(Dictionary<string, int> counts, int maxItems = 5)
+    {
+        if (counts.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join(
+            ",",
+            counts
+                .OrderByDescending(x => x.Value)
+                .ThenBy(x => x.Key, StringComparer.Ordinal)
+                .Take(maxItems)
+                .Select(x => $"{x.Key}:{x.Value}"));
     }
 
     private async Task<List<Guid>> LoadLinkedFinancialAccountIdsAsync(Guid userId, CancellationToken cancellationToken)
@@ -5995,26 +6202,42 @@ public sealed class BankSyncService(
         int RowsTerminalCurrentVersion,
         int RowsRemaining,
         int RowsActionableRemaining,
+        int RowsDeferredRemaining,
         int RowsDeferredWaitingForCounterparty,
         int RowsDeferredWaitingForMoreContext,
+        int RowsDeferredLegitimateWaiting,
+        int RowsDeferredReadyForTerminalization,
+        int RowsRejectedAmbiguous,
+        int RowsEvaluatedNoMatchingRule,
         int RowsNotEvaluated,
         int RowsEvaluating,
         int RowsVersionBehind,
         int RowsMarkedForReclassification,
-        int RowsSupersededRecomputeRequired)
+        int RowsSupersededRecomputeRequired,
+        bool FullSameUserCounterpartyUniversePresent,
+        string DeferredReasonBreakdown,
+        string DeferredFamilyBreakdown)
     {
         public static readonly DeterministicRemainingWorkSnapshot Empty = new(
             RowsTotal: 0,
             RowsTerminalCurrentVersion: 0,
             RowsRemaining: 0,
             RowsActionableRemaining: 0,
+            RowsDeferredRemaining: 0,
             RowsDeferredWaitingForCounterparty: 0,
             RowsDeferredWaitingForMoreContext: 0,
+            RowsDeferredLegitimateWaiting: 0,
+            RowsDeferredReadyForTerminalization: 0,
+            RowsRejectedAmbiguous: 0,
+            RowsEvaluatedNoMatchingRule: 0,
             RowsNotEvaluated: 0,
             RowsEvaluating: 0,
             RowsVersionBehind: 0,
             RowsMarkedForReclassification: 0,
-            RowsSupersededRecomputeRequired: 0);
+            RowsSupersededRecomputeRequired: 0,
+            FullSameUserCounterpartyUniversePresent: false,
+            DeferredReasonBreakdown: "none",
+            DeferredFamilyBreakdown: "none");
     }
 
     private readonly record struct DeterministicEnrichmentPassSummary(

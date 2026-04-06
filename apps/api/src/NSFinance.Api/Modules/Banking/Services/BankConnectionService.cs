@@ -491,6 +491,17 @@ public sealed class BankConnectionService(
                 group => group.Key,
                 group => group.Select(x => x.Provider).FirstOrDefault() ?? "unknown_provider");
 
+        var sameUserFinancialAccountIds = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.FinancialAccountId.HasValue
+                && x.Connection != null
+                && x.Connection.UserId == userId)
+            .Select(x => x.FinancialAccountId!.Value)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var fullSameUserCounterpartyUniversePresent = sameUserFinancialAccountIds.Count > 1;
+
         var rows = await dbContext.Transactions
             .AsNoTracking()
             .Where(x => linkedFinancialAccountIds.Contains(x.FinancialAccountId))
@@ -520,11 +531,11 @@ public sealed class BankConnectionService(
             })
             .ToListAsync(cancellationToken);
 
-        var hasCounterpartyAccountsByFinancialAccountId = linkedFinancialAccountIds
+        var hasCounterpartyAccountsByFinancialAccountId = sameUserFinancialAccountIds
             .Distinct()
             .ToDictionary(
                 accountId => accountId,
-                accountId => linkedFinancialAccountIds.Any(other => other != accountId));
+                accountId => sameUserFinancialAccountIds.Any(other => other != accountId));
 
         var duplicateClusterStats = rows
             .GroupBy(x =>
@@ -559,6 +570,7 @@ public sealed class BankConnectionService(
                     && duplicateClusterStat.InflowCount > 1;
                 var duplicateClusterSize = duplicateClusterMember ? duplicateClusterStat!.ClusterSize : 0;
                 hasCounterpartyAccountsByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var hasCounterpartyAccounts);
+                var fullCounterpartyUniverseForRow = fullSameUserCounterpartyUniversePresent && hasCounterpartyAccounts;
                 var provider = providerByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var mappedProvider)
                     ? mappedProvider
                     : "unknown_provider";
@@ -590,6 +602,17 @@ public sealed class BankConnectionService(
                     row.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
                     && row.DeterministicReasonCode is DeterministicClassificationReasonCodes.DeferredMissingCounterparty
                         or "deferred_strong_savings_missing_counterparty";
+                var waitingForFutureDataPlausible = IsWaitingForFutureDataPlausible(
+                    row.DeterministicClassificationStatus,
+                    row.DeterministicReasonCode,
+                    row.BookedAtUtc,
+                    fullCounterpartyUniverseForRow);
+                var nonTerminalExplanation = ResolveNonTerminalExplanation(
+                    row.DeterministicClassificationStatus,
+                    row.DeterministicReasonCode,
+                    row.DeterministicClassificationTerminal,
+                    waitingForFutureDataPlausible,
+                    fullCounterpartyUniverseForRow);
 
                 return new
                 {
@@ -620,6 +643,7 @@ public sealed class BankConnectionService(
                     DuplicateClusterMember = duplicateClusterMember,
                     DuplicateClusterSize = duplicateClusterSize,
                     HasCounterpartyAccounts = hasCounterpartyAccounts,
+                    FullSameUserCounterpartyUniversePresent = fullCounterpartyUniverseForRow,
                     CandidateCounterpartCount = candidateCounterpartCount,
                     HasPlausibleCounterpartCandidates = hasPlausibleCounterpartCandidates,
                     CandidateFamily = candidateFamily,
@@ -642,6 +666,8 @@ public sealed class BankConnectionService(
                     TransferTieBreakReason = evidence.TransferTieBreakReason,
                     TransferHasHighConfidenceReferenceOverlap = evidence.TransferHasHighConfidenceReferenceOverlap,
                     TransferNamesOnlyWeakSupport = evidence.TransferNamesOnlyWeakSupport,
+                    WaitingForFutureDataPlausible = waitingForFutureDataPlausible,
+                    NonTerminalExplanation = nonTerminalExplanation,
                     DeterministicSemanticFamily = deterministicSemanticFamily,
                     StylingFromDeterministicSemantic = stylingFromDeterministicSemantic,
                     TaxonomyFallbackUsed = taxonomyFallbackUsed
@@ -735,6 +761,7 @@ public sealed class BankConnectionService(
                 x.DuplicateClusterMember,
                 x.DuplicateClusterSize,
                 x.HasCounterpartyAccounts,
+                x.FullSameUserCounterpartyUniversePresent,
                 x.CandidateCounterpartCount,
                 x.TopCandidateTransactionId,
                 x.TopCandidateScore,
@@ -756,6 +783,8 @@ public sealed class BankConnectionService(
                 x.TransferTieBreakReason,
                 x.TransferHasHighConfidenceReferenceOverlap,
                 x.TransferNamesOnlyWeakSupport,
+                x.WaitingForFutureDataPlausible,
+                x.NonTerminalExplanation,
                 x.DeterministicSemanticFamily,
                 x.StylingFromDeterministicSemantic,
                 x.TaxonomyFallbackUsed,
@@ -770,45 +799,105 @@ public sealed class BankConnectionService(
             .ToList();
 
         var terminalCount = enrichedRows.Count(x => x.DeterministicClassificationTerminal);
-        var deferredMoreContextCount = rows.Count(x =>
+        var deferredRows = enrichedRows
+            .Where(x =>
+                x.DeterministicClassificationStatus is DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                    or DeterministicClassificationStatus.DeferredWaitingForMoreContext)
+            .ToList();
+        var deferredMoreContextCount = deferredRows.Count(x =>
             x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext);
-        var deferredCounterpartyCount = rows.Count(x =>
+        var deferredCounterpartyCount = deferredRows.Count(x =>
             x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty);
-        var actionableRemainingCount = rows.Count(x =>
+        var deferredRemainingCount = 0;
+        var actionableRemainingCount = 0;
+        var rowsRemainingTotal = 0;
+        var deferredReadyForTerminalizationCount = 0;
+        foreach (var row in rows)
         {
-            var versionBehind = !x.DeterministicClassificationVersion.HasValue
-                || x.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion;
-            var remaining = x.NeedsDeterministicReclassification
+            var versionBehind = !row.DeterministicClassificationVersion.HasValue
+                || row.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion;
+            var remaining = row.NeedsDeterministicReclassification
                 || versionBehind
-                || !x.DeterministicClassificationTerminal
-                || x.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired;
+                || !row.DeterministicClassificationTerminal
+                || row.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired;
             if (!remaining)
             {
-                return false;
+                continue;
             }
 
-            var deferredCounterpartyCurrent = x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+            var deferredCounterpartyCurrent = row.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
                 && !versionBehind
-                && !x.NeedsDeterministicReclassification;
-            var deferredMoreContextCurrent = x.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                && !row.NeedsDeterministicReclassification;
+            var deferredMoreContextCurrent = row.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext
                 && !versionBehind
-                && !x.NeedsDeterministicReclassification;
+                && !row.NeedsDeterministicReclassification;
+            rowsRemainingTotal++;
+            if (!deferredCounterpartyCurrent && !deferredMoreContextCurrent)
+            {
+                actionableRemainingCount++;
+                continue;
+            }
 
-            return !deferredCounterpartyCurrent && !deferredMoreContextCurrent;
-        });
+            deferredRemainingCount++;
+            var fullUniverseForRow = fullSameUserCounterpartyUniversePresent && hasCounterpartyAccountsByFinancialAccountId.TryGetValue(row.FinancialAccountId, out var hasCounterparty)
+                && hasCounterparty;
+            var waitingPlausible = IsWaitingForFutureDataPlausible(
+                row.DeterministicClassificationStatus,
+                row.DeterministicReasonCode,
+                row.BookedAtUtc,
+                fullUniverseForRow);
+            if (!waitingPlausible)
+            {
+                deferredReadyForTerminalizationCount++;
+                actionableRemainingCount++;
+            }
+        }
+
+        var rejectedAmbiguousCount = rows.Count(x =>
+            x.DeterministicClassificationStatus == DeterministicClassificationStatus.RejectedAmbiguousMatch);
+        var evaluatedNoMatchingRuleCount = rows.Count(x =>
+            x.DeterministicClassificationStatus == DeterministicClassificationStatus.EvaluatedNoMatchingRule);
+        var notEvaluatedCount = rows.Count(x =>
+            x.DeterministicClassificationStatus == DeterministicClassificationStatus.NotEvaluated);
+        var evaluatingCount = rows.Count(x =>
+            x.DeterministicClassificationStatus == DeterministicClassificationStatus.Evaluating);
+
+        var topDeferredReasonCodes = deferredRows
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.DeterministicReasonCode) ? "unknown_reason" : x.DeterministicReasonCode!, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new DeterministicKeyCountDto(group.Key, group.Count()))
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
+            .Take(6)
+            .ToList();
+        var topDeferredFamilies = deferredRows
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.CandidateFamily) ? "unknown_family" : x.CandidateFamily, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new DeterministicKeyCountDto(group.Key, group.Count()))
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
+            .Take(6)
+            .ToList();
 
         var queueEligible = actionableRemainingCount > 0;
         var queueEligibilityReason = queueEligible
             ? "actionable_remaining_rows"
-            : rows.Count > terminalCount
+            : rowsRemainingTotal > 0
                 ? "deferred_only_remaining_rows"
                 : "no_remaining_rows";
         var continuationDecision = queueEligible ? "continue" : "stop";
         var continuationReason = queueEligible
             ? "actionable_remaining_rows"
-            : rows.Count > terminalCount
+            : rowsRemainingTotal > 0
                 ? "deferred_only_remaining_rows"
                 : "no_remaining_rows";
+        var remainingWorkClassification = rowsRemainingTotal == 0
+            ? "no_remaining_rows"
+            : deferredReadyForTerminalizationCount > 0
+                ? "ready_for_terminalization_downgrade"
+                : queueEligible
+                    ? "actively_runnable"
+                    : deferredRemainingCount > 0 && deferredRemainingCount == rowsRemainingTotal
+                        ? "waiting_on_future_data"
+                        : "partially_blocked_remaining";
 
         return ServiceResult<DeterministicCategorizationDiagnosticsDto>.Ok(
             new DeterministicCategorizationDiagnosticsDto(
@@ -817,13 +906,25 @@ public sealed class BankConnectionService(
                 rows.Count,
                 terminalCount,
                 Math.Max(0, rows.Count - terminalCount),
+                rowsRemainingTotal,
                 actionableRemainingCount,
+                deferredRemainingCount,
                 deferredMoreContextCount,
                 deferredCounterpartyCount,
+                Math.Max(0, deferredRemainingCount - deferredReadyForTerminalizationCount),
+                deferredReadyForTerminalizationCount,
+                rejectedAmbiguousCount,
+                evaluatedNoMatchingRuleCount,
+                notEvaluatedCount,
+                evaluatingCount,
+                fullSameUserCounterpartyUniversePresent,
+                remainingWorkClassification,
                 queueEligible,
                 queueEligibilityReason,
                 continuationDecision,
                 continuationReason,
+                topDeferredReasonCodes,
+                topDeferredFamilies,
                 statusCounts,
                 unresolvedBreakdown,
                 sampleDecisions));
@@ -2844,6 +2945,71 @@ public sealed class BankConnectionService(
         }
 
         return "evaluated_not_classified";
+    }
+
+    private static bool IsWaitingForFutureDataPlausible(
+        DeterministicClassificationStatus status,
+        string? reasonCode,
+        DateTime bookedAtUtc,
+        bool fullCounterpartyUniversePresent)
+    {
+        var now = DateTime.UtcNow;
+        var ageHours = Math.Max(0d, (now - bookedAtUtc).TotalHours);
+
+        return status switch
+        {
+            DeterministicClassificationStatus.DeferredWaitingForCounterparty =>
+                !fullCounterpartyUniversePresent
+                && string.Equals(reasonCode, DeterministicClassificationReasonCodes.DeferredMissingCounterparty, StringComparison.Ordinal)
+                && ageHours < 48d,
+            DeterministicClassificationStatus.DeferredWaitingForMoreContext =>
+                string.Equals(reasonCode, DeterministicClassificationReasonCodes.DeferredPendingBookedContext, StringComparison.Ordinal)
+                && ageHours < 24d,
+            _ => false
+        };
+    }
+
+    private static string ResolveNonTerminalExplanation(
+        DeterministicClassificationStatus status,
+        string? reasonCode,
+        bool terminal,
+        bool waitingForFutureDataPlausible,
+        bool fullCounterpartyUniversePresent)
+    {
+        if (terminal)
+        {
+            return "terminal";
+        }
+
+        if (status == DeterministicClassificationStatus.NotEvaluated)
+        {
+            return "not_evaluated_yet";
+        }
+
+        if (status == DeterministicClassificationStatus.Evaluating)
+        {
+            return "currently_evaluating";
+        }
+
+        if (waitingForFutureDataPlausible)
+        {
+            return status == DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                ? "waiting_for_posted_context"
+                : "waiting_for_missing_counterparty_data";
+        }
+
+        if (status == DeterministicClassificationStatus.DeferredWaitingForCounterparty && fullCounterpartyUniversePresent)
+        {
+            return "deferred_invalid_full_counterparty_universe_present";
+        }
+
+        if (status == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+            || status == DeterministicClassificationStatus.DeferredWaitingForMoreContext)
+        {
+            return $"deferred_requires_terminalization:{reasonCode ?? "unknown_reason"}";
+        }
+
+        return "non_terminal_unclassified";
     }
 
     private static string NormalizeDeterministicDescriptionForDiagnostics(string? description)

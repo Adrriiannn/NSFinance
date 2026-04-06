@@ -18,6 +18,9 @@ public sealed class DeterministicClassificationPersistenceService(
     DeterministicCategorizationMetrics metrics,
     ILogger<DeterministicClassificationPersistenceService> logger)
 {
+    private const int CounterpartyDeferExpiryHours = 48;
+    private const int ContextDeferExpiryHours = 24;
+
     public async Task<DeterministicCategorizationSummary> EvaluateWindowAsync(
         Guid userId,
         DateTime selectionStartUtc,
@@ -107,10 +110,11 @@ public sealed class DeterministicClassificationPersistenceService(
             .ThenBy(x => x.Id)
             .Select((row, index) => new { row.Id, StableSequence = (long)index + 1L })
             .ToDictionary(x => x.Id, x => x.StableSequence);
-        var accountIds = contextRows.Select(x => x.FinancialAccountId).Distinct().ToArray();
+        var accountIds = linkedAccountsByFinancialAccountId.Keys.ToArray();
         var hasCounterpartyByAccountId = accountIds.ToDictionary(
             accountId => accountId,
             accountId => accountIds.Any(other => other != accountId));
+        var hasFullSameUserCounterpartyUniverse = linkedAccountsByFinancialAccountId.Count > 1;
 
         var featureInputs = contextRows
             .Select(row =>
@@ -171,7 +175,9 @@ public sealed class DeterministicClassificationPersistenceService(
                 feature,
                 linkedPairs,
                 pairingAnalysis.ResolvedPairDecisions,
-                pairingAnalysis.PendingDecisions);
+                pairingAnalysis.PendingDecisions,
+                now,
+                hasFullSameUserCounterpartyUniverse);
 
             rowsEvaluated++;
             outcomesByTransactionId[transactionId] = outcome;
@@ -266,7 +272,9 @@ public sealed class DeterministicClassificationPersistenceService(
         DeterministicTransactionFeature feature,
         IReadOnlyDictionary<Guid, Guid> linkedPairs,
         IReadOnlyDictionary<Guid, TransferPairDecision> resolvedPairDecisions,
-        IReadOnlyDictionary<Guid, TransferPendingDecision> pendingDecisions)
+        IReadOnlyDictionary<Guid, TransferPendingDecision> pendingDecisions,
+        DateTime now,
+        bool hasFullSameUserCounterpartyUniverse)
     {
         linkedPairs.TryGetValue(transaction.Id, out var linkedCounterpartId);
         var isLinkedInternal =
@@ -326,6 +334,17 @@ public sealed class DeterministicClassificationPersistenceService(
         if (hasPendingTransferDecision
             && pendingDecision!.Status != DeterministicClassificationStatus.EvaluatedNoMatchingRule)
         {
+            if (TryFinalizeExpiredDeferredDecision(
+                    transaction,
+                    feature,
+                    pendingDecision,
+                    now,
+                    hasFullSameUserCounterpartyUniverse,
+                    out var finalizedDeferredDecision))
+            {
+                return finalizedDeferredDecision;
+            }
+
             return BuildTransferPendingOutcome(pendingDecision);
         }
 
@@ -351,6 +370,17 @@ public sealed class DeterministicClassificationPersistenceService(
 
         if (hasPendingTransferDecision)
         {
+            if (TryFinalizeExpiredDeferredDecision(
+                    transaction,
+                    feature,
+                    pendingDecision!,
+                    now,
+                    hasFullSameUserCounterpartyUniverse,
+                    out var finalizedDeferredDecision))
+            {
+                return finalizedDeferredDecision;
+            }
+
             return BuildTransferPendingOutcome(pendingDecision!);
         }
 
@@ -509,6 +539,86 @@ public sealed class DeterministicClassificationPersistenceService(
             LinkedTransactionId: null,
             RelationshipType: null,
             RelationshipGroupId: null);
+    }
+
+    private static bool TryFinalizeExpiredDeferredDecision(
+        Transaction transaction,
+        DeterministicTransactionFeature feature,
+        TransferPendingDecision pendingDecision,
+        DateTime now,
+        bool hasFullSameUserCounterpartyUniverse,
+        out DeterministicClassificationOutcome finalizedOutcome)
+    {
+        finalizedOutcome = default!;
+        var isDeferred = pendingDecision.Status is DeterministicClassificationStatus.DeferredWaitingForCounterparty
+            or DeterministicClassificationStatus.DeferredWaitingForMoreContext;
+        if (!isDeferred)
+        {
+            return false;
+        }
+
+        // Keep true pending/unbooked rows deferred for future settlement context.
+        if (feature.IsPending || !feature.IsBooked)
+        {
+            return false;
+        }
+
+        var deferAgeHours = Math.Max(0d, (now - transaction.BookedAtUtc).TotalHours);
+        var expirationHours = pendingDecision.Status == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+            ? CounterpartyDeferExpiryHours
+            : ContextDeferExpiryHours;
+        var deferExpired = deferAgeHours >= expirationHours;
+        var fullUniversePresent = hasFullSameUserCounterpartyUniverse && feature.HasCounterpartyAccounts;
+        if (!deferExpired && !fullUniversePresent)
+        {
+            return false;
+        }
+
+        var finalizeAsAmbiguous = pendingDecision.IsDuplicateClusterMember
+                                  || pendingDecision.CandidateCount > 1
+                                  || pendingDecision.Status == DeterministicClassificationStatus.DeferredWaitingForMoreContext;
+        var finalStatus = finalizeAsAmbiguous
+            ? DeterministicClassificationStatus.RejectedAmbiguousMatch
+            : DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+        var reasonCode = finalizeAsAmbiguous
+            ? DeterministicClassificationReasonCodes.TransferDeferredExpiredAmbiguous
+            : DeterministicClassificationReasonCodes.TransferDeferredExpiredNoCounterpart;
+        var ruleKey = "bank_transfer.deferred_expiry_terminalized_v1";
+        var evidence = JsonSerializer.Serialize(new
+        {
+            family = "bank_account_transfer",
+            resolutionOutcome = "deferred_invalidated_to_terminal",
+            originalDeferredStatus = pendingDecision.Status.ToString(),
+            pendingDecision.ReasonCode,
+            pendingDecision.CandidateCount,
+            pendingDecision.IsDuplicateClusterMember,
+            pendingDecision.DuplicateClusterSize,
+            deferAgeHours = Math.Round(deferAgeHours, 2, MidpointRounding.AwayFromZero),
+            deferExpirationHours = expirationHours,
+            deferExpired,
+            fullCounterpartyUniversePresent = fullUniversePresent,
+            feature.HasCounterpartyAccounts,
+            feature.IsBooked,
+            feature.IsPending,
+            finalStatus = finalStatus.ToString(),
+            finalReasonCode = reasonCode,
+            pendingEvidence = pendingDecision.EvidenceJson
+        });
+
+        finalizedOutcome = new DeterministicClassificationOutcome(
+            finalStatus,
+            Terminal: true,
+            RetryEligible: false,
+            RuleKey: ruleKey,
+            ReasonCode: reasonCode,
+            EvidenceJson: evidence,
+            MatchScore: null,
+            ClassificationCategoryId: null,
+            ClassificationSubcategoryId: null,
+            LinkedTransactionId: null,
+            RelationshipType: null,
+            RelationshipGroupId: null);
+        return true;
     }
 
     private bool ApplyClassificationOutcome(

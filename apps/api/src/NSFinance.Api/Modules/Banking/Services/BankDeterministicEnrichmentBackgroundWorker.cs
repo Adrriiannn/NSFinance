@@ -123,7 +123,7 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                 }
 
                 logger.LogInformation(
-                    "Deterministic enrichment batch processed connectionId={ConnectionId} userId={UserId} inProgress={InProgress} completed={Completed} progressPercent={ProgressPercent} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext}",
+                    "Deterministic enrichment batch processed connectionId={ConnectionId} userId={UserId} inProgress={InProgress} completed={Completed} progressPercent={ProgressPercent} rowsEvaluated={RowsEvaluated} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredRemaining={RowsDeferredRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext} rowsDeferredLegitimateWaiting={RowsDeferredLegitimateWaiting} rowsDeferredReadyForTerminalization={RowsDeferredReadyForTerminalization} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsEvaluatedNoMatch={RowsEvaluatedNoMatch} fullCounterpartyUniversePresent={FullCounterpartyUniversePresent} deferredReasonBreakdown={DeferredReasonBreakdown} deferredFamilyBreakdown={DeferredFamilyBreakdown}",
                     workItem.ConnectionId,
                     workItem.UserId,
                     result.Value.HistoricalEnrichmentInProgress,
@@ -132,8 +132,16 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                     result.Value.RowsEvaluated,
                     result.Value.RowsRemaining,
                     result.Value.RowsActionableRemaining,
+                    result.Value.RowsDeferredRemaining,
                     result.Value.RowsDeferredWaitingForCounterparty,
-                    result.Value.RowsDeferredWaitingForMoreContext);
+                    result.Value.RowsDeferredWaitingForMoreContext,
+                    result.Value.RowsDeferredLegitimateWaiting,
+                    result.Value.RowsDeferredReadyForTerminalization,
+                    result.Value.RowsRejectedAmbiguous,
+                    result.Value.RowsEvaluatedNoMatchingRule,
+                    result.Value.FullSameUserCounterpartyUniversePresent,
+                    result.Value.DeferredReasonBreakdown,
+                    result.Value.DeferredFamilyBreakdown);
 
                 var shouldContinue = DeterministicEnrichmentContinuationPolicy.ShouldContinue(
                     result.Value.RowsActionableRemaining);
@@ -160,14 +168,22 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                 else
                 {
                     logger.LogInformation(
-                        "Deterministic enrichment continuation decision connectionId={ConnectionId} userId={UserId} decision=stop reason={Reason} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext}",
+                        "Deterministic enrichment continuation decision connectionId={ConnectionId} userId={UserId} decision=stop reason={Reason} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredRemaining={RowsDeferredRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext} rowsDeferredLegitimateWaiting={RowsDeferredLegitimateWaiting} rowsDeferredReadyForTerminalization={RowsDeferredReadyForTerminalization} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsEvaluatedNoMatch={RowsEvaluatedNoMatch} fullCounterpartyUniversePresent={FullCounterpartyUniversePresent} deferredReasonBreakdown={DeferredReasonBreakdown} deferredFamilyBreakdown={DeferredFamilyBreakdown}",
                         workItem.ConnectionId,
                         workItem.UserId,
                         decisionReason,
                         result.Value.RowsRemaining,
                         result.Value.RowsActionableRemaining,
+                        result.Value.RowsDeferredRemaining,
                         result.Value.RowsDeferredWaitingForCounterparty,
-                        result.Value.RowsDeferredWaitingForMoreContext);
+                        result.Value.RowsDeferredWaitingForMoreContext,
+                        result.Value.RowsDeferredLegitimateWaiting,
+                        result.Value.RowsDeferredReadyForTerminalization,
+                        result.Value.RowsRejectedAmbiguous,
+                        result.Value.RowsEvaluatedNoMatchingRule,
+                        result.Value.FullSameUserCounterpartyUniversePresent,
+                        result.Value.DeferredReasonBreakdown,
+                        result.Value.DeferredFamilyBreakdown);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -189,6 +205,9 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var nowUtc = DateTime.UtcNow;
+        var deferredCounterpartyExpiryThresholdUtc = nowUtc.AddHours(-48);
+        var deferredMoreContextExpiryThresholdUtc = nowUtc.AddHours(-24);
 
         var pendingByFlags = await dbContext.OpenBankingConnections
             .AsNoTracking()
@@ -235,8 +254,12 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                         || t.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion
                         || t.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired
                         || (!t.DeterministicClassificationTerminal
-                            && t.DeterministicClassificationStatus != DeterministicClassificationStatus.DeferredWaitingForCounterparty
-                            && t.DeterministicClassificationStatus != DeterministicClassificationStatus.DeferredWaitingForMoreContext)),
+                            && (t.DeterministicClassificationStatus != DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                                && t.DeterministicClassificationStatus != DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                                || (t.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                                    && t.BookedAtUtc <= deferredCounterpartyExpiryThresholdUtc)
+                                || (t.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                                    && t.BookedAtUtc <= deferredMoreContextExpiryThresholdUtc)))),
                 linked => linked.FinancialAccountId!.Value,
                 tx => tx.FinancialAccountId,
                 (linked, _tx) => new { linked.ConnectionId, linked.Connection!.UserId })

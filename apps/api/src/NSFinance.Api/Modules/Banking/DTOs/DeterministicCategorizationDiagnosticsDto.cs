@@ -4,6 +4,10 @@ public sealed record DeterministicCategorizationStatusCountDto(
     string Status,
     int Count);
 
+public sealed record DeterministicKeyCountDto(
+    string Key,
+    int Count);
+
 public sealed record DeterministicDiagnosticsBreakdownDto(
     string Status,
     string? ReasonCode,
@@ -45,6 +49,7 @@ public sealed record DeterministicTransactionDecisionDto(
     bool DuplicateClusterMember,
     int DuplicateClusterSize,
     bool HasCounterpartyAccounts,
+    bool FullSameUserCounterpartyUniversePresent,
     int CandidateCounterpartCount,
     Guid? TopCandidateTransactionId,
     int? TopCandidateScore,
@@ -66,6 +71,8 @@ public sealed record DeterministicTransactionDecisionDto(
     string? TransferTieBreakReason,
     bool TransferHasHighConfidenceReferenceOverlap,
     bool TransferNamesOnlyWeakSupport,
+    bool WaitingForFutureDataPlausible,
+    string NonTerminalExplanation,
     string DeterministicSemanticFamily,
     bool StylingFromDeterministicSemantic,
     bool TaxonomyFallbackUsed,
@@ -84,13 +91,25 @@ public sealed record DeterministicCategorizationDiagnosticsDto(
     int TotalTransactions,
     int TerminalTransactions,
     int NonTerminalTransactions,
+    int RowsRemainingTotal,
     int ActionableRemainingTransactions,
+    int DeferredRemainingTransactions,
     int DeferredMoreContextTransactions,
     int DeferredCounterpartyTransactions,
+    int DeferredLegitimateWaitingTransactions,
+    int DeferredReadyForTerminalizationTransactions,
+    int RejectedAmbiguousTransactions,
+    int EvaluatedNoMatchingRuleTransactions,
+    int NotEvaluatedTransactions,
+    int EvaluatingTransactions,
+    bool FullSameUserCounterpartyUniversePresent,
+    string RemainingWorkClassification,
     bool QueueEligible,
     string QueueEligibilityReason,
     string ContinuationDecision,
     string ContinuationReason,
+    IReadOnlyList<DeterministicKeyCountDto> TopDeferredReasonCodes,
+    IReadOnlyList<DeterministicKeyCountDto> TopDeferredFamilies,
     IReadOnlyList<DeterministicCategorizationStatusCountDto> StatusCounts,
     IReadOnlyList<DeterministicDiagnosticsBreakdownDto> UnresolvedBreakdown,
     IReadOnlyList<DeterministicTransactionDecisionDto> SampleDecisions);

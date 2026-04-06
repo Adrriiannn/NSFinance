@@ -8,6 +8,8 @@ public static class DeterministicClassificationReasonCodes
     public const string TransferRejectedAmbiguous = "transfer_rejected_ambiguous";
     public const string TransferRejectedAmbiguousDuplicateCluster = "transfer_rejected_ambiguous_duplicate_cluster";
     public const string TransferRejectedNoCounterpart = "transfer_rejected_no_counterpart";
+    public const string TransferDeferredExpiredNoCounterpart = "transfer_deferred_expired_no_counterpart";
+    public const string TransferDeferredExpiredAmbiguous = "transfer_deferred_expired_ambiguous";
 
     public const string SavingsProviderStructuralSignal = "savings_provider_structural_signal";
     public const string SavingsContextNearbySpend = "savings_context_nearby_spend";

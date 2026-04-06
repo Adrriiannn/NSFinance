@@ -1271,6 +1271,183 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task DeterministicDiagnostics_DeferredRowsWithFullUniverse_AreActionableForTerminalization()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.deferred-full-universe-terminalize@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-deferred-full-universe-terminalize", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var primaryLinkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var primaryFinancialAccountId = primaryLinkedAccount.FinancialAccountId!.Value;
+
+        var secondaryFinancialAccountId = Guid.NewGuid();
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = secondaryFinancialAccountId,
+            UserId = user.Id,
+            Name = "Secondary Counterparty",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddDays(-30)
+        });
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = connection.Id,
+            ProviderAccountId = "deferred-full-universe-secondary",
+            DisplayName = "Secondary Counterparty",
+            AccountType = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddDays(-30),
+            UpdatedUtc = now.AddDays(-30),
+            FinancialAccountId = secondaryFinancialAccountId
+        });
+
+        var deferredIds = new List<Guid>();
+        var bookedBaseUtc = now.AddDays(-6);
+        for (var i = 0; i < 18; i++)
+        {
+            var id = Guid.NewGuid();
+            deferredIds.Add(id);
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = id,
+                FinancialAccountId = primaryFinancialAccountId,
+                Amount = -(20m + i),
+                Currency = "EUR",
+                Description = $"Transfer memo deferred row {i:D2}",
+                BookedAtUtc = bookedBaseUtc.AddMinutes(i),
+                CreatedUtc = bookedBaseUtc.AddMinutes(i),
+                DeterministicClassificationStatus = DeterministicClassificationStatus.DeferredWaitingForCounterparty,
+                DeterministicClassificationVersion = currentVersion,
+                DeterministicClassificationTerminal = false,
+                DeterministicDeferredRetryEligible = true,
+                DeterministicClassificationRuleKey = "bank_transfer.deferred_or_rejected_v3",
+                DeterministicReasonCode = DeterministicClassificationReasonCodes.DeferredMissingCounterparty,
+                DeterministicClassificationEvaluatedUtc = bookedBaseUtc.AddMinutes(i),
+                NeedsDeterministicReclassification = false
+            });
+        }
+
+        connection.NeedsHistoricalReclassification = true;
+        connection.HistoricalEnrichmentStartedUtc = now.AddHours(-1);
+        connection.HistoricalEnrichmentCompletedUtc = null;
+        connection.HistoricalEnrichmentVersion = currentVersion;
+        connection.LastSyncAttemptedUtc = now.AddHours(-1);
+        connection.LastSuccessfulSyncUtc = now.AddHours(-1);
+        await harness.DbContext.SaveChangesAsync();
+
+        var diagnosticsBefore = await harness.CreateConnectionService().GetDeterministicCategorizationDiagnosticsAsync(
+            user.Id,
+            connection.Id,
+            CancellationToken.None);
+        Assert.True(diagnosticsBefore.Succeeded);
+        Assert.True(diagnosticsBefore.Value!.FullSameUserCounterpartyUniversePresent);
+        Assert.True(diagnosticsBefore.Value.DeferredRemainingTransactions >= deferredIds.Count);
+        Assert.True(diagnosticsBefore.Value.ActionableRemainingTransactions >= deferredIds.Count);
+        Assert.Contains(diagnosticsBefore.Value.TopDeferredReasonCodes, item =>
+            item.Key == DeterministicClassificationReasonCodes.DeferredMissingCounterparty);
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var run = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            connection.Id,
+            trigger: "test_deferred_full_universe_terminalization",
+            cancellationToken: CancellationToken.None);
+        Assert.True(run.Succeeded);
+
+        var deferredRows = await harness.DbContext.Transactions
+            .Where(x => deferredIds.Contains(x.Id))
+            .ToListAsync();
+        Assert.Equal(deferredIds.Count, deferredRows.Count);
+        Assert.All(deferredRows, row =>
+        {
+            Assert.True(row.DeterministicClassificationTerminal);
+            Assert.NotEqual(DeterministicClassificationStatus.DeferredWaitingForCounterparty, row.DeterministicClassificationStatus);
+            Assert.NotEqual(DeterministicClassificationStatus.DeferredWaitingForMoreContext, row.DeterministicClassificationStatus);
+            Assert.Contains(
+                row.DeterministicReasonCode,
+                new[]
+                {
+                    DeterministicClassificationReasonCodes.TransferDeferredExpiredNoCounterpart,
+                    DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily,
+                    DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart
+                });
+        });
+    }
+
+    [Fact]
+    public async Task DeterministicDiagnostics_TaxonomyOnlySavingsText_DoesNotCreateDeterministicTransferStyling()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.taxonomy-fallback-style-guard@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-taxonomy-fallback-style-guard", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var accountId = linkedAccount.FinancialAccountId!.Value;
+
+        var rowId = Guid.NewGuid();
+        harness.DbContext.Transactions.Add(new Transaction
+        {
+            Id = rowId,
+            FinancialAccountId = accountId,
+            Amount = -2_000m,
+            Currency = "EUR",
+            Description = "Savings transfer category only",
+            BookedAtUtc = now.AddDays(-2),
+            CreatedUtc = now.AddDays(-2),
+            TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId,
+            TaxonomySubcategoryId = DeterministicCategorizationConstants.SavingsTransferSubcategoryId,
+            DeterministicClassificationStatus = DeterministicClassificationStatus.NotEvaluated,
+            DeterministicClassificationTerminal = false,
+            DeterministicClassificationVersion = DeterministicCategorizationConstants.CurrentClassificationVersion,
+            NeedsDeterministicReclassification = false
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var diagnostics = await harness.CreateConnectionService().GetDeterministicCategorizationDiagnosticsAsync(
+            user.Id,
+            connection.Id,
+            CancellationToken.None);
+        Assert.True(diagnostics.Succeeded);
+
+        var sample = Assert.Single(diagnostics.Value!.SampleDecisions, x => x.TransactionId == rowId);
+        Assert.Equal("none", sample.DeterministicSemanticFamily);
+        Assert.False(sample.StylingFromDeterministicSemantic);
+        Assert.True(sample.TaxonomyFallbackUsed);
+    }
+
+    [Fact]
     public async Task DeterministicEnrichment_SmallTransferLikeResidual_FinalizesAsTerminalNoMatch()
     {
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
