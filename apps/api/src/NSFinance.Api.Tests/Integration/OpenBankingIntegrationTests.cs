@@ -2658,7 +2658,88 @@ public class OpenBankingIntegrationTests
     [Fact]
     public async Task DeterministicEnrichment_March30FourRowSameUserTie_UsesStableSequenceFallback()
     {
-        await CallbackFlow_AibRevolutWeakNameOutgoing_DuplicateClusterRoutesAndPairs();
+        await CallbackFlow_AibRevolutWeakNameOutgoing_DateOnlyStoredPriorUtc_DuplicateClusterRoutesAndPairs();
+    }
+
+    [Fact]
+    public async Task CallbackFlow_AibRevolutWeakNameOutgoing_DateOnlyStoredPriorUtc_DuplicateClusterRoutesAndPairs()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: AibRevolutWeakNameDateOnlyStoredPriorUtcFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.weak-name-prior-utc@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-weak-name-prior-utc", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var clusterRows = await harness.DbContext.Transactions
+            .Where(x => x.Currency == "EUR" && Math.Abs(x.Amount) == 1.00m)
+            .OrderBy(x => x.Amount)
+            .ThenBy(x => x.BookedAtUtc)
+            .ToListAsync();
+
+        Assert.Equal(4, clusterRows.Count);
+        var outflows = clusterRows.Where(x => x.Amount < 0m).OrderBy(x => x.BookedAtUtc).ToList();
+        var inflows = clusterRows.Where(x => x.Amount > 0m).OrderBy(x => x.BookedAtUtc).ToList();
+        Assert.Equal(2, outflows.Count);
+        Assert.Equal(2, inflows.Count);
+        Assert.Equal(new DateTime(2026, 3, 29, 23, 0, 0, DateTimeKind.Utc), inflows[0].BookedAtUtc);
+        Assert.Equal(new DateTime(2026, 3, 29, 23, 0, 0, DateTimeKind.Utc), inflows[1].BookedAtUtc);
+
+        var unmatchedRows = clusterRows
+            .Where(row =>
+                row.DeterministicClassificationStatus != DeterministicClassificationStatus.ClassifiedMatchedRule
+                || row.DeterministicRelationshipType != "internal_transfer"
+                || !row.DeterministicLinkedTransactionId.HasValue)
+            .ToList();
+        Assert.True(
+            unmatchedRows.Count == 0,
+            $"Expected all rows matched. Actual={string.Join(" || ", unmatchedRows.Select(row => $"{row.Id}:{row.DeterministicClassificationStatus}:{row.DeterministicReasonCode}:{row.DeterministicReasonDetailJson}"))}");
+
+        var evidenceJson = outflows[0].DeterministicReasonDetailJson;
+        Assert.False(string.IsNullOrWhiteSpace(evidenceJson));
+        using var evidence = JsonDocument.Parse(evidenceJson!);
+        Assert.True(evidence.RootElement.GetProperty("stableOrderingUsed").GetBoolean());
+        Assert.Equal("stable_sequence_equal_score_cluster", evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
+        Assert.True(evidence.RootElement.GetProperty("usedDateOnlyClusterNormalization").GetBoolean());
+        Assert.Equal("2026-03-29", evidence.RootElement.GetProperty("rawBookedUtcDay").GetProperty("credit").GetString());
+        Assert.Equal("2026-03-30", evidence.RootElement.GetProperty("effectiveClusterDay").GetProperty("credit").GetString());
+        Assert.True(evidence.RootElement.GetProperty("duplicateClusterMember").GetBoolean());
+        Assert.Equal(4, evidence.RootElement.GetProperty("duplicateClusterSize").GetInt32());
+    }
+
+    [Fact]
+    public async Task CallbackFlow_DateOnlyStoredPriorUtc_UnrelatedCrossDayRows_AreNotForceClustered()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: AibRevolutWeakNameDateOnlyStoredPriorUtcUnrelatedCrossDayFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.weak-name-prior-utc-cross-day-negative@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-weak-name-prior-utc-negative", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var rows = await harness.DbContext.Transactions
+            .Where(x => x.Currency == "EUR" && Math.Abs(x.Amount) == 1.00m)
+            .ToListAsync();
+        Assert.Equal(4, rows.Count);
+
+        Assert.DoesNotContain(rows, row =>
+            row.DeterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule
+            && row.DeterministicRelationshipType == "internal_transfer");
+        Assert.DoesNotContain(rows, row => row.DeterministicLinkedTransactionId.HasValue);
     }
 
     [Fact]
@@ -5323,6 +5404,272 @@ public class OpenBankingIntegrationTests
         });
     }
 
+    private static HttpMessageHandler AibRevolutWeakNameDateOnlyStoredPriorUtcFlowHandler()
+    {
+        var localDayUtc = new DateTime(2026, 3, 30, 0, 0, 0, DateTimeKind.Utc);
+        var inboundStoredUtc = localDayUtc.AddHours(-1);
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-weak-name-prior-utc",
+                      "refresh_token":"refresh-token-weak-name-prior-utc",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-weak-name-prior-utc-001",
+                          "display_name": "AIB Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-aib",
+                            "display_name": "AIB"
+                          }
+                        },
+                        {
+                          "account_id": "acc-revolut-weak-name-prior-utc-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-weak-name-prior-utc-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 2200.00,
+                          "current": 2200.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T00:10:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-weak-name-prior-utc-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 2200.00,
+                          "current": 2200.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-30T08:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-weak-name-prior-utc-001/transactions", StringComparison.Ordinal))
+            {
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddInboundStoredUtcCustom(
+                        "tx-weak-name-prior-utc-inbound-a",
+                        "norm-weak-name-prior-utc-inbound-a",
+                        1.00m,
+                        inboundStoredUtc,
+                        "ALBU MARIUS IE26033080917464 TxnDate: 30Mar2026 Sent from Revolut")
+                    .AddInboundStoredUtcCustom(
+                        "tx-weak-name-prior-utc-inbound-b",
+                        "norm-weak-name-prior-utc-inbound-b",
+                        1.00m,
+                        inboundStoredUtc,
+                        "ALBU MARIUS IE26033080924925 TxnDate: 30Mar2026 Sent from Revolut");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-weak-name-prior-utc-001/transactions", StringComparison.Ordinal))
+            {
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddPreciseOutboundCustom(
+                        "tx-weak-name-prior-utc-outbound-a",
+                        "norm-weak-name-prior-utc-outbound-a",
+                        -1.00m,
+                        localDayUtc.AddHours(4).AddMinutes(53).AddSeconds(25),
+                        "To Marius Albu")
+                    .AddPreciseOutboundCustom(
+                        "tx-weak-name-prior-utc-outbound-b",
+                        "norm-weak-name-prior-utc-outbound-b",
+                        -1.00m,
+                        localDayUtc.AddHours(7).AddMinutes(33).AddSeconds(6),
+                        "To Marius Albu");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler AibRevolutWeakNameDateOnlyStoredPriorUtcUnrelatedCrossDayFlowHandler()
+    {
+        var inboundStoredUtc = new DateTime(2026, 3, 29, 23, 0, 0, DateTimeKind.Utc);
+        var outboundDayUtc = new DateTime(2026, 3, 31, 0, 0, 0, DateTimeKind.Utc);
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-weak-name-prior-utc-negative",
+                      "refresh_token":"refresh-token-weak-name-prior-utc-negative",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-aib-weak-name-prior-utc-negative-001",
+                          "display_name": "AIB Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-aib",
+                            "display_name": "AIB"
+                          }
+                        },
+                        {
+                          "account_id": "acc-revolut-weak-name-prior-utc-negative-001",
+                          "display_name": "Revolut Main",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-revolut-ie",
+                            "display_name": "REVOLUT-IE"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-weak-name-prior-utc-negative-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1800.00,
+                          "current": 1800.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-31T00:10:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-weak-name-prior-utc-negative-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1800.00,
+                          "current": 1800.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-03-31T08:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-weak-name-prior-utc-negative-001/transactions", StringComparison.Ordinal))
+            {
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddInboundStoredUtcCustom(
+                        "tx-weak-name-prior-utc-negative-inbound-a",
+                        "norm-weak-name-prior-utc-negative-inbound-a",
+                        1.00m,
+                        inboundStoredUtc,
+                        "ALBU MARIUS IE26033080917464 TxnDate: 30Mar2026 Sent from Revolut")
+                    .AddInboundStoredUtcCustom(
+                        "tx-weak-name-prior-utc-negative-inbound-b",
+                        "norm-weak-name-prior-utc-negative-inbound-b",
+                        1.00m,
+                        inboundStoredUtc,
+                        "ALBU MARIUS IE26033080924925 TxnDate: 30Mar2026 Sent from Revolut");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-weak-name-prior-utc-negative-001/transactions", StringComparison.Ordinal))
+            {
+                var scenario = new RepeatedAmountClusterScenarioBuilder()
+                    .AddPreciseOutboundCustom(
+                        "tx-weak-name-prior-utc-negative-outbound-a",
+                        "norm-weak-name-prior-utc-negative-outbound-a",
+                        -1.00m,
+                        outboundDayUtc.AddHours(4).AddMinutes(53).AddSeconds(25),
+                        "To Marius Albu")
+                    .AddPreciseOutboundCustom(
+                        "tx-weak-name-prior-utc-negative-outbound-b",
+                        "norm-weak-name-prior-utc-negative-outbound-b",
+                        -1.00m,
+                        outboundDayUtc.AddHours(7).AddMinutes(33).AddSeconds(6),
+                        "To Marius Albu");
+
+                return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
     private static HttpMessageHandler AmbiguousRepeatedAmountTransferFlowHandler()
     {
         var baseDateUtc = new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc);
@@ -6720,6 +7067,25 @@ public class OpenBankingIntegrationTests
                 amount,
                 "EUR",
                 bookedDateUtc.ToString("yyyy-MM-dd"),
+                description,
+                transactionType));
+            return this;
+        }
+
+        public TransferPairScenarioBuilder AddInboundStoredUtcCustom(
+            string transactionId,
+            string normalizedProviderTransactionId,
+            decimal amount,
+            DateTime timestampUtc,
+            string description,
+            string transactionType = "CREDIT")
+        {
+            rows.Add(new TransferScenarioTransactionSeed(
+                transactionId,
+                normalizedProviderTransactionId,
+                amount,
+                "EUR",
+                timestampUtc.ToString("O"),
                 description,
                 transactionType));
             return this;

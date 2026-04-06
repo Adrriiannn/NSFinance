@@ -39,8 +39,20 @@ public sealed class TransferPairingEngine
                 0);
         }
 
+        var clusterDayInfoById = transferLikeFeatures
+            .ToDictionary(
+                feature => feature.TransactionId,
+                feature => ResolveClusterDayInfo(
+                    feature,
+                    routingDecisionsById[feature.TransactionId],
+                    transferLikeFeatures));
+
         var groupStatsByAmountCurrencyDay = transferLikeFeatures
-            .GroupBy(CreateAmountCurrencyDayKey)
+            .GroupBy(feature =>
+            {
+                var clusterDayInfo = clusterDayInfoById[feature.TransactionId];
+                return CreateAmountCurrencyDayKey(feature, clusterDayInfo.EffectiveClusterDay);
+            })
             .ToDictionary(
                 group => group.Key,
                 group => new
@@ -61,7 +73,8 @@ public sealed class TransferPairingEngine
                 continue;
             }
 
-            var amountDayKey = CreateAmountCurrencyDayKey(source);
+            var sourceClusterDayInfo = clusterDayInfoById[source.TransactionId];
+            var amountDayKey = CreateAmountCurrencyDayKey(source, sourceClusterDayInfo.EffectiveClusterDay);
             groupStatsByAmountCurrencyDay.TryGetValue(amountDayKey, out var groupStats);
             var duplicateClusterMember = groupStats is not null && groupStats.OutflowCount > 1 && groupStats.InflowCount > 1;
             var duplicateClusterSize = groupStats?.Total ?? 0;
@@ -81,7 +94,9 @@ public sealed class TransferPairingEngine
                     duplicateClusterMember,
                     duplicateClusterSize,
                     routingDecisionsById[source.TransactionId],
-                    routingDecisionsById[candidate.TransactionId]))
+                    routingDecisionsById[candidate.TransactionId],
+                    sourceClusterDayInfo,
+                    clusterDayInfoById[candidate.TransactionId]))
                 .OrderByDescending(x => x.ReferenceConfidenceRank)
                 .ThenByDescending(x => x.ReferenceOverlapScore)
                 .ThenByDescending(x => x.HighConfidenceReferenceOverlap)
@@ -104,7 +119,8 @@ public sealed class TransferPairingEngine
         var resolvedPairDecisions = ResolvePairs(
             transferLikeFeatures,
             candidatesBySourceId,
-            pairedTransactionIds);
+            pairedTransactionIds,
+            clusterDayInfoById);
         var pairedByDeterministicResolution = resolvedPairDecisions.Keys.ToHashSet();
 
         var pending = new Dictionary<Guid, TransferPendingDecision>();
@@ -129,6 +145,7 @@ public sealed class TransferPairingEngine
             var duplicateClusterMember = candidates.FirstOrDefault()?.IsDuplicateClusterMember ?? false;
             var duplicateClusterSize = candidates.FirstOrDefault()?.DuplicateClusterSize ?? 0;
             var topCandidate = candidates.FirstOrDefault();
+            var clusterDayInfo = clusterDayInfoById[feature.TransactionId];
 
             if (candidates.Count == 0)
             {
@@ -172,6 +189,9 @@ public sealed class TransferPairingEngine
                         candidateCount = 0,
                         duplicateClusterMember,
                         duplicateClusterSize,
+                        rawBookedUtcDay = clusterDayInfo.RawBookedUtcDay,
+                        effectiveClusterDay = clusterDayInfo.EffectiveClusterDay,
+                        usedDateOnlyClusterNormalization = clusterDayInfo.UsedDateOnlyClusterNormalization,
                         timePrecisionMode = feature.ProviderTimestampPrecision.ToString().ToLowerInvariant(),
                         feature.HasTransferKeyword,
                         feature.HasProviderTransferHint,
@@ -213,6 +233,9 @@ public sealed class TransferPairingEngine
                         topCandidateWeakNamesOnlySupport = topCandidate?.NamesOnlyOverlapPenaltyApplied,
                         topCandidateTimePrecisionMode = topCandidate?.TimePrecisionMode,
                         stableOrderingUsed = false,
+                        rawBookedUtcDay = clusterDayInfo.RawBookedUtcDay,
+                        effectiveClusterDay = clusterDayInfo.EffectiveClusterDay,
+                        usedDateOnlyClusterNormalization = clusterDayInfo.UsedDateOnlyClusterNormalization,
                         routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionsById[feature.TransactionId].InitiallyBlockedByExternalCounterpartyRisk,
                         sameUserCandidateUniverseOverrideApplied = routingDecisionsById[feature.TransactionId].SameUserCandidateUniverseOverrideApplied
                     }));
@@ -252,6 +275,9 @@ public sealed class TransferPairingEngine
                             nextWeakNamesOnlySupport = next.NamesOnlyOverlapPenaltyApplied,
                             bestTimePrecisionMode = best.TimePrecisionMode,
                             nextTimePrecisionMode = next.TimePrecisionMode,
+                            rawBookedUtcDay = clusterDayInfo.RawBookedUtcDay,
+                            effectiveClusterDay = clusterDayInfo.EffectiveClusterDay,
+                            usedDateOnlyClusterNormalization = clusterDayInfo.UsedDateOnlyClusterNormalization,
                             routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionsById[feature.TransactionId].InitiallyBlockedByExternalCounterpartyRisk,
                             sameUserCandidateUniverseOverrideApplied = routingDecisionsById[feature.TransactionId].SameUserCandidateUniverseOverrideApplied
                         }));
@@ -288,6 +314,9 @@ public sealed class TransferPairingEngine
                         bestScore = bestCandidate.Score,
                         referenceOverlap = bestCandidate.ReferenceOverlapScore,
                         timePrecisionMode = bestCandidate.TimePrecisionMode,
+                        rawBookedUtcDay = clusterDayInfo.RawBookedUtcDay,
+                        effectiveClusterDay = clusterDayInfo.EffectiveClusterDay,
+                        usedDateOnlyClusterNormalization = clusterDayInfo.UsedDateOnlyClusterNormalization,
                         routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionForFeature.InitiallyBlockedByExternalCounterpartyRisk,
                         sameUserCandidateUniverseOverrideApplied = routingDecisionForFeature.SameUserCandidateUniverseOverrideApplied
                     }));
@@ -317,6 +346,9 @@ public sealed class TransferPairingEngine
                         bestReferenceOverlap = bestCandidate.ReferenceOverlapScore,
                         explicitCounterpartyExpectation,
                         duplicateClusterMember,
+                        rawBookedUtcDay = clusterDayInfo.RawBookedUtcDay,
+                        effectiveClusterDay = clusterDayInfo.EffectiveClusterDay,
+                        usedDateOnlyClusterNormalization = clusterDayInfo.UsedDateOnlyClusterNormalization,
                         routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionForFeature.InitiallyBlockedByExternalCounterpartyRisk,
                         sameUserCandidateUniverseOverrideApplied = routingDecisionForFeature.SameUserCandidateUniverseOverrideApplied
                     }));
@@ -343,6 +375,9 @@ public sealed class TransferPairingEngine
                         bestScore = bestCandidate.Score,
                         bestReferenceOverlap = bestCandidate.ReferenceOverlapScore,
                         bestTimePrecisionMode = bestCandidate.TimePrecisionMode,
+                        rawBookedUtcDay = clusterDayInfo.RawBookedUtcDay,
+                        effectiveClusterDay = clusterDayInfo.EffectiveClusterDay,
+                        usedDateOnlyClusterNormalization = clusterDayInfo.UsedDateOnlyClusterNormalization,
                         routingInitiallyBlockedExternalCounterpartyRisk = routingDecisionForFeature.InitiallyBlockedByExternalCounterpartyRisk,
                         sameUserCandidateUniverseOverrideApplied = routingDecisionForFeature.SameUserCandidateUniverseOverrideApplied
                 }));
@@ -358,7 +393,8 @@ public sealed class TransferPairingEngine
     private static Dictionary<Guid, TransferPairDecision> ResolvePairs(
         IReadOnlyList<DeterministicTransactionFeature> transferLikeFeatures,
         IReadOnlyDictionary<Guid, List<CandidateEdge>> candidatesBySourceId,
-        IReadOnlySet<Guid> prePaired)
+        IReadOnlySet<Guid> prePaired,
+        IReadOnlyDictionary<Guid, ClusterDayInfo> clusterDayInfoById)
     {
         var resolved = new Dictionary<Guid, TransferPairDecision>();
         var claimed = prePaired.ToHashSet();
@@ -504,7 +540,11 @@ public sealed class TransferPairingEngine
             .Where(x => !claimed.Contains(x.TransactionId))
             .ToList();
         var clusterGroups = unresolved
-            .GroupBy(CreateAmountCurrencyDayKey)
+            .GroupBy(feature =>
+            {
+                var clusterDayInfo = clusterDayInfoById[feature.TransactionId];
+                return CreateAmountCurrencyDayKey(feature, clusterDayInfo.EffectiveClusterDay);
+            })
             .Where(group => group.Count(x => x.IsOutflow) > 1 && group.Count(x => x.IsInflow) > 1)
             .ToList();
 
@@ -785,6 +825,8 @@ public sealed class TransferPairingEngine
             score = edge.Score,
             candidateEdgeCount = clusterCandidateEdgeCount,
             clusterAssignmentCount,
+            duplicateClusterMember = edge.IsDuplicateClusterMember,
+            duplicateClusterSize = clusterSize,
             clusterMembership = new
             {
                 isDuplicateClusterMember = edge.IsDuplicateClusterMember,
@@ -822,6 +864,27 @@ public sealed class TransferPairingEngine
             equalCardinalityCluster,
             referenceTieExhausted,
             timePrecisionNonDiscriminating,
+            rawBookedUtcDay = new
+            {
+                debit = debit.TransactionId == edge.Source.TransactionId
+                    ? edge.SourceRawBookedUtcDay
+                    : edge.CandidateRawBookedUtcDay,
+                credit = credit.TransactionId == edge.Source.TransactionId
+                    ? edge.SourceRawBookedUtcDay
+                    : edge.CandidateRawBookedUtcDay
+            },
+            effectiveClusterDay = new
+            {
+                debit = debit.TransactionId == edge.Source.TransactionId
+                    ? edge.SourceEffectiveClusterDay
+                    : edge.CandidateEffectiveClusterDay,
+                credit = credit.TransactionId == edge.Source.TransactionId
+                    ? edge.SourceEffectiveClusterDay
+                    : edge.CandidateEffectiveClusterDay
+            },
+            usedDateOnlyClusterNormalization =
+                edge.SourceUsedDateOnlyClusterNormalization
+                || edge.CandidateUsedDateOnlyClusterNormalization,
             routingInitiallyBlockedExternalCounterpartyRisk =
                 edge.SourceInitiallyBlockedExternalCounterpartyRisk
                 || edge.CandidateInitiallyBlockedExternalCounterpartyRisk,
@@ -949,9 +1012,46 @@ public sealed class TransferPairingEngine
         return false;
     }
 
-    private static string CreateAmountCurrencyDayKey(DeterministicTransactionFeature feature)
+    private static ClusterDayInfo ResolveClusterDayInfo(
+        DeterministicTransactionFeature feature,
+        TransferRoutingDecision routingDecision,
+        IReadOnlyList<DeterministicTransactionFeature> transferLikeFeatures)
     {
-        return $"{feature.AbsoluteAmount:0.00}|{feature.Currency}|{feature.BookedAtUtc:yyyy-MM-dd}";
+        var rawBookedUtcDay = feature.BookedAtUtc.Date;
+        var hasPlausibleOppositeDirectionCandidate = transferLikeFeatures.Any(candidate =>
+            candidate.TransactionId != feature.TransactionId
+            && candidate.FinancialAccountId != feature.FinancialAccountId
+            && candidate.Currency == feature.Currency
+            && candidate.AbsoluteAmount == feature.AbsoluteAmount
+            && candidate.IsOutflow != feature.IsOutflow
+            && Math.Abs((candidate.BookedAtUtc - feature.BookedAtUtc).TotalHours) <= DeterministicCategorizationConstants.TransferCandidateWindowHours);
+        var applyDateOnlyNormalization = (feature.ProviderTimestampPrecision == DeterministicProviderTimestampPrecision.DateOnly
+                                          || IsLocalMidnightBoundaryTimestamp(feature.BookedAtUtc))
+                                         && routingDecision.SameUserCandidateUniverseSize > 1
+                                         && hasPlausibleOppositeDirectionCandidate;
+        var effectiveClusterDay = applyDateOnlyNormalization
+            ? feature.BookedAtUtc.AddHours(12d).Date
+            : rawBookedUtcDay;
+
+        return new ClusterDayInfo(
+            RawBookedUtcDay: $"{rawBookedUtcDay:yyyy-MM-dd}",
+            EffectiveClusterDay: $"{effectiveClusterDay:yyyy-MM-dd}",
+            UsedDateOnlyClusterNormalization: applyDateOnlyNormalization);
+    }
+
+    private static bool IsLocalMidnightBoundaryTimestamp(DateTime bookedAtUtc)
+    {
+        if (bookedAtUtc.Minute != 0 || bookedAtUtc.Second != 0)
+        {
+            return false;
+        }
+
+        return bookedAtUtc.Hour is 22 or 23 or 0 or 1 or 2;
+    }
+
+    private static string CreateAmountCurrencyDayKey(DeterministicTransactionFeature feature, string effectiveClusterDay)
+    {
+        return $"{feature.AbsoluteAmount:0.00}|{feature.Currency}|{effectiveClusterDay}";
     }
 
     private static CandidateEdge BuildCandidateEdge(
@@ -960,7 +1060,9 @@ public sealed class TransferPairingEngine
         bool duplicateClusterMember,
         int duplicateClusterSize,
         TransferRoutingDecision sourceRoutingDecision,
-        TransferRoutingDecision candidateRoutingDecision)
+        TransferRoutingDecision candidateRoutingDecision,
+        ClusterDayInfo sourceClusterDayInfo,
+        ClusterDayInfo candidateClusterDayInfo)
     {
         var scoring = ScoreCandidate(source, candidate, sourceRoutingDecision, candidateRoutingDecision);
         var sameUserOverrideApplied = sourceRoutingDecision.SameUserCandidateUniverseOverrideApplied
@@ -991,6 +1093,12 @@ public sealed class TransferPairingEngine
             SameUserCandidateUniverseSize: Math.Max(
                 sourceRoutingDecision.SameUserCandidateUniverseSize,
                 candidateRoutingDecision.SameUserCandidateUniverseSize),
+            SourceRawBookedUtcDay: sourceClusterDayInfo.RawBookedUtcDay,
+            SourceEffectiveClusterDay: sourceClusterDayInfo.EffectiveClusterDay,
+            SourceUsedDateOnlyClusterNormalization: sourceClusterDayInfo.UsedDateOnlyClusterNormalization,
+            CandidateRawBookedUtcDay: candidateClusterDayInfo.RawBookedUtcDay,
+            CandidateEffectiveClusterDay: candidateClusterDayInfo.EffectiveClusterDay,
+            CandidateUsedDateOnlyClusterNormalization: candidateClusterDayInfo.UsedDateOnlyClusterNormalization,
             IsDuplicateClusterMember: duplicateClusterMember,
             DuplicateClusterSize: duplicateClusterSize);
     }
@@ -1658,6 +1766,12 @@ public sealed class TransferPairingEngine
         bool SameUserCandidateUniverseOverrideApplied,
         bool StrongOppositeStructuredEvidencePresent,
         int SameUserCandidateUniverseSize,
+        string SourceRawBookedUtcDay,
+        string SourceEffectiveClusterDay,
+        bool SourceUsedDateOnlyClusterNormalization,
+        string CandidateRawBookedUtcDay,
+        string CandidateEffectiveClusterDay,
+        bool CandidateUsedDateOnlyClusterNormalization,
         bool IsDuplicateClusterMember,
         int DuplicateClusterSize);
 
@@ -1709,6 +1823,11 @@ public sealed class TransferPairingEngine
                 ReferenceTieExhausted: false,
                 TimePrecisionNonDiscriminating: false);
     }
+
+    private sealed record ClusterDayInfo(
+        string RawBookedUtcDay,
+        string EffectiveClusterDay,
+        bool UsedDateOnlyClusterNormalization);
 
     private sealed record TransferRoutingDecision(
         bool IncludeInTransferMatching,

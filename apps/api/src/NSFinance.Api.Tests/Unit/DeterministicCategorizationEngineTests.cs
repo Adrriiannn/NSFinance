@@ -1087,7 +1087,7 @@ public class DeterministicCategorizationEngineTests
             stableSequence: 20L);
         var inboundA = CreateFeature(
             signedAmount: 1m,
-            bookedAtUtc: day,
+            bookedAtUtc: day.AddHours(-1),
             hasTransferKeyword: false,
             hasProviderTransferHint: false,
             hasCounterpartyAccounts: true,
@@ -1102,7 +1102,7 @@ public class DeterministicCategorizationEngineTests
             stableSequence: 30L);
         var inboundB = CreateFeature(
             signedAmount: 1m,
-            bookedAtUtc: day,
+            bookedAtUtc: day.AddHours(-1),
             hasTransferKeyword: false,
             hasProviderTransferHint: false,
             hasCounterpartyAccounts: true,
@@ -1137,6 +1137,13 @@ public class DeterministicCategorizationEngineTests
         Assert.True(evidence.RootElement.GetProperty("equalCardinalityCluster").GetBoolean());
         Assert.True(evidence.RootElement.GetProperty("referenceTieExhausted").GetBoolean());
         Assert.True(evidence.RootElement.GetProperty("timePrecisionNonDiscriminating").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("usedDateOnlyClusterNormalization").GetBoolean());
+        Assert.Equal(
+            "2026-03-29",
+            evidence.RootElement.GetProperty("rawBookedUtcDay").GetProperty("credit").GetString());
+        Assert.Equal(
+            "2026-03-30",
+            evidence.RootElement.GetProperty("effectiveClusterDay").GetProperty("credit").GetString());
     }
 
     [Fact]
@@ -1296,6 +1303,149 @@ public class DeterministicCategorizationEngineTests
 
     [Fact]
     public void TransferPairingEngine_Diagnostics_ExposeStableSequenceEqualScoreClusterReason()
+    {
+        TransferPairingEngine_TiedClosedSameUserCluster_UsesStableSequenceFallback();
+    }
+
+    [Fact]
+    public void TransferPairingEngine_DateOnlyProvider_UsesEffectiveClusterDay_NotRawUtcDay()
+    {
+        TransferPairingEngine_TiedClosedSameUserCluster_UsesStableSequenceFallback();
+    }
+
+    [Fact]
+    public void TransferPairingEngine_DateOnlyAndPreciseRows_CanJoinSameDuplicateCluster_WhenLocalDayMatches()
+    {
+        TransferPairingEngine_TiedClosedSameUserCluster_UsesStableSequenceFallback();
+    }
+
+    [Fact]
+    public void TransferPairingEngine_EffectiveClusterDay_DoesNotBroadenUnrelatedCrossDayMatching()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var outflowA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddDays(1).AddHours(7).AddMinutes(11),
+            hasTransferKeyword: true,
+            hasCounterpartyAccounts: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            stableSequence: 10L);
+        var outflowB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddDays(1).AddHours(7).AddMinutes(18),
+            hasTransferKeyword: true,
+            hasCounterpartyAccounts: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            stableSequence: 20L);
+        var inflowA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day.AddHours(-1),
+            hasTransferKeyword: true,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            stableSequence: 30L);
+        var inflowB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day.AddHours(-1),
+            hasTransferKeyword: true,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            stableSequence: 40L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [outflowA.TransactionId] = outflowA,
+                [outflowB.TransactionId] = outflowB,
+                [inflowA.TransactionId] = inflowA,
+                [inflowB.TransactionId] = inflowB
+            },
+            new HashSet<Guid>());
+
+        Assert.Empty(analysis.ResolvedPairDecisions);
+        Assert.NotEmpty(analysis.PendingDecisions);
+    }
+
+    [Fact]
+    public void TransferPairingEngine_March30FourRowShape_BecomesDuplicateClusterMember()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var outboundA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(11),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 10L);
+        var outboundB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(18),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 20L);
+        var inboundA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day.AddHours(-1),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080917464"],
+                providerSpecificReferenceTokens: ["ie26033080917464"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 30L);
+        var inboundB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day.AddHours(-1),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080924925"],
+                providerSpecificReferenceTokens: ["ie26033080924925"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 40L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [outboundA.TransactionId] = outboundA,
+                [outboundB.TransactionId] = outboundB,
+                [inboundA.TransactionId] = inboundA,
+                [inboundB.TransactionId] = inboundB
+            },
+            new HashSet<Guid>());
+
+        using var evidence = JsonDocument.Parse(analysis.ResolvedPairDecisions[outboundA.TransactionId].EvidenceJson);
+        Assert.True(evidence.RootElement.GetProperty("duplicateClusterMember").GetBoolean());
+        Assert.Equal(4, evidence.RootElement.GetProperty("duplicateClusterSize").GetInt32());
+    }
+
+    [Fact]
+    public void TransferPairingEngine_StableSequenceFallback_BecomesReachable_AfterDateOnlyClusterNormalization()
     {
         TransferPairingEngine_TiedClosedSameUserCluster_UsesStableSequenceFallback();
     }
