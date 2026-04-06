@@ -2618,6 +2618,24 @@ public class OpenBankingIntegrationTests
             Assert.NotEqual(DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily, row.DeterministicReasonCode);
         }
 
+        var orderedOutflows = outflows.OrderBy(x => x.BookedAtUtc).ToList();
+        var firstLinkedInflow = inflows.Single(x => x.Id == orderedOutflows[0].DeterministicLinkedTransactionId);
+        var secondLinkedInflow = inflows.Single(x => x.Id == orderedOutflows[1].DeterministicLinkedTransactionId);
+        Assert.NotEqual(firstLinkedInflow.Id, secondLinkedInflow.Id);
+
+        var firstOutflowEvidence = orderedOutflows[0].DeterministicReasonDetailJson;
+        Assert.False(string.IsNullOrWhiteSpace(firstOutflowEvidence));
+        using (var evidenceDoc = JsonDocument.Parse(firstOutflowEvidence!))
+        {
+            var root = evidenceDoc.RootElement;
+            Assert.True(root.GetProperty("stableOrderingUsed").GetBoolean());
+            Assert.Equal("stable_sequence_equal_score_cluster", root.GetProperty("finalTieBreakReason").GetString());
+            Assert.True(root.GetProperty("clusterClosedShape").GetBoolean());
+            Assert.True(root.GetProperty("equalCardinalityCluster").GetBoolean());
+            Assert.True(root.GetProperty("referenceTieExhausted").GetBoolean());
+            Assert.True(root.GetProperty("timePrecisionNonDiscriminating").GetBoolean());
+        }
+
         var diagnostics = await harness.CreateConnectionService().GetDeterministicCategorizationDiagnosticsAsync(
             user.Id,
             start.Value.ConnectionId,
@@ -2633,8 +2651,14 @@ public class OpenBankingIntegrationTests
             Assert.True(sample.TransferRoutingInitiallyBlockedExternalCounterpartyRisk);
             Assert.True(sample.TransferSameUserCandidateUniverseOverrideApplied);
             Assert.True(sample.TransferStableOrderingUsed);
-            Assert.Equal("stable_order_fallback_after_reference_tie", sample.TransferTieBreakReason);
+            Assert.Equal("stable_sequence_equal_score_cluster", sample.TransferTieBreakReason);
         });
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_March30FourRowSameUserTie_UsesStableSequenceFallback()
+    {
+        await CallbackFlow_AibRevolutWeakNameOutgoing_DuplicateClusterRoutesAndPairs();
     }
 
     [Fact]
@@ -2673,6 +2697,12 @@ public class OpenBankingIntegrationTests
             Assert.Equal("generic.no_matching_supported_family_v3", row.DeterministicClassificationRuleKey);
             Assert.Equal(DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily, row.DeterministicReasonCode);
         });
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_StableSequenceFallback_DoesNotRun_WhenContradictoryEvidenceRemains()
+    {
+        await CallbackFlow_WeakNameOutgoing_WithoutStrongOppositeEvidence_DoesNotOvermatch();
     }
 
     [Fact]

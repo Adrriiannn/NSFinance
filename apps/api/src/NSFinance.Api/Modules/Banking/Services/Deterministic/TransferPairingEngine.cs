@@ -586,6 +586,7 @@ public sealed class TransferPairingEngine
             var clusterTimePrecisionMode = ResolveClusterTimePrecisionMode(contenders);
             var stableOrderingUsed = false;
             var tieBreakReason = ResolveClusterTieBreakReason(bestCore.CoreScore);
+            var stableSequenceFallbackDiagnostics = StableSequenceFallbackDiagnostics.None;
             ClusterAssignment chosen;
             if (contenders.Count == 1)
             {
@@ -593,22 +594,30 @@ public sealed class TransferPairingEngine
             }
             else
             {
-                var stableOrderFallbackAllowed = CanUseStableOrderFallback(
+                stableSequenceFallbackDiagnostics = EvaluateStableSequenceFallbackEligibility(
+                    outflows,
+                    inflows,
+                    candidatesBySourceId,
+                    candidatesByOutflowId,
                     contenders,
-                    clusterTimePrecisionMode);
-                if (!stableOrderFallbackAllowed)
+                    clusterTimePrecisionMode,
+                    claimed);
+                if (!stableSequenceFallbackDiagnostics.Allowed)
+                {
+                    continue;
+                }
+
+                if (!TrySelectStableSequenceAssignment(
+                    contenders,
+                    outflows,
+                    inflows,
+                    out chosen))
                 {
                     continue;
                 }
 
                 stableOrderingUsed = true;
-                tieBreakReason = "stable_order_fallback_after_reference_tie";
-                chosen = contenders
-                    .OrderBy(x => x.StableOrderDistanceSum)
-                    .ThenBy(x => x.StableOrderCrossingPenalty)
-                    .ThenBy(x => x.EdgeCount)
-                    .ThenBy(x => string.Join("|", x.Edges.Select(edge => edge.Candidate.TransactionId.ToString("N"))), StringComparer.Ordinal)
-                    .First();
+                tieBreakReason = "stable_sequence_equal_score_cluster";
             }
 
             foreach (var edge in chosen.Edges)
@@ -642,7 +651,11 @@ public sealed class TransferPairingEngine
                     clusterTimePrecisionMode,
                     clusterCandidateEdgeCount,
                     assignments.Count,
-                    namesOnlyWeakSupport);
+                    namesOnlyWeakSupport,
+                    clusterClosedShape: stableSequenceFallbackDiagnostics.ClusterClosedShape,
+                    equalCardinalityCluster: stableSequenceFallbackDiagnostics.EqualCardinalityCluster,
+                    referenceTieExhausted: stableSequenceFallbackDiagnostics.ReferenceTieExhausted,
+                    timePrecisionNonDiscriminating: stableSequenceFallbackDiagnostics.TimePrecisionNonDiscriminating);
             }
         }
 
@@ -751,7 +764,11 @@ public sealed class TransferPairingEngine
         string clusterTimePrecisionMode,
         int clusterCandidateEdgeCount,
         int clusterAssignmentCount,
-        bool namesOnlyWeakSupport)
+        bool namesOnlyWeakSupport,
+        bool clusterClosedShape = false,
+        bool equalCardinalityCluster = false,
+        bool referenceTieExhausted = false,
+        bool timePrecisionNonDiscriminating = false)
     {
         var debit = edge.Source.IsOutflow ? edge.Source : edge.Candidate;
         var credit = edge.Source.IsInflow ? edge.Source : edge.Candidate;
@@ -801,6 +818,10 @@ public sealed class TransferPairingEngine
             stableOrderDistance = edge.StableOrderDistance,
             weakNameSupportOnly = namesOnlyWeakSupport,
             finalTieBreakReason = tieBreakReason,
+            clusterClosedShape,
+            equalCardinalityCluster,
+            referenceTieExhausted,
+            timePrecisionNonDiscriminating,
             routingInitiallyBlockedExternalCounterpartyRisk =
                 edge.SourceInitiallyBlockedExternalCounterpartyRisk
                 || edge.CandidateInitiallyBlockedExternalCounterpartyRisk,
@@ -1221,51 +1242,280 @@ public sealed class TransferPairingEngine
         return "unknown";
     }
 
-    private static bool CanUseStableOrderFallback(
+    private static StableSequenceFallbackDiagnostics EvaluateStableSequenceFallbackEligibility(
+        IReadOnlyList<DeterministicTransactionFeature> outflows,
+        IReadOnlyList<DeterministicTransactionFeature> inflows,
+        IReadOnlyDictionary<Guid, List<CandidateEdge>> candidatesBySourceId,
+        IReadOnlyDictionary<Guid, List<CandidateEdge>> candidatesByOutflowId,
         IReadOnlyList<ClusterAssignment> contenders,
-        string clusterTimePrecisionMode)
+        string clusterTimePrecisionMode,
+        IReadOnlySet<Guid> claimed)
+    {
+        var equalCardinalityCluster = outflows.Count == inflows.Count && outflows.Count == 2;
+        var clusterClosedShape = equalCardinalityCluster
+                                 && IsClosedClusterCandidateShape(
+                                     outflows,
+                                     inflows,
+                                     candidatesBySourceId,
+                                     claimed);
+        var referenceTieExhausted = equalCardinalityCluster
+                                    && HasExhaustedReferenceTie(
+                                        outflows,
+                                        inflows,
+                                        candidatesBySourceId,
+                                        candidatesByOutflowId,
+                                        contenders,
+                                        claimed);
+        var timePrecisionNonDiscriminating = IsTimePrecisionNonDiscriminating(contenders, clusterTimePrecisionMode);
+        var sameUserUniverseEstablished = contenders.All(assignment => assignment.Edges.All(edge =>
+            edge.SameUserCandidateUniverseSize >= 2));
+        var noExternalContradiction = contenders.All(assignment => assignment.Edges.All(edge =>
+            (!edge.SourceInitiallyBlockedExternalCounterpartyRisk && !edge.CandidateInitiallyBlockedExternalCounterpartyRisk)
+            || (edge.SameUserCandidateUniverseOverrideApplied && edge.StrongOppositeStructuredEvidencePresent)));
+        var consistentClusterShape = outflows.Count > 0
+                                     && inflows.Count > 0
+                                     && outflows.All(x => x.IsOutflow)
+                                     && inflows.All(x => x.IsInflow)
+                                     && outflows.All(x => x.Currency == outflows[0].Currency && x.AbsoluteAmount == outflows[0].AbsoluteAmount)
+                                     && inflows.All(x => x.Currency == outflows[0].Currency && x.AbsoluteAmount == outflows[0].AbsoluteAmount);
+
+        var allowed = equalCardinalityCluster
+                      && clusterClosedShape
+                      && referenceTieExhausted
+                      && timePrecisionNonDiscriminating
+                      && sameUserUniverseEstablished
+                      && noExternalContradiction
+                      && consistentClusterShape;
+
+        return new StableSequenceFallbackDiagnostics(
+            Allowed: allowed,
+            ClusterClosedShape: clusterClosedShape,
+            EqualCardinalityCluster: equalCardinalityCluster,
+            ReferenceTieExhausted: referenceTieExhausted,
+            TimePrecisionNonDiscriminating: timePrecisionNonDiscriminating);
+    }
+
+    private static bool IsClosedClusterCandidateShape(
+        IReadOnlyList<DeterministicTransactionFeature> outflows,
+        IReadOnlyList<DeterministicTransactionFeature> inflows,
+        IReadOnlyDictionary<Guid, List<CandidateEdge>> candidatesBySourceId,
+        IReadOnlySet<Guid> claimed)
+    {
+        var outflowIds = outflows.Select(x => x.TransactionId).ToHashSet();
+        var inflowIds = inflows.Select(x => x.TransactionId).ToHashSet();
+
+        foreach (var outflow in outflows)
+        {
+            if (!candidatesBySourceId.TryGetValue(outflow.TransactionId, out var outflowCandidates))
+            {
+                return false;
+            }
+
+            var activeOutflowCandidates = outflowCandidates
+                .Where(edge => !claimed.Contains(edge.Candidate.TransactionId))
+                .Where(edge => edge.Score >= MinScoreForPairing)
+                .ToList();
+            if (activeOutflowCandidates.Count != inflowIds.Count
+                || activeOutflowCandidates.Any(edge => !inflowIds.Contains(edge.Candidate.TransactionId)))
+            {
+                return false;
+            }
+        }
+
+        foreach (var inflow in inflows)
+        {
+            if (!candidatesBySourceId.TryGetValue(inflow.TransactionId, out var inflowCandidates))
+            {
+                return false;
+            }
+
+            var activeInflowCandidates = inflowCandidates
+                .Where(edge => !claimed.Contains(edge.Candidate.TransactionId))
+                .Where(edge => edge.Score >= MinScoreForPairing)
+                .ToList();
+            if (activeInflowCandidates.Count != outflowIds.Count
+                || activeInflowCandidates.Any(edge => !outflowIds.Contains(edge.Candidate.TransactionId)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasExhaustedReferenceTie(
+        IReadOnlyList<DeterministicTransactionFeature> outflows,
+        IReadOnlyList<DeterministicTransactionFeature> inflows,
+        IReadOnlyDictionary<Guid, List<CandidateEdge>> candidatesBySourceId,
+        IReadOnlyDictionary<Guid, List<CandidateEdge>> candidatesByOutflowId,
+        IReadOnlyList<ClusterAssignment> contenders,
+        IReadOnlySet<Guid> claimed)
     {
         if (contenders.Count <= 1)
         {
             return false;
         }
 
-        var highConfidenceTied = contenders
-            .Select(x => x.CoreScore.HighConfidenceReferenceOverlap)
-            .Distinct()
-            .Count() == 1;
-        var providerSpecificTied = contenders
-            .Select(x => x.CoreScore.ProviderSpecificReferenceOverlap)
-            .Distinct()
-            .Count() == 1;
-        var accountTied = contenders
-            .Select(x => x.CoreScore.AccountReferenceOverlap)
-            .Distinct()
-            .Count() == 1;
-        var paymentTied = contenders
-            .Select(x => x.CoreScore.PaymentMarkerOverlap)
-            .Distinct()
-            .Count() == 1;
-        var mediumStructuredTied = contenders
+        var noHighConfidenceReferenceOverlap = contenders.All(x =>
+            x.CoreScore.HighConfidenceReferenceOverlap == 0
+            && x.CoreScore.ProviderSpecificReferenceOverlap == 0
+            && x.CoreScore.AccountReferenceOverlap == 0
+            && x.CoreScore.PaymentMarkerOverlap == 0);
+        var mediumStructuredTie = contenders
             .Select(x => x.CoreScore.MediumConfidenceOverlap)
             .Distinct()
             .Count() == 1;
-        if (!highConfidenceTied
-            || !providerSpecificTied
-            || !accountTied
-            || !paymentTied
-            || !mediumStructuredTied)
+        var referenceScoreTie = contenders
+            .Select(x => x.CoreScore.ReferenceOverlapScore)
+            .Distinct()
+            .Count() == 1;
+        var totalScoreTie = contenders
+            .Select(x => x.CoreScore.TotalScore)
+            .Distinct()
+            .Count() == 1;
+        if (!noHighConfidenceReferenceOverlap
+            || !mediumStructuredTie
+            || !referenceScoreTie
+            || !totalScoreTie)
         {
             return false;
         }
 
+        foreach (var outflow in outflows)
+        {
+            if (!candidatesByOutflowId.TryGetValue(outflow.TransactionId, out var outflowCandidates))
+            {
+                return false;
+            }
+
+            var activeOutflowCandidates = outflowCandidates
+                .Where(edge => !claimed.Contains(edge.Candidate.TransactionId))
+                .ToList();
+            if (!IsCandidateSetPureTie(activeOutflowCandidates, inflows.Count))
+            {
+                return false;
+            }
+        }
+
+        var outflowIds = outflows.Select(x => x.TransactionId).ToHashSet();
+        foreach (var inflow in inflows)
+        {
+            if (!candidatesBySourceId.TryGetValue(inflow.TransactionId, out var inflowCandidates))
+            {
+                return false;
+            }
+
+            var activeInflowCandidates = inflowCandidates
+                .Where(edge => !claimed.Contains(edge.Candidate.TransactionId))
+                .Where(edge => edge.Score >= MinScoreForPairing)
+                .Where(edge => outflowIds.Contains(edge.Candidate.TransactionId))
+                .ToList();
+            if (!IsCandidateSetPureTie(activeInflowCandidates, outflows.Count))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsCandidateSetPureTie(IReadOnlyList<CandidateEdge> candidates, int expectedCount)
+    {
+        if (candidates.Count != expectedCount || candidates.Count <= 1)
+        {
+            return false;
+        }
+
+        return candidates.Select(x => x.Score).Distinct().Count() == 1
+               && candidates.Select(x => x.ReferenceOverlapScore).Distinct().Count() == 1
+               && candidates.Select(x => x.ReferenceConfidenceRank).Distinct().Count() == 1
+               && candidates.Select(x => x.HighConfidenceReferenceOverlap).Distinct().Count() == 1
+               && candidates.Select(x => x.ProviderSpecificReferenceOverlap).Distinct().Count() == 1
+               && candidates.Select(x => x.AccountReferenceOverlap).Distinct().Count() == 1
+               && candidates.Select(x => x.PaymentMarkerOverlap).Distinct().Count() == 1
+               && candidates.Select(x => x.MediumConfidenceOverlap).Distinct().Count() == 1;
+    }
+
+    private static bool IsTimePrecisionNonDiscriminating(
+        IReadOnlyList<ClusterAssignment> contenders,
+        string clusterTimePrecisionMode)
+    {
         var coarsePrecision = clusterTimePrecisionMode is "date_only" or "coarse" or "unknown";
         var nonDiscriminatingTime = contenders
             .Select(x => x.CoreScore.TotalWindowMinutes)
             .Distinct()
             .Count() == 1;
-
         return coarsePrecision || nonDiscriminatingTime;
+    }
+
+    private static bool TrySelectStableSequenceAssignment(
+        IReadOnlyList<ClusterAssignment> contenders,
+        IReadOnlyList<DeterministicTransactionFeature> outflows,
+        IReadOnlyList<DeterministicTransactionFeature> inflows,
+        out ClusterAssignment selected)
+    {
+        var orderedOutflows = OrderForStableSequenceFallback(outflows).ToList();
+        var orderedInflows = OrderForStableSequenceFallback(inflows).ToList();
+        if (orderedOutflows.Count != orderedInflows.Count || orderedOutflows.Count == 0)
+        {
+            selected = contenders[0];
+            return false;
+        }
+
+        var expectedPairs = orderedOutflows
+            .Select((outflow, index) => new { outflow.TransactionId, InflowId = orderedInflows[index].TransactionId })
+            .ToDictionary(x => x.TransactionId, x => x.InflowId);
+
+        var exactStableSequenceMatch = contenders.FirstOrDefault(assignment =>
+            assignment.Edges.Count == orderedOutflows.Count
+            && assignment.Edges.All(edge =>
+                expectedPairs.TryGetValue(edge.Source.TransactionId, out var expectedInflowId)
+                && expectedInflowId == edge.Candidate.TransactionId));
+        if (exactStableSequenceMatch is null)
+        {
+            selected = contenders[0];
+            return false;
+        }
+
+        selected = exactStableSequenceMatch;
+        return true;
+    }
+
+    private static IOrderedEnumerable<DeterministicTransactionFeature> OrderForStableSequenceFallback(
+        IEnumerable<DeterministicTransactionFeature> rows)
+    {
+        return rows
+            .OrderBy(ResolveStableOrderingSourceRank)
+            .ThenBy(ResolveMeaningfulBookedTimestamp)
+            .ThenBy(ResolveStableSequenceFallbackKey)
+            .ThenBy(row => row.TransactionId);
+    }
+
+    private static int ResolveStableOrderingSourceRank(DeterministicTransactionFeature feature)
+    {
+        if (feature.ProviderTimestampPrecision == DeterministicProviderTimestampPrecision.PreciseDateTime)
+        {
+            return 0;
+        }
+
+        if (feature.StableSequence > 0L)
+        {
+            return 1;
+        }
+
+        return 2;
+    }
+
+    private static DateTime ResolveMeaningfulBookedTimestamp(DeterministicTransactionFeature feature)
+    {
+        return feature.ProviderTimestampPrecision == DeterministicProviderTimestampPrecision.PreciseDateTime
+            ? feature.BookedAtUtc
+            : DateTime.MinValue;
+    }
+
+    private static long ResolveStableSequenceFallbackKey(DeterministicTransactionFeature feature)
+    {
+        return feature.StableSequence > 0L ? feature.StableSequence : long.MaxValue;
     }
 
     private static string ResolveClusterTieBreakReason(CoreClusterScore coreScore)
@@ -1443,6 +1693,22 @@ public sealed class TransferPairingEngine
         int MediumConfidenceOverlap,
         int ReferenceOverlapScore,
         int TotalWindowMinutes);
+
+    private sealed record StableSequenceFallbackDiagnostics(
+        bool Allowed,
+        bool ClusterClosedShape,
+        bool EqualCardinalityCluster,
+        bool ReferenceTieExhausted,
+        bool TimePrecisionNonDiscriminating)
+    {
+        public static StableSequenceFallbackDiagnostics None { get; } =
+            new(
+                Allowed: false,
+                ClusterClosedShape: false,
+                EqualCardinalityCluster: false,
+                ReferenceTieExhausted: false,
+                TimePrecisionNonDiscriminating: false);
+    }
 
     private sealed record TransferRoutingDecision(
         bool IncludeInTransferMatching,

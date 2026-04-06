@@ -1009,28 +1009,28 @@ public class DeterministicCategorizationEngineTests
             bookedAtUtc: baseUtc,
             hasTransferKeyword: true,
             providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
-            accountHint: "1234",
+            narrativeSignals: CreateNarrativeSignals(freeTextReferenceTokens: ["shared-note"]),
             stableSequence: 10L);
         var debitB = CreateFeature(
             signedAmount: -1m,
             bookedAtUtc: baseUtc,
             hasTransferKeyword: true,
             providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
-            accountHint: "1234",
+            narrativeSignals: CreateNarrativeSignals(freeTextReferenceTokens: ["shared-note"]),
             stableSequence: 20L);
         var creditA = CreateFeature(
             signedAmount: 1m,
             bookedAtUtc: baseUtc,
             hasTransferKeyword: true,
             providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
-            accountHint: "1234",
+            narrativeSignals: CreateNarrativeSignals(freeTextReferenceTokens: ["shared-note"]),
             stableSequence: 11L);
         var creditB = CreateFeature(
             signedAmount: 1m,
             bookedAtUtc: baseUtc,
             hasTransferKeyword: true,
             providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
-            accountHint: "1234",
+            narrativeSignals: CreateNarrativeSignals(freeTextReferenceTokens: ["shared-note"]),
             stableSequence: 21L);
 
         var analysis = engine.AnalyzeUnpairedTransactions(
@@ -1048,7 +1048,7 @@ public class DeterministicCategorizationEngineTests
         Assert.True(evidence.RootElement.TryGetProperty("stableOrderingUsed", out var stableOrderingNode));
         Assert.True(stableOrderingNode.GetBoolean());
         Assert.Equal(
-            "stable_order_fallback_after_reference_tie",
+            "stable_sequence_equal_score_cluster",
             evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
     }
 
@@ -1056,6 +1056,248 @@ public class DeterministicCategorizationEngineTests
     public void TransferPairingEngine_DuplicateCluster_StableOrderUsedOnlyAfterReferenceTie()
     {
         TransferPairing_DuplicateCluster_UsesStableOrderingOnlyAsLastTieBreaker();
+    }
+
+    [Fact]
+    public void TransferPairingEngine_TiedClosedSameUserCluster_UsesStableSequenceFallback()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var outboundA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(11),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 10L);
+        var outboundB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(18),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 20L);
+        var inboundA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080917464"],
+                providerSpecificReferenceTokens: ["ie26033080917464"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 30L);
+        var inboundB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080924925"],
+                providerSpecificReferenceTokens: ["ie26033080924925"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 40L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [outboundA.TransactionId] = outboundA,
+                [outboundB.TransactionId] = outboundB,
+                [inboundA.TransactionId] = inboundA,
+                [inboundB.TransactionId] = inboundB
+            },
+            new HashSet<Guid>());
+
+        Assert.Equal(4, analysis.ResolvedPairDecisions.Count);
+        Assert.Equal(inboundA.TransactionId, analysis.ResolvedPairDecisions[outboundA.TransactionId].CreditTransactionId);
+        Assert.Equal(inboundB.TransactionId, analysis.ResolvedPairDecisions[outboundB.TransactionId].CreditTransactionId);
+
+        using var evidence = JsonDocument.Parse(analysis.ResolvedPairDecisions[outboundA.TransactionId].EvidenceJson);
+        Assert.True(evidence.RootElement.GetProperty("stableOrderingUsed").GetBoolean());
+        Assert.Equal("stable_sequence_equal_score_cluster", evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
+        Assert.True(evidence.RootElement.GetProperty("clusterClosedShape").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("equalCardinalityCluster").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("referenceTieExhausted").GetBoolean());
+        Assert.True(evidence.RootElement.GetProperty("timePrecisionNonDiscriminating").GetBoolean());
+    }
+
+    [Fact]
+    public void TransferPairingEngine_StableSequenceFallback_RequiresEqualCardinality()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var outflowA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(9),
+            hasTransferKeyword: true,
+            accountHint: "1234",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            stableSequence: 1L);
+        var outflowB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(9).AddMinutes(5),
+            hasTransferKeyword: true,
+            accountHint: "1234",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            stableSequence: 2L);
+        var inflowA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: true,
+            accountHint: "1234",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            stableSequence: 3L);
+        var inflowB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: true,
+            accountHint: "1234",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            stableSequence: 4L);
+        var inflowC = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: true,
+            accountHint: "1234",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            stableSequence: 5L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [outflowA.TransactionId] = outflowA,
+                [outflowB.TransactionId] = outflowB,
+                [inflowA.TransactionId] = inflowA,
+                [inflowB.TransactionId] = inflowB,
+                [inflowC.TransactionId] = inflowC
+            },
+            new HashSet<Guid>());
+
+        Assert.Empty(analysis.ResolvedPairDecisions);
+        Assert.NotEmpty(analysis.PendingDecisions);
+        Assert.All(analysis.PendingDecisions.Values, pending =>
+        {
+            using var evidence = JsonDocument.Parse(pending.EvidenceJson);
+            Assert.False(evidence.RootElement.GetProperty("stableOrderingUsed").GetBoolean());
+        });
+    }
+
+    [Fact]
+    public void TransferPairingEngine_StableSequenceFallback_DoesNotRun_WhenReferenceOverlapSeparatesCandidates()
+    {
+        TransferPairing_AmbiguousDuplicateCluster_ResolvesByHighConfidenceReferenceOverlap();
+    }
+
+    [Fact]
+    public void TransferPairingEngine_StableSequenceFallback_DoesNotRun_ForOpenCluster()
+    {
+        var engine = new TransferPairingEngine();
+        var day = new DateTime(2026, 03, 30, 0, 0, 0, DateTimeKind.Utc);
+        var outflowA = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(11),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 10L);
+        var outflowB = CreateFeature(
+            signedAmount: -1m,
+            bookedAtUtc: day.AddHours(7).AddMinutes(18),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            looksLikeExternalCounterparty: true,
+            providerKey: "revolut",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.PreciseDateTime,
+            tokens: ["to", "marius", "albu"],
+            stableSequence: 20L);
+        var inflowA = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080917464"],
+                providerSpecificReferenceTokens: ["ie26033080917464"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 30L);
+        var inflowB = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day,
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080924925"],
+                providerSpecificReferenceTokens: ["ie26033080924925"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 40L);
+        var extraInflow = CreateFeature(
+            signedAmount: 1m,
+            bookedAtUtc: day.AddDays(1),
+            hasTransferKeyword: false,
+            hasProviderTransferHint: false,
+            hasCounterpartyAccounts: true,
+            providerKey: "aib",
+            providerTimestampPrecision: DeterministicProviderTimestampPrecision.DateOnly,
+            narrativeSignals: CreateNarrativeSignals(
+                machineReferenceTokens: ["ie26033080999999"],
+                providerSpecificReferenceTokens: ["ie26033080999999"]),
+            hasHighConfidenceReferenceSignals: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["albu", "marius", "sent", "from", "revolut"],
+            stableSequence: 50L);
+
+        var analysis = engine.AnalyzeUnpairedTransactions(
+            new Dictionary<Guid, DeterministicTransactionFeature>
+            {
+                [outflowA.TransactionId] = outflowA,
+                [outflowB.TransactionId] = outflowB,
+                [inflowA.TransactionId] = inflowA,
+                [inflowB.TransactionId] = inflowB,
+                [extraInflow.TransactionId] = extraInflow
+            },
+            new HashSet<Guid>());
+
+        Assert.Empty(analysis.ResolvedPairDecisions);
+        Assert.NotEmpty(analysis.PendingDecisions);
+    }
+
+    [Fact]
+    public void TransferPairingEngine_Diagnostics_ExposeStableSequenceEqualScoreClusterReason()
+    {
+        TransferPairingEngine_TiedClosedSameUserCluster_UsesStableSequenceFallback();
     }
 
     [Fact]
@@ -1397,7 +1639,7 @@ public class DeterministicCategorizationEngineTests
         Assert.True(evidence.RootElement.GetProperty("sameUserCandidateUniverseOverrideApplied").GetBoolean());
         Assert.True(evidence.RootElement.GetProperty("stableOrderingUsed").GetBoolean());
         Assert.Equal(
-            "stable_order_fallback_after_reference_tie",
+            "stable_sequence_equal_score_cluster",
             evidence.RootElement.GetProperty("finalTieBreakReason").GetString());
     }
 
