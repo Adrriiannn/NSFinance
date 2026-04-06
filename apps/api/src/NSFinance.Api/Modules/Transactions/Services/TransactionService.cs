@@ -469,16 +469,17 @@ public sealed class TransactionService(
 
     private TransactionDto MapToDto(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
     {
-        var taxonomyDomainName = expenseTaxonomyService.GetDomainName(transaction.TaxonomyDomainId);
-        var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(transaction.TaxonomyCategoryId);
-        var taxonomySubcategoryName = expenseTaxonomyService.GetSubcategoryName(transaction.TaxonomySubcategoryId);
+        var effectiveTransferMaterialization = ResolveEffectiveTransferMaterialization(transaction);
+        var taxonomyDomainName = expenseTaxonomyService.GetDomainName(effectiveTransferMaterialization.TaxonomyDomainId);
+        var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(effectiveTransferMaterialization.TaxonomyCategoryId);
+        var taxonomySubcategoryName = expenseTaxonomyService.GetSubcategoryName(effectiveTransferMaterialization.TaxonomySubcategoryId);
         var categoryName = taxonomyCategoryName ?? transaction.LegacyCategoryName;
         var transferPolicy = TransferPolicyEngine.Evaluate(
-            transaction.TaxonomyDomainId,
-            transaction.TaxonomyCategoryId,
-            transaction.TaxonomySubcategoryId,
-            transaction.TransferKind,
-            transaction.LinkedTransferTransactionId,
+            effectiveTransferMaterialization.TaxonomyDomainId,
+            effectiveTransferMaterialization.TaxonomyCategoryId,
+            effectiveTransferMaterialization.TaxonomySubcategoryId,
+            effectiveTransferMaterialization.TransferKind,
+            effectiveTransferMaterialization.LinkedTransferTransactionId,
             transaction.Amount);
 
         return new TransactionDto(
@@ -490,14 +491,14 @@ public sealed class TransactionService(
             transaction.Currency,
             transaction.LegacyCategoryId,
             categoryName,
-            transaction.TaxonomyDomainId,
+            effectiveTransferMaterialization.TaxonomyDomainId,
             taxonomyDomainName,
-            transaction.TaxonomyCategoryId,
+            effectiveTransferMaterialization.TaxonomyCategoryId,
             taxonomyCategoryName,
-            transaction.TaxonomySubcategoryId,
+            effectiveTransferMaterialization.TaxonomySubcategoryId,
             taxonomySubcategoryName,
-            MapTransferKind(transaction.TransferKind),
-            transaction.LinkedTransferTransactionId,
+            MapTransferKind(effectiveTransferMaterialization.TransferKind),
+            effectiveTransferMaterialization.LinkedTransferTransactionId,
             MapDeterministicClassificationStatus(transaction.DeterministicClassificationStatus),
             transaction.DeterministicClassificationTerminal,
             transaction.DeterministicClassificationVersion,
@@ -532,6 +533,38 @@ public sealed class TransactionService(
             transaction.CreatedUtc,
             transaction.MetadataUpdatedUtc,
             transaction.Amount < 0 ? "Expense" : "Income");
+    }
+
+    private static EffectiveTransferMaterialization ResolveEffectiveTransferMaterialization(TransactionReadModel transaction)
+    {
+        var deterministicInternalTransferMatched =
+            transaction.DeterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule
+            && string.Equals(transaction.DeterministicRelationshipType, "internal_transfer", StringComparison.Ordinal)
+            && transaction.DeterministicLinkedTransactionId.HasValue;
+
+        if (!deterministicInternalTransferMatched)
+        {
+            return new EffectiveTransferMaterialization(
+                transaction.TaxonomyDomainId,
+                transaction.TaxonomyCategoryId,
+                transaction.TaxonomySubcategoryId,
+                transaction.TransferKind,
+                transaction.LinkedTransferTransactionId);
+        }
+
+        var deterministicCategoryId = transaction.DeterministicClassificationCategoryId
+            ?? transaction.TaxonomyCategoryId
+            ?? ExpenseTaxonomyService.TransferDefaultCategoryId;
+        var deterministicSubcategoryId = transaction.DeterministicClassificationSubcategoryId
+            ?? transaction.TaxonomySubcategoryId
+            ?? ExpenseTaxonomyService.TransferDefaultSubcategoryId;
+
+        return new EffectiveTransferMaterialization(
+            ExpenseTaxonomyService.TransferDomainId,
+            deterministicCategoryId,
+            deterministicSubcategoryId,
+            TransactionTransferKind.LinkedInternal,
+            transaction.DeterministicLinkedTransactionId);
     }
 
     private async Task<Dictionary<Guid, RelationshipSummary>> GetRelationshipSummariesByTransactionIdAsync(
@@ -625,6 +658,8 @@ public sealed class TransactionService(
             x.DeterministicClassificationTerminal,
             x.DeterministicClassificationVersion,
             x.DeterministicClassificationRuleKey,
+            x.DeterministicClassificationCategoryId,
+            x.DeterministicClassificationSubcategoryId,
             x.DeterministicReasonCode,
             x.DeterministicReasonDetailJson,
             x.DeterministicDeferredRetryEligible,
@@ -659,6 +694,8 @@ public sealed class TransactionService(
         bool DeterministicClassificationTerminal,
         int? DeterministicClassificationVersion,
         string? DeterministicClassificationRuleKey,
+        int? DeterministicClassificationCategoryId,
+        int? DeterministicClassificationSubcategoryId,
         string? DeterministicReasonCode,
         string? DeterministicReasonDetailJson,
         bool DeterministicDeferredRetryEligible,
@@ -673,6 +710,13 @@ public sealed class TransactionService(
         DateTime BookedAtUtc,
         DateTime CreatedUtc,
         DateTime? MetadataUpdatedUtc);
+
+    private sealed record EffectiveTransferMaterialization(
+        int? TaxonomyDomainId,
+        int? TaxonomyCategoryId,
+        int? TaxonomySubcategoryId,
+        TransactionTransferKind? TransferKind,
+        Guid? LinkedTransferTransactionId);
 
     private sealed record RelationshipSummary(
         TransactionRelationshipType RelationshipType,

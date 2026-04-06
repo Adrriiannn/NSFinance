@@ -636,6 +636,41 @@ public sealed class DeterministicClassificationPersistenceService(
             transaction.BookedAtUtc,
             feature.NormalizedDescription,
             outcome.LinkedTransactionId ?? transaction.LinkedTransferTransactionId);
+        var shouldMaterializeLegacyInternalTransfer =
+            outcome.Status == DeterministicClassificationStatus.ClassifiedMatchedRule
+            && string.Equals(outcome.RelationshipType, "internal_transfer", StringComparison.Ordinal)
+            && outcome.LinkedTransactionId.HasValue;
+
+        var materializedTransferCategoryId = outcome.ClassificationCategoryId ?? ExpenseTaxonomyService.TransferDefaultCategoryId;
+        var materializedTransferSubcategoryId = outcome.ClassificationSubcategoryId ?? ExpenseTaxonomyService.TransferDefaultSubcategoryId;
+
+        var targetTransferKind = shouldMaterializeLegacyInternalTransfer
+            ? TransactionTransferKind.LinkedInternal
+            : transaction.TransferKind;
+        var targetLinkedTransferTransactionId = shouldMaterializeLegacyInternalTransfer
+            ? outcome.LinkedTransactionId
+            : transaction.LinkedTransferTransactionId;
+        var targetLinkedTransferMatchedUtc = shouldMaterializeLegacyInternalTransfer
+            ? transaction.LinkedTransferMatchedUtc ?? now
+            : transaction.LinkedTransferMatchedUtc;
+        var targetTaxonomyDomainId = shouldMaterializeLegacyInternalTransfer
+            ? ExpenseTaxonomyService.TransferDomainId
+            : transaction.TaxonomyDomainId;
+        var targetTaxonomyCategoryId = shouldMaterializeLegacyInternalTransfer
+            ? materializedTransferCategoryId
+            : transaction.TaxonomyCategoryId;
+        var targetTaxonomySubcategoryId = shouldMaterializeLegacyInternalTransfer
+            ? materializedTransferSubcategoryId
+            : transaction.TaxonomySubcategoryId;
+        var targetTransferMatchReason = shouldMaterializeLegacyInternalTransfer
+            ? outcome.ReasonCode ?? outcome.RuleKey
+            : transaction.TransferMatchReason;
+        var targetTransferMatchConfidenceScore = shouldMaterializeLegacyInternalTransfer
+            ? outcome.MatchScore
+            : transaction.TransferMatchConfidenceScore;
+        var targetTransferMatchConfidenceTier = shouldMaterializeLegacyInternalTransfer
+            ? "deterministic_matched_rule"
+            : transaction.TransferMatchConfidenceTier;
 
         var changed =
             transaction.DeterministicClassificationStatus != outcome.Status
@@ -652,7 +687,16 @@ public sealed class DeterministicClassificationPersistenceService(
             || transaction.DeterministicClassificationTerminal != terminal
             || transaction.DeterministicDeferredRetryEligible != retryEligible
             || transaction.NeedsDeterministicReclassification
-            || !string.Equals(transaction.DeterministicSourceSignature, sourceSignature, StringComparison.Ordinal);
+            || !string.Equals(transaction.DeterministicSourceSignature, sourceSignature, StringComparison.Ordinal)
+            || transaction.TransferKind != targetTransferKind
+            || transaction.LinkedTransferTransactionId != targetLinkedTransferTransactionId
+            || transaction.LinkedTransferMatchedUtc != targetLinkedTransferMatchedUtc
+            || transaction.TaxonomyDomainId != targetTaxonomyDomainId
+            || transaction.TaxonomyCategoryId != targetTaxonomyCategoryId
+            || transaction.TaxonomySubcategoryId != targetTaxonomySubcategoryId
+            || transaction.TransferMatchConfidenceScore != targetTransferMatchConfidenceScore
+            || !string.Equals(transaction.TransferMatchConfidenceTier, targetTransferMatchConfidenceTier, StringComparison.Ordinal)
+            || !string.Equals(transaction.TransferMatchReason, targetTransferMatchReason, StringComparison.Ordinal);
 
         if (!changed)
         {
@@ -676,6 +720,15 @@ public sealed class DeterministicClassificationPersistenceService(
         transaction.DeterministicClassificationEvaluatedUtc = now;
         transaction.NeedsDeterministicReclassification = false;
         transaction.DeterministicSourceSignature = sourceSignature;
+        transaction.TransferKind = targetTransferKind;
+        transaction.LinkedTransferTransactionId = targetLinkedTransferTransactionId;
+        transaction.LinkedTransferMatchedUtc = targetLinkedTransferMatchedUtc;
+        transaction.TaxonomyDomainId = targetTaxonomyDomainId;
+        transaction.TaxonomyCategoryId = targetTaxonomyCategoryId;
+        transaction.TaxonomySubcategoryId = targetTaxonomySubcategoryId;
+        transaction.TransferMatchConfidenceScore = targetTransferMatchConfidenceScore;
+        transaction.TransferMatchConfidenceTier = targetTransferMatchConfidenceTier;
+        transaction.TransferMatchReason = targetTransferMatchReason;
 
         // Keep historical compatibility for existing enrichment/version progress pathways.
         transaction.DeterministicEnrichmentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;

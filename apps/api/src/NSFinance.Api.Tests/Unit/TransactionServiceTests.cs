@@ -268,6 +268,56 @@ public class TransactionServiceTests
         Assert.Equal("savings_roundup", row.DisplaySemantic);
     }
 
+    [Fact]
+    public async Task GetTransactionByIdAsync_DeterministicInternalTransfer_MaterializesTransferCategoryAndLinkedCounterpart()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedDeterministicInternalTransferWithoutLegacyMaterializationAsync(dbContext);
+        var taxonomy = new ExpenseTaxonomyService();
+        var service = new TransactionService(
+            dbContext,
+            new TestCurrentUserProvider(seeded.UserId),
+            taxonomy);
+
+        var detail = await service.GetTransactionByIdAsync(seeded.OutflowTransactionId, CancellationToken.None);
+        Assert.NotNull(detail);
+
+        Assert.Equal(seeded.InflowTransactionId, detail!.LinkedTransferTransactionId);
+        Assert.Equal(seeded.InflowTransactionId, detail.DeterministicLinkedTransactionId);
+        Assert.Equal(seeded.RelationshipGroupId, detail.DeterministicRelationshipGroupId);
+        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, detail.TaxonomyDomainId);
+        Assert.Equal(ExpenseTaxonomyService.TransferDefaultCategoryId, detail.TaxonomyCategoryId);
+        Assert.Equal(ExpenseTaxonomyService.TransferDefaultSubcategoryId, detail.TaxonomySubcategoryId);
+        Assert.Equal(taxonomy.GetCategoryName(ExpenseTaxonomyService.TransferDefaultCategoryId), detail.TaxonomyCategoryName);
+        Assert.Equal(taxonomy.GetSubcategoryName(ExpenseTaxonomyService.TransferDefaultSubcategoryId), detail.TaxonomySubcategoryName);
+        Assert.Equal("linked_internal_transfer", detail.TransferKind);
+        Assert.Equal("internal_transfer", detail.DeterministicRelationshipType);
+        Assert.Equal("internal_transfer", detail.DisplaySemantic);
+    }
+
+    [Fact]
+    public async Task GetTransactionsAsync_DeterministicInternalTransfer_ListAndDetailSemanticsAgree()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedDeterministicInternalTransferWithoutLegacyMaterializationAsync(dbContext);
+        var service = new TransactionService(
+            dbContext,
+            new TestCurrentUserProvider(seeded.UserId),
+            new ExpenseTaxonomyService());
+
+        var list = await service.GetTransactionsAsync(null, CancellationToken.None);
+        var listRow = list.Single(x => x.Id == seeded.OutflowTransactionId);
+        var detailRow = await service.GetTransactionByIdAsync(seeded.OutflowTransactionId, CancellationToken.None);
+        Assert.NotNull(detailRow);
+
+        Assert.Equal(listRow.LinkedTransferTransactionId, detailRow!.LinkedTransferTransactionId);
+        Assert.Equal(listRow.TaxonomyDomainId, detailRow.TaxonomyDomainId);
+        Assert.Equal(listRow.TaxonomyCategoryId, detailRow.TaxonomyCategoryId);
+        Assert.Equal(listRow.TaxonomySubcategoryId, detailRow.TaxonomySubcategoryId);
+        Assert.Equal(listRow.CategoryName, detailRow.CategoryName);
+        Assert.Equal(listRow.DisplaySemantic, detailRow.DisplaySemantic);
+    }
+
     private static AppDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -360,6 +410,104 @@ public class TransactionServiceTests
 
         await dbContext.SaveChangesAsync();
         return (userId, debitTransactionId, creditTransactionId);
+    }
+
+    private static async Task<(Guid UserId, Guid OutflowTransactionId, Guid InflowTransactionId, Guid RelationshipGroupId)> SeedDeterministicInternalTransferWithoutLegacyMaterializationAsync(AppDbContext dbContext)
+    {
+        var now = DateTime.UtcNow;
+        var userId = Guid.NewGuid();
+        var outflowAccountId = Guid.NewGuid();
+        var inflowAccountId = Guid.NewGuid();
+        var outflowTransactionId = Guid.NewGuid();
+        var inflowTransactionId = Guid.NewGuid();
+        var relationshipGroupId = Guid.NewGuid();
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        dbContext.Users.Add(new User
+        {
+            Id = userId,
+            PrimaryEmail = "deterministic-transfer-materialization@local",
+            NormalizedEmail = "deterministic-transfer-materialization@local",
+            DisplayName = "Deterministic Materialization Tester",
+            Status = "active",
+            OnboardingStatus = "profile_created",
+            Role = "user",
+            CreatedUtc = now,
+            UpdatedUtc = now,
+            EmailVerified = true,
+            Timezone = "UTC",
+            Locale = "en-IE",
+            PreferredCurrency = "EUR",
+            PlanTier = "standard"
+        });
+
+        dbContext.FinancialAccounts.AddRange(
+            new FinancialAccount
+            {
+                Id = outflowAccountId,
+                UserId = userId,
+                Name = "Revolut Main",
+                Type = "Current",
+                Currency = "EUR",
+                CreatedUtc = now
+            },
+            new FinancialAccount
+            {
+                Id = inflowAccountId,
+                UserId = userId,
+                Name = "AIB Current",
+                Type = "Current",
+                Currency = "EUR",
+                CreatedUtc = now
+            });
+
+        dbContext.Transactions.AddRange(
+            new Transaction
+            {
+                Id = outflowTransactionId,
+                FinancialAccountId = outflowAccountId,
+                Amount = -1.00m,
+                Currency = "EUR",
+                Description = "To Marius",
+                BookedAtUtc = now.AddMinutes(-5),
+                CreatedUtc = now.AddMinutes(-5),
+                DeterministicClassificationStatus = DeterministicClassificationStatus.ClassifiedMatchedRule,
+                DeterministicClassificationVersion = currentVersion,
+                DeterministicClassificationRuleKey = "bank_transfer.duplicate_cluster_stable_sequence_v3",
+                DeterministicClassificationCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId,
+                DeterministicClassificationSubcategoryId = ExpenseTaxonomyService.TransferDefaultSubcategoryId,
+                DeterministicLinkedTransactionId = inflowTransactionId,
+                DeterministicRelationshipType = "internal_transfer",
+                DeterministicRelationshipGroupId = relationshipGroupId,
+                DeterministicReasonCode = DeterministicClassificationReasonCodes.TransferPairStrictMatch,
+                DeterministicClassificationTerminal = true,
+                DeterministicClassificationEvaluatedUtc = now
+            },
+            new Transaction
+            {
+                Id = inflowTransactionId,
+                FinancialAccountId = inflowAccountId,
+                Amount = 1.00m,
+                Currency = "EUR",
+                Description = "Sent from Revolut",
+                BookedAtUtc = now.AddMinutes(-4),
+                CreatedUtc = now.AddMinutes(-4),
+                DeterministicClassificationStatus = DeterministicClassificationStatus.ClassifiedMatchedRule,
+                DeterministicClassificationVersion = currentVersion,
+                DeterministicClassificationRuleKey = "bank_transfer.duplicate_cluster_stable_sequence_v3",
+                DeterministicClassificationCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId,
+                DeterministicClassificationSubcategoryId = ExpenseTaxonomyService.TransferDefaultSubcategoryId,
+                DeterministicLinkedTransactionId = outflowTransactionId,
+                DeterministicRelationshipType = "internal_transfer",
+                DeterministicRelationshipGroupId = relationshipGroupId,
+                DeterministicReasonCode = DeterministicClassificationReasonCodes.TransferPairStrictMatch,
+                DeterministicClassificationTerminal = true,
+                DeterministicClassificationEvaluatedUtc = now
+            });
+
+        await dbContext.SaveChangesAsync();
+
+        return (userId, outflowTransactionId, inflowTransactionId, relationshipGroupId);
     }
 
     private sealed class TestCurrentUserProvider(Guid userId) : ICurrentUserProvider

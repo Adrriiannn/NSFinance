@@ -2702,6 +2702,24 @@ public class OpenBankingIntegrationTests
             unmatchedRows.Count == 0,
             $"Expected all rows matched. Actual={string.Join(" || ", unmatchedRows.Select(row => $"{row.Id}:{row.DeterministicClassificationStatus}:{row.DeterministicReasonCode}:{row.DeterministicReasonDetailJson}"))}");
 
+        Assert.All(clusterRows, row =>
+        {
+            Assert.Equal(TransactionTransferKind.LinkedInternal, row.TransferKind);
+            Assert.True(row.LinkedTransferTransactionId.HasValue);
+            Assert.Equal(row.DeterministicLinkedTransactionId, row.LinkedTransferTransactionId);
+            Assert.Equal(ExpenseTaxonomyService.TransferDomainId, row.TaxonomyDomainId);
+            Assert.Equal(ExpenseTaxonomyService.TransferDefaultCategoryId, row.TaxonomyCategoryId);
+            Assert.Equal(ExpenseTaxonomyService.TransferDefaultSubcategoryId, row.TaxonomySubcategoryId);
+            Assert.Equal("deterministic_matched_rule", row.TransferMatchConfidenceTier);
+        });
+
+        var byId = clusterRows.ToDictionary(row => row.Id);
+        Assert.All(clusterRows, row =>
+        {
+            var counterpart = byId[row.LinkedTransferTransactionId!.Value];
+            Assert.Equal(row.Id, counterpart.LinkedTransferTransactionId);
+        });
+
         var evidenceJson = outflows[0].DeterministicReasonDetailJson;
         Assert.False(string.IsNullOrWhiteSpace(evidenceJson));
         using var evidence = JsonDocument.Parse(evidenceJson!);
