@@ -23,16 +23,64 @@ internal sealed record BankDeterministicEnrichmentWorkItem(
 
 public static class DeterministicEnrichmentContinuationPolicy
 {
-    public static bool ShouldContinue(int rowsActionableRemaining)
+    public static bool ShouldContinue(
+        int rowsRemaining,
+        int rowsActionableRemaining,
+        int rowsNotEvaluated,
+        int rowsEvaluating,
+        int rowsVersionBehind,
+        int rowsMarkedForReclassification,
+        int rowsSupersededRecomputeRequired)
     {
-        return rowsActionableRemaining > 0;
+        if (rowsActionableRemaining > 0)
+        {
+            return true;
+        }
+
+        if (rowsNotEvaluated > 0
+            || rowsEvaluating > 0
+            || rowsVersionBehind > 0
+            || rowsMarkedForReclassification > 0
+            || rowsSupersededRecomputeRequired > 0)
+        {
+            return true;
+        }
+
+        return rowsRemaining > 0;
     }
 
-    public static string ResolveReason(int rowsRemaining, int rowsActionableRemaining)
+    public static string ResolveReason(
+        int rowsRemaining,
+        int rowsActionableRemaining,
+        int rowsNotEvaluated,
+        int rowsEvaluating,
+        int rowsVersionBehind,
+        int rowsMarkedForReclassification,
+        int rowsSupersededRecomputeRequired)
     {
         if (rowsActionableRemaining > 0)
         {
             return "actionable_remaining_rows";
+        }
+
+        if (rowsNotEvaluated > 0)
+        {
+            return "not_evaluated_rows_remaining";
+        }
+
+        if (rowsVersionBehind > 0)
+        {
+            return "version_behind_rows_remaining";
+        }
+
+        if (rowsMarkedForReclassification > 0 || rowsSupersededRecomputeRequired > 0)
+        {
+            return "explicit_recompute_rows_remaining";
+        }
+
+        if (rowsEvaluating > 0)
+        {
+            return "evaluating_rows_remaining";
         }
 
         return rowsRemaining > 0
@@ -94,7 +142,21 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
         {
             if (DateTime.UtcNow >= nextSweepAtUtc)
             {
-                await EnqueuePendingConnectionsAsync(stoppingToken);
+                try
+                {
+                    await EnqueuePendingConnectionsAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception sweepException)
+                {
+                    logger.LogError(
+                        sweepException,
+                        "Deterministic enrichment pending sweep crashed; worker will continue running.");
+                }
+
                 nextSweepAtUtc = DateTime.UtcNow.Add(PendingSweepInterval);
             }
 
@@ -212,20 +274,36 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                     result.Value.DeferredFamilyBreakdown);
 
                 var shouldContinue = DeterministicEnrichmentContinuationPolicy.ShouldContinue(
-                    result.Value.RowsActionableRemaining);
+                    result.Value.RowsRemaining,
+                    result.Value.RowsActionableRemaining,
+                    result.Value.RowsNotEvaluated,
+                    result.Value.RowsEvaluating,
+                    result.Value.RowsVersionBehind,
+                    result.Value.RowsMarkedForReclassification,
+                    result.Value.RowsSupersededRecomputeRequired);
                 var decisionReason = DeterministicEnrichmentContinuationPolicy.ResolveReason(
                     result.Value.RowsRemaining,
-                    result.Value.RowsActionableRemaining);
+                    result.Value.RowsActionableRemaining,
+                    result.Value.RowsNotEvaluated,
+                    result.Value.RowsEvaluating,
+                    result.Value.RowsVersionBehind,
+                    result.Value.RowsMarkedForReclassification,
+                    result.Value.RowsSupersededRecomputeRequired);
 
                 if (shouldContinue)
                 {
                     logger.LogInformation(
-                        "Deterministic enrichment continuation decision connectionId={ConnectionId} userId={UserId} decision=continue reason={Reason} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining}",
+                        "Deterministic enrichment continuation decision connectionId={ConnectionId} userId={UserId} decision=continue reason={Reason} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsNotEvaluated={RowsNotEvaluated} rowsEvaluating={RowsEvaluating} rowsVersionBehind={RowsVersionBehind} rowsMarkedForReclassification={RowsMarkedForReclassification} rowsSupersededRecomputeRequired={RowsSupersededRecomputeRequired}",
                         workItem.ConnectionId,
                         workItem.UserId,
                         decisionReason,
                         result.Value.RowsRemaining,
-                        result.Value.RowsActionableRemaining);
+                        result.Value.RowsActionableRemaining,
+                        result.Value.RowsNotEvaluated,
+                        result.Value.RowsEvaluating,
+                        result.Value.RowsVersionBehind,
+                        result.Value.RowsMarkedForReclassification,
+                        result.Value.RowsSupersededRecomputeRequired);
 
                     await QueueConnectionAsync(
                         workItem.UserId,
@@ -236,12 +314,17 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                 else
                 {
                     logger.LogInformation(
-                        "Deterministic enrichment continuation decision connectionId={ConnectionId} userId={UserId} decision=stop reason={Reason} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsDeferredRemaining={RowsDeferredRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext} rowsDeferredLegitimateWaiting={RowsDeferredLegitimateWaiting} rowsDeferredReadyForTerminalization={RowsDeferredReadyForTerminalization} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsEvaluatedNoMatch={RowsEvaluatedNoMatch} fullCounterpartyUniversePresent={FullCounterpartyUniversePresent} deferredReasonBreakdown={DeferredReasonBreakdown} deferredFamilyBreakdown={DeferredFamilyBreakdown}",
+                        "Deterministic enrichment continuation decision connectionId={ConnectionId} userId={UserId} decision=stop reason={Reason} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsNotEvaluated={RowsNotEvaluated} rowsEvaluating={RowsEvaluating} rowsVersionBehind={RowsVersionBehind} rowsMarkedForReclassification={RowsMarkedForReclassification} rowsSupersededRecomputeRequired={RowsSupersededRecomputeRequired} rowsDeferredRemaining={RowsDeferredRemaining} rowsDeferredCounterparty={RowsDeferredCounterparty} rowsDeferredMoreContext={RowsDeferredMoreContext} rowsDeferredLegitimateWaiting={RowsDeferredLegitimateWaiting} rowsDeferredReadyForTerminalization={RowsDeferredReadyForTerminalization} rowsRejectedAmbiguous={RowsRejectedAmbiguous} rowsEvaluatedNoMatch={RowsEvaluatedNoMatch} fullCounterpartyUniversePresent={FullCounterpartyUniversePresent} deferredReasonBreakdown={DeferredReasonBreakdown} deferredFamilyBreakdown={DeferredFamilyBreakdown}",
                         workItem.ConnectionId,
                         workItem.UserId,
                         decisionReason,
                         result.Value.RowsRemaining,
                         result.Value.RowsActionableRemaining,
+                        result.Value.RowsNotEvaluated,
+                        result.Value.RowsEvaluating,
+                        result.Value.RowsVersionBehind,
+                        result.Value.RowsMarkedForReclassification,
+                        result.Value.RowsSupersededRecomputeRequired,
                         result.Value.RowsDeferredRemaining,
                         result.Value.RowsDeferredWaitingForCounterparty,
                         result.Value.RowsDeferredWaitingForMoreContext,
