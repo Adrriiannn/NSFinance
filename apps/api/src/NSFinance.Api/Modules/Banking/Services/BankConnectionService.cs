@@ -380,12 +380,19 @@ public sealed class BankConnectionService(
                     ? Math.Max(0, Math.Min(stats?.CurrentEnrichedAfterStartCount ?? 0, currentCount))
                     : 0;
                 var hasEverSynced = connection.LastSyncAttemptedUtc.HasValue || connection.LastSuccessfulSyncUtc.HasValue;
+                var runScopedByFlags = required || connection.HistoricalEnrichmentStartedUtc.HasValue;
+                var runScopedByRowTruth = staleCount > 0;
+                var useRunScopedProgress = runScopedByFlags || runScopedByRowTruth;
+                var currentRowsOutsideActiveRun = Math.Max(0, currentCount - currentEnrichedAfterStartCount);
 
                 int totalCount;
                 int processedCount;
                 int remainingCount;
 
-                if (awaitingSync && !hasEverSynced && !connection.HistoricalEnrichmentStartedUtc.HasValue)
+                if (awaitingSync
+                    && !hasEverSynced
+                    && !connection.HistoricalEnrichmentStartedUtc.HasValue
+                    && staleCount == 0)
                 {
                     totalCount = 0;
                     processedCount = 0;
@@ -393,9 +400,11 @@ public sealed class BankConnectionService(
                 }
                 // During active/pending enrichment, progress should track work completed in
                 // the current run scope rather than rows already current from older runs.
-                else if (required || connection.HistoricalEnrichmentStartedUtc.HasValue)
+                else if (useRunScopedProgress)
                 {
-                    processedCount = currentEnrichedAfterStartCount;
+                    processedCount = connection.HistoricalEnrichmentStartedUtc.HasValue
+                        ? currentEnrichedAfterStartCount
+                        : 0;
                     remainingCount = staleCount;
                     totalCount = processedCount + remainingCount;
                 }
@@ -404,6 +413,21 @@ public sealed class BankConnectionService(
                     processedCount = currentCount;
                     totalCount = totalRows;
                     remainingCount = Math.Max(0, totalCount - processedCount);
+                }
+
+                if (runScopedByRowTruth
+                    && !connection.HistoricalEnrichmentStartedUtc.HasValue
+                    && currentRowsOutsideActiveRun > 0)
+                {
+                    logger.LogInformation(
+                        "Suppressed prior-run current-row contribution in active deterministic progress connectionId={ConnectionId} provider={ProviderDisplayName} status={Status} currentRowsOutsideActiveRun={CurrentRowsOutsideActiveRun} staleCount={StaleCount} processedCount={ProcessedCount} totalCount={TotalCount}",
+                        connection.Id,
+                        connection.ProviderDisplayName ?? "<unknown>",
+                        connection.Status,
+                        currentRowsOutsideActiveRun,
+                        staleCount,
+                        processedCount,
+                        totalCount);
                 }
 
                 var completed = totalCount > 0
@@ -454,9 +478,22 @@ public sealed class BankConnectionService(
                 || x.Stage is "waiting_for_counterparty"
                 || x.Stage is "categorizing")
             .ToList();
+        var activeConnectionIds = activeConnections
+            .Select(x => x.ConnectionId)
+            .ToHashSet();
 
         var inProgressOverall = activeConnections.Count > 0;
         var progressScope = inProgressOverall ? activeConnections : connectionProgress;
+        var processedOutsideActiveScope = inProgressOverall
+            ? connectionProgress
+                .Where(x => !activeConnectionIds.Contains(x.ConnectionId))
+                .Sum(x => x.ProcessedCount)
+            : 0;
+        var totalOutsideActiveScope = inProgressOverall
+            ? connectionProgress
+                .Where(x => !activeConnectionIds.Contains(x.ConnectionId))
+                .Sum(x => x.TotalCount)
+            : 0;
 
         var total = progressScope.Sum(x => x.TotalCount);
         var processed = progressScope.Sum(x => x.ProcessedCount);
@@ -472,6 +509,18 @@ public sealed class BankConnectionService(
             .Select(x => x.LastUpdatedUtc!.Value)
             .DefaultIfEmpty()
             .Max();
+
+        if (inProgressOverall && (processedOutsideActiveScope > 0 || totalOutsideActiveScope > 0))
+        {
+            logger.LogInformation(
+                "Suppressed stale completed deterministic snapshot while active work exists userId={UserId} activeConnectionCount={ActiveConnectionCount} activeScopeProcessed={ActiveScopeProcessed} activeScopeTotal={ActiveScopeTotal} suppressedProcessedOutsideActiveScope={SuppressedProcessedOutsideActiveScope} suppressedTotalOutsideActiveScope={SuppressedTotalOutsideActiveScope}",
+                userId,
+                activeConnections.Count,
+                processed,
+                total,
+                processedOutsideActiveScope,
+                totalOutsideActiveScope);
+        }
 
         var resolvedStage = ResolveOverallHistoricalEnrichmentStage(progressScope, inProgressOverall, completedOverall);
 

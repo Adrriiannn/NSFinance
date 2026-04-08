@@ -2093,6 +2093,245 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task EnrichmentProgress_SecondImportWork_SuppressesPriorCompletedSnapshot()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-second-import-snapshot-suppression@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-second-import-snapshot-suppression", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var firstConnection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        firstConnection.Status = BankConnectionStatuses.Synced;
+        firstConnection.NeedsHistoricalReclassification = false;
+        firstConnection.HistoricalEnrichmentStartedUtc = now.AddMinutes(-6);
+        firstConnection.HistoricalEnrichmentCompletedUtc = now.AddMinutes(-2);
+        firstConnection.HistoricalEnrichmentVersion = currentVersion;
+        firstConnection.LastSyncAttemptedUtc = now.AddMinutes(-3);
+        firstConnection.LastSuccessfulSyncUtc = now.AddMinutes(-3);
+
+        var firstAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == firstConnection.Id && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var firstRows = await harness.DbContext.Transactions
+            .Where(x => firstAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+        Assert.NotEmpty(firstRows);
+
+        foreach (var row in firstRows)
+        {
+            row.DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+            row.DeterministicClassificationVersion = currentVersion;
+            row.DeterministicClassificationTerminal = true;
+            row.DeterministicClassificationEvaluatedUtc = now.AddMinutes(-2);
+            row.NeedsDeterministicReclassification = false;
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var baseline = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+        Assert.True(baseline.Completed);
+        Assert.False(baseline.InProgress);
+        Assert.True(baseline.TotalCount > 0);
+        Assert.Equal(baseline.TotalCount, baseline.ProcessedCount);
+
+        var secondConnection = new OpenBankingConnection
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Second Import Pending",
+            Status = BankConnectionStatuses.Synced,
+            NeedsHistoricalReclassification = false,
+            HistoricalEnrichmentStartedUtc = null,
+            HistoricalEnrichmentCompletedUtc = now.AddMinutes(-20),
+            HistoricalEnrichmentVersion = currentVersion,
+            LastSyncAttemptedUtc = now.AddMinutes(-1),
+            LastSuccessfulSyncUtc = now.AddMinutes(-1),
+            CreatedUtc = now.AddMinutes(-20),
+            UpdatedUtc = now.AddMinutes(-1)
+        };
+        harness.DbContext.OpenBankingConnections.Add(secondConnection);
+
+        var secondFinancialAccountId = Guid.NewGuid();
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = secondFinancialAccountId,
+            UserId = user.Id,
+            Name = "Second Import Account",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddMinutes(-20)
+        });
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = secondConnection.Id,
+            ProviderAccountId = "second-import-progress-account",
+            DisplayName = "Second Import Account",
+            AccountType = "Current",
+            Currency = "EUR",
+            CurrentConnectionHealth = "healthy",
+            CreatedUtc = now.AddMinutes(-20),
+            UpdatedUtc = now.AddMinutes(-1),
+            FinancialAccountId = secondFinancialAccountId
+        });
+
+        for (var index = 0; index < 120; index++)
+        {
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = Guid.NewGuid(),
+                FinancialAccountId = secondFinancialAccountId,
+                Amount = -(10 + index),
+                Currency = "EUR",
+                Description = $"Second import pending row {index:D3}",
+                BookedAtUtc = now.AddMinutes(-120 + index),
+                CreatedUtc = now.AddMinutes(-120 + index),
+                DeterministicClassificationStatus = DeterministicClassificationStatus.NotEvaluated,
+                DeterministicClassificationVersion = null,
+                DeterministicClassificationTerminal = false,
+                NeedsDeterministicReclassification = false
+            });
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var withSecondImport = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+        Assert.True(withSecondImport.InProgress);
+        Assert.False(withSecondImport.Completed);
+        Assert.NotEqual("completed", withSecondImport.Stage);
+        Assert.Equal(0, withSecondImport.ProcessedCount);
+        Assert.Equal(120, withSecondImport.TotalCount);
+        Assert.Equal(120, withSecondImport.RemainingCount);
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_RowTruthPendingWithoutRunStart_DoesNotInflateNumeratorFromPriorCurrentRows()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.enrichment-row-truth-numerator@test.local");
+        var now = DateTime.UtcNow;
+
+        var connection = new OpenBankingConnection
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Row Truth Pending",
+            Status = BankConnectionStatuses.Synced,
+            NeedsHistoricalReclassification = false,
+            HistoricalEnrichmentStartedUtc = null,
+            HistoricalEnrichmentCompletedUtc = now.AddMinutes(-30),
+            HistoricalEnrichmentVersion = currentVersion,
+            LastSyncAttemptedUtc = now.AddMinutes(-2),
+            LastSuccessfulSyncUtc = now.AddMinutes(-2),
+            CreatedUtc = now.AddHours(-1),
+            UpdatedUtc = now.AddMinutes(-2)
+        };
+        harness.DbContext.OpenBankingConnections.Add(connection);
+
+        var financialAccountId = Guid.NewGuid();
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = financialAccountId,
+            UserId = user.Id,
+            Name = "Row Truth Account",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddHours(-1)
+        });
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = connection.Id,
+            ProviderAccountId = "row-truth-progress-account",
+            DisplayName = "Row Truth Account",
+            AccountType = "Current",
+            Currency = "EUR",
+            CurrentConnectionHealth = "healthy",
+            CreatedUtc = now.AddHours(-1),
+            UpdatedUtc = now.AddMinutes(-2),
+            FinancialAccountId = financialAccountId
+        });
+
+        for (var index = 0; index < 20; index++)
+        {
+            var isPriorCurrent = index < 12;
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = Guid.NewGuid(),
+                FinancialAccountId = financialAccountId,
+                Amount = -(30 + index),
+                Currency = "EUR",
+                Description = $"Row truth mixed row {index:D2}",
+                BookedAtUtc = now.AddMinutes(-60 + index),
+                CreatedUtc = now.AddMinutes(-60 + index),
+                DeterministicClassificationStatus = isPriorCurrent
+                    ? DeterministicClassificationStatus.EvaluatedNoMatchingRule
+                    : DeterministicClassificationStatus.NotEvaluated,
+                DeterministicClassificationVersion = isPriorCurrent ? currentVersion : null,
+                DeterministicClassificationTerminal = isPriorCurrent,
+                DeterministicClassificationEvaluatedUtc = isPriorCurrent ? now.AddDays(-1) : null,
+                NeedsDeterministicReclassification = false
+            });
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+        var connectionProgress = progress.Connections.Single(x => x.ConnectionId == connection.Id);
+
+        Assert.True(progress.InProgress);
+        Assert.False(progress.Completed);
+        Assert.Equal(0, connectionProgress.ProcessedCount);
+        Assert.Equal(8, connectionProgress.TotalCount);
+        Assert.Equal(8, connectionProgress.RemainingCount);
+        Assert.Equal(0d, connectionProgress.ProgressPercent);
+
+        foreach (var row in await harness.DbContext.Transactions.Where(x => x.FinancialAccountId == financialAccountId).ToListAsync())
+        {
+            row.DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+            row.DeterministicClassificationVersion = currentVersion;
+            row.DeterministicClassificationTerminal = true;
+            row.DeterministicClassificationEvaluatedUtc = now.AddMinutes(-1);
+            row.NeedsDeterministicReclassification = false;
+        }
+
+        connection.NeedsHistoricalReclassification = false;
+        connection.HistoricalEnrichmentStartedUtc = now.AddMinutes(-3);
+        connection.HistoricalEnrichmentCompletedUtc = now.AddMinutes(-1);
+        connection.HistoricalEnrichmentVersion = currentVersion;
+        await harness.DbContext.SaveChangesAsync();
+
+        var completed = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+        Assert.False(completed.InProgress);
+        Assert.True(completed.Completed);
+        Assert.Equal("completed", completed.Stage);
+        Assert.Equal(completed.TotalCount, completed.ProcessedCount);
+    }
+
+    [Fact]
     public async Task EnrichmentProgress_EvaluatedNoMatchingRuleCountsAsTerminalCompletion()
     {
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
