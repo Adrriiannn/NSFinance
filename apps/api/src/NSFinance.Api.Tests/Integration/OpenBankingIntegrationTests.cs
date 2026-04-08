@@ -376,6 +376,9 @@ public class OpenBankingIntegrationTests
             CancellationToken.None);
         Assert.True(callback.Succeeded);
         Assert.Equal(0, await harness.DbContext.Transactions.CountAsync());
+        Assert.DoesNotContain(
+            queue.Items,
+            item => item.ConnectionId == start.Value.ConnectionId && item.UserId == user.Id);
 
         var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
         var delayedSync = await syncService.SyncConnectionAsync(
@@ -618,6 +621,182 @@ public class OpenBankingIntegrationTests
         await InvokePendingSweepAsync(worker);
         var queuedKeys = ReadQueuedKeys(worker);
         Assert.Contains($"{user.Id:N}:{connection.Id:N}", queuedKeys);
+    }
+
+    [Fact]
+    public async Task DeterministicWorker_PeriodicSweep_DoesNotQueueFlagDebtWithoutImportedConnectionFootprint()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.worker-no-footprint-flag-debt@test.local");
+        var now = DateTime.UtcNow;
+        var connection = new OpenBankingConnection
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "No Footprint Connection",
+            Status = BankConnectionStatuses.Synced,
+            NeedsHistoricalReclassification = true,
+            HistoricalEnrichmentStartedUtc = null,
+            HistoricalEnrichmentCompletedUtc = null,
+            HistoricalEnrichmentVersion = null,
+            LastSyncAttemptedUtc = now.AddMinutes(-2),
+            LastSuccessfulSyncUtc = now.AddMinutes(-2),
+            CreatedUtc = now.AddHours(-2),
+            UpdatedUtc = now.AddMinutes(-2)
+        };
+        harness.DbContext.OpenBankingConnections.Add(connection);
+
+        var financialAccountId = Guid.NewGuid();
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = financialAccountId,
+            UserId = user.Id,
+            Name = "No Footprint Account",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddHours(-2)
+        });
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = connection.Id,
+            ProviderAccountId = "worker-no-footprint-account",
+            DisplayName = "No Footprint Account",
+            AccountType = "Current",
+            Currency = "EUR",
+            CurrentConnectionHealth = "healthy",
+            CreatedUtc = now.AddHours(-2),
+            UpdatedUtc = now.AddMinutes(-2),
+            FinancialAccountId = financialAccountId
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var serviceProvider = new ServiceCollection()
+            .AddSingleton(harness.DbContext)
+            .BuildServiceProvider();
+        var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+        var worker = new BankDeterministicEnrichmentBackgroundWorker(
+            scopeFactory,
+            NullLogger<BankDeterministicEnrichmentBackgroundWorker>.Instance);
+
+        await InvokePendingSweepAsync(worker);
+        var queuedKeys = ReadQueuedKeys(worker);
+        Assert.DoesNotContain($"{user.Id:N}:{connection.Id:N}", queuedKeys);
+    }
+
+    [Fact]
+    public async Task DeterministicEnrichment_RowTruthDebt_ReopensHistoricalRun_WhenFlagsLookCompleted()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.row-truth-historical-reopen@test.local");
+        var now = DateTime.UtcNow;
+
+        var connection = new OpenBankingConnection
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "sandbox",
+            ProviderDisplayName = "Row Truth Historical Reopen",
+            Status = BankConnectionStatuses.Synced,
+            InitialBackfillStartedUtc = now.AddDays(-2),
+            InitialBackfillCompletedUtc = now.AddDays(-1),
+            NeedsHistoricalReclassification = false,
+            HistoricalEnrichmentStartedUtc = null,
+            HistoricalEnrichmentCompletedUtc = now.AddHours(-6),
+            HistoricalEnrichmentVersion = currentVersion,
+            LastSyncAttemptedUtc = now.AddMinutes(-5),
+            LastSuccessfulSyncUtc = now.AddMinutes(-5),
+            CreatedUtc = now.AddDays(-2),
+            UpdatedUtc = now.AddMinutes(-5)
+        };
+        harness.DbContext.OpenBankingConnections.Add(connection);
+
+        var financialAccountId = Guid.NewGuid();
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = financialAccountId,
+            UserId = user.Id,
+            Name = "Row Truth Debt Account",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddDays(-2)
+        });
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = connection.Id,
+            ProviderAccountId = "row-truth-historical-reopen-account",
+            DisplayName = "Row Truth Debt Account",
+            AccountType = "Current",
+            Currency = "EUR",
+            CurrentConnectionHealth = "healthy",
+            CreatedUtc = now.AddDays(-2),
+            UpdatedUtc = now.AddMinutes(-5),
+            FinancialAccountId = financialAccountId
+        });
+
+        for (var index = 0; index < 720; index++)
+        {
+            harness.DbContext.Transactions.Add(new Transaction
+            {
+                Id = Guid.NewGuid(),
+                FinancialAccountId = financialAccountId,
+                Amount = -(25 + index),
+                Currency = "EUR",
+                Description = $"Historical stale row {index:D4}",
+                BookedAtUtc = now.AddDays(-120).AddMinutes(index),
+                CreatedUtc = now.AddDays(-120).AddMinutes(index),
+                DeterministicClassificationStatus = DeterministicClassificationStatus.NotEvaluated,
+                DeterministicClassificationVersion = null,
+                DeterministicClassificationTerminal = false,
+                NeedsDeterministicReclassification = false
+            });
+        }
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var run = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            connection.Id,
+            "test_row_truth_reopen",
+            CancellationToken.None);
+        Assert.True(run.Succeeded);
+        Assert.True(run.Value.RowsEvaluated > 0);
+        Assert.True(run.Value.RowsRemaining > 0);
+
+        var refreshedConnection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == connection.Id);
+        Assert.True(refreshedConnection.NeedsHistoricalReclassification);
+        Assert.True(refreshedConnection.HistoricalEnrichmentStartedUtc.HasValue);
+        Assert.False(refreshedConnection.HistoricalEnrichmentCompletedUtc.HasValue);
+
+        var currentRows = await harness.DbContext.Transactions
+            .CountAsync(x =>
+                x.FinancialAccountId == financialAccountId
+                && x.DeterministicClassificationVersion.HasValue
+                && x.DeterministicClassificationVersion.Value >= currentVersion
+                && x.DeterministicClassificationTerminal);
+        var staleRows = await harness.DbContext.Transactions
+            .CountAsync(x =>
+                x.FinancialAccountId == financialAccountId
+                && (!x.DeterministicClassificationVersion.HasValue
+                    || x.DeterministicClassificationVersion.Value < currentVersion
+                    || !x.DeterministicClassificationTerminal));
+
+        Assert.True(currentRows > 0);
+        Assert.True(staleRows > 0);
     }
 
     [Fact]

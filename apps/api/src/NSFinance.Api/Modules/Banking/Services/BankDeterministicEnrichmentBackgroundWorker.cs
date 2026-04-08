@@ -276,6 +276,17 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
         var nowUtc = DateTime.UtcNow;
         var deferredCounterpartyExpiryThresholdUtc = nowUtc.AddHours(-48);
         var deferredMoreContextExpiryThresholdUtc = nowUtc.AddHours(-24);
+        var connectionIdsWithImportedRows = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x => x.FinancialAccountId.HasValue)
+            .Join(
+                dbContext.Transactions
+                    .AsNoTracking(),
+                linked => linked.FinancialAccountId!.Value,
+                tx => tx.FinancialAccountId,
+                (linked, _tx) => linked.ConnectionId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
 
         var pendingByFlags = await dbContext.OpenBankingConnections
             .AsNoTracking()
@@ -283,6 +294,7 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                 (x.NeedsHistoricalReclassification
                  || !x.HistoricalEnrichmentCompletedUtc.HasValue
                  || (x.HistoricalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion)
+                && connectionIdsWithImportedRows.Contains(x.Id)
                 && (x.Status == BankConnectionStatuses.ConnectedPendingSync
                     || x.Status == BankConnectionStatuses.Connected
                     || x.Status == BankConnectionStatuses.SyncPending

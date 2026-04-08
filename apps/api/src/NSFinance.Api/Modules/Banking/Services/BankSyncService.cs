@@ -1366,9 +1366,15 @@ public sealed class BankSyncService(
             errorReason: null,
             cancellationToken);
 
+        var remainingWorkSnapshotAfterSync = await GetDeterministicRemainingWorkSnapshotAsync(
+            connection.UserId,
+            cancellationToken);
+        var rowsInDeterministicScopeAfterSync = remainingWorkSnapshotAfterSync.RowsTotal;
+        var actionableRowsRemainingAfterSync = remainingWorkSnapshotAfterSync.RowsActionableRemaining;
+        var requiresHistoricalReplayWithImportedRows = connection.NeedsHistoricalReclassification
+            && rowsInDeterministicScopeAfterSync > 0;
         var shouldQueuePostSync = !ingestionKickoffQueueAccepted
-            || universeExpansionRowsInvalidated > 0
-            || newlyImportedRowsMarkedPostSync > 0;
+            && (actionableRowsRemainingAfterSync > 0 || requiresHistoricalReplayWithImportedRows);
         var postSyncQueueReason = ingestionKickoffRowsInserted > 0 && !ingestionKickoffQueueAccepted
             ? DeterministicEnqueueReasonIngestionInsert
             : DeterministicEnqueueReasonPostSync;
@@ -1381,21 +1387,29 @@ public sealed class BankSyncService(
                 postSyncQueueReason);
 
             logger.LogInformation(
-                "Deterministic kickoff queue outcome connectionId={ConnectionId} userId={UserId} queueAccepted={QueueAccepted} markedRows={MarkedRows} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated} reason={Reason}",
+                "Deterministic kickoff queue outcome connectionId={ConnectionId} userId={UserId} queueAccepted={QueueAccepted} markedRows={MarkedRows} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated} rowsInDeterministicScopeAfterSync={RowsInDeterministicScopeAfterSync} actionableRowsRemainingAfterSync={ActionableRowsRemainingAfterSync} requiresHistoricalReplayWithImportedRows={RequiresHistoricalReplayWithImportedRows} reason={Reason}",
                 connection.Id,
                 connection.UserId,
                 postSyncQueueAccepted,
                 newlyImportedRowsMarkedForDeterministicReclassification,
                 universeExpansionRowsInvalidated,
+                rowsInDeterministicScopeAfterSync,
+                actionableRowsRemainingAfterSync,
+                requiresHistoricalReplayWithImportedRows,
                 postSyncQueueReason);
         }
         else
         {
             logger.LogInformation(
-                "Skipped post-sync deterministic enqueue because ingestion kickoff already queued connectionId={ConnectionId} userId={UserId} markedRows={MarkedRows}",
+                "Skipped post-sync deterministic enqueue because no actionable deterministic row debt remained after sync connectionId={ConnectionId} userId={UserId} ingestionKickoffQueueAccepted={IngestionKickoffQueueAccepted} markedRows={MarkedRows} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated} rowsInDeterministicScopeAfterSync={RowsInDeterministicScopeAfterSync} actionableRowsRemainingAfterSync={ActionableRowsRemainingAfterSync} requiresHistoricalReplayWithImportedRows={RequiresHistoricalReplayWithImportedRows}",
                 connection.Id,
                 connection.UserId,
-                newlyImportedRowsMarkedForDeterministicReclassification);
+                ingestionKickoffQueueAccepted,
+                newlyImportedRowsMarkedForDeterministicReclassification,
+                universeExpansionRowsInvalidated,
+                rowsInDeterministicScopeAfterSync,
+                actionableRowsRemainingAfterSync,
+                requiresHistoricalReplayWithImportedRows);
         }
 
         var queueAccepted = ingestionKickoffQueueAccepted || postSyncQueueAccepted;
@@ -3255,12 +3269,38 @@ public sealed class BankSyncService(
                 hasTransferLinkIntegrityDrift);
         }
 
+        remainingWorkSnapshot = await GetDeterministicRemainingWorkSnapshotAsync(connection.UserId, cancellationToken);
+        var rowTruthRowsRemaining = remainingWorkSnapshot.RowsRemaining;
+        var rowTruthActionableRowsRemaining = remainingWorkSnapshot.RowsActionableRemaining;
+        var hasRowTruthHistoricalDebt = rowTruthRowsRemaining > 0;
+
+        if (hasRowTruthHistoricalDebt && !connection.NeedsHistoricalReclassification)
+        {
+            logger.LogInformation(
+                "Deterministic enrichment auto-reopened historical run from row-truth debt connectionId={ConnectionId} userId={UserId} rowsRemaining={RowsRemaining} rowsActionableRemaining={RowsActionableRemaining} rowsVersionBehind={RowsVersionBehind} rowsMarkedForReclassification={RowsMarkedForReclassification} rowsSuperseded={RowsSuperseded} rowsNotEvaluated={RowsNotEvaluated} rowsEvaluating={RowsEvaluating}",
+                connection.Id,
+                connection.UserId,
+                rowTruthRowsRemaining,
+                rowTruthActionableRowsRemaining,
+                remainingWorkSnapshot.RowsVersionBehind,
+                remainingWorkSnapshot.RowsMarkedForReclassification,
+                remainingWorkSnapshot.RowsSupersededRecomputeRequired,
+                remainingWorkSnapshot.RowsNotEvaluated,
+                remainingWorkSnapshot.RowsEvaluating);
+
+            connection.NeedsHistoricalReclassification = true;
+            connection.HistoricalEnrichmentStartedUtc = null;
+            connection.HistoricalEnrichmentCompletedUtc = null;
+            connection.HistoricalEnrichmentCheckpointUtc = null;
+        }
+
         var hasDeterministicScopeRows = await HasAnyLinkedDeterministicScopeRowsAsync(connection.UserId, cancellationToken);
         var historicalEligible = connection.InitialBackfillCompletedUtc.HasValue || isInitialBackfill || hasDeterministicScopeRows;
         var historicalRequired = historicalEligible
             && (connection.NeedsHistoricalReclassification
                 || !connection.HistoricalEnrichmentCompletedUtc.HasValue
-                || (connection.HistoricalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion);
+                || (connection.HistoricalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion
+                || hasRowTruthHistoricalDebt);
 
         var historicalInProgress = false;
         var historicalCompleted = connection.HistoricalEnrichmentCompletedUtc.HasValue
