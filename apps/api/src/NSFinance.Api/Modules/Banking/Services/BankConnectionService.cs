@@ -1907,36 +1907,71 @@ public sealed class BankConnectionService(
 
         var nowUtc = DateTime.UtcNow;
 
-        return connections
-            .Select(connection =>
+        var resolved = new List<BankConnectionDto>(connections.Count);
+        foreach (var connection in connections)
+        {
+            linkedAccountCounts.TryGetValue(connection.Id, out var linkedAccountCount);
+            enrichmentByConnectionId.TryGetValue(connection.Id, out var enrichment);
+            importedTransactionCountByConnectionId.TryGetValue(connection.Id, out var importedTransactionCount);
+
+            var enrichmentStage = enrichment?.Stage;
+            var normalizedEnrichmentStage = NormalizeEnrichmentStage(enrichmentStage);
+            var stageIsQueued = IsEnrichmentQueuedStage(normalizedEnrichmentStage);
+            var hasExplicitZeroRowImportCompletion = HasExplicitZeroRowImportCompletionEvidence(
+                connection.Status,
+                connection.LastSyncAttemptedUtc,
+                connection.LastSuccessfulSyncUtc,
+                connection.UpdatedUtc,
+                linkedAccountCount,
+                importedTransactionCount,
+                nowUtc);
+            var hasMaterialImportEvidence =
+                importedTransactionCount > 0
+                || hasExplicitZeroRowImportCompletion;
+            var queueVisibleWithoutMaterialImportEvidence = stageIsQueued && !hasMaterialImportEvidence;
+
+            var resolution = ResolveConnectionSyncLifecyclePhase(
+                connection.Status,
+                connection.LastSyncAttemptedUtc,
+                connection.LastSuccessfulSyncUtc,
+                connection.UpdatedUtc,
+                linkedAccountCount,
+                importedTransactionCount,
+                enrichmentStage,
+                nowUtc);
+
+            logger.LogInformation(
+                "Connection lifecycle resolution connectionId={ConnectionId} userId={UserId} status={Status} enrichmentStage={EnrichmentStage} linkedAccountCount={LinkedAccountCount} importedTransactionCount={ImportedTransactionCount} hasMaterialImportEvidence={HasMaterialImportEvidence} hasExplicitZeroRowImportCompletion={HasExplicitZeroRowImportCompletion} queueVisibleWithoutMaterialImportEvidence={QueueVisibleWithoutMaterialImportEvidence} resolvedPhase={ResolvedPhase} resolvedReason={ResolvedReason} reconciled={Reconciled} staleProtectionApplied={StaleProtectionApplied} lastSyncAttemptedUtc={LastSyncAttemptedUtc} lastSuccessfulSyncUtc={LastSuccessfulSyncUtc} updatedUtc={UpdatedUtc}",
+                connection.Id,
+                userId,
+                connection.Status,
+                normalizedEnrichmentStage ?? "<none>",
+                linkedAccountCount,
+                importedTransactionCount,
+                hasMaterialImportEvidence,
+                hasExplicitZeroRowImportCompletion,
+                queueVisibleWithoutMaterialImportEvidence,
+                resolution.Phase,
+                resolution.Reason,
+                resolution.Reconciled,
+                resolution.StaleProtectionApplied,
+                connection.LastSyncAttemptedUtc,
+                connection.LastSuccessfulSyncUtc,
+                connection.UpdatedUtc);
+
+            resolved.Add(connection with
             {
-                linkedAccountCounts.TryGetValue(connection.Id, out var linkedAccountCount);
-                enrichmentByConnectionId.TryGetValue(connection.Id, out var enrichment);
-                importedTransactionCountByConnectionId.TryGetValue(connection.Id, out var importedTransactionCount);
+                SyncLifecyclePhase = resolution.Phase,
+                SyncLifecycleReason = resolution.Reason,
+                SyncEnrichmentStage = enrichmentStage,
+                LinkedAccountCount = linkedAccountCount,
+                ImportedTransactionCount = importedTransactionCount,
+                SyncStateReconciled = resolution.Reconciled,
+                SyncStateStaleProtectionApplied = resolution.StaleProtectionApplied
+            });
+        }
 
-                var enrichmentStage = enrichment?.Stage;
-                var resolution = ResolveConnectionSyncLifecyclePhase(
-                    connection.Status,
-                    connection.LastSyncAttemptedUtc,
-                    connection.LastSuccessfulSyncUtc,
-                    connection.UpdatedUtc,
-                    linkedAccountCount,
-                    importedTransactionCount,
-                    enrichmentStage,
-                    nowUtc);
-
-                return connection with
-                {
-                    SyncLifecyclePhase = resolution.Phase,
-                    SyncLifecycleReason = resolution.Reason,
-                    SyncEnrichmentStage = enrichmentStage,
-                    LinkedAccountCount = linkedAccountCount,
-                    ImportedTransactionCount = importedTransactionCount,
-                    SyncStateReconciled = resolution.Reconciled,
-                    SyncStateStaleProtectionApplied = resolution.StaleProtectionApplied
-                };
-            })
-            .ToList();
+        return resolved;
     }
 
     private static ConnectionSyncLifecycleResolution ResolveConnectionSyncLifecyclePhase(
@@ -1949,25 +1984,31 @@ public sealed class BankConnectionService(
         string? enrichmentStage,
         DateTime nowUtc)
     {
-        var normalizedStage = string.IsNullOrWhiteSpace(enrichmentStage)
-            ? null
-            : enrichmentStage.Trim().ToLowerInvariant();
+        var normalizedStage = NormalizeEnrichmentStage(enrichmentStage);
         var hasLinkedAccounts = linkedAccountCount > 0;
         var hasImportedTransactions = importedTransactionCount > 0;
-        var hasAnySyncEvidence = lastSyncAttemptedUtc.HasValue || lastSuccessfulSyncUtc.HasValue;
-        var hasPostImportEvidence = hasLinkedAccounts && (hasImportedTransactions || hasAnySyncEvidence);
+        var hasExplicitZeroRowImportCompletion = HasExplicitZeroRowImportCompletionEvidence(
+            status,
+            lastSyncAttemptedUtc,
+            lastSuccessfulSyncUtc,
+            connectionUpdatedUtc,
+            linkedAccountCount,
+            importedTransactionCount,
+            nowUtc);
+        var hasMaterialImportEvidence = hasImportedTransactions || hasExplicitZeroRowImportCompletion;
 
-        var stageIsQueued = normalizedStage is "queued_for_sync" or "needs_reclassification" or "waiting_for_first_sync";
+        var stageIsQueued = IsEnrichmentQueuedStage(normalizedStage);
         var stageIsOrganizing = normalizedStage is "categorizing" or "waiting_for_counterparty";
         var stageIsCompleted = normalizedStage is "completed";
 
         var statusIsSyncingLike = status is BankConnectionStatuses.ConnectedPendingSync
             or BankConnectionStatuses.SyncPending
             or BankConnectionStatuses.Connected;
+        var statusCanStillBeImporting = statusIsSyncingLike || status == BankConnectionStatuses.Synced;
 
         var syncReferenceUtc = MaxUtc(MaxUtc(lastSuccessfulSyncUtc, lastSyncAttemptedUtc), connectionUpdatedUtc);
         var staleSyncPending =
-            statusIsSyncingLike
+            statusCanStillBeImporting
             && syncReferenceUtc.HasValue
             && nowUtc - syncReferenceUtc.Value >= SyncingStaleThreshold;
 
@@ -1994,16 +2035,57 @@ public sealed class BankConnectionService(
                 StaleProtectionApplied: false);
         }
 
-        if (stageIsCompleted || status == BankConnectionStatuses.Synced)
+        if (!hasMaterialImportEvidence)
+        {
+            if (statusCanStillBeImporting)
+            {
+                var queueVisibleWithoutMaterialImportEvidence = stageIsQueued;
+                if (staleSyncPending)
+                {
+                    return new ConnectionSyncLifecycleResolution(
+                        SyncLifecyclePhaseSyncTakingLongerThanExpected,
+                        queueVisibleWithoutMaterialImportEvidence
+                            ? "stale_sync_without_material_import_evidence_queue_visible"
+                            : "stale_sync_without_material_import_evidence",
+                        Reconciled: true,
+                        StaleProtectionApplied: true);
+                }
+
+                return new ConnectionSyncLifecycleResolution(
+                    SyncLifecyclePhaseImportingBankData,
+                    queueVisibleWithoutMaterialImportEvidence
+                        ? "awaiting_connection_import_footprint_queue_visible"
+                        : "awaiting_connection_import_footprint",
+                    Reconciled: status == BankConnectionStatuses.Synced,
+                    StaleProtectionApplied: false);
+            }
+
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseConnecting,
+                "no_connection_import_footprint_defaulting_connecting",
+                Reconciled: false,
+                StaleProtectionApplied: false);
+        }
+
+        if (hasExplicitZeroRowImportCompletion)
         {
             return new ConnectionSyncLifecycleResolution(
                 SyncLifecyclePhaseCompleted,
-                stageIsCompleted ? "enrichment_stage_completed" : "connection_status_synced",
-                Reconciled: statusIsSyncingLike && status != BankConnectionStatuses.Synced,
+                "explicit_zero_row_import_completion_confirmed",
+                Reconciled: false,
+                StaleProtectionApplied: false);
+        }
+
+        if (stageIsCompleted)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseCompleted,
+                "enrichment_stage_completed",
+                Reconciled: statusIsSyncingLike,
                 StaleProtectionApplied: staleSyncPending);
         }
 
-        if (stageIsOrganizing && hasPostImportEvidence)
+        if (stageIsOrganizing)
         {
             return new ConnectionSyncLifecycleResolution(
                 SyncLifecyclePhaseOrganizingTransactions,
@@ -2012,7 +2094,7 @@ public sealed class BankConnectionService(
                 StaleProtectionApplied: staleSyncPending);
         }
 
-        if (stageIsQueued && hasPostImportEvidence)
+        if (stageIsQueued)
         {
             return new ConnectionSyncLifecycleResolution(
                 SyncLifecyclePhaseImportCompleteEnrichmentQueued,
@@ -2021,40 +2103,31 @@ public sealed class BankConnectionService(
                 StaleProtectionApplied: staleSyncPending);
         }
 
-        if (statusIsSyncingLike)
-        {
-            if (hasPostImportEvidence)
-            {
-                return new ConnectionSyncLifecycleResolution(
-                    SyncLifecyclePhaseImportCompleteEnrichmentQueued,
-                    staleSyncPending
-                        ? "stale_sync_status_reconciled_post_import"
-                        : "import_evidence_present_waiting_for_enrichment",
-                    Reconciled: true,
-                    StaleProtectionApplied: staleSyncPending);
-            }
-
-            if (staleSyncPending)
-            {
-                return new ConnectionSyncLifecycleResolution(
-                    SyncLifecyclePhaseSyncTakingLongerThanExpected,
-                    "stale_sync_without_import_evidence",
-                    Reconciled: true,
-                    StaleProtectionApplied: true);
-            }
-
-            return new ConnectionSyncLifecycleResolution(
-                SyncLifecyclePhaseImportingBankData,
-                "awaiting_initial_import",
-                Reconciled: false,
-                StaleProtectionApplied: false);
-        }
-
-        if (hasPostImportEvidence)
+        if (status == BankConnectionStatuses.Synced)
         {
             return new ConnectionSyncLifecycleResolution(
                 SyncLifecyclePhaseCompleted,
-                "post_import_evidence_without_syncing_status",
+                "connection_status_synced_with_material_import_evidence",
+                Reconciled: false,
+                StaleProtectionApplied: staleSyncPending);
+        }
+
+        if (statusIsSyncingLike)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseImportCompleteEnrichmentQueued,
+                staleSyncPending
+                    ? "stale_sync_status_reconciled_post_import"
+                    : "material_import_evidence_present_waiting_for_enrichment",
+                Reconciled: true,
+                StaleProtectionApplied: staleSyncPending);
+        }
+
+        if (hasLinkedAccounts || hasImportedTransactions)
+        {
+            return new ConnectionSyncLifecycleResolution(
+                SyncLifecyclePhaseCompleted,
+                "material_import_evidence_present_without_syncing_status",
                 Reconciled: false,
                 StaleProtectionApplied: false);
         }
@@ -2064,6 +2137,47 @@ public sealed class BankConnectionService(
             "default_connecting_fallback",
             Reconciled: false,
             StaleProtectionApplied: false);
+    }
+
+    private static string? NormalizeEnrichmentStage(string? enrichmentStage)
+    {
+        return string.IsNullOrWhiteSpace(enrichmentStage)
+            ? null
+            : enrichmentStage.Trim().ToLowerInvariant();
+    }
+
+    private static bool IsEnrichmentQueuedStage(string? normalizedStage)
+    {
+        return normalizedStage is "queued_for_sync" or "needs_reclassification" or "waiting_for_first_sync";
+    }
+
+    private static bool HasExplicitZeroRowImportCompletionEvidence(
+        string status,
+        DateTime? lastSyncAttemptedUtc,
+        DateTime? lastSuccessfulSyncUtc,
+        DateTime connectionUpdatedUtc,
+        int linkedAccountCount,
+        int importedTransactionCount,
+        DateTime nowUtc)
+    {
+        if (status != BankConnectionStatuses.Synced)
+        {
+            return false;
+        }
+
+        if (linkedAccountCount <= 0 || importedTransactionCount > 0)
+        {
+            return false;
+        }
+
+        if (!lastSuccessfulSyncUtc.HasValue)
+        {
+            return false;
+        }
+
+        var syncReferenceUtc = MaxUtc(MaxUtc(lastSuccessfulSyncUtc, lastSyncAttemptedUtc), connectionUpdatedUtc);
+        return syncReferenceUtc.HasValue
+            && nowUtc - syncReferenceUtc.Value >= SyncingStaleThreshold;
     }
 
     private async Task<IReadOnlyList<LinkedBankAccountDto>> ListLinkedAccountsWithBrandingAsync(
