@@ -298,7 +298,7 @@ public class OpenBankingIntegrationTests
         Assert.Contains(queue.Items, item =>
             item.ConnectionId == start.Value.ConnectionId
             && item.UserId == user.Id
-            && item.Reason == "post_sync_enqueue");
+            && item.Reason == "ingestion_insert_enqueue");
 
         var rows = await harness.DbContext.Transactions.ToListAsync();
         Assert.NotEmpty(rows);
@@ -339,7 +339,7 @@ public class OpenBankingIntegrationTests
         Assert.Contains(queue.Items, item =>
             item.ConnectionId == secondStart.Value!.ConnectionId
             && item.UserId == user.Id
-            && item.Reason == "post_sync_enqueue");
+            && item.Reason == "ingestion_insert_enqueue");
 
         var secondConnectionFinancialAccountIds = await harness.DbContext.LinkedBankAccounts
             .Where(x => x.ConnectionId == secondStart.Value.ConnectionId && x.FinancialAccountId.HasValue)
@@ -355,6 +355,120 @@ public class OpenBankingIntegrationTests
             Assert.True(row.NeedsDeterministicReclassification);
             Assert.False(row.DeterministicClassificationVersion.HasValue);
         });
+    }
+
+    [Fact]
+    public async Task CallbackFlow_EmptyFirstSyncThenLateIngestion_TriggersDeterministicKickoffFromInsertion()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: DelayedIngestionAfterSyncFlowHandler());
+        var queue = new RecordingBankDeterministicEnrichmentQueue();
+        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+
+        var user = await harness.CreateUserAsync("bank.delayed-ingestion-kickoff@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-delayed-ingestion", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+        Assert.Equal(0, await harness.DbContext.Transactions.CountAsync());
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
+        var delayedSync = await syncService.SyncConnectionAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None);
+        Assert.True(delayedSync.Succeeded);
+
+        var rows = await harness.DbContext.Transactions.ToListAsync();
+        Assert.NotEmpty(rows);
+        Assert.All(rows, row =>
+        {
+            Assert.True(row.NeedsDeterministicReclassification);
+            Assert.False(row.DeterministicClassificationVersion.HasValue);
+        });
+
+        Assert.Contains(queue.Items, item =>
+            item.ConnectionId == start.Value.ConnectionId
+            && item.UserId == user.Id
+            && item.Reason == "ingestion_insert_enqueue");
+    }
+
+    [Fact]
+    public async Task EnrichmentProgress_ZeroRows_DoesNotReportCompleted()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: DelayedIngestionAfterSyncFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.zero-rows-not-completed@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-delayed-ingestion", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
+        Assert.Equal(0, progress.TotalCount);
+        Assert.Equal(0, progress.RemainingCount);
+        Assert.False(progress.Completed);
+        Assert.Equal(0d, progress.ProgressPercent);
+        Assert.NotEqual("completed", progress.Stage);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_SecondBankLargeImport_TriggersIngestionKickoffForLaterAccount()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SequentialSecondAccountLargeImportFlowHandler());
+        var queue = new RecordingBankDeterministicEnrichmentQueue();
+        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+
+        var user = await harness.CreateUserAsync("bank.second-account-large-import-kickoff@test.local");
+
+        var firstStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(firstStart.Succeeded);
+        var firstState = GetQueryValue(firstStart.Value!.AuthorizationUrl, "state");
+        var firstCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-large-second-account-a", firstState, null, null),
+            CancellationToken.None);
+        Assert.True(firstCallback.Succeeded);
+
+        var secondStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(secondStart.Succeeded);
+        var secondState = GetQueryValue(secondStart.Value!.AuthorizationUrl, "state");
+        var secondCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-large-second-account-b", secondState, null, null),
+            CancellationToken.None);
+        Assert.True(secondCallback.Succeeded);
+
+        var secondConnectionFinancialAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == secondStart.Value.ConnectionId && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var secondRows = await harness.DbContext.Transactions
+            .Where(x => secondConnectionFinancialAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+
+        Assert.True(secondRows.Count >= 400);
+        Assert.All(secondRows, row =>
+        {
+            Assert.True(row.NeedsDeterministicReclassification);
+            Assert.False(row.DeterministicClassificationVersion.HasValue);
+        });
+
+        Assert.Contains(queue.Items, item =>
+            item.ConnectionId == secondStart.Value.ConnectionId
+            && item.UserId == user.Id
+            && item.Reason == "ingestion_insert_enqueue");
     }
 
     [Fact]
@@ -6010,6 +6124,255 @@ public class OpenBankingIntegrationTests
             if (request.Method == HttpMethod.Get
                 && (path.EndsWith("/data/v1/accounts/acc-sequential-universe-a/transactions/pending", StringComparison.Ordinal)
                     || path.EndsWith("/data/v1/accounts/acc-sequential-universe-b/transactions/pending", StringComparison.Ordinal)))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler DelayedIngestionAfterSyncFlowHandler()
+    {
+        var baseDateUtc = new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc);
+        var transactionRequestCount = 0;
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-delayed-ingestion",
+                      "refresh_token":"refresh-token-delayed-ingestion",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "account_id": "acc-delayed-ingestion-001",
+                          "display_name": "Delayed Feed Current",
+                          "currency": "EUR",
+                          "account_type": "TRANSACTION",
+                          "provider": {
+                            "provider_id": "ob-provider-delayed",
+                            "display_name": "Delayed Provider"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-delayed-ingestion-001/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 980.00,
+                          "current": 980.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-02T08:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-delayed-ingestion-001/transactions", StringComparison.Ordinal))
+            {
+                var requestNumber = Interlocked.Increment(ref transactionRequestCount);
+                if (requestNumber == 1)
+                {
+                    return Json(HttpStatusCode.OK, """{ "results": [] }""");
+                }
+
+                var rows = new[]
+                {
+                    new TransferScenarioTransactionSeed(
+                        "tx-delayed-ingestion-001",
+                        "norm-delayed-ingestion-001",
+                        -74.11m,
+                        "EUR",
+                        baseDateUtc.AddHours(9).ToString("O"),
+                        "Delayed provider transfer reference 001",
+                        "TRANSFER")
+                };
+                return Json(HttpStatusCode.OK, BuildTransactionsResponseJson(rows));
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-delayed-ingestion-001/transactions/pending", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK, """{ "results": [] }""");
+            }
+
+            return Json(HttpStatusCode.NotFound, """{ "error": "not_found", "error_description":"Missing mock route." }""");
+        });
+    }
+
+    private static HttpMessageHandler SequentialSecondAccountLargeImportFlowHandler()
+    {
+        var baseDateUtc = new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        return new StubHttpMessageHandler(async (request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (request.Method == HttpMethod.Post && path.EndsWith("/connect/token", StringComparison.Ordinal))
+            {
+                var body = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync();
+                if (body.Contains("large-second-account-a", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Json(HttpStatusCode.OK,
+                        """
+                        {
+                          "access_token":"access-token-large-second-account-a",
+                          "refresh_token":"refresh-token-large-second-account-a",
+                          "expires_in":1800,
+                          "scope":"accounts balance transactions offline_access"
+                        }
+                        """);
+                }
+
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "access_token":"access-token-large-second-account-b",
+                      "refresh_token":"refresh-token-large-second-account-b",
+                      "expires_in":1800,
+                      "scope":"accounts balance transactions offline_access"
+                    }
+                    """);
+            }
+
+            var accessToken = request.Headers.Authorization?.Parameter;
+            var firstImport = string.Equals(accessToken, "access-token-large-second-account-a", StringComparison.Ordinal);
+            var secondImport = string.Equals(accessToken, "access-token-large-second-account-b", StringComparison.Ordinal);
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts", StringComparison.Ordinal))
+            {
+                if (firstImport)
+                {
+                    return Json(HttpStatusCode.OK,
+                        """
+                        {
+                          "results": [
+                            {
+                              "account_id": "acc-large-second-a",
+                              "display_name": "Large Import Primary",
+                              "currency": "EUR",
+                              "account_type": "TRANSACTION",
+                              "provider": {
+                                "provider_id": "ob-provider-large-a",
+                                "display_name": "Large Provider A"
+                              }
+                            }
+                          ]
+                        }
+                        """);
+                }
+
+                if (secondImport)
+                {
+                    return Json(HttpStatusCode.OK,
+                        """
+                        {
+                          "results": [
+                            {
+                              "account_id": "acc-large-second-b",
+                              "display_name": "Large Import Secondary",
+                              "currency": "EUR",
+                              "account_type": "TRANSACTION",
+                              "provider": {
+                                "provider_id": "ob-provider-large-b",
+                                "display_name": "Large Provider B"
+                              }
+                            }
+                          ]
+                        }
+                        """);
+                }
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-large-second-a/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 1500.00,
+                          "current": 1500.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-01T09:00:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-large-second-b/balance", StringComparison.Ordinal))
+            {
+                return Json(HttpStatusCode.OK,
+                    """
+                    {
+                      "results": [
+                        {
+                          "available": 3400.00,
+                          "current": 3400.00,
+                          "currency": "EUR",
+                          "update_timestamp": "2026-04-01T09:05:00Z"
+                        }
+                      ]
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-large-second-a/transactions", StringComparison.Ordinal))
+            {
+                var rows = new[]
+                {
+                    new TransferScenarioTransactionSeed(
+                        "tx-large-second-a-0001",
+                        "norm-large-second-a-0001",
+                        -22.75m,
+                        "EUR",
+                        baseDateUtc.AddHours(8).ToString("O"),
+                        "Initial import control row",
+                        "DEBIT")
+                };
+                return Json(HttpStatusCode.OK, BuildTransactionsResponseJson(rows));
+            }
+
+            if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-large-second-b/transactions", StringComparison.Ordinal))
+            {
+                var rows = Enumerable.Range(1, 460)
+                    .Select(index => new TransferScenarioTransactionSeed(
+                        $"tx-large-second-b-{index:D4}",
+                        $"norm-large-second-b-{index:D4}",
+                        -(5m + (index % 37)),
+                        "EUR",
+                        baseDateUtc.AddHours(10).AddMinutes(index).ToString("O"),
+                        $"Large secondary import row {index:D4}",
+                        "DEBIT"))
+                    .ToList();
+                return Json(HttpStatusCode.OK, BuildTransactionsResponseJson(rows));
+            }
+
+            if (request.Method == HttpMethod.Get
+                && (path.EndsWith("/data/v1/accounts/acc-large-second-a/transactions/pending", StringComparison.Ordinal)
+                    || path.EndsWith("/data/v1/accounts/acc-large-second-b/transactions/pending", StringComparison.Ordinal)))
             {
                 return Json(HttpStatusCode.OK, """{ "results": [] }""");
             }

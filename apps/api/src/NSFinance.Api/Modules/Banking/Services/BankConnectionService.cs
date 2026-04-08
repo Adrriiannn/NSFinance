@@ -348,8 +348,8 @@ public sealed class BankConnectionService(
         {
             return new BankEnrichmentProgressDto(
                 InProgress: false,
-                Completed: true,
-                ProgressPercent: 100d,
+                Completed: false,
+                ProgressPercent: 0d,
                 ProcessedCount: 0,
                 TotalCount: 0,
                 RemainingCount: 0,
@@ -368,7 +368,6 @@ public sealed class BankConnectionService(
             {
                 transactionStatsByConnectionId.TryGetValue(connection.Id, out var stats);
 
-                var completed = IsHistoricalEnrichmentCompleted(connection);
                 var required = IsHistoricalEnrichmentRequired(connection);
                 var awaitingSync = IsSyncAwaitingRunStatus(connection.Status);
                 var totalRows = Math.Max(0, stats?.TotalCount ?? 0);
@@ -407,6 +406,9 @@ public sealed class BankConnectionService(
                     remainingCount = Math.Max(0, totalCount - processedCount);
                 }
 
+                var completed = totalCount > 0
+                    && remainingCount == 0
+                    && IsHistoricalEnrichmentCompleted(connection);
                 var inProgress = IsHistoricalEnrichmentInProgress(connection, remainingCount, awaitingSync, required);
                 var stage = ResolveHistoricalEnrichmentStage(
                     connection.Status,
@@ -423,9 +425,7 @@ public sealed class BankConnectionService(
                     connection.UpdatedUtc);
                 var progressPercent = totalCount > 0
                     ? Math.Round((processedCount / (double)totalCount) * 100d, 2, MidpointRounding.AwayFromZero)
-                    : completed
-                        ? 100d
-                        : 0d;
+                    : 0d;
                 var lastUpdatedUtc = MaxUtc(stats?.LastUpdatedUtc, connection.UpdatedUtc);
 
                 return new BankEnrichmentConnectionProgressDto(
@@ -461,12 +461,12 @@ public sealed class BankConnectionService(
         var total = progressScope.Sum(x => x.TotalCount);
         var processed = progressScope.Sum(x => x.ProcessedCount);
         var remaining = progressScope.Sum(x => x.RemainingCount);
-        var completedOverall = !inProgressOverall && connectionProgress.All(x => x.Completed || x.Stage is "completed" or "idle");
+        var completedOverall = !inProgressOverall
+            && total > 0
+            && remaining == 0;
         var percentOverall = total > 0
             ? Math.Round((processed / (double)total) * 100d, 2, MidpointRounding.AwayFromZero)
-            : inProgressOverall
-                ? 0d
-                : 100d;
+            : 0d;
         var lastUpdatedOverall = progressScope
             .Where(x => x.LastUpdatedUtc.HasValue)
             .Select(x => x.LastUpdatedUtc!.Value)
