@@ -464,6 +464,13 @@ public sealed class BankSyncService(
         var now = DateTime.UtcNow;
         var isInitialBackfill = await IsInitialBackfillPendingAsync(connection, now, cancellationToken);
         var transactionSyncMode = isInitialBackfill ? "initial_backfill" : "incremental_sync";
+        var linkedAccountCountBeforeSync = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.FinancialAccountId.HasValue
+                && x.Connection != null
+                && x.Connection.UserId == connection.UserId)
+            .CountAsync(cancellationToken);
         var sameUserUniverseAccountIdsBeforeSync = await LoadSameUserFinancialAccountIdsWithProjectedRowsAsync(
             connection.UserId,
             cancellationToken);
@@ -550,6 +557,7 @@ public sealed class BankSyncService(
         var projectedBackfillRowsDeferred = 0;
         var projectedCandidatePoolSize = 0;
         var projectedTransactionIdsPendingDeterministicReclassification = new HashSet<Guid>();
+        var deterministicKickoffFinancialAccountIds = new HashSet<Guid>();
         var directDebitsSynced = 0;
         var standingOrdersSynced = 0;
         var identityInfoSynced = false;
@@ -851,6 +859,11 @@ public sealed class BankSyncService(
             projectedCandidatePoolSize += transactionUpsert.ProjectedCandidatePoolSize;
             projectedTransactionIdsPendingDeterministicReclassification.UnionWith(
                 transactionUpsert.ProjectedTransactionIdsForDeterministicReclassification);
+            if (transactionUpsert.ProjectedTransactionIdsForDeterministicReclassification.Count > 0
+                && linkedAccount.FinancialAccountId.HasValue)
+            {
+                deterministicKickoffFinancialAccountIds.Add(linkedAccount.FinancialAccountId.Value);
+            }
 
             logger.LogInformation(
                 "Bank transaction lifecycle accountId={AccountId} connectionId={ConnectionId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} fetched={Fetched} rawInserted={RawInserted} rawUpdated={RawUpdated} rawSkippedProviderId={RawSkippedProviderId} rawSkippedDedupe={RawSkippedDedupe} projectedFromNewRaw={ProjectedFromNewRaw} projectedFromStatusTransition={ProjectedFromStatusTransition} projectedBackfilled={ProjectedBackfilled} projectedSkippedUnbookedFetched={ProjectedSkippedUnbookedFetched} projectedSkippedUnbookedBackfill={ProjectedSkippedUnbookedBackfill} projectedSkippedDuplicate={ProjectedSkippedDuplicate} projectedDuplicateCheckAttempts={ProjectedDuplicateCheckAttempts} projectedBackfillRowsEvaluated={ProjectedBackfillRowsEvaluated} projectedBackfillRowsDeferred={ProjectedBackfillRowsDeferred} projectedCandidatePoolSize={ProjectedCandidatePoolSize} fetchElapsedMs={FetchElapsedMs} upsertElapsedMs={UpsertElapsedMs}",
@@ -1191,6 +1204,13 @@ public sealed class BankSyncService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        var linkedAccountCountAfterSync = await dbContext.LinkedBankAccounts
+            .AsNoTracking()
+            .Where(x =>
+                x.FinancialAccountId.HasValue
+                && x.Connection != null
+                && x.Connection.UserId == connection.UserId)
+            .CountAsync(cancellationToken);
         var sameUserUniverseAccountIdsAfterSync = await LoadSameUserFinancialAccountIdsWithProjectedRowsAsync(
             connection.UserId,
             cancellationToken);
@@ -1206,6 +1226,30 @@ public sealed class BankSyncService(
         var universeExpansionRowsInvalidated = sameUserUniverseExpanded
             ? await InvalidateTransferRowsForSameUserUniverseExpansionAsync(connection.UserId, now, cancellationToken)
             : 0;
+        var deterministicKickoffAccountIdsText = deterministicKickoffFinancialAccountIds.Count == 0
+            ? "none"
+            : string.Join(
+                ",",
+                deterministicKickoffFinancialAccountIds
+                    .OrderBy(x => x)
+                    .Take(12)
+                    .Select(x => x.ToString("N")));
+
+        logger.LogInformation(
+            "Deterministic kickoff post-import connectionId={ConnectionId} userId={UserId} importedTransactions={ImportedTransactions} projectedRowsForKickoff={ProjectedRowsForKickoff} markedRows={MarkedRows} kickoffFinancialAccountCount={KickoffFinancialAccountCount} kickoffFinancialAccountIds={KickoffFinancialAccountIds} linkedAccountsBefore={LinkedAccountsBefore} linkedAccountsAfter={LinkedAccountsAfter} sameUserUniverseSizeBefore={SameUserUniverseSizeBefore} sameUserUniverseSizeAfter={SameUserUniverseSizeAfter} sameUserUniverseExpanded={SameUserUniverseExpanded} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated}",
+            connection.Id,
+            connection.UserId,
+            transactionsImported,
+            projectedTransactionIdsPendingDeterministicReclassification.Count,
+            newlyImportedRowsMarkedForDeterministicReclassification,
+            deterministicKickoffFinancialAccountIds.Count,
+            deterministicKickoffAccountIdsText,
+            linkedAccountCountBeforeSync,
+            linkedAccountCountAfterSync,
+            sameUserUniverseSizeBeforeSync,
+            sameUserUniverseSizeAfterSync,
+            sameUserUniverseExpanded,
+            universeExpansionRowsInvalidated);
 
         if (newlyImportedRowsMarkedForDeterministicReclassification > 0 || universeExpansionRowsInvalidated > 0)
         {
@@ -1238,6 +1282,15 @@ public sealed class BankSyncService(
         var queueAccepted = TryQueueDeterministicEnrichmentNonBlocking(
             connection.UserId,
             connection.Id,
+            "post_sync_enqueue");
+
+        logger.LogInformation(
+            "Deterministic kickoff queue outcome connectionId={ConnectionId} userId={UserId} queueAccepted={QueueAccepted} markedRows={MarkedRows} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated} reason={Reason}",
+            connection.Id,
+            connection.UserId,
+            queueAccepted,
+            newlyImportedRowsMarkedForDeterministicReclassification,
+            universeExpansionRowsInvalidated,
             "post_sync_enqueue");
 
         if (queueAccepted)

@@ -66,6 +66,11 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
         var key = BuildQueueKey(userId, connectionId);
         if (!_queuedKeys.TryAdd(key, 0))
         {
+            logger.LogDebug(
+                "Skipped duplicate deterministic enrichment queue request connectionId={ConnectionId} userId={UserId} reason={Reason}",
+                connectionId,
+                userId,
+                reason);
             return ValueTask.CompletedTask;
         }
 
@@ -103,9 +108,72 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
 
             using var scope = scopeFactory.CreateScope();
             var bankSyncService = scope.ServiceProvider.GetRequiredService<BankSyncService>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             try
             {
+                var nowUtc = DateTime.UtcNow;
+                var deferredCounterpartyExpiryThresholdUtc = nowUtc.AddHours(-48);
+                var deferredMoreContextExpiryThresholdUtc = nowUtc.AddHours(-24);
+                var connectionFinancialAccountIds = await dbContext.LinkedBankAccounts
+                    .AsNoTracking()
+                    .Where(x => x.ConnectionId == workItem.ConnectionId && x.FinancialAccountId.HasValue)
+                    .Select(x => x.FinancialAccountId!.Value)
+                    .Distinct()
+                    .ToListAsync(stoppingToken);
+                var sameUserFinancialAccountIds = await dbContext.LinkedBankAccounts
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.FinancialAccountId.HasValue
+                        && x.Connection != null
+                        && x.Connection.UserId == workItem.UserId)
+                    .Select(x => x.FinancialAccountId!.Value)
+                    .Distinct()
+                    .ToListAsync(stoppingToken);
+
+                var actionableRowsQuery = dbContext.Transactions
+                    .AsNoTracking()
+                    .Where(t =>
+                        t.NeedsDeterministicReclassification
+                        || !t.DeterministicClassificationVersion.HasValue
+                        || t.DeterministicClassificationVersion.Value < DeterministicEnrichmentCurrentVersion
+                        || t.DeterministicClassificationStatus == DeterministicClassificationStatus.SupersededRecomputeRequired
+                        || (!t.DeterministicClassificationTerminal
+                            && (t.DeterministicClassificationStatus != DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                                && t.DeterministicClassificationStatus != DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                                || (t.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForCounterparty
+                                    && t.BookedAtUtc <= deferredCounterpartyExpiryThresholdUtc)
+                                || (t.DeterministicClassificationStatus == DeterministicClassificationStatus.DeferredWaitingForMoreContext
+                                    && t.BookedAtUtc <= deferredMoreContextExpiryThresholdUtc))));
+                var actionableRowsOnConnection = connectionFinancialAccountIds.Count == 0
+                    ? 0
+                    : await actionableRowsQuery
+                        .Where(t => connectionFinancialAccountIds.Contains(t.FinancialAccountId))
+                        .CountAsync(stoppingToken);
+                var actionableRowsForUser = sameUserFinancialAccountIds.Count == 0
+                    ? 0
+                    : await actionableRowsQuery
+                        .Where(t => sameUserFinancialAccountIds.Contains(t.FinancialAccountId))
+                        .CountAsync(stoppingToken);
+                var connectionAccountIdsText = connectionFinancialAccountIds.Count == 0
+                    ? "none"
+                    : string.Join(
+                        ",",
+                        connectionFinancialAccountIds
+                            .OrderBy(x => x)
+                            .Take(12)
+                            .Select(x => x.ToString("N")));
+
+                logger.LogInformation(
+                    "Deterministic enrichment worker pickup connectionId={ConnectionId} userId={UserId} reason={Reason} connectionFinancialAccountCount={ConnectionFinancialAccountCount} connectionFinancialAccountIds={ConnectionFinancialAccountIds} actionableRowsOnConnection={ActionableRowsOnConnection} actionableRowsForUser={ActionableRowsForUser}",
+                    workItem.ConnectionId,
+                    workItem.UserId,
+                    workItem.Reason,
+                    connectionFinancialAccountIds.Count,
+                    connectionAccountIdsText,
+                    actionableRowsOnConnection,
+                    actionableRowsForUser);
+
                 var result = await bankSyncService.RunDeterministicEnrichmentAsync(
                     workItem.UserId,
                     workItem.ConnectionId,
