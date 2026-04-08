@@ -464,7 +464,10 @@ public sealed class BankSyncService(
         var now = DateTime.UtcNow;
         var isInitialBackfill = await IsInitialBackfillPendingAsync(connection, now, cancellationToken);
         var transactionSyncMode = isInitialBackfill ? "initial_backfill" : "incremental_sync";
-        var sameUserUniverseSizeBeforeSync = (await LoadLinkedFinancialAccountIdsAsync(connection.UserId, cancellationToken)).Count;
+        var sameUserUniverseAccountIdsBeforeSync = await LoadSameUserFinancialAccountIdsWithProjectedRowsAsync(
+            connection.UserId,
+            cancellationToken);
+        var sameUserUniverseSizeBeforeSync = sameUserUniverseAccountIdsBeforeSync.Count;
 
         if (isInitialBackfill && !connection.InitialBackfillStartedUtc.HasValue)
         {
@@ -1188,8 +1191,13 @@ public sealed class BankSyncService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var sameUserUniverseSizeAfterSync = (await LoadLinkedFinancialAccountIdsAsync(connection.UserId, cancellationToken)).Count;
-        var sameUserUniverseExpanded = sameUserUniverseSizeAfterSync > sameUserUniverseSizeBeforeSync;
+        var sameUserUniverseAccountIdsAfterSync = await LoadSameUserFinancialAccountIdsWithProjectedRowsAsync(
+            connection.UserId,
+            cancellationToken);
+        var sameUserUniverseSizeAfterSync = sameUserUniverseAccountIdsAfterSync.Count;
+        var sameUserUniverseExpanded = sameUserUniverseAccountIdsAfterSync
+            .Except(sameUserUniverseAccountIdsBeforeSync)
+            .Any();
         var newlyImportedRowsMarkedForDeterministicReclassification =
             await MarkSpecificTransactionsForDeterministicReclassificationAsync(
                 projectedTransactionIdsPendingDeterministicReclassification,
@@ -3359,9 +3367,7 @@ public sealed class BankSyncService(
             .Where(x =>
                 linkedFinancialAccountIds.Contains(x.FinancialAccountId)
                 && x.DeterministicClassificationTerminal
-                && !x.NeedsDeterministicReclassification
-                && x.DeterministicClassificationVersion.HasValue
-                && x.DeterministicClassificationVersion.Value >= DeterministicEnrichmentCurrentVersion)
+                && !x.NeedsDeterministicReclassification)
             .ToListAsync(cancellationToken);
 
         var touched = 0;
@@ -3431,25 +3437,43 @@ public sealed class BankSyncService(
             return false;
         }
 
-        return EvidenceShowsIncompleteSameUserUniverse(row.DeterministicReasonDetailJson);
+        return EvidenceShowsIncompleteSameUserUniverse(row.DeterministicReasonDetailJson)
+               || IsGenericTransferLikeNoMatchOutcome(row);
     }
 
     private static bool IsTransferFamilyRow(Transaction row)
     {
         if (!string.IsNullOrWhiteSpace(row.DeterministicClassificationRuleKey)
-            && row.DeterministicClassificationRuleKey.Contains("bank_transfer", StringComparison.OrdinalIgnoreCase))
+            && (row.DeterministicClassificationRuleKey.Contains("bank_transfer", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(
+                    row.DeterministicClassificationRuleKey,
+                    "generic.no_matching_supported_family_v3",
+                    StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }
 
         var evidenceFamily = TryReadEvidenceFamily(row.DeterministicReasonDetailJson);
-        return string.Equals(evidenceFamily, "bank_account_transfer", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(evidenceFamily, "bank_account_transfer", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return EvidenceShowsTransferLikeSignals(row.DeterministicReasonDetailJson);
     }
 
     private static bool IsNoCounterpartTerminalOutcome(Transaction row)
     {
         return string.Equals(row.DeterministicReasonCode, DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart, StringComparison.Ordinal)
-               || string.Equals(row.DeterministicReasonCode, DeterministicClassificationReasonCodes.TransferDeferredExpiredNoCounterpart, StringComparison.Ordinal);
+               || string.Equals(row.DeterministicReasonCode, DeterministicClassificationReasonCodes.TransferDeferredExpiredNoCounterpart, StringComparison.Ordinal)
+               || IsGenericTransferLikeNoMatchOutcome(row);
+    }
+
+    private static bool IsGenericTransferLikeNoMatchOutcome(Transaction row)
+    {
+        return string.Equals(row.DeterministicClassificationRuleKey, "generic.no_matching_supported_family_v3", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(row.DeterministicReasonCode, DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily, StringComparison.Ordinal)
+               && EvidenceShowsTransferLikeSignals(row.DeterministicReasonDetailJson);
     }
 
     private static bool EvidenceShowsIncompleteSameUserUniverse(string? evidenceJson)
@@ -3468,6 +3492,65 @@ public sealed class BankSyncService(
         {
             return false;
         }
+    }
+
+    private static bool EvidenceShowsTransferLikeSignals(string? evidenceJson)
+    {
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(evidenceJson);
+            return EvidenceShowsTransferLikeSignals(document.RootElement, depth: 0);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool EvidenceShowsTransferLikeSignals(JsonElement element, int depth)
+    {
+        if (element.ValueKind != JsonValueKind.Object || depth > 3)
+        {
+            return false;
+        }
+
+        if ((element.TryGetProperty("transferKeyword", out var transferKeywordElement)
+             && transferKeywordElement.ValueKind == JsonValueKind.True)
+            || (element.TryGetProperty("providerHint", out var providerHintElement)
+                && providerHintElement.ValueKind == JsonValueKind.True)
+            || (element.TryGetProperty("transferSignals", out var transferSignalsElement)
+                && transferSignalsElement.ValueKind == JsonValueKind.True))
+        {
+            return true;
+        }
+
+        if (element.TryGetProperty("pendingEvidence", out var pendingEvidenceElement)
+            && pendingEvidenceElement.ValueKind == JsonValueKind.String)
+        {
+            var nested = pendingEvidenceElement.GetString();
+            if (!string.IsNullOrWhiteSpace(nested))
+            {
+                try
+                {
+                    using var nestedDocument = JsonDocument.Parse(nested);
+                    if (EvidenceShowsTransferLikeSignals(nestedDocument.RootElement, depth + 1))
+                    {
+                        return true;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Ignore malformed nested evidence payloads.
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool EvidenceShowsIncompleteSameUserUniverse(JsonElement element, int depth)
@@ -3977,6 +4060,26 @@ public sealed class BankSyncService(
             .Select(x => x.FinancialAccountId!.Value)
             .Distinct()
             .ToListAsync(cancellationToken);
+    }
+
+    private async Task<HashSet<Guid>> LoadSameUserFinancialAccountIdsWithProjectedRowsAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return [];
+        }
+
+        var accountIdsWithProjectedRows = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x => linkedFinancialAccountIds.Contains(x.FinancialAccountId))
+            .Select(x => x.FinancialAccountId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        return accountIdsWithProjectedRows.ToHashSet();
     }
 
     private async Task<bool> HasAnyLinkedDeterministicScopeRowsAsync(

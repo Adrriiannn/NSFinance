@@ -4,7 +4,10 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Reflection;
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Infrastructure.RequestContext;
@@ -271,6 +274,410 @@ public class OpenBankingIntegrationTests
         Assert.Equal(TransactionTransferKind.LinkedInternal, debit.TransferKind);
         Assert.Equal(TransactionTransferKind.LinkedInternal, credit.TransferKind);
         Assert.NotEqual(DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart, debit.DeterministicReasonCode);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_FirstBankImport_EnqueuesDeterministicProcessingForImportedRows()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+        var queue = new RecordingBankDeterministicEnrichmentQueue();
+        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+
+        var user = await harness.CreateUserAsync("bank.enqueue-first-import@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-enqueue-first-import", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        Assert.Contains(queue.Items, item =>
+            item.ConnectionId == start.Value.ConnectionId
+            && item.UserId == user.Id
+            && item.Reason == "post_sync_enqueue");
+
+        var rows = await harness.DbContext.Transactions.ToListAsync();
+        Assert.NotEmpty(rows);
+        Assert.All(rows, row =>
+        {
+            Assert.True(row.NeedsDeterministicReclassification);
+            Assert.False(row.DeterministicClassificationVersion.HasValue);
+        });
+    }
+
+    [Fact]
+    public async Task CallbackFlow_SecondBankImport_AlsoEnqueuesDeterministicProcessingForImportedRows()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SequentialUniverseExpansionTransferFlowHandler());
+        var queue = new RecordingBankDeterministicEnrichmentQueue();
+        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+
+        var user = await harness.CreateUserAsync("bank.enqueue-second-import@test.local");
+
+        var firstStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(firstStart.Succeeded);
+        var firstState = GetQueryValue(firstStart.Value!.AuthorizationUrl, "state");
+        var firstCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-a", firstState, null, null),
+            CancellationToken.None);
+        Assert.True(firstCallback.Succeeded);
+
+        var secondStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(secondStart.Succeeded);
+        var secondState = GetQueryValue(secondStart.Value!.AuthorizationUrl, "state");
+        var secondCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-b", secondState, null, null),
+            CancellationToken.None);
+        Assert.True(secondCallback.Succeeded);
+
+        Assert.Contains(queue.Items, item =>
+            item.ConnectionId == secondStart.Value!.ConnectionId
+            && item.UserId == user.Id
+            && item.Reason == "post_sync_enqueue");
+
+        var secondConnectionFinancialAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == secondStart.Value.ConnectionId && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var secondAccountRows = await harness.DbContext.Transactions
+            .Where(x => secondConnectionFinancialAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+
+        Assert.NotEmpty(secondAccountRows);
+        Assert.All(secondAccountRows, row =>
+        {
+            Assert.True(row.NeedsDeterministicReclassification);
+            Assert.False(row.DeterministicClassificationVersion.HasValue);
+        });
+    }
+
+    [Fact]
+    public async Task CallbackFlow_SecondBankImport_InvalidatesPriorTransferTerminalization_WhenUniverseExpands()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SequentialUniverseExpansionTransferFlowHandler());
+        var queue = new RecordingBankDeterministicEnrichmentQueue();
+        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+
+        var user = await harness.CreateUserAsync("bank.invalidate-transfer-terminalization@test.local");
+
+        var firstStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(firstStart.Succeeded);
+        var firstState = GetQueryValue(firstStart.Value!.AuthorizationUrl, "state");
+        var firstCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-a", firstState, null, null),
+            CancellationToken.None);
+        Assert.True(firstCallback.Succeeded);
+
+        var firstRow = await harness.DbContext.Transactions.SingleAsync();
+        firstRow.DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+        firstRow.DeterministicClassificationTerminal = true;
+        firstRow.DeterministicClassificationVersion = currentVersion;
+        firstRow.DeterministicClassificationRuleKey = "bank_transfer.deferred_expiry_terminalized_v1";
+        firstRow.DeterministicReasonCode = DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart;
+        firstRow.DeterministicReasonDetailJson = JsonSerializer.Serialize(new
+        {
+            family = "bank_account_transfer",
+            candidateCount = 0,
+            hasCounterpartyAccounts = true,
+            sameUserCandidateUniverseSize = 1
+        });
+        firstRow.NeedsDeterministicReclassification = false;
+        firstRow.DeterministicDeferredRetryEligible = false;
+        firstRow.DeterministicLastRetryConsideredUtc = null;
+        await harness.DbContext.SaveChangesAsync();
+
+        var secondStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(secondStart.Succeeded);
+        var secondState = GetQueryValue(secondStart.Value!.AuthorizationUrl, "state");
+        var secondCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-b", secondState, null, null),
+            CancellationToken.None);
+        Assert.True(secondCallback.Succeeded);
+
+        var refreshedFirstRow = await harness.DbContext.Transactions.SingleAsync(x => x.Id == firstRow.Id);
+        Assert.True(refreshedFirstRow.NeedsDeterministicReclassification);
+        Assert.False(refreshedFirstRow.DeterministicClassificationTerminal);
+        Assert.Equal(DeterministicClassificationStatus.SupersededRecomputeRequired, refreshedFirstRow.DeterministicClassificationStatus);
+        Assert.True(refreshedFirstRow.DeterministicDeferredRetryEligible);
+    }
+
+    [Fact]
+    public async Task DeterministicWorker_PeriodicSweep_DiscoversSecondAccountRowsViaLinkedAccountFinancialAccountJoin()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.worker-second-account-sweep@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-worker-second-account-sweep", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var now = DateTime.UtcNow;
+        var connection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == start.Value.ConnectionId);
+        var primaryLinked = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == connection.Id && x.FinancialAccountId.HasValue);
+        var primaryAccountId = primaryLinked.FinancialAccountId!.Value;
+
+        var existingRows = await harness.DbContext.Transactions
+            .Where(x => x.FinancialAccountId == primaryAccountId)
+            .ToListAsync();
+        Assert.NotEmpty(existingRows);
+        foreach (var row in existingRows)
+        {
+            row.NeedsDeterministicReclassification = false;
+            row.DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+            row.DeterministicClassificationVersion = currentVersion;
+            row.DeterministicClassificationTerminal = true;
+            row.DeterministicDeferredRetryEligible = false;
+        }
+
+        var secondaryAccountId = Guid.NewGuid();
+        harness.DbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = secondaryAccountId,
+            UserId = user.Id,
+            Name = "Second sweep account",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddDays(-1)
+        });
+        harness.DbContext.LinkedBankAccounts.Add(new LinkedBankAccount
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = connection.Id,
+            ProviderAccountId = "worker-sweep-second-account",
+            DisplayName = "Second sweep account",
+            AccountType = "Current",
+            Currency = "EUR",
+            CreatedUtc = now.AddDays(-1),
+            UpdatedUtc = now.AddDays(-1),
+            FinancialAccountId = secondaryAccountId
+        });
+        harness.DbContext.Transactions.Add(new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = secondaryAccountId,
+            Amount = -64.21m,
+            Currency = "EUR",
+            Description = "Second account imported row for sweep",
+            BookedAtUtc = now.AddHours(-6),
+            CreatedUtc = now.AddHours(-6),
+            DeterministicClassificationStatus = DeterministicClassificationStatus.NotEvaluated,
+            DeterministicClassificationVersion = null,
+            DeterministicClassificationTerminal = false,
+            NeedsDeterministicReclassification = false
+        });
+
+        connection.NeedsHistoricalReclassification = false;
+        connection.HistoricalEnrichmentStartedUtc = now.AddMinutes(-15);
+        connection.HistoricalEnrichmentCompletedUtc = now.AddMinutes(-1);
+        connection.HistoricalEnrichmentVersion = currentVersion;
+        connection.Status = BankConnectionStatuses.Synced;
+        await harness.DbContext.SaveChangesAsync();
+
+        var serviceProvider = new ServiceCollection()
+            .AddSingleton(harness.DbContext)
+            .BuildServiceProvider();
+        var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+        var worker = new BankDeterministicEnrichmentBackgroundWorker(
+            scopeFactory,
+            NullLogger<BankDeterministicEnrichmentBackgroundWorker>.Instance);
+
+        await InvokePendingSweepAsync(worker);
+        var queuedKeys = ReadQueuedKeys(worker);
+        Assert.Contains($"{user.Id:N}:{connection.Id:N}", queuedKeys);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_UniverseExpansionInvalidation_IsIdempotentAndDoesNotOvertriggerUnrelatedRows()
+    {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SequentialUniverseExpansionTransferFlowHandler());
+        var queue = new RecordingBankDeterministicEnrichmentQueue();
+        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+
+        var user = await harness.CreateUserAsync("bank.universe-invalidation-idempotent@test.local");
+
+        var firstStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(firstStart.Succeeded);
+        var firstState = GetQueryValue(firstStart.Value!.AuthorizationUrl, "state");
+        var firstCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-a", firstState, null, null),
+            CancellationToken.None);
+        Assert.True(firstCallback.Succeeded);
+
+        var seededTransferRow = await harness.DbContext.Transactions.SingleAsync();
+        seededTransferRow.DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule;
+        seededTransferRow.DeterministicClassificationTerminal = true;
+        seededTransferRow.DeterministicClassificationVersion = currentVersion;
+        seededTransferRow.DeterministicClassificationRuleKey = "bank_transfer.deferred_expiry_terminalized_v1";
+        seededTransferRow.DeterministicReasonCode = DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart;
+        seededTransferRow.DeterministicReasonDetailJson = JsonSerializer.Serialize(new
+        {
+            family = "bank_account_transfer",
+            candidateCount = 0,
+            sameUserCandidateUniverseSize = 1
+        });
+        seededTransferRow.NeedsDeterministicReclassification = false;
+        seededTransferRow.DeterministicDeferredRetryEligible = false;
+        seededTransferRow.DeterministicLastRetryConsideredUtc = null;
+
+        var unrelatedId = Guid.NewGuid();
+        harness.DbContext.Transactions.Add(new Transaction
+        {
+            Id = unrelatedId,
+            FinancialAccountId = seededTransferRow.FinancialAccountId,
+            Amount = -19.99m,
+            Currency = "EUR",
+            Description = "Coffee shop purchase",
+            BookedAtUtc = DateTime.UtcNow.AddDays(-1),
+            CreatedUtc = DateTime.UtcNow.AddDays(-1),
+            DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+            DeterministicClassificationVersion = currentVersion,
+            DeterministicClassificationTerminal = true,
+            DeterministicClassificationRuleKey = "generic.no_matching_supported_family_v3",
+            DeterministicReasonCode = DeterministicClassificationReasonCodes.EvaluatedUnsupportedFamily,
+            DeterministicReasonDetailJson = JsonSerializer.Serialize(new
+            {
+                family = "none",
+                transferKeyword = false,
+                providerHint = false
+            }),
+            NeedsDeterministicReclassification = false,
+            DeterministicDeferredRetryEligible = false
+        });
+        await harness.DbContext.SaveChangesAsync();
+
+        var secondStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(secondStart.Succeeded);
+        var secondState = GetQueryValue(secondStart.Value!.AuthorizationUrl, "state");
+        var secondCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-b", secondState, null, null),
+            CancellationToken.None);
+        Assert.True(secondCallback.Succeeded);
+
+        var transferAfterExpansion = await harness.DbContext.Transactions.SingleAsync(x => x.Id == seededTransferRow.Id);
+        var unrelatedAfterExpansion = await harness.DbContext.Transactions.SingleAsync(x => x.Id == unrelatedId);
+        Assert.True(transferAfterExpansion.NeedsDeterministicReclassification);
+        Assert.Equal(DeterministicClassificationStatus.SupersededRecomputeRequired, transferAfterExpansion.DeterministicClassificationStatus);
+        Assert.False(transferAfterExpansion.DeterministicClassificationTerminal);
+        Assert.False(unrelatedAfterExpansion.NeedsDeterministicReclassification);
+        Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, unrelatedAfterExpansion.DeterministicClassificationStatus);
+        Assert.True(unrelatedAfterExpansion.DeterministicClassificationTerminal);
+
+        var transferRetryTimestamp = transferAfterExpansion.DeterministicLastRetryConsideredUtc;
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
+        var rerun = await syncService.SyncConnectionAsync(user.Id, secondStart.Value.ConnectionId, CancellationToken.None);
+        Assert.True(rerun.Succeeded);
+
+        var transferAfterRerun = await harness.DbContext.Transactions.SingleAsync(x => x.Id == seededTransferRow.Id);
+        var unrelatedAfterRerun = await harness.DbContext.Transactions.SingleAsync(x => x.Id == unrelatedId);
+        Assert.Equal(transferRetryTimestamp, transferAfterRerun.DeterministicLastRetryConsideredUtc);
+        Assert.False(unrelatedAfterRerun.NeedsDeterministicReclassification);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_SequentialSecondAccountImport_RequeuesNewRowsAndReprocessesStaleFirstAccountRows()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SequentialUniverseExpansionTransferFlowHandler());
+        var queue = new RecordingBankDeterministicEnrichmentQueue();
+        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+
+        var user = await harness.CreateUserAsync("bank.production-shape-sequential-reclassification@test.local");
+
+        var firstStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(firstStart.Succeeded);
+        var firstState = GetQueryValue(firstStart.Value!.AuthorizationUrl, "state");
+        var firstCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-a", firstState, null, null),
+            CancellationToken.None);
+        Assert.True(firstCallback.Succeeded);
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
+        var firstDeterministicRun = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            firstStart.Value.ConnectionId,
+            "test_production_shape_first_pass",
+            CancellationToken.None);
+        Assert.True(firstDeterministicRun.Succeeded);
+
+        var firstOnlyRow = await harness.DbContext.Transactions.SingleAsync();
+        Assert.Equal(DeterministicClassificationStatus.EvaluatedNoMatchingRule, firstOnlyRow.DeterministicClassificationStatus);
+        Assert.Contains("\"sameUserCandidateUniverseSize\":1", firstOnlyRow.DeterministicReasonDetailJson ?? string.Empty, StringComparison.Ordinal);
+        Assert.True(firstOnlyRow.DeterministicClassificationTerminal);
+
+        var secondStart = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(secondStart.Succeeded);
+        var secondState = GetQueryValue(secondStart.Value!.AuthorizationUrl, "state");
+        var secondCallback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sequential-universe-b", secondState, null, null),
+            CancellationToken.None);
+        Assert.True(secondCallback.Succeeded);
+
+        var firstRowBeforeReprocess = await harness.DbContext.Transactions.SingleAsync(x => x.Id == firstOnlyRow.Id);
+        Assert.True(firstRowBeforeReprocess.NeedsDeterministicReclassification);
+        Assert.Equal(DeterministicClassificationStatus.SupersededRecomputeRequired, firstRowBeforeReprocess.DeterministicClassificationStatus);
+
+        var secondConnectionFinancialAccountIds = await harness.DbContext.LinkedBankAccounts
+            .Where(x => x.ConnectionId == secondStart.Value.ConnectionId && x.FinancialAccountId.HasValue)
+            .Select(x => x.FinancialAccountId!.Value)
+            .ToListAsync();
+        var secondRowsBeforeReprocess = await harness.DbContext.Transactions
+            .Where(x => secondConnectionFinancialAccountIds.Contains(x.FinancialAccountId))
+            .ToListAsync();
+        Assert.NotEmpty(secondRowsBeforeReprocess);
+        Assert.All(secondRowsBeforeReprocess, row =>
+        {
+            Assert.True(row.NeedsDeterministicReclassification);
+            Assert.False(row.DeterministicClassificationVersion.HasValue);
+        });
+
+        var secondDeterministicRun = await syncService.RunDeterministicEnrichmentAsync(
+            user.Id,
+            secondStart.Value.ConnectionId,
+            "test_production_shape_second_pass",
+            CancellationToken.None);
+        Assert.True(secondDeterministicRun.Succeeded);
+
+        var finalRows = await harness.DbContext.Transactions
+            .OrderBy(x => x.Amount)
+            .ThenBy(x => x.BookedAtUtc)
+            .ToListAsync();
+        Assert.Equal(2, finalRows.Count);
+        Assert.All(finalRows, row =>
+        {
+            Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, row.DeterministicClassificationStatus);
+            Assert.Equal("internal_transfer", row.DeterministicRelationshipType);
+            Assert.True(row.DeterministicLinkedTransactionId.HasValue);
+        });
+
+        var first = finalRows[0];
+        var second = finalRows[1];
+        Assert.Equal(first.Id, second.DeterministicLinkedTransactionId);
+        Assert.Equal(second.Id, first.DeterministicLinkedTransactionId);
     }
 
     [Fact]
@@ -7204,6 +7611,30 @@ public class OpenBankingIntegrationTests
         return query[key];
     }
 
+    private static async Task InvokePendingSweepAsync(BankDeterministicEnrichmentBackgroundWorker worker)
+    {
+        var method = typeof(BankDeterministicEnrichmentBackgroundWorker).GetMethod(
+            "EnqueuePendingConnectionsAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var task = method!.Invoke(worker, new object[] { CancellationToken.None }) as Task;
+        Assert.NotNull(task);
+        await task!;
+    }
+
+    private static IReadOnlyCollection<string> ReadQueuedKeys(BankDeterministicEnrichmentBackgroundWorker worker)
+    {
+        var field = typeof(BankDeterministicEnrichmentBackgroundWorker).GetField(
+            "_queuedKeys",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+
+        var queued = field!.GetValue(worker) as ConcurrentDictionary<string, byte>;
+        Assert.NotNull(queued);
+        return queued!.Keys.ToList();
+    }
+
     private sealed class OpenBankingTestHarness : IAsyncDisposable
     {
         private readonly IRequestContextAccessor _requestContext = new TestRequestContextAccessor();
@@ -7211,7 +7642,7 @@ public class OpenBankingIntegrationTests
         private readonly HttpMessageHandler _httpHandler;
 
         public AppDbContext DbContext { get; }
-        public TrueLayerAuthService AuthService { get; private set; }
+        public TrueLayerAuthService AuthService { get; set; }
 
         public OpenBankingTestHarness(TrueLayerOptions options, HttpMessageHandler httpHandler)
         {
@@ -7224,9 +7655,11 @@ public class OpenBankingIntegrationTests
             AuthService = BuildAuthService(options);
         }
 
-        public TrueLayerAuthService BuildAuthService(TrueLayerOptions options)
+        public TrueLayerAuthService BuildAuthService(
+            TrueLayerOptions options,
+            IBankDeterministicEnrichmentQueue? enrichmentQueueOverride = null)
         {
-            var syncService = CreateSyncService(options);
+            var syncService = CreateSyncService(options, enrichmentQueueOverride);
             var configurationService = new TrueLayerConfigurationService(Options.Create(options));
             var tokenService = new TrueLayerTokenService(
                 new TrueLayerHttpClient(new HttpClient(_httpHandler)),
@@ -7466,6 +7899,28 @@ public class OpenBankingIntegrationTests
             await Task.Delay(delay, cancellationToken);
         }
     }
+
+    private sealed class RecordingBankDeterministicEnrichmentQueue : IBankDeterministicEnrichmentQueue
+    {
+        private readonly ConcurrentQueue<RecordedDeterministicQueueItem> _items = new();
+
+        public IReadOnlyCollection<RecordedDeterministicQueueItem> Items => _items.ToArray();
+
+        public ValueTask QueueConnectionAsync(
+            Guid userId,
+            Guid connectionId,
+            string reason,
+            CancellationToken cancellationToken = default)
+        {
+            _items.Enqueue(new RecordedDeterministicQueueItem(userId, connectionId, reason));
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed record RecordedDeterministicQueueItem(
+        Guid UserId,
+        Guid ConnectionId,
+        string Reason);
 
     private sealed class TestSecretProtector : ISecretProtector
     {
