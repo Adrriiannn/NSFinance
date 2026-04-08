@@ -11,7 +11,7 @@ public class DeterministicEnrichmentContinuationPolicyTests
     [InlineData(10, 0, 0, 0, 2, 0, 0, true)]
     [InlineData(10, 0, 0, 0, 0, 4, 0, true)]
     [InlineData(10, 0, 0, 0, 0, 0, 3, true)]
-    [InlineData(4, 0, 0, 0, 0, 0, 0, true)]
+    [InlineData(4, 0, 0, 0, 0, 0, 0, false)]
     [InlineData(0, 0, 0, 0, 0, 0, 0, false)]
     public void ShouldContinue_UsesRowDebtSignals(
         int rowsRemaining,
