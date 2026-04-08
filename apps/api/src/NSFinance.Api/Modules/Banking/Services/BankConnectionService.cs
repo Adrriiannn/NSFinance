@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -15,6 +16,7 @@ public sealed class BankConnectionService(
     AppDbContext dbContext,
     IAuditService auditService,
     IBankDisconnectQueue disconnectQueue,
+    IServiceScopeFactory? scopeFactory,
     ILogger<BankConnectionService> logger)
 {
     private static readonly string[] UserVisibleActiveStatuses =
@@ -42,6 +44,10 @@ public sealed class BankConnectionService(
     private const string SyncLifecyclePhaseCompleted = "completed";
     private const string SyncLifecyclePhaseSyncTakingLongerThanExpected = "sync_taking_longer_than_expected";
     private const string SyncLifecyclePhaseAttentionRequired = "attention_required";
+    private static readonly TimeSpan DeterministicRescueMinStallAge = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan DeterministicRescueCooldown = TimeSpan.FromSeconds(90);
+    private static readonly ConcurrentDictionary<Guid, byte> DeterministicRescueInFlight = new();
+    private static readonly ConcurrentDictionary<Guid, DateTime> DeterministicRescueLastAttemptUtc = new();
 
     private sealed record EnrichmentConnectionRow(
         Guid Id,
@@ -525,6 +531,10 @@ public sealed class BankConnectionService(
         }
 
         var resolvedStage = ResolveOverallHistoricalEnrichmentStage(progressScope, inProgressOverall, completedOverall);
+        TryScheduleDeterministicStallRescue(
+            userId,
+            connections,
+            connectionProgress);
 
         return new BankEnrichmentProgressDto(
             InProgress: inProgressOverall,
@@ -537,6 +547,113 @@ public sealed class BankConnectionService(
             LastUpdatedUtc: lastUpdatedOverall == default ? null : lastUpdatedOverall,
             NewestFirst: true,
             Connections: connectionProgress);
+    }
+
+    private void TryScheduleDeterministicStallRescue(
+        Guid userId,
+        IReadOnlyCollection<EnrichmentConnectionRow> connectionRows,
+        IReadOnlyCollection<BankEnrichmentConnectionProgressDto> progressRows)
+    {
+        if (scopeFactory is null)
+        {
+            return;
+        }
+
+        if (connectionRows.Count == 0 || progressRows.Count == 0)
+        {
+            return;
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        var connectionById = connectionRows.ToDictionary(x => x.Id);
+
+        foreach (var progress in progressRows)
+        {
+            if (!connectionById.TryGetValue(progress.ConnectionId, out var connection))
+            {
+                continue;
+            }
+
+            if (IsSyncAwaitingRunStatus(connection.Status))
+            {
+                continue;
+            }
+
+            if (progress.RemainingCount <= 0 || progress.ProcessedCount > 0)
+            {
+                continue;
+            }
+
+            if (connection.HistoricalEnrichmentStartedUtc.HasValue)
+            {
+                continue;
+            }
+
+            var lastObservedUtc = MaxUtc(connection.UpdatedUtc, progress.LastUpdatedUtc) ?? connection.UpdatedUtc;
+            if ((nowUtc - lastObservedUtc) < DeterministicRescueMinStallAge)
+            {
+                continue;
+            }
+
+            if (DeterministicRescueLastAttemptUtc.TryGetValue(connection.Id, out var lastAttemptUtc)
+                && (nowUtc - lastAttemptUtc) < DeterministicRescueCooldown)
+            {
+                continue;
+            }
+
+            if (!DeterministicRescueInFlight.TryAdd(connection.Id, 0))
+            {
+                continue;
+            }
+
+            DeterministicRescueLastAttemptUtc[connection.Id] = nowUtc;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var scopedSyncService = scope.ServiceProvider.GetRequiredService<BankSyncService>();
+                    var runResult = await scopedSyncService.RunDeterministicEnrichmentAsync(
+                        userId,
+                        connection.Id,
+                        trigger: "progress_stall_rescue",
+                        CancellationToken.None);
+
+                    if (runResult.Succeeded)
+                    {
+                        logger.LogInformation(
+                            "Triggered deterministic stall rescue connectionId={ConnectionId} userId={UserId} remaining={Remaining} processed={Processed} trigger={Trigger}",
+                            connection.Id,
+                            userId,
+                            progress.RemainingCount,
+                            progress.ProcessedCount,
+                            "progress_stall_rescue");
+                    }
+                    else
+                    {
+                        logger.LogWarning(
+                            "Deterministic stall rescue failed connectionId={ConnectionId} userId={UserId} code={Code} message={Message}",
+                            connection.Id,
+                            userId,
+                            runResult.Error?.Code,
+                            runResult.Error?.Message);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(
+                        ex,
+                        "Deterministic stall rescue crashed connectionId={ConnectionId} userId={UserId}",
+                        connection.Id,
+                        userId);
+                }
+                finally
+                {
+                    DeterministicRescueInFlight.TryRemove(connection.Id, out _);
+                }
+            });
+        }
     }
 
     public async Task<ServiceResult<DeterministicCategorizationDiagnosticsDto>> GetDeterministicCategorizationDiagnosticsAsync(

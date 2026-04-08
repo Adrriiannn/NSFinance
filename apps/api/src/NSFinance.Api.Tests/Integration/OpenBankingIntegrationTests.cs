@@ -8873,6 +8873,7 @@ public class OpenBankingIntegrationTests
                 DbContext,
                 _auditService,
                 new NoOpBankDisconnectQueue(),
+                scopeFactory: null,
                 NullLogger<BankConnectionService>.Instance);
         }
 
