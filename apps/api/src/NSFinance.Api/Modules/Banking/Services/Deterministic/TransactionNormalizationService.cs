@@ -1,10 +1,12 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace NSFinance.Api.Modules.Banking.Services.Deterministic;
 
 public sealed class TransactionNormalizationService
 {
+    private const int DeterministicSourceSignatureMaxLength = 160;
     private static readonly Regex MultiWhitespace = new(@"\s+", RegexOptions.Compiled);
     private static readonly Regex NoisePunctuation = new(@"[^\p{L}\p{Nd}\s]+", RegexOptions.Compiled);
 
@@ -177,16 +179,37 @@ public sealed class TransactionNormalizationService
         string normalizedDescription,
         Guid? linkedTransactionId)
     {
+        var linkedId = linkedTransactionId?.ToString("N") ?? "none";
+        var normalizedCurrency = currency.Trim().ToUpperInvariant();
+        var bookedAt = bookedAtUtc.ToUniversalTime().ToString("O");
+
         var builder = new StringBuilder(200);
         builder.Append(amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
         builder.Append('|');
-        builder.Append(currency.Trim().ToUpperInvariant());
+        builder.Append(normalizedCurrency);
         builder.Append('|');
-        builder.Append(bookedAtUtc.ToUniversalTime().ToString("O"));
+        builder.Append(bookedAt);
         builder.Append('|');
         builder.Append(normalizedDescription);
         builder.Append('|');
-        builder.Append(linkedTransactionId?.ToString("N") ?? "none");
-        return builder.ToString();
+        builder.Append(linkedId);
+
+        var signature = builder.ToString();
+        if (signature.Length <= DeterministicSourceSignatureMaxLength)
+        {
+            return signature;
+        }
+
+        // Keep signatures deterministic but bounded so a single long narrative
+        // cannot make the whole enrichment batch fail on DB length limits.
+        var normalizedDescriptionHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(normalizedDescription)))
+            .ToLowerInvariant();
+        var boundedSignature =
+            $"{amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}|{normalizedCurrency}|{bookedAt}|sha256:{normalizedDescriptionHash}|{linkedId}";
+
+        return boundedSignature.Length <= DeterministicSourceSignatureMaxLength
+            ? boundedSignature
+            : boundedSignature[..DeterministicSourceSignatureMaxLength];
     }
 }

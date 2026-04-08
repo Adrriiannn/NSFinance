@@ -107,7 +107,7 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
         });
     private readonly ConcurrentDictionary<string, byte> _queuedKeys = new(StringComparer.Ordinal);
 
-    public ValueTask QueueConnectionAsync(
+    public async ValueTask QueueConnectionAsync(
         Guid userId,
         Guid connectionId,
         string reason,
@@ -121,7 +121,7 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                 connectionId,
                 userId,
                 reason);
-            return ValueTask.CompletedTask;
+            return;
         }
 
         logger.LogInformation(
@@ -131,9 +131,17 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
             reason,
             _queuedKeys.Count);
 
-        return _queue.Writer.WriteAsync(
-            new BankDeterministicEnrichmentWorkItem(userId, connectionId, reason),
-            cancellationToken);
+        try
+        {
+            await _queue.Writer.WriteAsync(
+                new BankDeterministicEnrichmentWorkItem(userId, connectionId, reason),
+                cancellationToken);
+        }
+        catch
+        {
+            _queuedKeys.TryRemove(key, out _);
+            throw;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

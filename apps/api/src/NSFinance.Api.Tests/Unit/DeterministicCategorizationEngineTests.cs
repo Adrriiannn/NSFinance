@@ -59,6 +59,50 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void BuildSourceSignature_LongNarrative_IsBoundedAndDeterministic()
+    {
+        var normalization = new TransactionNormalizationService();
+        var longNarrative = string.Join(' ', Enumerable.Repeat("revolut-long-narrative-token", 24));
+        var linkedTransactionId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var bookedAtUtc = new DateTime(2026, 4, 8, 14, 15, 0, DateTimeKind.Utc);
+
+        var signature1 = normalization.BuildSourceSignature(
+            -13.00m,
+            "eur",
+            bookedAtUtc,
+            longNarrative,
+            linkedTransactionId);
+        var signature2 = normalization.BuildSourceSignature(
+            -13.00m,
+            "eur",
+            bookedAtUtc,
+            longNarrative,
+            linkedTransactionId);
+
+        Assert.Equal(signature1, signature2);
+        Assert.True(signature1.Length <= 160);
+        Assert.Contains("|sha256:", signature1, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildSourceSignature_ShortNarrative_KeepsReadableFormat()
+    {
+        var normalization = new TransactionNormalizationService();
+        var description = "steamgames com";
+
+        var signature = normalization.BuildSourceSignature(
+            -13.00m,
+            "eur",
+            new DateTime(2026, 4, 8, 14, 15, 0, DateTimeKind.Utc),
+            description,
+            linkedTransactionId: null);
+
+        Assert.DoesNotContain("|sha256:", signature, StringComparison.Ordinal);
+        Assert.Contains(description, signature, StringComparison.Ordinal);
+        Assert.True(signature.Length <= 160);
+    }
+
+    [Fact]
     public void ProviderCapabilityRegistry_ResolvesAibAndNatWestProfiles()
     {
         var registry = new ProviderCapabilityRegistry();
