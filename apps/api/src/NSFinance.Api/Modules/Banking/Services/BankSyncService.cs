@@ -1373,9 +1373,16 @@ public sealed class BankSyncService(
         var actionableRowsRemainingAfterSync = remainingWorkSnapshotAfterSync.RowsActionableRemaining;
         var requiresHistoricalReplayWithImportedRows = connection.NeedsHistoricalReclassification
             && rowsInDeterministicScopeAfterSync > 0;
-        var shouldQueuePostSync = !ingestionKickoffQueueAccepted
-            && (actionableRowsRemainingAfterSync > 0 || requiresHistoricalReplayWithImportedRows);
-        var postSyncQueueReason = ingestionKickoffRowsInserted > 0 && !ingestionKickoffQueueAccepted
+        var shouldContinueFromRowTruthDebt = DeterministicEnrichmentContinuationPolicy.ShouldContinue(
+            remainingWorkSnapshotAfterSync.RowsRemaining,
+            remainingWorkSnapshotAfterSync.RowsActionableRemaining,
+            remainingWorkSnapshotAfterSync.RowsNotEvaluated,
+            remainingWorkSnapshotAfterSync.RowsEvaluating,
+            remainingWorkSnapshotAfterSync.RowsVersionBehind,
+            remainingWorkSnapshotAfterSync.RowsMarkedForReclassification,
+            remainingWorkSnapshotAfterSync.RowsSupersededRecomputeRequired);
+        var shouldQueuePostSync = requiresHistoricalReplayWithImportedRows || shouldContinueFromRowTruthDebt;
+        var postSyncQueueReason = ingestionKickoffRowsInserted > 0
             ? DeterministicEnqueueReasonIngestionInsert
             : DeterministicEnqueueReasonPostSync;
         var postSyncQueueAccepted = false;
@@ -1401,14 +1408,20 @@ public sealed class BankSyncService(
         else
         {
             logger.LogInformation(
-                "Skipped post-sync deterministic enqueue because no actionable deterministic row debt remained after sync connectionId={ConnectionId} userId={UserId} ingestionKickoffQueueAccepted={IngestionKickoffQueueAccepted} markedRows={MarkedRows} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated} rowsInDeterministicScopeAfterSync={RowsInDeterministicScopeAfterSync} actionableRowsRemainingAfterSync={ActionableRowsRemainingAfterSync} requiresHistoricalReplayWithImportedRows={RequiresHistoricalReplayWithImportedRows}",
+                "Skipped post-sync deterministic enqueue because no deterministic row debt remained after sync connectionId={ConnectionId} userId={UserId} ingestionKickoffQueueAccepted={IngestionKickoffQueueAccepted} markedRows={MarkedRows} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated} rowsInDeterministicScopeAfterSync={RowsInDeterministicScopeAfterSync} rowsRemainingAfterSync={RowsRemainingAfterSync} actionableRowsRemainingAfterSync={ActionableRowsRemainingAfterSync} rowsNotEvaluatedAfterSync={RowsNotEvaluatedAfterSync} rowsEvaluatingAfterSync={RowsEvaluatingAfterSync} rowsVersionBehindAfterSync={RowsVersionBehindAfterSync} rowsMarkedForReclassificationAfterSync={RowsMarkedForReclassificationAfterSync} rowsSupersededAfterSync={RowsSupersededAfterSync} requiresHistoricalReplayWithImportedRows={RequiresHistoricalReplayWithImportedRows}",
                 connection.Id,
                 connection.UserId,
                 ingestionKickoffQueueAccepted,
                 newlyImportedRowsMarkedForDeterministicReclassification,
                 universeExpansionRowsInvalidated,
                 rowsInDeterministicScopeAfterSync,
+                remainingWorkSnapshotAfterSync.RowsRemaining,
                 actionableRowsRemainingAfterSync,
+                remainingWorkSnapshotAfterSync.RowsNotEvaluated,
+                remainingWorkSnapshotAfterSync.RowsEvaluating,
+                remainingWorkSnapshotAfterSync.RowsVersionBehind,
+                remainingWorkSnapshotAfterSync.RowsMarkedForReclassification,
+                remainingWorkSnapshotAfterSync.RowsSupersededRecomputeRequired,
                 requiresHistoricalReplayWithImportedRows);
         }
 
@@ -3566,7 +3579,7 @@ public sealed class BankSyncService(
                     .Select(x => x.ToString("N")));
 
         logger.LogInformation(
-            "Deterministic kickoff triggered from ingestion connectionId={ConnectionId} userId={UserId} insertedRows={InsertedRows} markedRows={MarkedRows} projectedRowCount={ProjectedRowCount} affectedFinancialAccountCount={AffectedFinancialAccountCount} affectedFinancialAccountIds={AffectedFinancialAccountIds} queueDeferred={QueueDeferred} queueAccepted={QueueAccepted} reason={Reason}",
+            "Deterministic kickoff triggered from ingestion connectionId={ConnectionId} userId={UserId} insertedRows={InsertedRows} markedRows={MarkedRows} projectedRowCount={ProjectedRowCount} affectedFinancialAccountCount={AffectedFinancialAccountCount} affectedFinancialAccountIds={AffectedFinancialAccountIds} queueDeferred={QueueDeferred} connectionStatus={ConnectionStatus} queueAccepted={QueueAccepted} reason={Reason}",
             connection.Id,
             connection.UserId,
             insertedRows,
@@ -3575,6 +3588,7 @@ public sealed class BankSyncService(
             affectedFinancialAccountIds.Count,
             affectedAccountIdsText,
             queueDeferred,
+            connection.Status,
             queueAccepted,
             DeterministicEnqueueReasonIngestionInsert);
 

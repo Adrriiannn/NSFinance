@@ -384,6 +384,7 @@ public sealed class BankConnectionService(
                 var runScopedByRowTruth = staleCount > 0;
                 var useRunScopedProgress = runScopedByFlags || runScopedByRowTruth;
                 var currentRowsOutsideActiveRun = Math.Max(0, currentCount - currentEnrichedAfterStartCount);
+                var suppressPriorRunProcessedForRowTruth = runScopedByRowTruth && !required;
 
                 int totalCount;
                 int processedCount;
@@ -402,7 +403,9 @@ public sealed class BankConnectionService(
                 // the current run scope rather than rows already current from older runs.
                 else if (useRunScopedProgress)
                 {
-                    processedCount = connection.HistoricalEnrichmentStartedUtc.HasValue
+                    processedCount = suppressPriorRunProcessedForRowTruth
+                        ? 0
+                        : connection.HistoricalEnrichmentStartedUtc.HasValue
                         ? currentEnrichedAfterStartCount
                         : 0;
                     remainingCount = staleCount;
@@ -415,8 +418,7 @@ public sealed class BankConnectionService(
                     remainingCount = Math.Max(0, totalCount - processedCount);
                 }
 
-                if (runScopedByRowTruth
-                    && !connection.HistoricalEnrichmentStartedUtc.HasValue
+                if (suppressPriorRunProcessedForRowTruth
                     && currentRowsOutsideActiveRun > 0)
                 {
                     logger.LogInformation(
