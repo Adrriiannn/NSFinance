@@ -4077,7 +4077,7 @@ public class OpenBankingIntegrationTests
             Assert.Equal(ExpenseTaxonomyService.TransferDomainId, row.TaxonomyDomainId);
             Assert.Equal(ExpenseTaxonomyService.TransferDefaultCategoryId, row.TaxonomyCategoryId);
             Assert.Equal(ExpenseTaxonomyService.TransferDefaultSubcategoryId, row.TaxonomySubcategoryId);
-            Assert.Equal("deterministic_matched_rule", row.TransferMatchConfidenceTier);
+            Assert.Equal("deterministic_match", row.TransferMatchConfidenceTier);
         });
 
         var byId = clusterRows.ToDictionary(row => row.Id);

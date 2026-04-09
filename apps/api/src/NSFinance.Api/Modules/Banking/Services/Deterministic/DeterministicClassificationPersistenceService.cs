@@ -669,7 +669,7 @@ public sealed class DeterministicClassificationPersistenceService(
             ? outcome.MatchScore
             : transaction.TransferMatchConfidenceScore;
         var targetTransferMatchConfidenceTier = shouldMaterializeLegacyInternalTransfer
-            ? "deterministic_matched_rule"
+            ? "deterministic_match"
             : transaction.TransferMatchConfidenceTier;
 
         var changed =
