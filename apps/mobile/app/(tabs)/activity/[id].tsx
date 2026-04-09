@@ -22,7 +22,10 @@ import {
   getTransferPolicyWarning,
   TRANSFER_DOMAIN_ID
 } from "../../../src/features/transactions/transferClassification";
-import { buildTransactionMetaLine } from "../../../src/features/transactions/activityGrouping";
+import {
+  buildTransactionMetaLine,
+  resolveCanonicalTransactionLabels
+} from "../../../src/features/transactions/activityGrouping";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { formatDate, formatTime } from "../../../src/lib/format";
 import { HeaderShell } from "../../../src/layout/appHeader";
@@ -239,12 +242,14 @@ export default function PlannerTransactionDetailScreen() {
     });
   };
 
+  const canonicalLabels = transactionQuery.data
+    ? resolveCanonicalTransactionLabels(transactionQuery.data)
+    : { categoryLabel: null, subcategoryLabel: null };
   const categoryLabel = selectedCategory?.name
-    ?? transactionQuery.data?.taxonomyCategoryName
-    ?? transactionQuery.data?.categoryName
+    ?? canonicalLabels.categoryLabel
     ?? "Uncategorized";
   const subcategoryLabel = selectedSubcategory?.name
-    ?? transactionQuery.data?.taxonomySubcategoryName
+    ?? canonicalLabels.subcategoryLabel
     ?? "Not set";
   const draftDomainId =
     selectedCategory?.domainId

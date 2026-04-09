@@ -6,8 +6,12 @@ import type { TransactionDto } from "../../../types/api";
 import { useThemeTokens } from "../../../theme/tokens";
 import {
   buildTransactionDetailDate,
-  buildTransactionMetaLine
+  resolveTransactionDisplayLabel
 } from "../../../features/transactions/activityGrouping";
+import {
+  resolveTransactionLeadingVisual,
+  shouldRenderSemanticHelperLine
+} from "../../../features/transactions/activityPresentation";
 import { resolveCanonicalTransactionSemantic } from "../../../features/transactions/semanticResolver";
 import { AmountText } from "../../ui/AmountText";
 import { useRowPresets } from "./row.presets";
@@ -35,7 +39,7 @@ export function TransactionRow({
   showTimestamp = false,
   rowStyle
 }: TransactionRowProps) {
-  const { palette, surfaces } = useThemeTokens();
+  const { surfaces } = useThemeTokens();
   const rowPresets = useRowPresets();
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(10)).current;
@@ -58,24 +62,19 @@ export function TransactionRow({
   }, [index, opacity, translateY]);
 
   const semantic = resolveCanonicalTransactionSemantic(transaction);
-  const metadata = metadataOverride ?? buildTransactionMetaLine(transaction, semantic.subtitle);
+  const labelResolution = resolveTransactionDisplayLabel(transaction, semantic.subtitle);
+  const metadata = metadataOverride ?? labelResolution.displayLabel;
   const timestamp = buildTransactionDetailDate(transaction);
-  const relationshipBadge = semantic.badgeText;
+  const shouldShowRelationshipBadge = shouldRenderSemanticHelperLine({
+    metadataOverride,
+    hasCanonicalLabel: labelResolution.hasCanonicalLabel,
+    primaryLabel: metadata,
+    semanticBadge: semantic.badgeText,
+    semanticFamily: semantic.family
+  });
+  const relationshipBadge = shouldShowRelationshipBadge ? semantic.badgeText : null;
   const savingsStyle = semantic.styleKind === "savings_transfer";
-  const leadingIconName =
-    semantic.iconKind === "transfer"
-      ? "swap-horizontal"
-      : semantic.iconKind === "savings"
-      ? "wallet-outline"
-      : semantic.iconKind === "expense"
-      ? "arrow-down"
-      : "arrow-up";
-  const leadingIconBackgroundColor =
-    semantic.styleKind === "savings_transfer"
-      ? "rgba(90, 186, 226, 0.18)"
-      : semantic.iconKind === "expense"
-      ? "rgba(226, 90, 90, 0.26)"
-      : "rgba(29, 186, 114, 0.22)";
+  const leadingVisual = resolveTransactionLeadingVisual(transaction, semantic);
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
@@ -101,14 +100,14 @@ export function TransactionRow({
           style={[
             rowPresets.leadingIcon,
             {
-              backgroundColor: leadingIconBackgroundColor
+              backgroundColor: leadingVisual.backgroundColor
             }
           ]}
         >
           <Ionicons
-            name={leadingIconName}
+            name={leadingVisual.iconName}
             size={16}
-            color={palette.textPrimary}
+            color={leadingVisual.iconColor}
           />
         </View>
 

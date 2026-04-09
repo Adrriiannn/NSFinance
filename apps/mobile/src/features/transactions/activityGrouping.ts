@@ -13,6 +13,16 @@ export type GroupedActivity = {
   items: TransactionDto[];
 };
 
+export type CanonicalTransactionLabels = {
+  categoryLabel: string | null;
+  subcategoryLabel: string | null;
+};
+
+export type TransactionDisplayLabelResolution = CanonicalTransactionLabels & {
+  displayLabel: string;
+  hasCanonicalLabel: boolean;
+};
+
 export function getTransactionChannelLabel(transaction: TransactionDto): "Online" | "In person" {
   const source = `${transaction.description} ${transaction.categoryName ?? ""}`.toLowerCase();
   if (/\bonline\b|\bweb\b|\bapp\b|\bsubscription\b/.test(source)) {
@@ -129,21 +139,79 @@ export function groupTransactionsByTimeBucket(transactions: TransactionDto[]): G
 
 export function buildTransactionMetaLine(
   transaction: TransactionDto,
-  categoryOverride?: string | null
+  semanticFallbackLabel?: string | null
 ): string {
-  if (categoryOverride) {
-    return categoryOverride;
-  }
-
-  const category =
-    transaction.taxonomySubcategoryName ??
-    transaction.taxonomyCategoryName ??
-    transaction.categoryName ??
-    transaction.taxonomyDomainName ??
-    "Uncategorized";
-  return category;
+  return resolveTransactionDisplayLabel(transaction, semanticFallbackLabel).displayLabel;
 }
 
 export function buildTransactionDetailDate(transaction: TransactionDto): string {
   return `${formatLongDate(transaction.bookedAtUtc)} | ${formatTime(transaction.bookedAtUtc)}`;
+}
+
+export function resolveCanonicalTransactionLabels(transaction: TransactionDto): CanonicalTransactionLabels {
+  const subcategoryLabel = normalizeLabel(transaction.taxonomySubcategoryName);
+  const categoryLabel =
+    normalizeLabel(transaction.taxonomyCategoryName)
+    ?? normalizeLabel(transaction.categoryName);
+
+  return {
+    categoryLabel,
+    subcategoryLabel
+  };
+}
+
+export function resolveTransactionDisplayLabel(
+  transaction: TransactionDto,
+  semanticFallbackLabel?: string | null
+): TransactionDisplayLabelResolution {
+  const { categoryLabel, subcategoryLabel } = resolveCanonicalTransactionLabels(transaction);
+  const semanticLabel = normalizeLabel(semanticFallbackLabel);
+  const domainLabel = normalizeLabel(transaction.taxonomyDomainName);
+  const displayLabel = subcategoryLabel
+    ?? categoryLabel
+    ?? semanticLabel
+    ?? domainLabel
+    ?? "Uncategorized";
+
+  return {
+    categoryLabel,
+    subcategoryLabel,
+    displayLabel,
+    hasCanonicalLabel: Boolean(subcategoryLabel ?? categoryLabel)
+  };
+}
+
+export function areDisplayLabelsMeaningfullyDistinct(
+  primaryLabel: string | null | undefined,
+  secondaryLabel: string | null | undefined
+): boolean {
+  const primaryComparable = toComparableLabel(primaryLabel);
+  const secondaryComparable = toComparableLabel(secondaryLabel);
+  if (!primaryComparable || !secondaryComparable) {
+    return false;
+  }
+
+  if (primaryComparable === secondaryComparable) {
+    return false;
+  }
+
+  if (primaryComparable.includes(secondaryComparable) || secondaryComparable.includes(primaryComparable)) {
+    return false;
+  }
+
+  return true;
+}
+
+function normalizeLabel(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function toComparableLabel(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
