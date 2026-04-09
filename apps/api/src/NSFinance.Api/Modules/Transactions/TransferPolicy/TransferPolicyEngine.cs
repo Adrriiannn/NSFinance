@@ -10,12 +10,12 @@ public static class TransferPolicyEngine
     private const int InternalTransfersCategoryId = 92010;
     private const int LiabilityTransfersCategoryId = 92020;
     private const int CashMovementCategoryId = 92030;
-    private const int OtherTransfersCategoryId = 92040;
+    private const int LegacyOtherTransfersCategoryId = 92040;
 
     private const int BankAccountTransferSubcategoryId = 920101;
-    private const int SavingsTransferSubcategoryId = 920102;
-    private const int InvestmentTransferSubcategoryId = 920103;
-    private const int WalletTransferSubcategoryId = 920104;
+    private const int CurrencyTransferSubcategoryId = ExpenseTaxonomyService.TransferCurrencySubcategoryId;
+    private const int OtherInternalMoneyMovementSubcategoryId = ExpenseTaxonomyService.TransferOtherInternalMoneyMovementSubcategoryId;
+    private const int SavingsTransferSubcategoryId = ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId;
 
     private const int CreditCardPaymentTransferSubcategoryId = 920201;
     private const int LoanAccountTransferSubcategoryId = 920202;
@@ -23,11 +23,14 @@ public static class TransferPolicyEngine
 
     private const int CashWithdrawalSubcategoryId = 920301;
     private const int CashDepositSubcategoryId = 920302;
-    private const int AtmWithdrawalTransferSubcategoryId = 920303;
 
-    private const int BrokerageFundingTransferSubcategoryId = 920401;
-    private const int CurrencyTransferSubcategoryId = 920402;
-    private const int OtherInternalMoneyMovementSubcategoryId = 920403;
+    private const int LegacySavingsTransferSubcategoryId = 920102;
+    private const int LegacyInvestmentTransferSubcategoryId = 920103;
+    private const int LegacyWalletTransferSubcategoryId = 920104;
+    private const int LegacyAtmWithdrawalTransferSubcategoryId = 920303;
+    private const int LegacyBrokerageFundingTransferSubcategoryId = 920401;
+    private const int LegacyCurrencyTransferSubcategoryId = 920402;
+    private const int LegacyOtherInternalMoneyMovementSubcategoryId = 920403;
 
     public static TransferPolicyEvaluation Evaluate(
         int? taxonomyDomainId,
@@ -233,17 +236,20 @@ public static class TransferPolicyEngine
             {
                 BankAccountTransferSubcategoryId => TransferPolicyKind.BankAccountTransfer,
                 SavingsTransferSubcategoryId => TransferPolicyKind.SavingsTransfer,
-                InvestmentTransferSubcategoryId => TransferPolicyKind.InvestmentTransfer,
-                WalletTransferSubcategoryId => TransferPolicyKind.WalletTransfer,
+                LegacySavingsTransferSubcategoryId => TransferPolicyKind.SavingsTransfer,
                 CreditCardPaymentTransferSubcategoryId => TransferPolicyKind.CreditCardPaymentTransfer,
                 LoanAccountTransferSubcategoryId => TransferPolicyKind.LoanAccountTransfer,
                 DebtConsolidationTransferSubcategoryId => TransferPolicyKind.DebtConsolidationTransfer,
                 CashWithdrawalSubcategoryId => TransferPolicyKind.CashWithdrawal,
                 CashDepositSubcategoryId => TransferPolicyKind.CashDeposit,
-                AtmWithdrawalTransferSubcategoryId => TransferPolicyKind.AtmWithdrawalTransfer,
-                BrokerageFundingTransferSubcategoryId => TransferPolicyKind.BrokerageFundingTransfer,
                 CurrencyTransferSubcategoryId => TransferPolicyKind.CurrencyTransfer,
                 OtherInternalMoneyMovementSubcategoryId => TransferPolicyKind.OtherInternalMoneyMovement,
+                LegacyCurrencyTransferSubcategoryId => TransferPolicyKind.CurrencyTransfer,
+                LegacyOtherInternalMoneyMovementSubcategoryId => TransferPolicyKind.OtherInternalMoneyMovement,
+                LegacyAtmWithdrawalTransferSubcategoryId => TransferPolicyKind.CashWithdrawal,
+                LegacyInvestmentTransferSubcategoryId => TransferPolicyKind.InvestmentTransfer,
+                LegacyBrokerageFundingTransferSubcategoryId => TransferPolicyKind.BrokerageFundingTransfer,
+                LegacyWalletTransferSubcategoryId => TransferPolicyKind.WalletTransfer,
                 _ => TransferPolicyKind.None
             };
         }
@@ -255,7 +261,7 @@ public static class TransferPolicyEngine
                 InternalTransfersCategoryId => TransferPolicyKind.InternalTransferGeneric,
                 LiabilityTransfersCategoryId => TransferPolicyKind.LiabilityTransferGeneric,
                 CashMovementCategoryId => TransferPolicyKind.CashMovementGeneric,
-                OtherTransfersCategoryId => TransferPolicyKind.OtherTransferGeneric,
+                LegacyOtherTransfersCategoryId => TransferPolicyKind.OtherTransferGeneric,
                 _ => TransferPolicyKind.None
             };
         }

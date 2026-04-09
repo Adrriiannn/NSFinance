@@ -9,7 +9,7 @@ public class ExpenseTaxonomyTests
     [Fact]
     public void CanonicalCatalog_HasStableVersionAndValidRootCounts()
     {
-        Assert.Equal("2026-03-29-v1", NSFinanceTaxonomyCatalog.Version);
+        Assert.Equal("2026-04-09-v1", NSFinanceTaxonomyCatalog.Version);
         Assert.Equal(25, NSFinanceTaxonomyCatalog.Instance.Domains.Count);
     }
 
@@ -72,5 +72,59 @@ public class ExpenseTaxonomyTests
         Assert.NotNull(transferSubcategory);
         Assert.Equal(ExpenseTaxonomyService.TransferDomainId, transferCategory!.DomainId);
         Assert.Equal(transferCategory.Id, transferSubcategory!.CategoryId);
+    }
+
+    [Fact]
+    public void ExpenseTaxonomyService_DefaultTaxonomy_UsesReducedTransferStructure()
+    {
+        var service = new ExpenseTaxonomyService();
+        var taxonomy = service.GetTaxonomy();
+
+        var transferDomain = Assert.Single(taxonomy.Domains.Where(x => x.Id == ExpenseTaxonomyService.TransferDomainId));
+        var transferCategoryIds = transferDomain.Categories.Select(x => x.Id).ToArray();
+
+        Assert.Equal([92010, 92020, 92030], transferCategoryIds);
+
+        var internalTransfers = Assert.Single(transferDomain.Categories.Where(x => x.Id == 92010));
+        var internalTransferSubcategoryIds = internalTransfers.Subcategories.Select(x => x.Id).ToArray();
+        Assert.Equal(
+            [
+                ExpenseTaxonomyService.TransferDefaultSubcategoryId,
+                ExpenseTaxonomyService.TransferCurrencySubcategoryId,
+                ExpenseTaxonomyService.TransferOtherInternalMoneyMovementSubcategoryId
+            ],
+            internalTransferSubcategoryIds);
+    }
+
+    [Fact]
+    public void ExpenseTaxonomyService_DefaultTaxonomy_DoesNotExposeRetiredTransferSubcategories()
+    {
+        var service = new ExpenseTaxonomyService();
+        var taxonomy = service.GetTaxonomy();
+
+        var transferDomain = Assert.Single(taxonomy.Domains.Where(x => x.Id == ExpenseTaxonomyService.TransferDomainId));
+        var transferSubcategoryIds = transferDomain.Categories
+            .SelectMany(x => x.Subcategories)
+            .Select(x => x.Id)
+            .ToHashSet();
+
+        Assert.DoesNotContain(920102, transferSubcategoryIds);
+        Assert.DoesNotContain(920103, transferSubcategoryIds);
+        Assert.DoesNotContain(920104, transferSubcategoryIds);
+        Assert.DoesNotContain(920303, transferSubcategoryIds);
+        Assert.DoesNotContain(920401, transferSubcategoryIds);
+        Assert.DoesNotContain(920402, transferSubcategoryIds);
+        Assert.DoesNotContain(920403, transferSubcategoryIds);
+    }
+
+    [Fact]
+    public void ExpenseTaxonomyService_LegacySavingsTransferSubcategory_MapsForwardToGeneralSavingsTransfer()
+    {
+        var service = new ExpenseTaxonomyService();
+
+        var mapped = service.GetUserSelectableSubcategory(920102);
+        Assert.NotNull(mapped);
+        Assert.Equal(ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId, mapped!.Id);
+        Assert.Equal("General Savings Transfer", mapped.Name);
     }
 }

@@ -1,6 +1,6 @@
 # NSFinance Canonical Taxonomy
 
-Version: `2026-03-29-v1`
+Version: `2026-04-09-v1`
 
 ## Purpose
 - Manual expense tracking in the expense mini-app
@@ -1118,12 +1118,12 @@ Version: `2026-03-29-v1`
 - Transfer handling is policy-based, not a blanket neutral rule.
 - Only verified linked movements (or explicit allowed manual overrides) can be neutralized in global income/expense totals.
 - Cash movement and liability-related transfer subtypes remain conservative by default.
+- Legacy transfer IDs are not repurposed. Retired IDs remain forward-mapped for compatibility.
 
 - `92010` Internal Transfers
   - `920101` Bank Account Transfer
-  - `920102` Savings Transfer
-  - `920103` Investment Transfer
-  - `920104` Wallet Transfer
+  - `920105` Currency Transfer
+  - `920106` Other Internal Money Movement
 - `92020` Liability & Card Transfers
   - `920201` Credit Card Payment Transfer
   - `920202` Loan Account Transfer
@@ -1131,8 +1131,3 @@ Version: `2026-03-29-v1`
 - `92030` Cash Movement
   - `920301` Cash Withdrawal
   - `920302` Cash Deposit
-  - `920303` ATM Withdrawal Transfer
-- `92040` Other Transfers
-  - `920401` Brokerage Funding Transfer
-  - `920402` Currency Transfer
-  - `920403` Other Internal Money Movement

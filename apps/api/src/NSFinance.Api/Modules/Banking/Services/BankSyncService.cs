@@ -35,7 +35,8 @@ public sealed class BankSyncService(
     private const int InternalTransferSequenceTieBreakBoost = 2;
     private const int InternalTransferAmbiguityMaxScoreGap = 1;
     private const int SavingsRelationshipLookbackDays = 35;
-    private const int SavingsTransferSubcategoryId = DeterministicCategorizationConstants.SavingsTransferSubcategoryId;
+    private const int SavingsTransferSubcategoryId = DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId;
+    private const int SavingsTransferCategoryId = DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId;
     private const int DeterministicEnrichmentCurrentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
     private const int DeterministicEnrichmentIncrementalLookbackDays = DeterministicCategorizationConstants.IncrementalLookbackDays;
     private const int DeterministicEnrichmentHistoricalBatchSize = 600;
@@ -7067,8 +7068,8 @@ public sealed class BankSyncService(
             return;
         }
 
-        transaction.TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId;
-        transaction.TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId;
+        transaction.TaxonomyDomainId = ExpenseTaxonomyService.SavingsAndInvestmentsDomainId;
+        transaction.TaxonomyCategoryId = SavingsTransferCategoryId;
         transaction.TaxonomySubcategoryId = SavingsTransferSubcategoryId;
     }
 

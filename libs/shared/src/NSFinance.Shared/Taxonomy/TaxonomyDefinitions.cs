@@ -52,7 +52,7 @@ public sealed record TaxonomySubcategoryDefinition(
 
 public sealed class NSFinanceTaxonomyCatalog
 {
-    public const string Version = "2026-03-29-v1";
+    public const string Version = "2026-04-09-v1";
 
     public static NSFinanceTaxonomyCatalog Instance { get; } = CreateValidated();
 

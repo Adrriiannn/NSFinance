@@ -157,8 +157,8 @@ public class OpenBankingIntegrationTests
 
         Assert.Null(outboundSavingsMovement.LinkedTransferTransactionId);
         Assert.Equal(TransactionTransferKind.SavingsManualDeposit, outboundSavingsMovement.TransferKind);
-        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, outboundSavingsMovement.TaxonomyDomainId);
-        Assert.Equal(920102, outboundSavingsMovement.TaxonomySubcategoryId);
+        Assert.Equal(ExpenseTaxonomyService.SavingsAndInvestmentsDomainId, outboundSavingsMovement.TaxonomyDomainId);
+        Assert.Equal(ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId, outboundSavingsMovement.TaxonomySubcategoryId);
 
         var savingsRelationship = await harness.DbContext.TransactionRelationships
             .SingleAsync(x =>
@@ -976,6 +976,8 @@ public class OpenBankingIntegrationTests
     [Fact]
     public async Task GlobalSync_DeterministicOrganization_ReappliesLinkedTransferAndSavingsClassification_InSinglePipeline()
     {
+        var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
+
         await using var harness = new OpenBankingTestHarness(
             options: ValidSandboxOptions(),
             httpHandler: RepeatedSameAmountTransferChainFlowHandler());
@@ -1025,9 +1027,13 @@ public class OpenBankingIntegrationTests
         savingsRow.TransferMatchConfidenceScore = null;
         savingsRow.TransferMatchConfidenceTier = null;
         savingsRow.TransferMatchReason = null;
-        savingsRow.TaxonomyDomainId = null;
-        savingsRow.TaxonomyCategoryId = null;
-        savingsRow.TaxonomySubcategoryId = null;
+        savingsRow.TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId;
+        savingsRow.TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId;
+        savingsRow.TaxonomySubcategoryId = DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId;
+        savingsRow.DeterministicClassificationCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId;
+        savingsRow.DeterministicClassificationSubcategoryId = DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId;
+        savingsRow.DeterministicClassificationVersion = currentVersion - 1;
+        savingsRow.NeedsDeterministicReclassification = true;
         savingsRow.DeterministicEnrichmentVersion = null;
         savingsRow.LastDeterministicEnrichedUtc = null;
 
@@ -1077,8 +1083,10 @@ public class OpenBankingIntegrationTests
         });
 
         Assert.Equal(TransactionTransferKind.SavingsManualDeposit, refreshedSavingsRow.TransferKind);
-        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, refreshedSavingsRow.TaxonomyDomainId);
-        Assert.Equal(920102, refreshedSavingsRow.TaxonomySubcategoryId);
+        Assert.Equal(ExpenseTaxonomyService.SavingsAndInvestmentsDomainId, refreshedSavingsRow.TaxonomyDomainId);
+        Assert.Equal(DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId, refreshedSavingsRow.TaxonomyCategoryId);
+        Assert.Equal(ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId, refreshedSavingsRow.TaxonomySubcategoryId);
+        Assert.Equal(currentVersion, refreshedSavingsRow.DeterministicClassificationVersion);
         Assert.True(refreshedSavingsRow.DeterministicEnrichmentVersion.HasValue && refreshedSavingsRow.DeterministicEnrichmentVersion.Value >= 2);
     }
 
@@ -1216,8 +1224,8 @@ public class OpenBankingIntegrationTests
 
         Assert.Null(merchant.LinkedTransferTransactionId);
         Assert.Equal(TransactionTransferKind.SavingsRoundup, roundup.TransferKind);
-        Assert.Equal(ExpenseTaxonomyService.TransferDomainId, roundup.TaxonomyDomainId);
-        Assert.Equal(920102, roundup.TaxonomySubcategoryId);
+        Assert.Equal(ExpenseTaxonomyService.SavingsAndInvestmentsDomainId, roundup.TaxonomyDomainId);
+        Assert.Equal(ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId, roundup.TaxonomySubcategoryId);
 
         var relationship = await harness.DbContext.TransactionRelationships
             .SingleAsync(x =>
@@ -2794,7 +2802,7 @@ public class OpenBankingIntegrationTests
             BookedAtUtc = now.AddDays(-2),
             CreatedUtc = now.AddDays(-2),
             TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId,
-            TaxonomySubcategoryId = DeterministicCategorizationConstants.SavingsTransferSubcategoryId,
+            TaxonomySubcategoryId = DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId,
             DeterministicClassificationStatus = DeterministicClassificationStatus.NotEvaluated,
             DeterministicClassificationTerminal = false,
             DeterministicClassificationVersion = DeterministicCategorizationConstants.CurrentClassificationVersion,

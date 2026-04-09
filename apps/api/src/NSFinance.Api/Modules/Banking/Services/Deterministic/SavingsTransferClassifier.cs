@@ -205,8 +205,8 @@ public sealed class SavingsTransferClassifier
                 legacySignalSupportOnly = hasLegacySavingsMarker
             }),
             MatchScore: score,
-            ClassificationCategoryId: ExpenseTaxonomyService.TransferDefaultCategoryId,
-            ClassificationSubcategoryId: DeterministicCategorizationConstants.SavingsTransferSubcategoryId,
+            ClassificationCategoryId: DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId,
+            ClassificationSubcategoryId: DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId,
             LinkedTransactionId: null,
             RelationshipType: "savings_transfer",
             RelationshipGroupId: null);

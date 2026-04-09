@@ -27,7 +27,7 @@ public class TransactionServiceTests
                 Reason: "Moved into investments",
                 Notes: "Internal transfer",
                 TaxonomyCategoryId: 92010,
-                TaxonomySubcategoryId: 920103),
+                TaxonomySubcategoryId: ExpenseTaxonomyService.TransferCurrencySubcategoryId),
             CancellationToken.None);
 
         Assert.NotNull(result.Transaction);
@@ -44,11 +44,11 @@ public class TransactionServiceTests
 
         Assert.Equal(ExpenseTaxonomyService.TransferDomainId, debit.TaxonomyDomainId);
         Assert.Equal(92010, debit.TaxonomyCategoryId);
-        Assert.Equal(920103, debit.TaxonomySubcategoryId);
+        Assert.Equal(ExpenseTaxonomyService.TransferCurrencySubcategoryId, debit.TaxonomySubcategoryId);
 
         Assert.Equal(ExpenseTaxonomyService.TransferDomainId, credit.TaxonomyDomainId);
         Assert.Equal(92010, credit.TaxonomyCategoryId);
-        Assert.Equal(920103, credit.TaxonomySubcategoryId);
+        Assert.Equal(ExpenseTaxonomyService.TransferCurrencySubcategoryId, credit.TaxonomySubcategoryId);
         Assert.NotNull(credit.MetadataUpdatedUtc);
     }
 
@@ -144,14 +144,14 @@ public class TransactionServiceTests
                 BookedAtUtc = now.AddMinutes(-1),
                 CreatedUtc = now.AddMinutes(-1),
                 TransferKind = TransactionTransferKind.SavingsRoundup,
-                TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId,
-                TaxonomyCategoryId = 92010,
-                TaxonomySubcategoryId = 920102,
+                TaxonomyDomainId = ExpenseTaxonomyService.SavingsAndInvestmentsDomainId,
+                TaxonomyCategoryId = ExpenseTaxonomyService.SavingsTransferCategoryId,
+                TaxonomySubcategoryId = ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId,
                 DeterministicClassificationStatus = DeterministicClassificationStatus.ClassifiedMatchedRule,
                 DeterministicClassificationVersion = currentVersion,
                 DeterministicClassificationRuleKey = "savings_transfer.paired_signal_v3",
-                DeterministicClassificationCategoryId = 92010,
-                DeterministicClassificationSubcategoryId = 920102,
+                DeterministicClassificationCategoryId = ExpenseTaxonomyService.SavingsTransferCategoryId,
+                DeterministicClassificationSubcategoryId = ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId,
                 DeterministicRelationshipType = "savings_transfer",
                 DeterministicClassificationTerminal = true,
                 DeterministicClassificationEvaluatedUtc = now.AddMinutes(-1)

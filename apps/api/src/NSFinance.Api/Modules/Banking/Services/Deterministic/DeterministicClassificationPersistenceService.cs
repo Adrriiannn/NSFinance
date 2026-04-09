@@ -160,6 +160,9 @@ public sealed class DeterministicClassificationPersistenceService(
         var rowsDeferredContext = 0;
         var rowsRejectedAmbiguous = 0;
         var rowsRetryQueued = 0;
+        var rowsReclassifiedLegacySavingsToCanonical = 0;
+        var rowsLegacySavingsReferencesRemaining = 0;
+        var rowsSavingsOutcomeMaterializedAsTransferWarning = 0;
         var changes = 0;
 
         var outcomesByTransactionId = new Dictionary<Guid, DeterministicClassificationOutcome>();
@@ -217,9 +220,53 @@ public sealed class DeterministicClassificationPersistenceService(
                 rowsRetryQueued++;
             }
 
-            if (ApplyClassificationOutcome(transaction, feature, outcome, now))
+            var hadLegacySavingsReferenceBeforeApply =
+                transaction.DeterministicClassificationSubcategoryId == DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId
+                || transaction.TaxonomySubcategoryId == DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId;
+            var isSavingsMatchedOutcome =
+                outcome.Status == DeterministicClassificationStatus.ClassifiedMatchedRule
+                && string.Equals(outcome.RelationshipType, "savings_transfer", StringComparison.Ordinal);
+            var landedOnCanonicalSavingsTarget =
+                isSavingsMatchedOutcome
+                && outcome.ClassificationCategoryId == DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId
+                && outcome.ClassificationSubcategoryId == DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId;
+
+            if (landedOnCanonicalSavingsTarget)
+            {
+                logger.LogDebug(
+                    "Deterministic savings outcome landed on canonical savings target transactionId={TransactionId} categoryId={CategoryId} subcategoryId={SubcategoryId}",
+                    transaction.Id,
+                    outcome.ClassificationCategoryId,
+                    outcome.ClassificationSubcategoryId);
+            }
+
+            var changedByOutcome = ApplyClassificationOutcome(transaction, feature, outcome, now);
+            if (changedByOutcome)
             {
                 changes++;
+            }
+
+            if (changedByOutcome && landedOnCanonicalSavingsTarget && hadLegacySavingsReferenceBeforeApply)
+            {
+                rowsReclassifiedLegacySavingsToCanonical++;
+            }
+
+            if (transaction.DeterministicClassificationSubcategoryId == DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId
+                || transaction.TaxonomySubcategoryId == DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId)
+            {
+                rowsLegacySavingsReferencesRemaining++;
+            }
+
+            if (isSavingsMatchedOutcome && transaction.TaxonomyDomainId == ExpenseTaxonomyService.TransferDomainId)
+            {
+                rowsSavingsOutcomeMaterializedAsTransferWarning++;
+                logger.LogWarning(
+                    "Savings outcome resolved but transaction taxonomy still points to Transfers transactionId={TransactionId} taxonomyDomainId={TaxonomyDomainId} taxonomyCategoryId={TaxonomyCategoryId} taxonomySubcategoryId={TaxonomySubcategoryId} metadataUpdatedUtc={MetadataUpdatedUtc}",
+                    transaction.Id,
+                    transaction.TaxonomyDomainId,
+                    transaction.TaxonomyCategoryId,
+                    transaction.TaxonomySubcategoryId,
+                    transaction.MetadataUpdatedUtc);
             }
 
             logger.LogDebug(
@@ -230,6 +277,17 @@ public sealed class DeterministicClassificationPersistenceService(
                 outcome.ReasonCode,
                 outcome.LinkedTransactionId,
                 outcome.MatchScore);
+        }
+
+        if (rowsReclassifiedLegacySavingsToCanonical > 0
+            || rowsLegacySavingsReferencesRemaining > 0
+            || rowsSavingsOutcomeMaterializedAsTransferWarning > 0)
+        {
+            logger.LogInformation(
+                "Savings taxonomy rehome diagnostics rowsReclassifiedLegacyToCanonical={RowsReclassifiedLegacyToCanonical} rowsWithLegacySavingsReferencesRemaining={RowsWithLegacySavingsReferencesRemaining} savingsOutcomeMaterializedAsTransferWarnings={SavingsOutcomeMaterializedAsTransferWarnings}",
+                rowsReclassifiedLegacySavingsToCanonical,
+                rowsLegacySavingsReferencesRemaining,
+                rowsSavingsOutcomeMaterializedAsTransferWarning);
         }
 
         var relationshipRowsUpserted = await ApplyRelationshipMetadataAsync(
@@ -640,9 +698,15 @@ public sealed class DeterministicClassificationPersistenceService(
             outcome.Status == DeterministicClassificationStatus.ClassifiedMatchedRule
             && string.Equals(outcome.RelationshipType, "internal_transfer", StringComparison.Ordinal)
             && outcome.LinkedTransactionId.HasValue;
+        var shouldMaterializeSavingsTransfer =
+            outcome.Status == DeterministicClassificationStatus.ClassifiedMatchedRule
+            && string.Equals(outcome.RelationshipType, "savings_transfer", StringComparison.Ordinal)
+            && !transaction.MetadataUpdatedUtc.HasValue;
 
         var materializedTransferCategoryId = outcome.ClassificationCategoryId ?? ExpenseTaxonomyService.TransferDefaultCategoryId;
         var materializedTransferSubcategoryId = outcome.ClassificationSubcategoryId ?? ExpenseTaxonomyService.TransferDefaultSubcategoryId;
+        var materializedSavingsCategoryId = outcome.ClassificationCategoryId ?? DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId;
+        var materializedSavingsSubcategoryId = outcome.ClassificationSubcategoryId ?? DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId;
 
         var targetTransferKind = shouldMaterializeLegacyInternalTransfer
             ? TransactionTransferKind.LinkedInternal
@@ -655,12 +719,18 @@ public sealed class DeterministicClassificationPersistenceService(
             : transaction.LinkedTransferMatchedUtc;
         var targetTaxonomyDomainId = shouldMaterializeLegacyInternalTransfer
             ? ExpenseTaxonomyService.TransferDomainId
+            : shouldMaterializeSavingsTransfer
+                ? ExpenseTaxonomyService.SavingsAndInvestmentsDomainId
             : transaction.TaxonomyDomainId;
         var targetTaxonomyCategoryId = shouldMaterializeLegacyInternalTransfer
             ? materializedTransferCategoryId
+            : shouldMaterializeSavingsTransfer
+                ? materializedSavingsCategoryId
             : transaction.TaxonomyCategoryId;
         var targetTaxonomySubcategoryId = shouldMaterializeLegacyInternalTransfer
             ? materializedTransferSubcategoryId
+            : shouldMaterializeSavingsTransfer
+                ? materializedSavingsSubcategoryId
             : transaction.TaxonomySubcategoryId;
         var targetTransferMatchReason = shouldMaterializeLegacyInternalTransfer
             ? outcome.ReasonCode ?? outcome.RuleKey

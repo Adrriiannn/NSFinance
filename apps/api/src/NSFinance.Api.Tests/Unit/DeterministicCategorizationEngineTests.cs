@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSFinance.Api.Modules.Banking.Services.Deterministic;
+using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 
@@ -621,6 +622,8 @@ public class DeterministicCategorizationEngineTests
         Assert.NotNull(outcome);
         Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
         Assert.Equal("savings_transfer", outcome.RelationshipType);
+        Assert.Equal(DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId, outcome.ClassificationCategoryId);
+        Assert.Equal(DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId, outcome.ClassificationSubcategoryId);
         Assert.Null(outcome.LinkedTransactionId);
         Assert.True(outcome.Terminal);
     }
@@ -2487,6 +2490,62 @@ public class DeterministicCategorizationEngineTests
         }
     }
 
+    [Fact]
+    public void ApplyClassificationOutcome_LegacySavingsClassification_RehomesToCanonicalSavingsTarget()
+    {
+        using var dbContext = CreateDbContext();
+        var service = CreatePersistenceService(dbContext);
+        var now = new DateTime(2026, 04, 09, 10, 30, 0, DateTimeKind.Utc);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = Guid.NewGuid(),
+            Amount = -4.75m,
+            Currency = "EUR",
+            Description = "To Internal Savings Pocket",
+            BookedAtUtc = now.AddMinutes(-5),
+            CreatedUtc = now.AddMinutes(-5),
+            TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId,
+            TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId,
+            TaxonomySubcategoryId = DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId,
+            DeterministicClassificationCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId,
+            DeterministicClassificationSubcategoryId = DeterministicCategorizationConstants.LegacyTransferDomainSavingsTransferSubcategoryId,
+            DeterministicClassificationVersion = DeterministicCategorizationConstants.CurrentClassificationVersion - 1,
+            DeterministicRelationshipType = "savings_transfer",
+            NeedsDeterministicReclassification = true
+        };
+        var feature = CreateFeature(
+            signedAmount: -4.75m,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: true,
+            hasProviderTransferHint: true,
+            tokens: ["pocket", "move"]);
+        var outcome = new DeterministicClassificationOutcome(
+            Status: DeterministicClassificationStatus.ClassifiedMatchedRule,
+            Terminal: true,
+            RetryEligible: false,
+            RuleKey: "savings_transfer.provider_structural_v5",
+            ReasonCode: DeterministicClassificationReasonCodes.SavingsProviderStructuralSignal,
+            EvidenceJson: "{\"family\":\"savings_transfer\"}",
+            MatchScore: 95,
+            ClassificationCategoryId: DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId,
+            ClassificationSubcategoryId: DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId,
+            LinkedTransactionId: null,
+            RelationshipType: "savings_transfer",
+            RelationshipGroupId: null);
+
+        var changed = InvokeApplyClassificationOutcome(service, transaction, feature, outcome, now);
+
+        Assert.True(changed);
+        Assert.Equal(DeterministicCategorizationConstants.CurrentClassificationVersion, transaction.DeterministicClassificationVersion);
+        Assert.Equal(DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId, transaction.DeterministicClassificationCategoryId);
+        Assert.Equal(DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId, transaction.DeterministicClassificationSubcategoryId);
+        Assert.Equal(ExpenseTaxonomyService.SavingsAndInvestmentsDomainId, transaction.TaxonomyDomainId);
+        Assert.Equal(DeterministicCategorizationConstants.SavingsAndInvestmentsCategoryId, transaction.TaxonomyCategoryId);
+        Assert.Equal(DeterministicCategorizationConstants.GeneralSavingsTransferSubcategoryId, transaction.TaxonomySubcategoryId);
+        Assert.False(transaction.NeedsDeterministicReclassification);
+    }
+
     private static DeterministicClassificationOutcome InvokeBuildOutcome(
         DeterministicClassificationPersistenceService service,
         Transaction transaction,
@@ -2508,6 +2567,23 @@ public class DeterministicCategorizationEngineTests
             [transaction, feature, linkedPairs, resolvedPairDecisions, pendingDecisions, evaluationNow, hasFullSameUserCounterpartyUniverse]);
         Assert.NotNull(result);
         return Assert.IsType<DeterministicClassificationOutcome>(result);
+    }
+
+    private static bool InvokeApplyClassificationOutcome(
+        DeterministicClassificationPersistenceService service,
+        Transaction transaction,
+        DeterministicTransactionFeature feature,
+        DeterministicClassificationOutcome outcome,
+        DateTime now)
+    {
+        var method = typeof(DeterministicClassificationPersistenceService).GetMethod(
+            "ApplyClassificationOutcome",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var result = method!.Invoke(service, [transaction, feature, outcome, now]);
+        Assert.NotNull(result);
+        return Assert.IsType<bool>(result);
     }
 
     private static AppDbContext CreateDbContext()

@@ -1,4 +1,5 @@
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
+using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Persistence.Entities;
 using Xunit;
 
@@ -100,8 +101,8 @@ public class TransferPolicyEngineTests
     {
         var evaluation = TransferPolicyEngine.Evaluate(
             taxonomyDomainId: 920,
-            taxonomyCategoryId: 92040,
-            taxonomySubcategoryId: 920403,
+            taxonomyCategoryId: 92010,
+            taxonomySubcategoryId: ExpenseTaxonomyService.TransferOtherInternalMoneyMovementSubcategoryId,
             transferKind: TransactionTransferKind.Manual,
             linkedTransferTransactionId: null,
             amount: -80m);
@@ -120,9 +121,9 @@ public class TransferPolicyEngineTests
         double amount)
     {
         var evaluation = TransferPolicyEngine.Evaluate(
-            taxonomyDomainId: 920,
-            taxonomyCategoryId: 92010,
-            taxonomySubcategoryId: 920102,
+            taxonomyDomainId: ExpenseTaxonomyService.SavingsAndInvestmentsDomainId,
+            taxonomyCategoryId: ExpenseTaxonomyService.SavingsTransferCategoryId,
+            taxonomySubcategoryId: ExpenseTaxonomyService.GeneralSavingsTransferSubcategoryId,
             transferKind: transferKind,
             linkedTransferTransactionId: null,
             amount: Convert.ToDecimal(amount));

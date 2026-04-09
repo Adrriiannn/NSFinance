@@ -5,9 +5,26 @@ namespace NSFinance.Api.Modules.ExpenseTracker.Services;
 
 public sealed class ExpenseTaxonomyService
 {
+    public const int SavingsAndInvestmentsDomainId = 180;
+    public const int SavingsTransferCategoryId = 18010;
+    public const int GeneralSavingsTransferSubcategoryId = 180102;
     public const int TransferDomainId = 920;
     public const int TransferDefaultCategoryId = 92010;
     public const int TransferDefaultSubcategoryId = 920101;
+    public const int TransferCurrencySubcategoryId = 920105;
+    public const int TransferOtherInternalMoneyMovementSubcategoryId = 920106;
+
+    private static readonly IReadOnlyDictionary<int, int> LegacySubcategoryForwardMap = new Dictionary<int, int>
+    {
+        [920102] = GeneralSavingsTransferSubcategoryId,
+        [920103] = 180604,
+        [920104] = TransferOtherInternalMoneyMovementSubcategoryId,
+        [920303] = 920301,
+        [920401] = 180301,
+        [920402] = TransferCurrencySubcategoryId,
+        [920403] = TransferOtherInternalMoneyMovementSubcategoryId
+    };
+
     private readonly NSFinanceTaxonomyCatalog catalog = NSFinanceTaxonomyCatalog.Instance;
 
     public ExpenseTaxonomyResponseDto GetTaxonomy(bool includeSystem = false)
@@ -28,7 +45,8 @@ public sealed class ExpenseTaxonomyService
 
     public TaxonomySubcategoryDefinition? GetUserSelectableSubcategory(int subcategoryId)
     {
-        if (!catalog.TryGetSubcategory(subcategoryId, out var subcategory) || subcategory is null)
+        var resolvedSubcategoryId = ResolveForwardCompatibleSubcategoryId(subcategoryId);
+        if (!catalog.TryGetSubcategory(resolvedSubcategoryId, out var subcategory) || subcategory is null)
         {
             return null;
         }
@@ -85,7 +103,8 @@ public sealed class ExpenseTaxonomyService
 
     public TaxonomySubcategoryDefinition? GetTransactionAssignableSubcategory(int subcategoryId)
     {
-        if (!catalog.TryGetSubcategory(subcategoryId, out var subcategory) || subcategory is null || !subcategory.IsActive)
+        var resolvedSubcategoryId = ResolveForwardCompatibleSubcategoryId(subcategoryId);
+        if (!catalog.TryGetSubcategory(resolvedSubcategoryId, out var subcategory) || subcategory is null || !subcategory.IsActive)
         {
             return null;
         }
@@ -116,9 +135,22 @@ public sealed class ExpenseTaxonomyService
 
     public string? GetSubcategoryName(int? subcategoryId)
     {
-        return subcategoryId.HasValue && catalog.SubcategoriesById.TryGetValue(subcategoryId.Value, out var subcategory)
+        if (!subcategoryId.HasValue)
+        {
+            return null;
+        }
+
+        var resolvedSubcategoryId = ResolveForwardCompatibleSubcategoryId(subcategoryId.Value);
+        return catalog.SubcategoriesById.TryGetValue(resolvedSubcategoryId, out var subcategory)
             ? subcategory.Name
             : null;
+    }
+
+    public static int ResolveForwardCompatibleSubcategoryId(int subcategoryId)
+    {
+        return LegacySubcategoryForwardMap.TryGetValue(subcategoryId, out var mappedSubcategoryId)
+            ? mappedSubcategoryId
+            : subcategoryId;
     }
 
     private static ExpenseTaxonomyDomainDto MapDomain(TaxonomyDomainDefinition domain)
