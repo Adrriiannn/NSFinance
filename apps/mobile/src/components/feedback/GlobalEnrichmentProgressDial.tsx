@@ -186,6 +186,7 @@ export function GlobalEnrichmentProgressDial() {
   const dragStartRef = useRef<DialPosition>(defaultPosition);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousHasActiveWorkRef = useRef(false);
+  const activeRunTotalRef = useRef<number | null>(null);
   const didHydrateRef = useRef(false);
 
   const enrichmentQuery = useBankEnrichmentProgressQuery(isAuthenticated && !isBootstrapping);
@@ -269,6 +270,16 @@ export function GlobalEnrichmentProgressDial() {
     && (progress.inProgress || hasPendingConnection || progress.remainingCount > 0 || pendingStage)
   );
 
+  useEffect(() => {
+    if (!progress || !hasActiveWork) {
+      activeRunTotalRef.current = null;
+      return;
+    }
+
+    const observedTotal = Math.max(0, progress.totalCount ?? 0, progress.remainingCount ?? 0);
+    activeRunTotalRef.current = Math.max(activeRunTotalRef.current ?? 0, observedTotal);
+  }, [hasActiveWork, progress?.remainingCount, progress?.totalCount]);
+
   const hasCompletionSnapshot = Boolean(progress && (progress.totalCount > 0 || progress.processedCount > 0));
   const isCompletedState = Boolean(progress && !hasActiveWork && progress.completed && hasCompletionSnapshot);
   const progressSignature = progress
@@ -283,7 +294,21 @@ export function GlobalEnrichmentProgressDial() {
   );
 
   const shouldShowDial = hasConnectedBanks && (hasActiveWork || (isCompletedState && !completedDismissed));
-  const progressPercent = Math.max(0, Math.min(100, Math.round(progress?.progressPercent ?? 0)));
+  const rawProcessedCount = progress?.processedCount ?? 0;
+  const rawTotalCount = progress?.totalCount ?? 0;
+  const rawRemainingCount = progress?.remainingCount ?? Math.max(0, rawTotalCount - rawProcessedCount);
+  const activeRunTotal = hasActiveWork ? activeRunTotalRef.current ?? 0 : 0;
+  const displayTotalCount = hasActiveWork
+    ? Math.max(rawTotalCount, rawRemainingCount, activeRunTotal)
+    : rawTotalCount;
+  const derivedProcessedCount = hasActiveWork
+    ? Math.max(0, displayTotalCount - rawRemainingCount)
+    : rawProcessedCount;
+  const displayProcessedCount = Math.max(rawProcessedCount, derivedProcessedCount);
+  const displayRemainingCount = rawRemainingCount;
+  const progressPercent = displayTotalCount > 0
+    ? Math.max(0, Math.min(100, Math.round((displayProcessedCount / displayTotalCount) * 100)))
+    : 0;
   const stageLabel = !hasConnectedBanks
     ? "Connect a bank account"
     : progress
@@ -502,9 +527,9 @@ export function GlobalEnrichmentProgressDial() {
     return null;
   }
 
-  const processedCount = progress.processedCount ?? 0;
-  const totalCount = progress.totalCount ?? 0;
-  const remainingCount = progress.remainingCount ?? Math.max(0, totalCount - processedCount);
+  const processedCount = displayProcessedCount;
+  const totalCount = displayTotalCount;
+  const remainingCount = displayRemainingCount;
   const isDone = isCompletedState;
 
   return (
