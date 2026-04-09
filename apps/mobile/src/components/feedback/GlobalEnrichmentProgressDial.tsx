@@ -38,6 +38,7 @@ const POPUP_GAP = 10;
 const DIAL_BOTTOM_CLEARANCE = 88;
 const RING_SIZE = DIAL_SIZE - 4;
 const RING_STROKE_WIDTH = 3.5;
+const PROGRESS_ANIMATION_TICK_MS = 33;
 
 type DialPosition = {
   left: number;
@@ -142,23 +143,18 @@ function resolveDetailsPlacement(
   return { left: centeredLeft, top: clampedBelowTop };
 }
 
-function mapStageLabel(stage: string) {
-  switch (stage) {
-    case "queued_for_sync":
-      return "Starting sync";
-    case "waiting_for_first_sync":
-      return "Starting sync";
-    case "needs_reclassification":
-      return "Starting sync";
-    case "categorizing":
-      return "Syncing transactions";
-    case "waiting_for_counterparty":
-      return "Syncing transactions";
-    case "completed":
-      return "Sync complete";
-    default:
-      return "In progress";
+function stageIndicatesActiveWork(stage: string | null | undefined) {
+  if (!stage) {
+    return false;
   }
+
+  return stage === "queued_for_sync"
+    || stage === "waiting_for_first_sync"
+    || stage === "needs_reclassification"
+    || stage === "categorizing"
+    || stage === "waiting_for_counterparty"
+    || stage === "sync_stalled"
+    || stage === "historical_backfill";
 }
 
 export function GlobalEnrichmentProgressDial() {
@@ -187,7 +183,7 @@ export function GlobalEnrichmentProgressDial() {
   const dragStartRef = useRef<DialPosition>(defaultPosition);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousHasActiveWorkRef = useRef(false);
-  const activeRunTotalRef = useRef<number | null>(null);
+  const runTotalRef = useRef<number | null>(null);
   const didHydrateRef = useRef(false);
 
   const enrichmentQuery = useBankEnrichmentProgressQuery(isAuthenticated && !isBootstrapping);
@@ -249,37 +245,59 @@ export function GlobalEnrichmentProgressDial() {
     }
   }, [maxTop, minTop, screenHeight, screenWidth]);
 
-  const pendingStage = progress
-    ? progress.stage === "queued_for_sync"
-      || progress.stage === "waiting_for_first_sync"
-      || progress.stage === "categorizing"
-      || progress.stage === "waiting_for_counterparty"
-    : false;
+  const pendingStage = progress ? stageIndicatesActiveWork(progress.stage) : false;
 
   const hasPendingConnection = Boolean(
     progress?.connections?.some((connection) =>
       connection.inProgress
       || connection.remainingCount > 0
-      || connection.stage === "queued_for_sync"
-      || connection.stage === "waiting_for_first_sync"
-      || connection.stage === "categorizing"
-      || connection.stage === "waiting_for_counterparty")
+      || stageIndicatesActiveWork(connection.stage))
+  );
+
+  const hasIncompleteSnapshot = Boolean(
+    progress
+    && progress.totalCount > 0
+    && progress.processedCount < progress.totalCount
+    && !progress.completed
   );
 
   const hasActiveWork = Boolean(
-    progress
-    && (progress.inProgress || hasPendingConnection || progress.remainingCount > 0 || pendingStage)
+    progress && (
+      progress.inProgress
+      || hasPendingConnection
+      || progress.remainingCount > 0
+      || pendingStage
+      || hasIncompleteSnapshot
+    )
   );
 
   useEffect(() => {
-    if (!progress || !hasActiveWork) {
-      activeRunTotalRef.current = null;
+    if (!progress) {
       return;
     }
 
-    const observedTotal = Math.max(0, progress.totalCount ?? 0, progress.remainingCount ?? 0);
-    activeRunTotalRef.current = Math.max(activeRunTotalRef.current ?? 0, observedTotal);
-  }, [hasActiveWork, progress?.remainingCount, progress?.totalCount]);
+    const observedTotal = Math.max(
+      0,
+      progress.totalCount ?? 0,
+      progress.remainingCount ?? 0,
+      progress.processedCount ?? 0
+    );
+
+    if (hasActiveWork) {
+      runTotalRef.current = Math.max(runTotalRef.current ?? 0, observedTotal);
+      return;
+    }
+
+    if (progress.completed && progress.remainingCount === 0) {
+      runTotalRef.current = null;
+    }
+  }, [
+    hasActiveWork,
+    progress?.completed,
+    progress?.processedCount,
+    progress?.remainingCount,
+    progress?.totalCount
+  ]);
 
   const hasCompletionSnapshot = Boolean(progress && (progress.totalCount > 0 || progress.processedCount > 0));
   const isCompletedState = Boolean(progress && !hasActiveWork && progress.completed && hasCompletionSnapshot);
@@ -298,77 +316,91 @@ export function GlobalEnrichmentProgressDial() {
   const rawProcessedCount = progress?.processedCount ?? 0;
   const rawTotalCount = progress?.totalCount ?? 0;
   const rawRemainingCount = progress?.remainingCount ?? Math.max(0, rawTotalCount - rawProcessedCount);
-  const activeRunTotal = hasActiveWork ? activeRunTotalRef.current ?? 0 : 0;
-  const displayTotalCount = hasActiveWork
-    ? Math.max(rawTotalCount, rawRemainingCount, activeRunTotal)
-    : rawTotalCount;
+  const runTotal = runTotalRef.current ?? 0;
+  const displayTotalCount = Math.max(rawTotalCount, rawRemainingCount, runTotal);
   const derivedProcessedCount = hasActiveWork
     ? Math.max(0, displayTotalCount - rawRemainingCount)
     : rawProcessedCount;
-  const displayProcessedCount = Math.max(rawProcessedCount, derivedProcessedCount);
+  const targetProcessedCount = Math.max(rawProcessedCount, derivedProcessedCount);
   const displayRemainingCount = rawRemainingCount;
 
   useEffect(() => {
     setAnimatedProcessedCount((current) => {
       if (!hasActiveWork) {
-        return displayProcessedCount;
+        return targetProcessedCount;
       }
 
-      if (displayProcessedCount < current) {
-        return displayProcessedCount;
+      if (targetProcessedCount < current) {
+        return targetProcessedCount;
       }
 
       return current;
     });
-  }, [displayProcessedCount, hasActiveWork]);
+  }, [targetProcessedCount, hasActiveWork]);
 
   useEffect(() => {
-    if (!hasActiveWork || !progress) {
+    if (!progress) {
+      return;
+    }
+
+    if (animatedProcessedCount >= targetProcessedCount) {
       return;
     }
 
     const timer = setInterval(() => {
       setAnimatedProcessedCount((current) => {
-        if (current >= displayProcessedCount) {
+        if (current >= targetProcessedCount) {
           return current;
         }
 
-        return current + 1;
+        const delta = targetProcessedCount - current;
+        const minStep = isCompletedState ? 16 : 1;
+        const maxStep = isCompletedState ? 500 : 120;
+        const scaledStep = Math.ceil(delta * (isCompletedState ? 0.38 : 0.16));
+        const step = Math.max(minStep, Math.min(maxStep, scaledStep, delta));
+
+        return current + step;
       });
-    }, 12);
+    }, PROGRESS_ANIMATION_TICK_MS);
 
     return () => {
       clearInterval(timer);
     };
-  }, [displayProcessedCount, hasActiveWork, progress]);
+  }, [animatedProcessedCount, isCompletedState, progress, targetProcessedCount]);
 
   const liveProcessedCount = hasActiveWork
-    ? Math.min(animatedProcessedCount, displayProcessedCount)
-    : displayProcessedCount;
+    ? Math.min(animatedProcessedCount, targetProcessedCount)
+    : targetProcessedCount;
   const liveRemainingCount = hasActiveWork
     ? Math.max(0, displayTotalCount - liveProcessedCount)
     : displayRemainingCount;
+  const waitingForVisualCompletion = Boolean(
+    isCompletedState && displayTotalCount > 0 && liveProcessedCount < displayTotalCount
+  );
+  const activeVisualState = hasActiveWork || waitingForVisualCompletion;
   const progressPercent = displayTotalCount > 0
     ? Math.max(0, Math.min(100, Math.round((liveProcessedCount / displayTotalCount) * 100)))
     : 0;
   const stageLabel = !hasConnectedBanks
     ? "Connect a bank account"
-    : progress
-      ? mapStageLabel(progress.stage)
-      : "In progress";
+    : isCompletedState && !waitingForVisualCompletion
+      ? "Sync complete"
+      : liveProcessedCount > 0
+        ? "Syncing transactions"
+        : "Starting sync";
   const popupMode: "before" | "active" | "completed" = !hasConnectedBanks
     ? "before"
-    : hasActiveWork
+    : activeVisualState
       ? "active"
       : "completed";
-  const titleText = hasActiveWork
+  const titleText = activeVisualState
     ? `Organizing transactions${".".repeat(dotCount)}`
     : isCompletedState
       ? "Transactions organized."
       : "No transactions.";
 
   useEffect(() => {
-    if (!hasActiveWork) {
+    if (!activeVisualState) {
       setDotCount(1);
       return;
     }
@@ -380,7 +412,7 @@ export function GlobalEnrichmentProgressDial() {
     return () => {
       clearInterval(timer);
     };
-  }, [hasActiveWork]);
+  }, [activeVisualState]);
 
   useEffect(() => {
     if (!hasActiveWork || !dismissedCompletedSignature) {
@@ -528,7 +560,7 @@ export function GlobalEnrichmentProgressDial() {
     [dialPosition, screenHeight, screenWidth]
   );
 
-  const ringProgress = isCompletedState ? 100 : progressPercent;
+  const ringProgress = isCompletedState && !waitingForVisualCompletion ? 100 : progressPercent;
   const ringRadius = (RING_SIZE / 2) - 2;
   const ringCircumference = 2 * Math.PI * ringRadius;
   const ringStrokeOffset = ringCircumference - ((Math.max(0, Math.min(100, ringProgress)) / 100) * ringCircumference);
@@ -572,7 +604,7 @@ export function GlobalEnrichmentProgressDial() {
   const processedCount = liveProcessedCount;
   const totalCount = displayTotalCount;
   const remainingCount = liveRemainingCount;
-  const isDone = isCompletedState;
+  const isDone = isCompletedState && !waitingForVisualCompletion;
 
   return (
     <View pointerEvents="box-none" style={styles.host}>
