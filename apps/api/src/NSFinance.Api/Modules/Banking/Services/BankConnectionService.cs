@@ -584,7 +584,9 @@ public sealed class BankConnectionService(
                 continue;
             }
 
-            if (connection.HistoricalEnrichmentStartedUtc.HasValue)
+            var startedUtc = connection.HistoricalEnrichmentStartedUtc;
+            if (startedUtc.HasValue
+                && (nowUtc - startedUtc.Value) < DeterministicRescueMinStallAge)
             {
                 continue;
             }
@@ -623,19 +625,25 @@ public sealed class BankConnectionService(
                     if (runResult.Succeeded)
                     {
                         logger.LogInformation(
-                            "Triggered deterministic stall rescue connectionId={ConnectionId} userId={UserId} remaining={Remaining} processed={Processed} trigger={Trigger}",
+                            "Triggered deterministic stall rescue connectionId={ConnectionId} userId={UserId} stage={Stage} remaining={Remaining} processed={Processed} startedUtc={StartedUtc} trigger={Trigger}",
                             connection.Id,
                             userId,
+                            progress.Stage,
                             progress.RemainingCount,
                             progress.ProcessedCount,
+                            startedUtc,
                             "progress_stall_rescue");
                     }
                     else
                     {
                         logger.LogWarning(
-                            "Deterministic stall rescue failed connectionId={ConnectionId} userId={UserId} code={Code} message={Message}",
+                            "Deterministic stall rescue failed connectionId={ConnectionId} userId={UserId} stage={Stage} remaining={Remaining} processed={Processed} startedUtc={StartedUtc} code={Code} message={Message}",
                             connection.Id,
                             userId,
+                            progress.Stage,
+                            progress.RemainingCount,
+                            progress.ProcessedCount,
+                            startedUtc,
                             runResult.Error?.Code,
                             runResult.Error?.Message);
                     }
