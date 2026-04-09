@@ -15,6 +15,7 @@ import {
   getEnrichmentDialState,
   setEnrichmentDialState
 } from "../../features/banking/enrichmentDial.storage";
+import { showFlashMessage } from "../../lib/flashMessage";
 import {
   useBankEnrichmentProgressQuery,
   useConnectedBanksQuery
@@ -39,6 +40,7 @@ const DIAL_BOTTOM_CLEARANCE = 88;
 const RING_SIZE = DIAL_SIZE - 4;
 const RING_STROKE_WIDTH = 3.5;
 const PROGRESS_ANIMATION_TICK_MS = 33;
+const COMPLETION_AUTO_DISMISS_MS = 1_000;
 
 type DialPosition = {
   left: number;
@@ -182,17 +184,25 @@ export function GlobalEnrichmentProgressDial() {
   const dialPositionRef = useRef<DialPosition>(defaultPosition);
   const dragStartRef = useRef<DialPosition>(defaultPosition);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completionAutoDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousHasActiveWorkRef = useRef(false);
   const runTotalRef = useRef<number | null>(null);
   const didHydrateRef = useRef(false);
+  const announcedCompletionSignatureRef = useRef<string | null>(null);
 
   const enrichmentQuery = useBankEnrichmentProgressQuery(isAuthenticated && !isBootstrapping);
   const connectedBanksQuery = useConnectedBanksQuery(isAuthenticated && !isBootstrapping);
   const progress = enrichmentQuery.data;
+  const activeConnections = connectedBanksQuery.data?.activeConnections ?? [];
+  const attentionConnections = connectedBanksQuery.data?.attentionConnections ?? [];
   const hasConnectedBanks = Boolean(
-    connectedBanksQuery.data
-    && ((connectedBanksQuery.data.activeConnections?.length ?? 0) > 0
-      || (connectedBanksQuery.data.attentionConnections?.length ?? 0) > 0)
+    activeConnections.length > 0
+  );
+  const hasDisconnectLifecycleState = Boolean(
+    [...activeConnections, ...attentionConnections].some((connection) =>
+      connection.status === "disconnect_pending"
+      || connection.status === "disconnect_failed"
+      || connection.status === "revoked")
   );
 
   useEffect(() => {
@@ -312,7 +322,13 @@ export function GlobalEnrichmentProgressDial() {
     && dismissedCompletedSignature === progressSignature
   );
 
-  const shouldShowDial = hasConnectedBanks && (hasActiveWork || (isCompletedState && !completedDismissed));
+  const shouldShowDial = Boolean(
+    (hasConnectedBanks || hasActiveWork)
+    && (
+      hasActiveWork
+      || (isCompletedState && !completedDismissed && !hasDisconnectLifecycleState)
+    )
+  );
   const rawProcessedCount = progress?.processedCount ?? 0;
   const rawTotalCount = progress?.totalCount ?? 0;
   const rawRemainingCount = progress?.remainingCount ?? Math.max(0, rawTotalCount - rawProcessedCount);
@@ -431,6 +447,46 @@ export function GlobalEnrichmentProgressDial() {
   }, [dismissedCompletedSignature, hasActiveWork, userId]);
 
   useEffect(() => {
+    if (!isCompletedState || !progressSignature || completedDismissed || hasDisconnectLifecycleState) {
+      if (completionAutoDismissTimerRef.current) {
+        clearTimeout(completionAutoDismissTimerRef.current);
+        completionAutoDismissTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (announcedCompletionSignatureRef.current !== progressSignature) {
+      announcedCompletionSignatureRef.current = progressSignature;
+      showFlashMessage("Transactions were categorized successfully.");
+    }
+
+    if (completionAutoDismissTimerRef.current) {
+      clearTimeout(completionAutoDismissTimerRef.current);
+    }
+
+    completionAutoDismissTimerRef.current = setTimeout(() => {
+      setDetailsVisible(false);
+      setDismissedCompletedSignature(progressSignature);
+      void setEnrichmentDialState(
+        {
+          left: dialPositionRef.current.left,
+          top: dialPositionRef.current.top,
+          dismissedCompletedSignature: progressSignature
+        },
+        userId
+      );
+      completionAutoDismissTimerRef.current = null;
+    }, COMPLETION_AUTO_DISMISS_MS);
+
+    return () => {
+      if (completionAutoDismissTimerRef.current) {
+        clearTimeout(completionAutoDismissTimerRef.current);
+        completionAutoDismissTimerRef.current = null;
+      }
+    };
+  }, [completedDismissed, hasDisconnectLifecycleState, isCompletedState, progressSignature, userId]);
+
+  useEffect(() => {
     const becameActive = hasActiveWork && !previousHasActiveWorkRef.current;
     previousHasActiveWorkRef.current = hasActiveWork;
 
@@ -505,6 +561,9 @@ export function GlobalEnrichmentProgressDial() {
     return () => {
       if (autoCloseTimerRef.current) {
         clearTimeout(autoCloseTimerRef.current);
+      }
+      if (completionAutoDismissTimerRef.current) {
+        clearTimeout(completionAutoDismissTimerRef.current);
       }
     };
   }, []);
@@ -630,7 +689,7 @@ export function GlobalEnrichmentProgressDial() {
               {popupMode === "active" ? (
                 <Text style={styles.detailsHint}>Newest transactions are processed first.</Text>
               ) : (
-                <Text style={styles.detailsHint}>Tap Done to close me</Text>
+                <Text style={styles.detailsHint}>Closing automatically...</Text>
               )}
             </>
           ) : null}
