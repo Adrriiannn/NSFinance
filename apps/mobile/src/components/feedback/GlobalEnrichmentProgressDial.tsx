@@ -145,17 +145,17 @@ function resolveDetailsPlacement(
 function mapStageLabel(stage: string) {
   switch (stage) {
     case "queued_for_sync":
-      return "Queued for sync";
+      return "Starting sync";
     case "waiting_for_first_sync":
-      return "Waiting for first sync";
+      return "Starting sync";
     case "needs_reclassification":
-      return "Needs deterministic reclassification";
+      return "Starting sync";
     case "categorizing":
-      return "Categorizing transactions";
+      return "Syncing transactions";
     case "waiting_for_counterparty":
-      return "Waiting for matching transaction";
+      return "Syncing transactions";
     case "completed":
-      return "Categorization complete";
+      return "Sync complete";
     default:
       return "In progress";
   }
@@ -249,7 +249,6 @@ export function GlobalEnrichmentProgressDial() {
 
   const pendingStage = progress
     ? progress.stage === "queued_for_sync"
-      || progress.stage === "needs_reclassification"
       || progress.stage === "waiting_for_first_sync"
       || progress.stage === "categorizing"
       || progress.stage === "waiting_for_counterparty"
@@ -260,7 +259,6 @@ export function GlobalEnrichmentProgressDial() {
       connection.inProgress
       || connection.remainingCount > 0
       || connection.stage === "queued_for_sync"
-      || connection.stage === "needs_reclassification"
       || connection.stage === "waiting_for_first_sync"
       || connection.stage === "categorizing"
       || connection.stage === "waiting_for_counterparty")

@@ -481,7 +481,6 @@ public sealed class BankConnectionService(
             .Where(x =>
                 x.InProgress
                 || x.Stage is "queued_for_sync"
-                || x.Stage is "needs_reclassification"
                 || x.Stage is "waiting_for_first_sync"
                 || x.Stage is "waiting_for_counterparty"
                 || x.Stage is "categorizing")
@@ -3224,7 +3223,7 @@ public sealed class BankConnectionService(
     }
 
     private static bool IsHistoricalEnrichmentInProgress(
-        EnrichmentConnectionRow connection,
+        EnrichmentConnectionRow _connection,
         int remainingCount,
         bool awaitingSync,
         bool required)
@@ -3239,13 +3238,9 @@ public sealed class BankConnectionService(
             return true;
         }
 
-        if (required && connection.HistoricalEnrichmentStartedUtc.HasValue)
-        {
-            return true;
-        }
-
-        return connection.HistoricalEnrichmentStartedUtc.HasValue
-            && !IsHistoricalEnrichmentCompleted(connection);
+        // Keep progress state row-truth-first so stale durable flags do not
+        // hold the dial in an active state after work has completed.
+        return false;
     }
 
     private static bool IsSyncAwaitingRunStatus(string status)
@@ -3285,7 +3280,7 @@ public sealed class BankConnectionService(
 
         if (required && !inProgress && !awaitingSync)
         {
-            return "needs_reclassification";
+            return "completed";
         }
 
         if (deferredWaitingForCounterpartyCount > 0 && remainingCount == deferredWaitingForCounterpartyCount)
@@ -3337,11 +3332,6 @@ public sealed class BankConnectionService(
         if (connections.Any(x => x.Stage == "queued_for_sync"))
         {
             return "queued_for_sync";
-        }
-
-        if (connections.Any(x => x.Stage == "needs_reclassification"))
-        {
-            return "needs_reclassification";
         }
 
         if (connections.Any(x => x.Stage == "waiting_for_counterparty"))

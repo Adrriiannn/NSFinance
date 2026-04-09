@@ -2010,7 +2010,7 @@ public class OpenBankingIntegrationTests
         Assert.NotNull(summary);
         Assert.True(summary!.ImportedTransactionCount > 0);
         Assert.Contains(summary.SyncLifecyclePhase, new[] { "import_complete_enrichment_queued", "organizing_transactions" });
-        Assert.Contains(summary.SyncEnrichmentStage, new[] { "queued_for_sync", "needs_reclassification", "waiting_for_first_sync", "categorizing", "waiting_for_counterparty" });
+        Assert.Contains(summary.SyncEnrichmentStage, new[] { "queued_for_sync", "waiting_for_first_sync", "categorizing", "waiting_for_counterparty", "completed" });
     }
 
     [Fact]
@@ -2123,7 +2123,7 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
-    public async Task EnrichmentProgress_SyncedLegacyConnectionWithoutDurableState_IsNeedsReclassification()
+    public async Task EnrichmentProgress_SyncedLegacyConnectionWithoutDurableState_IsIdleWithoutActiveRows()
     {
         await using var harness = new OpenBankingTestHarness(
             options: ValidSandboxOptions(),
@@ -2170,15 +2170,15 @@ public class OpenBankingIntegrationTests
 
         var progress = await harness.CreateConnectionService().GetEnrichmentProgressAsync(user.Id, CancellationToken.None);
 
-        Assert.True(progress.InProgress);
-        Assert.Equal("needs_reclassification", progress.Stage);
+        Assert.False(progress.InProgress);
+        Assert.Equal("idle", progress.Stage);
         Assert.Equal(0, progress.TotalCount);
         Assert.Equal(0, progress.ProcessedCount);
         Assert.Equal(0, progress.RemainingCount);
         Assert.Equal(0d, progress.ProgressPercent);
         Assert.Contains(progress.Connections, x =>
             x.ConnectionId == connection.Id
-            && x.Stage == "needs_reclassification"
+            && x.Stage == "completed"
             && x.InProgress == false);
     }
 
