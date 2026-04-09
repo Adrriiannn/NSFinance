@@ -138,7 +138,7 @@ export function useBankEnrichmentProgressQuery(enabled = true) {
         || data.stage === "waiting_for_first_sync"
         || data.stage === "historical_backfill";
 
-      return shouldPoll ? 2_500 : false;
+      return shouldPoll ? 1_000 : false;
     },
     refetchIntervalInBackground: true
   });

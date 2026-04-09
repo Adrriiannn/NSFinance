@@ -171,6 +171,7 @@ export function GlobalEnrichmentProgressDial() {
   const [detailsVisible, setDetailsVisible] = useState(false);
   const [dotCount, setDotCount] = useState(1);
   const [dismissedCompletedSignature, setDismissedCompletedSignature] = useState<string | null>(null);
+  const [animatedProcessedCount, setAnimatedProcessedCount] = useState(0);
 
   const minTop = insets.top + spacing[16];
   const maxTop = Math.max(minTop, screenHeight - insets.bottom - DIAL_SIZE - DIAL_BOTTOM_CLEARANCE);
@@ -306,8 +307,49 @@ export function GlobalEnrichmentProgressDial() {
     : rawProcessedCount;
   const displayProcessedCount = Math.max(rawProcessedCount, derivedProcessedCount);
   const displayRemainingCount = rawRemainingCount;
+
+  useEffect(() => {
+    setAnimatedProcessedCount((current) => {
+      if (!hasActiveWork) {
+        return displayProcessedCount;
+      }
+
+      if (displayProcessedCount < current) {
+        return displayProcessedCount;
+      }
+
+      return current;
+    });
+  }, [displayProcessedCount, hasActiveWork]);
+
+  useEffect(() => {
+    if (!hasActiveWork || !progress) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setAnimatedProcessedCount((current) => {
+        if (current >= displayProcessedCount) {
+          return current;
+        }
+
+        return current + 1;
+      });
+    }, 12);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [displayProcessedCount, hasActiveWork, progress]);
+
+  const liveProcessedCount = hasActiveWork
+    ? Math.min(animatedProcessedCount, displayProcessedCount)
+    : displayProcessedCount;
+  const liveRemainingCount = hasActiveWork
+    ? Math.max(0, displayTotalCount - liveProcessedCount)
+    : displayRemainingCount;
   const progressPercent = displayTotalCount > 0
-    ? Math.max(0, Math.min(100, Math.round((displayProcessedCount / displayTotalCount) * 100)))
+    ? Math.max(0, Math.min(100, Math.round((liveProcessedCount / displayTotalCount) * 100)))
     : 0;
   const stageLabel = !hasConnectedBanks
     ? "Connect a bank account"
@@ -527,9 +569,9 @@ export function GlobalEnrichmentProgressDial() {
     return null;
   }
 
-  const processedCount = displayProcessedCount;
+  const processedCount = liveProcessedCount;
   const totalCount = displayTotalCount;
-  const remainingCount = displayRemainingCount;
+  const remainingCount = liveRemainingCount;
   const isDone = isCompletedState;
 
   return (
