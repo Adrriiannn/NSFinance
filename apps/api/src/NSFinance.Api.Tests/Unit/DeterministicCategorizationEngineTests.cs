@@ -2605,6 +2605,9 @@ public class DeterministicCategorizationEngineTests
             providerCapabilityRegistry,
             narrativeSignalExtractor);
         var transferPairingEngine = new TransferPairingEngine();
+        var recurringPatternService = new RecurringPatternService(
+            normalizationService,
+            NullLogger<RecurringPatternService>.Instance);
         var savingsRoutingPolicy = new SavingsRoutingPolicy();
         var savingsTransferClassifier = new SavingsTransferClassifier();
         var retryPlanner = new DeterministicClassificationRetryPlanner();
@@ -2614,6 +2617,7 @@ public class DeterministicCategorizationEngineTests
             dbContext,
             normalizationService,
             featureExtractor,
+            recurringPatternService,
             transferPairingEngine,
             savingsRoutingPolicy,
             savingsTransferClassifier,
@@ -2794,6 +2798,7 @@ public class DeterministicCategorizationEngineTests
             LooksLikeExternalCounterparty: looksLikeExternalCounterparty,
             Direction: signedAmount < 0m ? "outflow" : signedAmount > 0m ? "inflow" : "neutral",
             HasCounterpartyAccounts: hasCounterpartyAccounts,
-            ReferenceEntropy: 0.6d);
+            ReferenceEntropy: 0.6d,
+            RecurringPattern: RecurringPatternResult.None());
     }
 }

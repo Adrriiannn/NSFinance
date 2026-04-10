@@ -42,7 +42,8 @@ public sealed record DeterministicTransactionFeature(
     bool LooksLikeExternalCounterparty,
     string Direction,
     bool HasCounterpartyAccounts,
-    double ReferenceEntropy);
+    double ReferenceEntropy,
+    RecurringPatternResult RecurringPattern);
 
 public sealed record DeterministicClassificationOutcome(
     DeterministicClassificationStatus Status,

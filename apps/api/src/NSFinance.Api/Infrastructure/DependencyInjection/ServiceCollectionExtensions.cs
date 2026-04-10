@@ -287,6 +287,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<NarrativeSignalExtractor>();
         services.AddScoped<TransactionNormalizationService>();
         services.AddScoped<TransactionFeatureExtractor>();
+        services.AddScoped<IRecurringPatternService, RecurringPatternService>();
         services.AddScoped<TransferPairingEngine>();
         services.AddScoped<SavingsRoutingPolicy>();
         services.AddScoped<SavingsTransferClassifier>();

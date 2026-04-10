@@ -8836,6 +8836,9 @@ public class OpenBankingIntegrationTests
                 normalizationService,
                 new ProviderCapabilityRegistry(),
                 new NarrativeSignalExtractor());
+            var recurringPatternService = new RecurringPatternService(
+                normalizationService,
+                NullLogger<RecurringPatternService>.Instance);
             var transferPairingEngine = new TransferPairingEngine();
             var savingsRoutingPolicy = new SavingsRoutingPolicy();
             var savingsTransferClassifier = new SavingsTransferClassifier();
@@ -8845,6 +8848,7 @@ public class OpenBankingIntegrationTests
                 DbContext,
                 normalizationService,
                 featureExtractor,
+                recurringPatternService,
                 transferPairingEngine,
                 savingsRoutingPolicy,
                 savingsTransferClassifier,

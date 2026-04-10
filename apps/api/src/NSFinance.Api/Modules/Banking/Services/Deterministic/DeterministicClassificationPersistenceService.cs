@@ -11,6 +11,7 @@ public sealed class DeterministicClassificationPersistenceService(
     AppDbContext dbContext,
     TransactionNormalizationService normalizationService,
     TransactionFeatureExtractor featureExtractor,
+    IRecurringPatternService recurringPatternService,
     TransferPairingEngine transferPairingEngine,
     SavingsRoutingPolicy savingsRoutingPolicy,
     SavingsTransferClassifier savingsTransferClassifier,
@@ -138,10 +139,57 @@ public sealed class DeterministicClassificationPersistenceService(
                     stableSequenceByTransactionId.TryGetValue(row.Id, out var stableSequence) ? stableSequence : 0L);
             })
             .ToList();
-        var featuresById = featureExtractor.BuildFeatures(featureInputs);
-
+        var extractedFeaturesById = featureExtractor.BuildFeatures(featureInputs);
         var byId = contextRows.ToDictionary(x => x.Id);
         var targetSet = targetTransactionIds.ToHashSet();
+
+        var recurringOptions = new RecurringPatternOptions
+        {
+            PrecomputedTextByTransactionId = extractedFeaturesById.ToDictionary(
+                x => x.Key,
+                x => new RecurringPatternTextDescriptor(
+                    x.Value.NormalizedDescription,
+                    x.Value.Tokens,
+                    x.Value.Tokens
+                        .Where(token =>
+                            token.Length > 2
+                            && !RecurringPatternOptions.DefaultMerchantStopWords.Contains(token)
+                            && !token.All(char.IsDigit))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase)))
+        };
+        var recurringByTransactionId = new Dictionary<Guid, RecurringPatternResult>(targetSet.Count);
+        var recurringDetectedCount = 0;
+        foreach (var transactionId in targetSet)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!byId.TryGetValue(transactionId, out var transaction))
+            {
+                continue;
+            }
+
+            var recurringResult = await recurringPatternService.EvaluateAsync(
+                transaction,
+                contextRows,
+                recurringOptions,
+                cancellationToken);
+            recurringByTransactionId[transactionId] = recurringResult;
+            if (recurringResult.IsRecurring)
+            {
+                recurringDetectedCount++;
+            }
+        }
+
+        logger.LogDebug(
+            "Recurring pattern pre-evaluation completed targetRows={TargetRows} recurringDetected={RecurringDetected}",
+            targetSet.Count,
+            recurringDetectedCount);
+
+        var featuresById = extractedFeaturesById.ToDictionary(
+            x => x.Key,
+            x => recurringByTransactionId.TryGetValue(x.Key, out var recurringPattern)
+                ? x.Value with { RecurringPattern = recurringPattern }
+                : x.Value);
+
         var linkedPairs = BuildLinkedPairMap(contextRows, byId);
         var pairedIds = linkedPairs.Keys.ToHashSet();
         var pairingAnalysis = transferPairingEngine.AnalyzeUnpairedTransactions(featuresById, pairedIds);

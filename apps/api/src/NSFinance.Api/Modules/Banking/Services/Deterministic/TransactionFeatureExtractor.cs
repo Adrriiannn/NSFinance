@@ -184,7 +184,8 @@ public sealed class TransactionFeatureExtractor(
                 current.LooksLikeExternalCounterparty,
                 row.Amount < 0m ? "outflow" : row.Amount > 0m ? "inflow" : "neutral",
                 row.HasCounterpartyAccounts,
-                normalizationService.ComputeReferenceEntropy(current.NormalizedDescription));
+                normalizationService.ComputeReferenceEntropy(current.NormalizedDescription),
+                RecurringPatternResult.None());
         }
 
         return features;
