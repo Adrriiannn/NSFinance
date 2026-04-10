@@ -39,6 +39,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<RawBankCardTransaction> RawBankCardTransactions => Set<RawBankCardTransaction>();
     public DbSet<BankDirectDebit> BankDirectDebits => Set<BankDirectDebit>();
     public DbSet<BankStandingOrder> BankStandingOrders => Set<BankStandingOrder>();
+    public DbSet<Merchant> Merchants => Set<Merchant>();
+    public DbSet<MerchantAlias> MerchantAliases => Set<MerchantAlias>();
+    public DbSet<MerchantBehaviorProfile> MerchantBehaviorProfiles => Set<MerchantBehaviorProfile>();
+    public DbSet<MerchantCategoryHint> MerchantCategoryHints => Set<MerchantCategoryHint>();
+    public DbSet<MerchantEvidence> MerchantEvidence => Set<MerchantEvidence>();
+    public DbSet<UnresolvedMerchant> UnresolvedMerchants => Set<UnresolvedMerchant>();
     public DbSet<ExpenseTrackerEntry> ExpenseTrackerEntries => Set<ExpenseTrackerEntry>();
     public DbSet<ExpensePlan> ExpensePlans => Set<ExpensePlan>();
     public DbSet<ExpensePlanLineItem> ExpensePlanLineItems => Set<ExpensePlanLineItem>();
