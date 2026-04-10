@@ -11,25 +11,39 @@ public class RecurringPatternServiceTests
     private static readonly DateTime ReferenceUtc = new(2026, 4, 10, 10, 0, 0, DateTimeKind.Utc);
 
     [Fact]
-    public async Task EvaluateAsync_MonthlySubscriptionPattern_ReturnsStrongMonthlyRecurring()
+    public async Task EvaluateAsync_FirstOccurrenceWithNoHistory_ReturnsNone()
+    {
+        var service = CreateService();
+        var candidate = BuildTransaction(-15.99m, "NETFLIX.COM", ReferenceUtc, Guid.NewGuid());
+
+        var result = await service.EvaluateAsync(candidate, [], new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.False(result.IsRecurring);
+        Assert.Equal(RecurringConfidenceTier.None, result.ConfidenceTier);
+        Assert.Contains(RecurringPatternReasonCodes.MinimumPriorMatchesNotMet, result.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_StableMonthlySpotify_ReturnsStrongRecurring()
     {
         var service = CreateService();
         var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-9.99m, "Netflix Subscription", ReferenceUtc, accountId);
+        var candidate = BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc, accountId);
         var history = new[]
         {
-            BuildTransaction(-9.99m, "Netflix Subscription", ReferenceUtc.AddDays(-30), accountId),
-            BuildTransaction(-9.99m, "Netflix Subscription", ReferenceUtc.AddDays(-60), accountId),
-            BuildTransaction(-9.99m, "Netflix Subscription", ReferenceUtc.AddDays(-90), accountId)
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-60), accountId),
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-90), accountId),
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-120), accountId)
         };
 
         var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
 
         Assert.True(result.IsRecurring);
         Assert.Equal(RecurringCadence.Monthly, result.Cadence);
-        Assert.Equal(RecurringConfidenceTier.Strong, result.ConfidenceTier);
-        Assert.Contains(RecurringPatternReasonCodes.MonthlyIntervalCluster, result.ReasonCodes);
-        Assert.Contains(RecurringPatternReasonCodes.MerchantExactMatch, result.ReasonCodes);
+        Assert.Equal(RecurringIntervalStabilityTier.Strong, result.IntervalStabilityTier);
+        Assert.Equal(RecurringAmountStabilityTier.Exact, result.AmountStabilityTier);
+        Assert.True(result.CadenceConfidence >= 0.8d);
     }
 
     [Fact]
@@ -53,87 +67,246 @@ public class RecurringPatternServiceTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_YearlyPattern_ReturnsRecurring()
+    public async Task EvaluateAsync_YearlyInsuranceRenewal_WithDrift_ReturnsRecurring()
     {
         var service = CreateService();
         var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-320.00m, "Home Insurance Renewal", ReferenceUtc, accountId);
+        var candidate = BuildTransaction(-320.00m, "Acme Insurance Renewal", ReferenceUtc, accountId);
         var history = new[]
         {
-            BuildTransaction(-318.00m, "Home Insurance Renewal", ReferenceUtc.AddDays(-365), accountId),
-            BuildTransaction(-315.00m, "Home Insurance Renewal", ReferenceUtc.AddDays(-730), accountId)
+            BuildTransaction(-300.00m, "Acme Insurance Renewal", ReferenceUtc.AddDays(-362), accountId),
+            BuildTransaction(-290.00m, "Acme Insurance Renewal", ReferenceUtc.AddDays(-729), accountId)
         };
 
         var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
 
         Assert.True(result.IsRecurring);
         Assert.Equal(RecurringCadence.Yearly, result.Cadence);
-        Assert.Contains(RecurringPatternReasonCodes.YearlyIntervalCluster, result.ReasonCodes);
+        Assert.True(result.CadenceConfidence >= 0.55d);
     }
 
     [Fact]
-    public async Task EvaluateAsync_GroceryPattern_IsBlockedAsDiscretionary()
+    public async Task EvaluateAsync_UtilityAmountDateDrift_ReturnsRecurringWithDriftTier()
     {
         var service = CreateService();
         var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-73.22m, "Tesco Grocery", ReferenceUtc, accountId);
+        var candidate = BuildTransaction(-71.33m, "City Water Bill", ReferenceUtc, accountId);
         var history = new[]
         {
-            BuildTransaction(-69.85m, "Tesco Grocery", ReferenceUtc.AddDays(-7), accountId),
-            BuildTransaction(-74.01m, "Tesco Grocery", ReferenceUtc.AddDays(-14), accountId),
-            BuildTransaction(-71.60m, "Tesco Grocery", ReferenceUtc.AddDays(-21), accountId)
+            BuildTransaction(-66.11m, "City Water Bill", ReferenceUtc.AddDays(-28), accountId),
+            BuildTransaction(-72.44m, "City Water Bill", ReferenceUtc.AddDays(-61), accountId),
+            BuildTransaction(-69.92m, "City Water Bill", ReferenceUtc.AddDays(-91), accountId),
+            BuildTransaction(-64.78m, "City Water Bill", ReferenceUtc.AddDays(-121), accountId)
+        };
+
+        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.True(result.IsRecurring);
+        Assert.Equal(RecurringCadence.Monthly, result.Cadence);
+        Assert.NotEqual(RecurringAmountStabilityTier.Chaotic, result.AmountStabilityTier);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_TescoRepeatedSpend_IsBlockedAsRepeatedUsage()
+    {
+        var service = CreateService();
+        var accountId = Guid.NewGuid();
+        var candidate = BuildTransaction(-74.21m, "Tesco Grocery", ReferenceUtc, accountId);
+        var history = new[]
+        {
+            BuildTransaction(-35.20m, "Tesco Grocery", ReferenceUtc.AddDays(-2), accountId),
+            BuildTransaction(-92.11m, "Tesco Grocery", ReferenceUtc.AddDays(-9), accountId),
+            BuildTransaction(-19.44m, "Tesco Grocery", ReferenceUtc.AddDays(-15), accountId),
+            BuildTransaction(-81.35m, "Tesco Grocery", ReferenceUtc.AddDays(-20), accountId),
+            BuildTransaction(-45.01m, "Tesco Grocery", ReferenceUtc.AddDays(-27), accountId)
         };
 
         var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
 
         Assert.False(result.IsRecurring);
         Assert.Equal(RecurringConfidenceTier.None, result.ConfidenceTier);
-        Assert.Contains(RecurringPatternReasonCodes.BlockedByDiscretionaryMerchant, result.ReasonCodes);
+        Assert.True(result.IsRepeatedUsagePattern);
+        Assert.Contains(RecurringPatternReasonCodes.BlockedByRepeatedUsage, result.ReasonCodes);
     }
 
     [Fact]
-    public async Task EvaluateAsync_RandomIntervals_RemainsNotRecurring()
+    public async Task EvaluateAsync_LoanWithSkippedCycle_PreservesRecurrence()
     {
         var service = CreateService();
         var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-18.20m, "Online Service Charge", ReferenceUtc, accountId);
+        var candidate = BuildTransaction(-250.00m, "Loan Repayment", ReferenceUtc, accountId);
         var history = new[]
         {
-            BuildTransaction(-18.20m, "Online Service Charge", ReferenceUtc.AddDays(-3), accountId),
-            BuildTransaction(-18.20m, "Online Service Charge", ReferenceUtc.AddDays(-19), accountId),
-            BuildTransaction(-18.20m, "Online Service Charge", ReferenceUtc.AddDays(-57), accountId),
-            BuildTransaction(-18.20m, "Online Service Charge", ReferenceUtc.AddDays(-92), accountId)
+            BuildTransaction(-250.00m, "Loan Repayment", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-250.00m, "Loan Repayment", ReferenceUtc.AddDays(-90), accountId),
+            BuildTransaction(-250.00m, "Loan Repayment", ReferenceUtc.AddDays(-120), accountId)
+        };
+
+        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.True(result.IsRecurring);
+        Assert.True(result.HasSkippedCycle);
+        Assert.Equal(RecurringCadence.Monthly, result.Cadence);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_RefundRowAgainstRecurringOutflow_DoesNotBecomeRecurring()
+    {
+        var service = CreateService();
+        var accountId = Guid.NewGuid();
+        var refundCandidate = BuildTransaction(12.99m, "Spotify Premium Refund", ReferenceUtc, accountId);
+        var history = new[]
+        {
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-60), accountId),
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-90), accountId)
+        };
+
+        var result = await service.EvaluateAsync(refundCandidate, history, new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.False(result.IsRecurring);
+        Assert.Equal(RecurringConfidenceTier.None, result.ConfidenceTier);
+        Assert.Contains(RecurringPatternReasonCodes.MinimumPriorMatchesNotMet, result.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_OutflowSeriesWithOneRefund_StillRecurring()
+    {
+        var service = CreateService();
+        var accountId = Guid.NewGuid();
+        var candidate = BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc, accountId);
+        var history = new[]
+        {
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-60), accountId),
+            BuildTransaction(-12.99m, "Spotify Premium", ReferenceUtc.AddDays(-90), accountId),
+            BuildTransaction(12.99m, "Spotify Premium Refund", ReferenceUtc.AddDays(-5), accountId)
+        };
+
+        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.True(result.IsRecurring);
+        Assert.Contains(RecurringPatternReasonCodes.OppositeDirectionReversalObserved, result.ReasonCodes);
+        Assert.False(result.HasDirectionConflict);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_MixedUseAmazon_PrimeSeriesIsIsolated()
+    {
+        var service = CreateService();
+        var accountId = Guid.NewGuid();
+        var primeOne = BuildTransaction(-8.99m, "AMAZON*PRIME", ReferenceUtc.AddDays(-30), accountId);
+        var primeTwo = BuildTransaction(-8.99m, "AMAZON*PRIME", ReferenceUtc.AddDays(-60), accountId);
+        var primeThree = BuildTransaction(-8.99m, "AMAZON*PRIME", ReferenceUtc.AddDays(-90), accountId);
+        var shoppingA = BuildTransaction(-44.11m, "AMAZON EU ORDER 1001", ReferenceUtc.AddDays(-3), accountId);
+        var shoppingB = BuildTransaction(-19.07m, "AMAZON EU ORDER 1002", ReferenceUtc.AddDays(-11), accountId);
+        var shoppingC = BuildTransaction(-77.22m, "AMAZON EU ORDER 1003", ReferenceUtc.AddDays(-18), accountId);
+        var candidate = BuildTransaction(-8.99m, "AMAZON*PRIME", ReferenceUtc, accountId);
+
+        var history = new[] { primeOne, primeTwo, primeThree, shoppingA, shoppingB, shoppingC };
+        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.True(result.IsRecurring);
+        Assert.Contains(primeOne.Id, result.MatchedTransactionIds);
+        Assert.Contains(primeTwo.Id, result.MatchedTransactionIds);
+        Assert.Contains(primeThree.Id, result.MatchedTransactionIds);
+        Assert.DoesNotContain(shoppingA.Id, result.MatchedTransactionIds);
+        Assert.DoesNotContain(shoppingB.Id, result.MatchedTransactionIds);
+        Assert.DoesNotContain(shoppingC.Id, result.MatchedTransactionIds);
+        Assert.Contains(RecurringPatternReasonCodes.MixedUseSignatureIsolated, result.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ModerateAmountUpgrade_PreservesRecurrenceWithShiftFlag()
+    {
+        var service = CreateService();
+        var accountId = Guid.NewGuid();
+        var candidate = BuildTransaction(-21.99m, "Streaming Plus", ReferenceUtc, accountId);
+        var history = new[]
+        {
+            BuildTransaction(-12.99m, "Streaming Plus", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-12.99m, "Streaming Plus", ReferenceUtc.AddDays(-60), accountId),
+            BuildTransaction(-12.99m, "Streaming Plus", ReferenceUtc.AddDays(-90), accountId),
+            BuildTransaction(-12.99m, "Streaming Plus", ReferenceUtc.AddDays(-120), accountId)
+        };
+
+        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.True(result.IsRecurring);
+        Assert.True(result.AmountChangeDetected);
+        Assert.Equal(RecurringAmountStabilityTier.Shifted, result.AmountStabilityTier);
+        Assert.False(result.MajorAmountShiftDetected);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_MajorAmountUpgrade_PreservesRecurrenceWithMajorShiftFlag()
+    {
+        var service = CreateService();
+        var accountId = Guid.NewGuid();
+        var candidate = BuildTransaction(-200.00m, "Pro Suite Subscription", ReferenceUtc, accountId);
+        var history = new[]
+        {
+            BuildTransaction(-20.00m, "Pro Suite Subscription", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-20.00m, "Pro Suite Subscription", ReferenceUtc.AddDays(-60), accountId),
+            BuildTransaction(-20.00m, "Pro Suite Subscription", ReferenceUtc.AddDays(-90), accountId),
+            BuildTransaction(-20.00m, "Pro Suite Subscription", ReferenceUtc.AddDays(-120), accountId),
+            BuildTransaction(-20.00m, "Pro Suite Subscription", ReferenceUtc.AddDays(-150), accountId)
+        };
+
+        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
+
+        Assert.True(result.IsRecurring);
+        Assert.True(result.AmountChangeDetected);
+        Assert.True(result.MajorAmountShiftDetected);
+        Assert.Equal(RecurringAmountStabilityTier.MajorShift, result.AmountStabilityTier);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ChaoticAmountHistory_RemainsNotRecurring()
+    {
+        var service = CreateService();
+        var accountId = Guid.NewGuid();
+        var candidate = BuildTransaction(-48.00m, "Service X", ReferenceUtc, accountId);
+        var history = new[]
+        {
+            BuildTransaction(-9.00m, "Service X", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-175.00m, "Service X", ReferenceUtc.AddDays(-60), accountId),
+            BuildTransaction(-200.00m, "Service X", ReferenceUtc.AddDays(-90), accountId),
+            BuildTransaction(-12.00m, "Service X", ReferenceUtc.AddDays(-120), accountId)
         };
 
         var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
 
         Assert.False(result.IsRecurring);
-        Assert.Equal(RecurringConfidenceTier.None, result.ConfidenceTier);
-        Assert.Contains(RecurringPatternReasonCodes.BlockedByHighIntervalVariance, result.ReasonCodes);
+        Assert.Equal(RecurringAmountStabilityTier.Chaotic, result.AmountStabilityTier);
+        Assert.Contains(RecurringPatternReasonCodes.BlockedByHighAmountVariance, result.ReasonCodes);
     }
 
     [Fact]
-    public async Task EvaluateAsync_MixedDirections_IsBlocked()
+    public async Task EvaluateAsync_MultipleOppositeDirectionConflicts_BlocksRecurrence()
     {
         var service = CreateService();
         var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-42m, "Cloud Storage Pro", ReferenceUtc, accountId);
+        var candidate = BuildTransaction(-49.99m, "Cloud Storage Pro", ReferenceUtc, accountId);
         var history = new[]
         {
-            BuildTransaction(-42m, "Cloud Storage Pro", ReferenceUtc.AddDays(-30), accountId),
-            BuildTransaction(-42m, "Cloud Storage Pro", ReferenceUtc.AddDays(-60), accountId),
-            BuildTransaction(42m, "Cloud Storage Pro", ReferenceUtc.AddDays(-90), accountId)
+            BuildTransaction(-49.99m, "Cloud Storage Pro", ReferenceUtc.AddDays(-30), accountId),
+            BuildTransaction(-49.99m, "Cloud Storage Pro", ReferenceUtc.AddDays(-60), accountId),
+            BuildTransaction(-49.99m, "Cloud Storage Pro", ReferenceUtc.AddDays(-90), accountId),
+            BuildTransaction(49.99m, "Cloud Storage Pro payout", ReferenceUtc.AddDays(-15), accountId),
+            BuildTransaction(49.99m, "Cloud Storage Pro payout", ReferenceUtc.AddDays(-45), accountId)
         };
 
         var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
 
         Assert.False(result.IsRecurring);
-        Assert.Equal(RecurringConfidenceTier.None, result.ConfidenceTier);
+        Assert.True(result.HasDirectionConflict);
+        Assert.True(result.DirectionConflictCount >= 2);
         Assert.Contains(RecurringPatternReasonCodes.BlockedByMixedDirection, result.ReasonCodes);
     }
 
     [Fact]
-    public async Task EvaluateAsync_MonthlyWithDateDrift_StillDetectsRecurring()
+    public async Task EvaluateAsync_MonthlyDateDrift_StillRecurring()
     {
         var service = CreateService();
         var accountId = Guid.NewGuid();
@@ -152,85 +325,6 @@ public class RecurringPatternServiceTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_AmountDriftWithinTolerance_StillDetectsRecurring()
-    {
-        var service = CreateService();
-        var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-20.00m, "Developer SaaS", ReferenceUtc, accountId);
-        var history = new[]
-        {
-            BuildTransaction(-19.20m, "Developer SaaS", ReferenceUtc.AddDays(-30), accountId),
-            BuildTransaction(-20.40m, "Developer SaaS", ReferenceUtc.AddDays(-60), accountId),
-            BuildTransaction(-19.85m, "Developer SaaS", ReferenceUtc.AddDays(-90), accountId)
-        };
-
-        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
-
-        Assert.True(result.IsRecurring);
-        Assert.Contains(RecurringPatternReasonCodes.AmountWithinTolerance, result.ReasonCodes);
-    }
-
-    [Fact]
-    public async Task EvaluateAsync_MissingOneCycle_StillDetectsRecurring()
-    {
-        var service = CreateService();
-        var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-30m, "Professional Tooling", ReferenceUtc, accountId);
-        var history = new[]
-        {
-            BuildTransaction(-30m, "Professional Tooling", ReferenceUtc.AddDays(-30), accountId),
-            BuildTransaction(-30m, "Professional Tooling", ReferenceUtc.AddDays(-90), accountId),
-            BuildTransaction(-30m, "Professional Tooling", ReferenceUtc.AddDays(-120), accountId)
-        };
-
-        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
-
-        Assert.True(result.IsRecurring);
-        Assert.Equal(RecurringCadence.Monthly, result.Cadence);
-        Assert.Contains(RecurringPatternReasonCodes.MissingCycleGap, result.ReasonCodes);
-    }
-
-    [Theory]
-    [InlineData("Restaurant Card Spend")]
-    [InlineData("Amazon Shopping")]
-    [InlineData("Supermarket Grocery")]
-    public async Task EvaluateAsync_DiscretionaryMerchantRegression_DoesNotFalsePositive(string description)
-    {
-        var service = CreateService();
-        var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-25.00m, description, ReferenceUtc, accountId);
-        var history = new[]
-        {
-            BuildTransaction(-24.50m, description, ReferenceUtc.AddDays(-7), accountId),
-            BuildTransaction(-26.30m, description, ReferenceUtc.AddDays(-14), accountId),
-            BuildTransaction(-25.15m, description, ReferenceUtc.AddDays(-21), accountId)
-        };
-
-        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
-
-        Assert.False(result.IsRecurring);
-        Assert.Equal(RecurringConfidenceTier.None, result.ConfidenceTier);
-    }
-
-    [Fact]
-    public async Task EvaluateAsync_TwoPriorMatches_CanStillReturnRecurring()
-    {
-        var service = CreateService();
-        var accountId = Guid.NewGuid();
-        var candidate = BuildTransaction(-5.49m, "Cloud Backup", ReferenceUtc, accountId);
-        var history = new[]
-        {
-            BuildTransaction(-5.49m, "Cloud Backup", ReferenceUtc.AddDays(-30), accountId),
-            BuildTransaction(-5.49m, "Cloud Backup", ReferenceUtc.AddDays(-60), accountId)
-        };
-
-        var result = await service.EvaluateAsync(candidate, history, new RecurringPatternOptions(), CancellationToken.None);
-
-        Assert.True(result.IsRecurring);
-        Assert.True(result.OccurrenceCount >= 3);
-    }
-
-    [Fact]
     public async Task EvaluateAsync_LargeHistorySet_RemainsStableAndReturnsResult()
     {
         var service = CreateService();
@@ -240,8 +334,8 @@ public class RecurringPatternServiceTests
 
         for (var i = 1; i <= 10000; i++)
         {
-            var amount = i % 100 == 0 ? -8.99m : -Math.Round(5m + (i % 30), 2);
-            var description = i % 100 == 0 ? "Streaming Max" : $"Random merchant {i}";
+            var amount = i % 80 == 0 ? -8.99m : -Math.Round(6m + (i % 45), 2);
+            var description = i % 80 == 0 ? "Streaming Max" : $"Random merchant {i}";
             history.Add(BuildTransaction(amount, description, ReferenceUtc.AddDays(-i), accountId));
         }
 

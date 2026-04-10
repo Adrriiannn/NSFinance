@@ -142,23 +142,25 @@ public sealed class DeterministicClassificationPersistenceService(
         var extractedFeaturesById = featureExtractor.BuildFeatures(featureInputs);
         var byId = contextRows.ToDictionary(x => x.Id);
         var targetSet = targetTransactionIds.ToHashSet();
+        var recurringOptionsPrototype = new RecurringPatternOptions();
+
+        var recurringDescriptorsByTransactionId = extractedFeaturesById.ToDictionary(
+            x => x.Key,
+            x => recurringOptionsPrototype.BuildDescriptorFromNormalized(x.Value.NormalizedDescription, x.Value.Tokens));
+        var recurringCandidatesBySignature = BuildRecurringCandidateIndex(
+            recurringDescriptorsByTransactionId,
+            descriptor => descriptor.BillingSignatureKey);
+        var recurringCandidatesByMerchantFamily = BuildRecurringCandidateIndex(
+            recurringDescriptorsByTransactionId,
+            descriptor => descriptor.MerchantFamilyKey);
 
         var recurringOptions = new RecurringPatternOptions
         {
-            PrecomputedTextByTransactionId = extractedFeaturesById.ToDictionary(
-                x => x.Key,
-                x => new RecurringPatternTextDescriptor(
-                    x.Value.NormalizedDescription,
-                    x.Value.Tokens,
-                    x.Value.Tokens
-                        .Where(token =>
-                            token.Length > 2
-                            && !RecurringPatternOptions.DefaultMerchantStopWords.Contains(token)
-                            && !token.All(char.IsDigit))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase)))
+            PrecomputedTextByTransactionId = recurringDescriptorsByTransactionId
         };
         var recurringByTransactionId = new Dictionary<Guid, RecurringPatternResult>(targetSet.Count);
         var recurringDetectedCount = 0;
+        var recurringAverageCandidatePool = 0d;
         foreach (var transactionId in targetSet)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -167,9 +169,18 @@ public sealed class DeterministicClassificationPersistenceService(
                 continue;
             }
 
+            var recurringCandidateRows = ResolveRecurringCandidateRows(
+                transactionId,
+                byId,
+                contextRows,
+                recurringDescriptorsByTransactionId,
+                recurringCandidatesBySignature,
+                recurringCandidatesByMerchantFamily);
+            recurringAverageCandidatePool += recurringCandidateRows.Count;
+
             var recurringResult = await recurringPatternService.EvaluateAsync(
                 transaction,
-                contextRows,
+                recurringCandidateRows,
                 recurringOptions,
                 cancellationToken);
             recurringByTransactionId[transactionId] = recurringResult;
@@ -180,9 +191,10 @@ public sealed class DeterministicClassificationPersistenceService(
         }
 
         logger.LogDebug(
-            "Recurring pattern pre-evaluation completed targetRows={TargetRows} recurringDetected={RecurringDetected}",
+            "Recurring pattern pre-evaluation completed targetRows={TargetRows} recurringDetected={RecurringDetected} averageCandidatePoolSize={AverageCandidatePoolSize}",
             targetSet.Count,
-            recurringDetectedCount);
+            recurringDetectedCount,
+            targetSet.Count == 0 ? 0d : Math.Round(recurringAverageCandidatePool / targetSet.Count, 2, MidpointRounding.AwayFromZero));
 
         var featuresById = extractedFeaturesById.ToDictionary(
             x => x.Key,
@@ -959,6 +971,74 @@ public sealed class DeterministicClassificationPersistenceService(
         }
 
         return touched;
+    }
+
+    private static Dictionary<string, List<Guid>> BuildRecurringCandidateIndex(
+        IReadOnlyDictionary<Guid, RecurringPatternTextDescriptor> descriptorsByTransactionId,
+        Func<RecurringPatternTextDescriptor, string> keySelector)
+    {
+        var index = new Dictionary<string, List<Guid>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (transactionId, descriptor) in descriptorsByTransactionId)
+        {
+            var key = keySelector(descriptor);
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            if (!index.TryGetValue(key, out var ids))
+            {
+                ids = [];
+                index[key] = ids;
+            }
+
+            ids.Add(transactionId);
+        }
+
+        return index;
+    }
+
+    private static IReadOnlyList<Transaction> ResolveRecurringCandidateRows(
+        Guid transactionId,
+        IReadOnlyDictionary<Guid, Transaction> rowsById,
+        IReadOnlyList<Transaction> contextRows,
+        IReadOnlyDictionary<Guid, RecurringPatternTextDescriptor> descriptorsByTransactionId,
+        IReadOnlyDictionary<string, List<Guid>> candidatesBySignature,
+        IReadOnlyDictionary<string, List<Guid>> candidatesByMerchantFamily)
+    {
+        if (!descriptorsByTransactionId.TryGetValue(transactionId, out var descriptor))
+        {
+            return contextRows;
+        }
+
+        var candidateIds = new HashSet<Guid>();
+        if (!string.IsNullOrWhiteSpace(descriptor.BillingSignatureKey)
+            && candidatesBySignature.TryGetValue(descriptor.BillingSignatureKey, out var signatureIds))
+        {
+            foreach (var candidateId in signatureIds)
+            {
+                candidateIds.Add(candidateId);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(descriptor.MerchantFamilyKey)
+            && candidatesByMerchantFamily.TryGetValue(descriptor.MerchantFamilyKey, out var familyIds))
+        {
+            foreach (var candidateId in familyIds)
+            {
+                candidateIds.Add(candidateId);
+            }
+        }
+
+        if (candidateIds.Count == 0)
+        {
+            return contextRows;
+        }
+
+        return candidateIds
+            .Where(rowsById.ContainsKey)
+            .Select(candidateId => rowsById[candidateId])
+            .ToArray();
     }
 
     private static bool HasProviderTransferHint(string? transactionType)
