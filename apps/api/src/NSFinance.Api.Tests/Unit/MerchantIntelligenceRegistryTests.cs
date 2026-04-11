@@ -83,6 +83,107 @@ public class MerchantIntelligenceRegistryTests
     }
 
     [Fact]
+    public async Task ResolveAsync_FuzzyDangerousFamily_DoesNotOverResolveMixedUseDescriptor()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var merchant = await registry.CreateMerchantAsync(
+            new MerchantCreateRequest(
+                CanonicalName: "Amazon Prime",
+                DisplayName: "Amazon Prime",
+                MerchantStatus: MerchantStatus.Active,
+                MerchantType: MerchantType.Merchant,
+                MerchantUsageType: MerchantUsageType.MixedUse,
+                PrimaryCountryCode: "IE",
+                OfficialWebsite: "https://amazon.test",
+                DescriptionSummary: "Prime membership",
+                ParentMerchantId: null),
+            CancellationToken.None);
+        await registry.AttachAliasAsync(
+            new MerchantAliasCreateRequest(
+                MerchantId: merchant.Id,
+                AliasText: "AMAZON PRIME MEMBERSHIP",
+                AliasType: MerchantAliasType.BillingDescriptor,
+                Confidence: 0.96d,
+                IsExactMatchPreferred: false,
+                Source: "seed",
+                IsActive: true),
+            CancellationToken.None);
+
+        var resolver = CreateResolver(dbContext, normalizer, registry);
+        var result = await resolver.ResolveAsync("amazon marketplace order", CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.NotNull(result.UnresolvedMerchantId);
+        Assert.Equal(MerchantAcceptanceDecisionType.Unresolved, result.AcceptanceDecisionType);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_FamilyDangerousFamily_RequiresExactCanonicalName()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        await registry.CreateMerchantAsync(
+            new MerchantCreateRequest(
+                CanonicalName: "Google Services",
+                DisplayName: "Google Services",
+                MerchantStatus: MerchantStatus.Active,
+                MerchantType: MerchantType.Merchant,
+                MerchantUsageType: MerchantUsageType.MixedUse,
+                PrimaryCountryCode: "US",
+                OfficialWebsite: null,
+                DescriptionSummary: null,
+                ParentMerchantId: null),
+            CancellationToken.None);
+
+        var resolver = CreateResolver(dbContext, normalizer, registry);
+        var result = await resolver.ResolveAsync("google youtube premium", CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.NotNull(result.UnresolvedMerchantId);
+        Assert.Equal(MerchantAcceptanceDecisionType.Unresolved, result.AcceptanceDecisionType);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ExactAliasStillWins_ForDangerousMerchantFamily()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var merchant = await registry.CreateMerchantAsync(
+            new MerchantCreateRequest(
+                CanonicalName: "PayPal Spotify",
+                DisplayName: "PayPal Spotify",
+                MerchantStatus: MerchantStatus.Active,
+                MerchantType: MerchantType.Intermediary,
+                MerchantUsageType: MerchantUsageType.MixedUse,
+                PrimaryCountryCode: "US",
+                OfficialWebsite: null,
+                DescriptionSummary: null,
+                ParentMerchantId: null),
+            CancellationToken.None);
+        await registry.AttachAliasAsync(
+            new MerchantAliasCreateRequest(
+                MerchantId: merchant.Id,
+                AliasText: "PAYPAL *SPOTIFY",
+                AliasType: MerchantAliasType.BillingDescriptor,
+                Confidence: 1d,
+                IsExactMatchPreferred: true,
+                Source: "seed",
+                IsActive: true),
+            CancellationToken.None);
+
+        var resolver = CreateResolver(dbContext, normalizer, registry);
+        var result = await resolver.ResolveAsync("paypal spotify", CancellationToken.None);
+
+        Assert.True(result.IsResolved);
+        Assert.Equal(MerchantResolutionType.ExactAlias, result.ResolutionType);
+        Assert.Equal(merchant.Id, result.MerchantId);
+    }
+
+    [Fact]
     public async Task ResolveAsync_NoMatch_TracksUnresolvedAndIncrementsOccurrence()
     {
         await using var dbContext = CreateDbContext();

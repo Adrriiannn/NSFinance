@@ -16,6 +16,14 @@ public sealed class MerchantResolutionService(
     private const int MaxFamilyCandidates = 30;
     private const double FuzzyAcceptanceThreshold = 0.82d;
     private const double FamilyAcceptanceThreshold = 0.76d;
+    private static readonly HashSet<string> DangerousFamilyRoots = new(StringComparer.Ordinal)
+    {
+        "amazon",
+        "google",
+        "apple",
+        "microsoft",
+        "paypal"
+    };
 
     public async Task<MerchantResolutionResult> ResolveAsync(string rawDescriptor, CancellationToken cancellationToken)
     {
@@ -39,6 +47,9 @@ public sealed class MerchantResolutionService(
         var exact = await TryResolveExactAliasAsync(normalizedDescriptor, cancellationToken);
         if (exact.IsResolved)
         {
+            logger.LogDebug(
+                "Merchant resolution short-circuit exact alias; fuzzy/family paths skipped normalizedDescriptor={NormalizedDescriptor}",
+                normalizedDescriptor);
             return exact;
         }
 
@@ -112,6 +123,7 @@ public sealed class MerchantResolutionService(
         {
             return UnresolvedResult(normalizedDescriptor, ["fuzzy_alias_not_attempted"]);
         }
+        var dangerousFamilyDescriptor = IsDangerousFamilyToken(firstToken);
 
         var fuzzyCandidates = await dbContext.MerchantAliases
             .AsNoTracking()
@@ -132,13 +144,15 @@ public sealed class MerchantResolutionService(
             .Take(MaxFuzzyAliasCandidates)
             .ToListAsync(cancellationToken);
 
-        var best = fuzzyCandidates
+        var scoredCandidates = fuzzyCandidates
             .Select(candidate =>
             {
                 var aliasTokens = normalizer.Tokenize(candidate.Alias.NormalizedAliasText);
                 var tokenSimilarity = ComputeJaccard(descriptorTokens, aliasTokens);
                 var startsWith = normalizedDescriptor.StartsWith(candidate.Alias.NormalizedAliasText, StringComparison.Ordinal)
                                  || candidate.Alias.NormalizedAliasText.StartsWith(normalizedDescriptor, StringComparison.Ordinal);
+                var aliasRootToken = aliasTokens.FirstOrDefault();
+                var dangerousFamilyAlias = IsDangerousFamilyToken(aliasRootToken);
                 var score = (tokenSimilarity * 0.72d)
                             + (Math.Clamp(candidate.Alias.Confidence, 0d, 1d) * 0.18d)
                             + (candidate.Alias.IsExactMatchPreferred ? 0.08d : 0d)
@@ -149,17 +163,77 @@ public sealed class MerchantResolutionService(
                     candidate.Alias,
                     candidate.MerchantUsageType,
                     Score = Math.Clamp(score, 0d, 1d),
-                    TokenSimilarity = tokenSimilarity
+                    TokenSimilarity = tokenSimilarity,
+                    StartsWith = startsWith,
+                    DangerousFamilyAlias = dangerousFamilyAlias
                 };
             })
+            .ToList();
+
+        var best = scoredCandidates
             .OrderByDescending(x => x.Score)
             .ThenByDescending(x => x.TokenSimilarity)
             .FirstOrDefault();
 
-        if (best is null || best.Score < FuzzyAcceptanceThreshold || best.TokenSimilarity < 0.72d)
+        if (scoredCandidates.Count > 0)
         {
-            return UnresolvedResult(normalizedDescriptor, ["fuzzy_alias_not_found"]);
+            var topDiagnostics = scoredCandidates
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.TokenSimilarity)
+                .Take(3)
+                .Select(x => $"alias={x.Alias.NormalizedAliasText}|score={x.Score:0.000}|token={x.TokenSimilarity:0.000}|startsWith={x.StartsWith}|usage={x.MerchantUsageType}|danger={x.DangerousFamilyAlias}")
+                .ToArray();
+            logger.LogDebug(
+                "Merchant fuzzy candidate diagnostics normalizedDescriptor={NormalizedDescriptor} descriptorDangerous={DescriptorDangerous} candidates={Candidates}",
+                normalizedDescriptor,
+                dangerousFamilyDescriptor,
+                string.Join(" || ", topDiagnostics));
         }
+
+        var minimumScore = FuzzyAcceptanceThreshold;
+        var minimumTokenSimilarity = 0.72d;
+        if (dangerousFamilyDescriptor)
+        {
+            minimumScore = 0.90d;
+            minimumTokenSimilarity = 0.86d;
+        }
+
+        var dangerousFamilyGuardFailed = best is not null
+                                         && (dangerousFamilyDescriptor || best.DangerousFamilyAlias)
+                                         && (!best.StartsWith
+                                             || best.TokenSimilarity < 0.90d
+                                             || best.MerchantUsageType == MerchantUsageType.MixedUse);
+
+        if (best is null
+            || best.Score < minimumScore
+            || best.TokenSimilarity < minimumTokenSimilarity
+            || dangerousFamilyGuardFailed)
+        {
+            var reasons = new List<string> { "fuzzy_alias_not_found" };
+            if (dangerousFamilyDescriptor || best?.DangerousFamilyAlias == true)
+            {
+                reasons.Add("fuzzy_alias_dangerous_family_guard");
+            }
+
+            logger.LogInformation(
+                "Merchant fuzzy resolution fallback to unresolved normalizedDescriptor={NormalizedDescriptor} bestScore={BestScore} bestTokenSimilarity={BestTokenSimilarity} dangerousGuardFailed={DangerousGuardFailed} minScore={MinimumScore} minToken={MinimumToken}",
+                normalizedDescriptor,
+                best?.Score,
+                best?.TokenSimilarity,
+                dangerousFamilyGuardFailed,
+                minimumScore,
+                minimumTokenSimilarity);
+
+            return UnresolvedResult(normalizedDescriptor, reasons);
+        }
+
+        logger.LogDebug(
+            "Merchant fuzzy resolution selected merchantId={MerchantId} alias={Alias} score={Score} tokenSimilarity={TokenSimilarity} descriptorDangerous={DescriptorDangerous}",
+            best.Alias.MerchantId,
+            best.Alias.NormalizedAliasText,
+            best.Score,
+            best.TokenSimilarity,
+            dangerousFamilyDescriptor);
 
         return new MerchantResolutionResult(
             MerchantId: best.Alias.MerchantId,
@@ -185,6 +259,7 @@ public sealed class MerchantResolutionService(
         {
             return UnresolvedResult(normalizedDescriptor, ["family_match_not_attempted"]);
         }
+        var dangerousFamilyDescriptor = IsDangerousFamilyToken(firstToken);
 
         var familyCandidates = await dbContext.Merchants
             .AsNoTracking()
@@ -201,7 +276,7 @@ public sealed class MerchantResolutionService(
             })
             .ToListAsync(cancellationToken);
 
-        var best = familyCandidates
+        var scoredFamilyCandidates = familyCandidates
             .Select(candidate =>
             {
                 var candidateTokens = normalizer.Tokenize(candidate.NormalizedCanonicalName);
@@ -212,18 +287,61 @@ public sealed class MerchantResolutionService(
                 {
                     candidate.Id,
                     candidate.CanonicalName,
+                    candidate.NormalizedCanonicalName,
                     Score = Math.Clamp(score, 0d, 1d),
                     Similarity = similarity
                 };
             })
+            .ToList();
+
+        var best = scoredFamilyCandidates
             .OrderByDescending(x => x.Score)
             .ThenByDescending(x => x.Similarity)
             .FirstOrDefault();
 
-        if (best is null || best.Score < FamilyAcceptanceThreshold || best.Similarity < 0.75d)
+        if (scoredFamilyCandidates.Count > 0)
         {
-            return UnresolvedResult(normalizedDescriptor, ["family_match_not_found"]);
+            var topDiagnostics = scoredFamilyCandidates
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Similarity)
+                .Take(3)
+                .Select(x => $"canonical={x.NormalizedCanonicalName}|score={x.Score:0.000}|similarity={x.Similarity:0.000}")
+                .ToArray();
+            logger.LogDebug(
+                "Merchant family candidate diagnostics normalizedDescriptor={NormalizedDescriptor} descriptorDangerous={DescriptorDangerous} candidates={Candidates}",
+                normalizedDescriptor,
+                dangerousFamilyDescriptor,
+                string.Join(" || ", topDiagnostics));
         }
+
+        var dangerousFamilyGuardFailed = dangerousFamilyDescriptor
+                                         && best is not null
+                                         && !string.Equals(best.NormalizedCanonicalName, normalizedDescriptor, StringComparison.Ordinal);
+
+        if (best is null || best.Score < FamilyAcceptanceThreshold || best.Similarity < 0.75d || dangerousFamilyGuardFailed)
+        {
+            var reasons = new List<string> { "family_match_not_found" };
+            if (dangerousFamilyGuardFailed)
+            {
+                reasons.Add("family_match_dangerous_family_guard");
+            }
+
+            logger.LogInformation(
+                "Merchant family resolution fallback to unresolved normalizedDescriptor={NormalizedDescriptor} bestScore={BestScore} bestSimilarity={BestSimilarity} dangerousGuardFailed={DangerousGuardFailed}",
+                normalizedDescriptor,
+                best?.Score,
+                best?.Similarity,
+                dangerousFamilyGuardFailed);
+
+            return UnresolvedResult(normalizedDescriptor, reasons);
+        }
+
+        logger.LogDebug(
+            "Merchant family resolution selected merchantId={MerchantId} canonical={Canonical} score={Score} similarity={Similarity}",
+            best.Id,
+            best.CanonicalName,
+            best.Score,
+            best.Similarity);
 
         return new MerchantResolutionResult(
             MerchantId: best.Id,
@@ -439,5 +557,15 @@ public sealed class MerchantResolutionService(
 
         var union = left.Count + right.Count - intersection;
         return union <= 0 ? 0d : intersection / (double)union;
+    }
+
+    private static bool IsDangerousFamilyToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        return DangerousFamilyRoots.Contains(token.Trim().ToLowerInvariant());
     }
 }

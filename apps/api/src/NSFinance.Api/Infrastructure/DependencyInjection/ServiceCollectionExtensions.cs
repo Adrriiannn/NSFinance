@@ -15,6 +15,7 @@ using NSFinance.Api.Infrastructure.RequestContext;
 using NSFinance.Api.Infrastructure.Seeding;
 using NSFinance.Api.Infrastructure.Startup;
 using NSFinance.Api.Modules.Accounts.Services;
+using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Auth.Services;
 using NSFinance.Api.Modules.Auth.Configuration;
@@ -276,6 +277,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ExpenseTrackerService>();
         services.AddScoped<ExpensePlanService>();
         services.AddScoped<ExpensePlanCommunityService>();
+        services.AddAIIntegration(configuration);
         services.AddHttpClient<TrueLayerHttpClient>();
         services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
         services.AddScoped<TrueLayerConfigurationService>();
@@ -290,7 +292,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MerchantDescriptorNormalizer>();
         services.AddScoped<IMerchantRegistryService, MerchantRegistryService>();
         services.AddScoped<IMerchantAcceptancePolicy, MerchantAcceptancePolicy>();
-        services.AddScoped<IMerchantInvestigationService, StubMerchantInvestigationService>();
         services.AddScoped<IMerchantResolutionService, MerchantResolutionService>();
         services.AddScoped<TransactionFeatureExtractor>();
         services.AddScoped<IRecurringPatternService, RecurringPatternService>();
