@@ -7,6 +7,7 @@ using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
+using ChatStateSnapshot = NSFinance.Api.Modules.AI.Services.ConversationStateSnapshot;
 
 namespace NSFinance.Api.Tests.Unit;
 
@@ -104,7 +105,7 @@ public sealed class AIIntegrationLayerTests
             new ConversationContextBuildRequest(
                 AITaskType.UserChatComplex,
                 turns,
-                new ConversationStateSnapshot(
+                new ChatStateSnapshot(
                     ActiveTopic: "budgeting",
                     UserIntent: "reduce monthly overspend",
                     Constraints: new Dictionary<string, string> { ["currency"] = "EUR" },
@@ -604,6 +605,8 @@ public sealed class AIIntegrationLayerTests
 
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddDbContext<AppDbContext>(builder =>
+            builder.UseInMemoryDatabase($"ai-integration-di-{Guid.NewGuid():N}"));
         services.AddSingleton<MerchantDescriptorNormalizer>();
         services.AddAIIntegration(configuration);
 

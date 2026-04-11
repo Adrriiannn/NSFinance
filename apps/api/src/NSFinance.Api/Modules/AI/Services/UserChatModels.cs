@@ -22,7 +22,10 @@ public sealed record UserChatRequest(
     IReadOnlyList<UserChatTurn> RecentTurns,
     ConversationStateSnapshot? State,
     string CorrelationId,
-    IReadOnlyDictionary<string, string>? Metadata = null);
+    IReadOnlyDictionary<string, string>? Metadata = null,
+    Guid? UserId = null,
+    Guid? ConversationThreadId = null,
+    bool UsePersistentMemory = false);
 
 public sealed record UserChatResponse(
     string ReplyText,
@@ -33,4 +36,5 @@ public sealed record UserChatResponse(
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> FollowUpIntentHints,
     bool Succeeded,
-    string? FailureReason);
+    string? FailureReason,
+    Guid? ConversationThreadId = null);

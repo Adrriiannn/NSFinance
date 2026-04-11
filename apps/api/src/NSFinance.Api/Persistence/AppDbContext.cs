@@ -45,6 +45,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MerchantCategoryHint> MerchantCategoryHints => Set<MerchantCategoryHint>();
     public DbSet<MerchantEvidence> MerchantEvidence => Set<MerchantEvidence>();
     public DbSet<UnresolvedMerchant> UnresolvedMerchants => Set<UnresolvedMerchant>();
+    public DbSet<ConversationThread> ConversationThreads => Set<ConversationThread>();
+    public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
+    public DbSet<ConversationStateSnapshot> ConversationStateSnapshots => Set<ConversationStateSnapshot>();
+    public DbSet<ConversationSummary> ConversationSummaries => Set<ConversationSummary>();
+    public DbSet<ConversationContextBuildLog> ConversationContextBuildLogs => Set<ConversationContextBuildLog>();
     public DbSet<ExpenseTrackerEntry> ExpenseTrackerEntries => Set<ExpenseTrackerEntry>();
     public DbSet<ExpensePlan> ExpensePlans => Set<ExpensePlan>();
     public DbSet<ExpensePlanLineItem> ExpensePlanLineItems => Set<ExpensePlanLineItem>();

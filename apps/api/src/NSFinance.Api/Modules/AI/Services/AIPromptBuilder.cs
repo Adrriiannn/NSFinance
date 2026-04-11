@@ -90,11 +90,22 @@ public sealed class AIPromptBuilder : IPromptBuilder
             Return strict JSON matching the requested schema.
             """;
 
-        var messages = new List<AIMessage>(input.Context.ContextMessages.Count + 2)
+        var messages = new List<AIMessage>(input.ContextMessages.Count + 3)
         {
             AIMessage.Developer($"Chat complexity: {input.ComplexityEvaluation.Complexity}; reasonCodes={string.Join(',', input.ComplexityEvaluation.ReasonCodes)}")
         };
-        messages.AddRange(input.Context.ContextMessages);
+        if (!string.IsNullOrWhiteSpace(input.ContextSummary))
+        {
+            messages.Add(AIMessage.Developer($"Conversation summary: {input.ContextSummary}"));
+        }
+
+        if (input.StructuredState.Count > 0)
+        {
+            var structured = string.Join("; ", input.StructuredState.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+            messages.Add(AIMessage.Developer($"Structured state: {structured}"));
+        }
+
+        messages.AddRange(input.ContextMessages);
 
         return new PromptBuildResult(
             SystemInstructions: systemInstructions,

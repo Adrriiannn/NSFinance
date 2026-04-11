@@ -11,7 +11,9 @@ public sealed record MerchantInvestigationPromptInput(
 
 public sealed record UserChatPromptInput(
     UserChatRequest ChatRequest,
-    ConversationContextBuildResult Context,
+    IReadOnlyList<AIMessage> ContextMessages,
+    string? ContextSummary,
+    IReadOnlyDictionary<string, string> StructuredState,
     UserChatComplexityEvaluation ComplexityEvaluation);
 
 public sealed record PromptBuildResult(

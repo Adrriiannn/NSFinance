@@ -26,6 +26,12 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IAIModelRouter, AIModelRouter>();
         services.AddScoped<IUserChatComplexityClassifier, UserChatComplexityClassifier>();
         services.AddScoped<IConversationContextService, ConversationContextService>();
+        services.AddScoped<IConversationThreadService, ConversationThreadService>();
+        services.AddScoped<IConversationMessageService, ConversationMessageService>();
+        services.AddScoped<IConversationStateService, ConversationStateService>();
+        services.AddScoped<IConversationSummaryGenerator, DeterministicConversationSummaryGenerator>();
+        services.AddScoped<IConversationSummaryService, ConversationSummaryService>();
+        services.AddScoped<IPersistentConversationContextService, PersistentConversationContextService>();
         services.AddScoped<IPromptBuilder, AIPromptBuilder>();
         services.AddScoped<IMerchantInvestigationResponseParser, MerchantInvestigationResponseParser>();
         services.AddScoped<IUserChatResponseParser, UserChatResponseParser>();
