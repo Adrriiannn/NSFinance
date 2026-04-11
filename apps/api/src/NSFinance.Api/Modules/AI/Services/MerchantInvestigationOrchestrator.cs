@@ -64,31 +64,44 @@ public sealed class MerchantInvestigationOrchestrator(
             metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["triggerSource"] = request.TriggerSource,
-                ["normalizedDescriptor"] = normalizedDescriptor
+                ["normalizedDescriptor"] = normalizedDescriptor,
+                ["rawDescriptor"] = sanitizedDescriptor
             });
 
         var response = await aiClient.SendAsync(aiRequest, route, cancellationToken);
-        if (responseParser.TryParse(response, out var parsedResult, out var parseReasonCodes))
+        var parsed = responseParser.Parse(response);
+        var parsedResult = parsed.InvestigationResult;
+
+        if (parsed.ParsedSuccessfully && parsed.SemanticallyValid)
         {
             logger.LogInformation(
-                "Merchant investigation succeeded correlationId={CorrelationId} routeModel={Model} routeDeployment={Deployment} candidates={CandidateCount} insufficientEvidence={InsufficientEvidence} parseReasonCodes={ReasonCodes}",
+                "Merchant investigation succeeded correlationId={CorrelationId} task={TaskType} modelClass={ModelClass} routeModel={Model} routeDeployment={Deployment} mock={WasMocked} parserLowTrust={ParserLowTrust} recommendation={Recommendation} candidates={CandidateCount} confidence={OverallConfidence} ambiguity={Ambiguity} parseReasonCodes={ReasonCodes}",
                 correlationId,
+                AITaskType.MerchantInvestigation,
+                route.ModelClass,
                 route.Model,
                 route.Deployment,
+                response.WasMocked,
+                parsed.IsLowTrustValid,
+                parsedResult.Recommendation,
                 parsedResult.Candidates.Count,
-                parsedResult.InsufficientEvidence,
-                string.Join(',', parseReasonCodes));
+                parsedResult.OverallConfidence,
+                parsedResult.AmbiguityLevel,
+                string.Join(',', parsed.ReasonCodes));
 
             return parsedResult;
         }
 
         logger.LogWarning(
-            "Merchant investigation parse failure correlationId={CorrelationId} routeModel={Model} routeDeployment={Deployment} parseReasonCodes={ReasonCodes} failureReason={FailureReason}",
+            "Merchant investigation parse failure correlationId={CorrelationId} task={TaskType} modelClass={ModelClass} routeModel={Model} routeDeployment={Deployment} mock={WasMocked} parseReasonCodes={ReasonCodes} failureReason={FailureReason}",
             correlationId,
+            AITaskType.MerchantInvestigation,
+            route.ModelClass,
             route.Model,
             route.Deployment,
-            string.Join(',', parseReasonCodes),
-            parsedResult.FailureReason);
+            response.WasMocked,
+            string.Join(',', parsed.ReasonCodes),
+            parsed.FailureReason ?? parsedResult.FailureReason);
 
         return parsedResult;
     }

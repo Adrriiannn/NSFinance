@@ -48,6 +48,11 @@ public enum MockAIScenario
     MerchantStrongCandidate = 0,
     MerchantAmbiguousCandidates = 1,
     MerchantInsufficientEvidence = 2,
-    UserChatSimple = 3,
-    UserChatComplex = 4
+    MerchantConflictingCandidates = 3,
+    MerchantMalformedOutput = 4,
+    MerchantDangerousAliasProposal = 5,
+    MerchantNarrowUseWeakOfficial = 6,
+    MerchantIntermediaryMarketplace = 7,
+    UserChatSimple = 8,
+    UserChatComplex = 9
 }

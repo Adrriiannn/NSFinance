@@ -15,11 +15,15 @@ public sealed class AIBackedMerchantInvestigationService(
 
         var result = await orchestrator.InvestigateAsync(request, cancellationToken);
         logger.LogDebug(
-            "AI-backed merchant investigation completed normalizedDescriptor={NormalizedDescriptor} succeeded={Succeeded} insufficientEvidence={InsufficientEvidence} candidates={CandidateCount}",
+            "AI-backed merchant investigation completed normalizedDescriptor={NormalizedDescriptor} succeeded={Succeeded} insufficientEvidence={InsufficientEvidence} recommendation={Recommendation} candidates={CandidateCount} overallConfidence={OverallConfidence} ambiguity={AmbiguityLevel} parserRejected={ParserRejected}",
             request.NormalizedDescriptor,
             result.Succeeded,
             result.InsufficientEvidence,
-            result.Candidates.Count);
+            result.Recommendation,
+            result.Candidates.Count,
+            result.OverallConfidence,
+            result.AmbiguityLevel,
+            result.ParserRejected);
 
         return result;
     }

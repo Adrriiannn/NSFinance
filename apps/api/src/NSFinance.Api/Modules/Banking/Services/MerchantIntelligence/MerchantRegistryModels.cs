@@ -97,7 +97,13 @@ public sealed record MerchantInvestigationResult(
     bool InsufficientEvidence,
     IReadOnlyList<MerchantInvestigationCandidate> Candidates,
     IReadOnlyList<MerchantInvestigationEvidence> Evidence,
-    string? FailureReason);
+    string? FailureReason,
+    MerchantInvestigationRecommendation Recommendation = MerchantInvestigationRecommendation.Unresolved,
+    double OverallConfidence = 0d,
+    double AmbiguityLevel = 1d,
+    IReadOnlyList<MerchantInvestigationAliasSuggestion>? AliasSuggestions = null,
+    IReadOnlyList<string>? InvestigationReasonCodes = null,
+    bool ParserRejected = false);
 
 public sealed record MerchantInvestigationCandidate(
     Guid? ExistingMerchantId,
@@ -112,10 +118,23 @@ public sealed record MerchantInvestigationCandidate(
     bool HasContradictions,
     string? OfficialWebsite,
     string? DescriptionSummary,
-    IReadOnlyList<string> AliasCandidates);
+    IReadOnlyList<string> AliasCandidates,
+    double DescriptorMatchStrength = 0d,
+    double EntityMatchStrength = 0d,
+    IReadOnlyList<MerchantInvestigationAliasSuggestion>? AliasSuggestions = null,
+    IReadOnlyList<MerchantInvestigationEvidence>? EvidenceItems = null);
 
 public sealed record MerchantInvestigationEvidence(
     MerchantEvidenceType EvidenceType,
     string EvidenceSummary,
     double Confidence,
-    string? SourceReference);
+    string? SourceReference,
+    string? SourceClass = null,
+    double Relevance = 0d);
+
+public sealed record MerchantInvestigationAliasSuggestion(
+    string AliasText,
+    string AliasType,
+    double Confidence,
+    string? Notes,
+    bool IsPreferred = false);

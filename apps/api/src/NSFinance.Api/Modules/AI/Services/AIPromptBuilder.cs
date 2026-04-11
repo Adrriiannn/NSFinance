@@ -13,6 +13,7 @@ public sealed class AIPromptBuilder : IPromptBuilder
             Return only strict JSON matching the requested schema.
             Be conservative, avoid unsupported certainty, and clearly surface ambiguity.
             Do not assign final transaction categories; provide merchant intelligence only.
+            Never return prose outside JSON.
             """;
 
         var sb = new StringBuilder();
@@ -29,8 +30,44 @@ public sealed class AIPromptBuilder : IPromptBuilder
             }
         }
 
-        sb.AppendLine("Provide candidate merchants, confidence, ambiguity, mixed-use risk, and evidence summaries.");
-        sb.AppendLine("If evidence is weak, return insufficient evidence recommendation.");
+        sb.AppendLine("Return JSON with this exact top-level shape:");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"summary\": {");
+        sb.AppendLine("    \"overallConfidence\": number(0..1),");
+        sb.AppendLine("    \"ambiguityLevel\": number(0..1),");
+        sb.AppendLine("    \"recommendation\": one of [\"accept_candidate\",\"accept_cautiously\",\"unresolved\",\"insufficient_evidence\",\"conflicting_candidates\"],");
+        sb.AppendLine("    \"summary\": non-empty string");
+        sb.AppendLine("  },");
+        sb.AppendLine("  \"candidates\": [");
+        sb.AppendLine("    {");
+        sb.AppendLine("      \"canonicalName\": required string,");
+        sb.AppendLine("      \"displayName\": optional string,");
+        sb.AppendLine("      \"merchantType\": required enum string,");
+        sb.AppendLine("      \"merchantUsageType\": required enum string,");
+        sb.AppendLine("      \"confidence\": number(0..1),");
+        sb.AppendLine("      \"descriptorMatchStrength\": number(0..1),");
+        sb.AppendLine("      \"entityMatchStrength\": number(0..1),");
+        sb.AppendLine("      \"mixedUseRisk\": bool,");
+        sb.AppendLine("      \"whyItMayMatch\": required string,");
+        sb.AppendLine("      \"whyItMayBeWrong\": required string,");
+        sb.AppendLine("      \"likelyOfficialWebsite\": optional string,");
+        sb.AppendLine("      \"parentBrand\": optional string,");
+        sb.AppendLine("      \"businessSummary\": optional string,");
+        sb.AppendLine("      \"supportsSubscriptions\": optional bool,");
+        sb.AppendLine("      \"supportsRecurringPayments\": optional bool,");
+        sb.AppendLine("      \"supportsOneTimePurchases\": optional bool,");
+        sb.AppendLine("      \"supportsMarketplacePayments\": optional bool,");
+        sb.AppendLine("      \"supportsInAppPurchases\": optional bool,");
+        sb.AppendLine("      \"likelyCategoryFamilies\": optional string[],");
+        sb.AppendLine("      \"aliasCandidates\": optional string[],");
+        sb.AppendLine("      \"aliasSuggestions\": optional [{\"aliasText\": string, \"aliasType\": string, \"confidence\": number(0..1), \"notes\": optional string, \"isPreferred\": optional bool}],");
+        sb.AppendLine("      \"evidenceItems\": optional [{\"evidenceType\": enum string, \"sourceClass\": string, \"summary\": string, \"confidence\": number(0..1), \"relevance\": number(0..1), \"sourceReference\": optional string}]");
+        sb.AppendLine("    }");
+        sb.AppendLine("  ],");
+        sb.AppendLine("  \"aliasSuggestions\": [{\"aliasText\": string, \"aliasType\": string, \"confidence\": number(0..1), \"notes\": optional string, \"isPreferred\": optional bool}],");
+        sb.AppendLine("  \"evidence\": [{\"evidenceType\": enum string, \"sourceClass\": string, \"summary\": string, \"confidence\": number(0..1), \"relevance\": number(0..1), \"sourceReference\": optional string}]");
+        sb.AppendLine("}");
+        sb.AppendLine("Use conservative outputs. If uncertain, return recommendation=insufficient_evidence or unresolved.");
 
         return new PromptBuildResult(
             SystemInstructions: systemInstructions,

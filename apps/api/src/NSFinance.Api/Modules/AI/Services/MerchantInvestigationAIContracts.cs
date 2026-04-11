@@ -1,61 +1,87 @@
-using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
-public enum MerchantInvestigationRecommendation
+public static class MerchantInvestigationContract
 {
-    AcceptCandidate = 0,
-    AcceptCautiously = 1,
-    Unresolved = 2,
-    InsufficientEvidence = 3,
-    ConflictingCandidates = 4
+    public const string RecommendationAcceptCandidate = "accept_candidate";
+    public const string RecommendationAcceptCautiously = "accept_cautiously";
+    public const string RecommendationUnresolved = "unresolved";
+    public const string RecommendationInsufficientEvidence = "insufficient_evidence";
+    public const string RecommendationConflictingCandidates = "conflicting_candidates";
+
+    public static readonly IReadOnlySet<string> AllowedRecommendations = new HashSet<string>(StringComparer.Ordinal)
+    {
+        RecommendationAcceptCandidate,
+        RecommendationAcceptCautiously,
+        RecommendationUnresolved,
+        RecommendationInsufficientEvidence,
+        RecommendationConflictingCandidates
+    };
+
+    public const int MaxCandidateCount = 8;
+    public const int MaxEvidenceCount = 16;
+    public const int MaxAliasSuggestionCount = 24;
 }
 
 public sealed record MerchantInvestigationStructuredResponse(
     MerchantInvestigationSummary Summary,
     IReadOnlyList<MerchantInvestigationStructuredCandidate> Candidates,
-    IReadOnlyList<MerchantInvestigationAliasSuggestion> AliasSuggestions,
+    IReadOnlyList<MerchantInvestigationAliasSuggestionPayload> AliasSuggestions,
     IReadOnlyList<MerchantInvestigationStructuredEvidence> Evidence);
 
 public sealed record MerchantInvestigationSummary(
     double OverallConfidence,
     double AmbiguityLevel,
-    MerchantInvestigationRecommendation Recommendation,
+    string Recommendation,
     string Summary);
 
 public sealed record MerchantInvestigationStructuredCandidate(
     string CanonicalName,
-    string DisplayName,
+    string? DisplayName,
     string? LikelyOfficialWebsite,
+    string? ParentBrand,
     MerchantType MerchantType,
     MerchantUsageType MerchantUsageType,
-    string BusinessSummary,
-    bool SupportsSubscriptions,
-    bool SupportsRecurringPayments,
-    bool SupportsOneTimePurchases,
-    bool SupportsMarketplacePayments,
-    bool SupportsInAppPurchases,
-    IReadOnlyList<string> LikelyCategoryFamilies,
+    string? BusinessSummary,
+    bool? SupportsSubscriptions,
+    bool? SupportsRecurringPayments,
+    bool? SupportsOneTimePurchases,
+    bool? SupportsMarketplacePayments,
+    bool? SupportsInAppPurchases,
+    IReadOnlyList<string>? LikelyCategoryFamilies,
+    double Confidence,
     double DescriptorMatchStrength,
     double EntityMatchStrength,
     bool MixedUseRisk,
-    double Confidence,
+    bool HasContradictions,
     string WhyItMayMatch,
     string WhyItMayBeWrong,
-    string PrimaryCountryCode,
-    bool HasContradictions,
-    IReadOnlyList<string> AliasCandidates);
+    string? PrimaryCountryCode,
+    IReadOnlyList<string>? AliasCandidates,
+    IReadOnlyList<MerchantInvestigationAliasSuggestionPayload>? AliasSuggestions,
+    IReadOnlyList<MerchantInvestigationStructuredEvidence>? EvidenceItems);
 
-public sealed record MerchantInvestigationAliasSuggestion(
+public sealed record MerchantInvestigationAliasSuggestionPayload(
     string AliasText,
     string AliasType,
     double Confidence,
-    bool IsPreferred);
+    string? Notes,
+    bool IsPreferred = false);
 
 public sealed record MerchantInvestigationStructuredEvidence(
     MerchantEvidenceType EvidenceType,
-    string EvidenceSummary,
+    string SourceClass,
+    string Summary,
     double Confidence,
-    string? SourceReference,
-    double Relevance);
+    double Relevance,
+    string? SourceReference);
+
+public sealed record MerchantInvestigationParseResult(
+    bool ParsedSuccessfully,
+    bool SemanticallyValid,
+    bool IsLowTrustValid,
+    MerchantInvestigationStructuredResponse? Structured,
+    NSFinance.Api.Modules.Banking.Services.MerchantIntelligence.MerchantInvestigationResult InvestigationResult,
+    IReadOnlyList<string> ReasonCodes,
+    string? FailureReason);

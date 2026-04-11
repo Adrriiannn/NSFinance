@@ -146,6 +146,42 @@ public class MerchantIntelligenceRegistryTests
         Assert.Equal(MerchantAcceptanceDecisionType.Unresolved, result.AcceptanceDecisionType);
     }
 
+    [Theory]
+    [InlineData("amazon", "Amazon Services", "amazon kindle charge")]
+    [InlineData("google", "Google Services", "google cloud billing")]
+    [InlineData("apple", "Apple Services", "apple digital service")]
+    [InlineData("microsoft", "Microsoft Services", "microsoft office payment")]
+    [InlineData("paypal", "PayPal Services", "paypal merchant payment")]
+    public async Task ResolveAsync_DangerousFamilyBroadDescriptor_DoesNotResolveWithoutSpecificity(
+        string familyToken,
+        string canonicalName,
+        string descriptor)
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        await registry.CreateMerchantAsync(
+            new MerchantCreateRequest(
+                CanonicalName: canonicalName,
+                DisplayName: canonicalName,
+                MerchantStatus: MerchantStatus.Active,
+                MerchantType: MerchantType.Merchant,
+                MerchantUsageType: MerchantUsageType.MixedUse,
+                PrimaryCountryCode: "US",
+                OfficialWebsite: null,
+                DescriptionSummary: null,
+                ParentMerchantId: null),
+            CancellationToken.None);
+
+        var resolver = CreateResolver(dbContext, normalizer, registry);
+        var result = await resolver.ResolveAsync(descriptor, CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.NotNull(result.UnresolvedMerchantId);
+        Assert.Equal(MerchantAcceptanceDecisionType.Unresolved, result.AcceptanceDecisionType);
+        Assert.Equal(familyToken, normalizer.Tokenize(result.NormalizedDescriptor).First());
+    }
+
     [Fact]
     public async Task ResolveAsync_ExactAliasStillWins_ForDangerousMerchantFamily()
     {
@@ -425,7 +461,9 @@ public class MerchantIntelligenceRegistryTests
                     HasContradictions: false,
                     OfficialWebsite: "https://acme-insurance.test",
                     DescriptionSummary: "Insurance provider",
-                    AliasCandidates: ["ACME INSURANCE DD"]),
+                    AliasCandidates: ["ACME INSURANCE DD"],
+                    DescriptorMatchStrength: 0.94d,
+                    EntityMatchStrength: 0.93d),
                 new MerchantInvestigationCandidate(
                     ExistingMerchantId: null,
                     CanonicalName: "Acme Financial",
@@ -439,7 +477,9 @@ public class MerchantIntelligenceRegistryTests
                     HasContradictions: false,
                     OfficialWebsite: null,
                     DescriptionSummary: null,
-                    AliasCandidates: ["ACME FINANCIAL"])
+                    AliasCandidates: ["ACME FINANCIAL"],
+                    DescriptorMatchStrength: 0.66d,
+                    EntityMatchStrength: 0.63d)
             ],
             Evidence:
             [
@@ -447,9 +487,14 @@ public class MerchantIntelligenceRegistryTests
                     MerchantEvidenceType.OfficialSource,
                     "Official billing descriptor matches insurer name.",
                     0.92d,
-                    "https://acme-insurance.test/help")
+                    "https://acme-insurance.test/help",
+                    SourceClass: "official_source",
+                    Relevance: 0.95d)
             ],
-            FailureReason: null);
+            FailureReason: null,
+            Recommendation: MerchantInvestigationRecommendation.AcceptCandidate,
+            OverallConfidence: 0.95d,
+            AmbiguityLevel: 0.06d);
 
         var decision = policy.Evaluate(result);
 
@@ -608,7 +653,9 @@ public class MerchantIntelligenceRegistryTests
                             HasContradictions: false,
                             OfficialWebsite: "https://acme-life-insurance.test",
                             DescriptionSummary: "Insurance direct debit provider",
-                            AliasCandidates: [request.RawDescriptor])
+                            AliasCandidates: [request.RawDescriptor],
+                            DescriptorMatchStrength: 0.95d,
+                            EntityMatchStrength: 0.94d)
                     ],
                     Evidence:
                     [
@@ -616,9 +663,14 @@ public class MerchantIntelligenceRegistryTests
                             MerchantEvidenceType.OfficialSource,
                             "Descriptor and official billing page align.",
                             0.92d,
-                            "https://acme-life-insurance.test/help")
+                            "https://acme-life-insurance.test/help",
+                            SourceClass: "official_source",
+                            Relevance: 0.93d)
                     ],
-                    FailureReason: null));
+                    FailureReason: null,
+                    Recommendation: MerchantInvestigationRecommendation.AcceptCandidate,
+                    OverallConfidence: 0.94d,
+                    AmbiguityLevel: 0.05d));
         }
     }
 }

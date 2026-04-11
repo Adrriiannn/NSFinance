@@ -1,9 +1,12 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
+using NSFinance.Api.Persistence;
+using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Tests.Unit;
 
@@ -138,11 +141,100 @@ public sealed class AIIntegrationLayerTests
             Succeeded: true,
             FailureReason: null);
 
-        var parsed = parser.TryParse(response, out var result, out var reasonCodes);
+        var parsed = parser.Parse(response);
 
-        Assert.False(parsed);
-        Assert.False(result.Succeeded);
-        Assert.Contains("invalid_json_payload", reasonCodes);
+        Assert.False(parsed.ParsedSuccessfully);
+        Assert.False(parsed.InvestigationResult.Succeeded);
+        Assert.True(parsed.InvestigationResult.ParserRejected);
+        Assert.Contains("invalid_json_payload", parsed.ReasonCodes);
+    }
+
+    [Fact]
+    public void MerchantInvestigationParser_RejectsAcceptCandidateWithoutCandidates()
+    {
+        var parser = new MerchantInvestigationResponseParser(NullLogger<MerchantInvestigationResponseParser>.Instance);
+        var payload = """
+            {
+              "summary": {
+                "overallConfidence": 0.90,
+                "ambiguityLevel": 0.10,
+                "recommendation": "accept_candidate",
+                "summary": "Trust this"
+              },
+              "candidates": [],
+              "aliasSuggestions": [],
+              "evidence": []
+            }
+            """;
+
+        var parsed = parser.Parse(new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "Mock",
+            Model: "gpt-5-chat",
+            Deployment: "merchant-investigation",
+            InputTokenEstimate: 10,
+            OutputTokenEstimate: 20,
+            LatencyMs: 1,
+            WasMocked: true,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null));
+
+        Assert.False(parsed.ParsedSuccessfully);
+        Assert.Contains("invalid_recommendation_accept_without_candidates", parsed.ReasonCodes);
+    }
+
+    [Fact]
+    public void MerchantInvestigationParser_ParsesLowTrustValidOutput()
+    {
+        var parser = new MerchantInvestigationResponseParser(NullLogger<MerchantInvestigationResponseParser>.Instance);
+        var payload = """
+            {
+              "summary": {
+                "overallConfidence": 0.62,
+                "ambiguityLevel": 0.40,
+                "recommendation": "unresolved",
+                "summary": "Ambiguous descriptor"
+              },
+              "candidates": [
+                {
+                  "canonicalName": "Acme",
+                  "displayName": "Acme",
+                  "merchantType": "Merchant",
+                  "merchantUsageType": "MixedUse",
+                  "confidence": 0.63,
+                  "descriptorMatchStrength": 0.68,
+                  "entityMatchStrength": 0.61,
+                  "mixedUseRisk": true,
+                  "whyItMayMatch": "descriptor overlap",
+                  "whyItMayBeWrong": "broad family"
+                }
+              ],
+              "aliasSuggestions": [],
+              "evidence": []
+            }
+            """;
+
+        var parsed = parser.Parse(new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "Mock",
+            Model: "gpt-5-chat",
+            Deployment: "merchant-investigation",
+            InputTokenEstimate: 10,
+            OutputTokenEstimate: 20,
+            LatencyMs: 1,
+            WasMocked: true,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null));
+
+        Assert.True(parsed.ParsedSuccessfully);
+        Assert.True(parsed.IsLowTrustValid);
+        Assert.Equal(MerchantInvestigationRecommendation.Unresolved, parsed.InvestigationResult.Recommendation);
     }
 
     [Fact]
@@ -159,13 +251,169 @@ public sealed class AIIntegrationLayerTests
 
         var service = services.GetRequiredService<IMerchantInvestigationService>();
         var result = await service.InvestigateAsync(
-            new MerchantInvestigationRequest("ACME STREAMING DUBLIN", "acme streaming dublin", "unit-test"),
+            new MerchantInvestigationRequest("NETFLIX.COM", "netflix com", "unit-test"),
             CancellationToken.None);
 
         Assert.True(result.Succeeded);
         Assert.False(result.InsufficientEvidence);
         Assert.NotEmpty(result.Candidates);
-        Assert.Equal("Acme Streaming", result.Candidates[0].CanonicalName);
+        Assert.Equal(MerchantInvestigationRecommendation.AcceptCandidate, result.Recommendation);
+    }
+
+    [Fact]
+    public async Task MerchantInvestigationOrchestrator_WithMalformedOutput_FallsBackSafely()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultMerchantScenario"] = "MerchantMalformedOutput"
+        });
+
+        var service = services.GetRequiredService<IMerchantInvestigationService>();
+        var result = await service.InvestigateAsync(
+            new MerchantInvestigationRequest("UNKNOWN*123", "unknown 123", "unit-test"),
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.ParserRejected);
+        Assert.True(result.InsufficientEvidence);
+    }
+
+    [Fact]
+    public async Task MerchantInvestigationResolutionFlow_StrongMerchantAccepted_EndToEnd()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultMerchantScenario"] = "MerchantStrongCandidate"
+        });
+
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = new MerchantRegistryService(dbContext, normalizer, NullLogger<MerchantRegistryService>.Instance);
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            services.GetRequiredService<IMerchantInvestigationService>(),
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance);
+
+        var result = await resolver.ResolveAsync("NETFLIX.COM", CancellationToken.None);
+
+        Assert.True(result.IsResolved);
+        Assert.NotNull(result.MerchantId);
+        Assert.True(await dbContext.Merchants.AnyAsync(x => x.Id == result.MerchantId));
+    }
+
+    [Fact]
+    public async Task MerchantInvestigationResolutionFlow_AmbiguousMerchant_RemainsUnresolved_EndToEnd()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultMerchantScenario"] = "MerchantAmbiguousCandidates"
+        });
+
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = new MerchantRegistryService(dbContext, normalizer, NullLogger<MerchantRegistryService>.Instance);
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            services.GetRequiredService<IMerchantInvestigationService>(),
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance);
+
+        var result = await resolver.ResolveAsync("GOOGLE *SERVICES", CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.NotNull(result.UnresolvedMerchantId);
+    }
+
+    [Fact]
+    public async Task MerchantInvestigationResolutionFlow_DangerousAliasProposal_DoesNotBecomeTrusted()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultMerchantScenario"] = "MerchantDangerousAliasProposal"
+        });
+
+        var investigation = services.GetRequiredService<IMerchantInvestigationService>();
+        var result = await investigation.InvestigateAsync(
+            new MerchantInvestigationRequest("AMAZON PRIME", "amazon prime", "unit-test"),
+            CancellationToken.None);
+
+        var decision = new MerchantAcceptancePolicy().Evaluate(result);
+
+        Assert.NotEqual(MerchantAcceptanceDecisionType.AcceptedTrusted, decision.DecisionType);
+    }
+
+    [Fact]
+    public async Task MerchantResolution_ExactAliasBeatsAIAmbiguity()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultMerchantScenario"] = "MerchantAmbiguousCandidates"
+        });
+
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = new MerchantRegistryService(dbContext, normalizer, NullLogger<MerchantRegistryService>.Instance);
+        var merchant = await registry.CreateMerchantAsync(
+            new MerchantCreateRequest(
+                CanonicalName: "Spotify",
+                DisplayName: "Spotify",
+                MerchantStatus: MerchantStatus.Active,
+                MerchantType: MerchantType.Merchant,
+                MerchantUsageType: MerchantUsageType.NarrowUse,
+                PrimaryCountryCode: "IE",
+                OfficialWebsite: null,
+                DescriptionSummary: null,
+                ParentMerchantId: null),
+            CancellationToken.None);
+        await registry.AttachAliasAsync(
+            new MerchantAliasCreateRequest(
+                merchant.Id,
+                "SPOTIFY",
+                MerchantAliasType.BillingDescriptor,
+                1d,
+                true,
+                "manual",
+                true),
+            CancellationToken.None);
+
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            services.GetRequiredService<IMerchantInvestigationService>(),
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance);
+
+        var result = await resolver.ResolveAsync("spotify", CancellationToken.None);
+
+        Assert.True(result.IsResolved);
+        Assert.Equal(MerchantResolutionType.ExactAlias, result.ResolutionType);
+        Assert.Equal(merchant.Id, result.MerchantId);
     }
 
     [Fact]
@@ -245,6 +493,14 @@ public sealed class AIIntegrationLayerTests
         Assert.True(response.Succeeded);
         Assert.True(response.WasMocked);
         Assert.Equal("Mock", response.Provider);
+    }
+
+    private static AppDbContext CreateDbContext()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"ai-integration-tests-{Guid.NewGuid():N}")
+            .Options;
+        return new AppDbContext(options);
     }
 
     private static AIModelRouter CreateRouter(Action<AIIntegrationOptions>? configure)

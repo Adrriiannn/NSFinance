@@ -24,6 +24,14 @@ public sealed class MerchantResolutionService(
         "microsoft",
         "paypal"
     };
+    private static readonly HashSet<string> SafeAliasTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "BillingDescriptor",
+        "MerchantName",
+        "Abbreviation",
+        "ProcessorDescriptor",
+        "Domain"
+    };
 
     public async Task<MerchantResolutionResult> ResolveAsync(string rawDescriptor, CancellationToken cancellationToken)
     {
@@ -395,18 +403,57 @@ public sealed class MerchantResolutionService(
             cancellationToken);
 
         var decision = acceptancePolicy.Evaluate(investigationResult);
+        logger.LogInformation(
+            "Merchant investigation decision normalizedDescriptor={NormalizedDescriptor} unresolvedId={UnresolvedMerchantId} recommendation={Recommendation} candidates={CandidateCount} overallConfidence={OverallConfidence} ambiguity={AmbiguityLevel} parserRejected={ParserRejected} decision={Decision} reasonCodes={ReasonCodes}",
+            normalizedDescriptor,
+            unresolved.Id,
+            investigationResult.Recommendation,
+            investigationResult.Candidates.Count,
+            investigationResult.OverallConfidence,
+            investigationResult.AmbiguityLevel,
+            investigationResult.ParserRejected,
+            decision.DecisionType,
+            string.Join(",", decision.ReasonCodes));
+
         if (decision.DecisionType is MerchantAcceptanceDecisionType.AcceptedTrusted or MerchantAcceptanceDecisionType.AcceptedCautious
             && decision.SelectedCandidate is not null)
         {
-            var resolved = await ApplyAcceptedInvestigationAsync(
-                unresolved,
-                rawDescriptor,
-                normalizedDescriptor,
-                decision,
-                investigationResult,
-                cancellationToken);
+            try
+            {
+                var resolved = await ApplyAcceptedInvestigationAsync(
+                    unresolved,
+                    rawDescriptor,
+                    normalizedDescriptor,
+                    decision,
+                    investigationResult,
+                    cancellationToken);
 
-            return resolved;
+                return resolved;
+            }
+            catch (Exception ex)
+            {
+                unresolved.Status = UnresolvedMerchantStatus.AwaitingEvidence;
+                unresolved.Notes = "apply_accepted_investigation_failed";
+                await dbContext.SaveChangesAsync(cancellationToken);
+
+                logger.LogError(
+                    ex,
+                    "Merchant resolution apply-accepted failed normalizedDescriptor={NormalizedDescriptor} unresolvedId={UnresolvedMerchantId} decision={Decision}",
+                    normalizedDescriptor,
+                    unresolved.Id,
+                    decision.DecisionType);
+
+                return new MerchantResolutionResult(
+                    MerchantId: null,
+                    ResolutionConfidence: Math.Round(decision.Confidence, 4, MidpointRounding.AwayFromZero),
+                    ResolutionType: MerchantResolutionType.None,
+                    MatchedAlias: null,
+                    IsResolved: false,
+                    UnresolvedMerchantId: unresolved.Id,
+                    NormalizedDescriptor: normalizedDescriptor,
+                    AcceptanceDecisionType: MerchantAcceptanceDecisionType.Rejected,
+                    ReasonCodes: ["apply_accepted_investigation_failed"]);
+            }
         }
 
         unresolved.Status = decision.DecisionType == MerchantAcceptanceDecisionType.Rejected
@@ -494,6 +541,29 @@ public sealed class MerchantResolutionService(
                 IsActive: true),
             cancellationToken);
 
+        var autoAttachedAliases = 0;
+        var skippedAliases = 0;
+        foreach (var suggestion in investigationResult.AliasSuggestions ?? [])
+        {
+            if (!IsSafeAliasSuggestion(suggestion))
+            {
+                skippedAliases += 1;
+                continue;
+            }
+
+            await merchantRegistryService.AttachAliasAsync(
+                new MerchantAliasCreateRequest(
+                    MerchantId: merchant.Id,
+                    AliasText: suggestion.AliasText,
+                    AliasType: MapAliasType(suggestion.AliasType),
+                    Confidence: Math.Clamp(suggestion.Confidence, 0.55d, 0.93d),
+                    IsExactMatchPreferred: false,
+                    Source: $"investigation:{decision.DecisionType}:alias_suggestion",
+                    IsActive: true),
+                cancellationToken);
+            autoAttachedAliases += 1;
+        }
+
         foreach (var evidence in investigationResult.Evidence)
         {
             await merchantRegistryService.AddEvidenceAsync(
@@ -502,7 +572,9 @@ public sealed class MerchantResolutionService(
                     EvidenceType: evidence.EvidenceType,
                     EvidenceSummary: evidence.EvidenceSummary,
                     Confidence: evidence.Confidence,
-                    SourceReference: evidence.SourceReference),
+                    SourceReference: string.IsNullOrWhiteSpace(evidence.SourceClass)
+                        ? evidence.SourceReference
+                        : $"{evidence.SourceClass}|{evidence.SourceReference}"),
                 cancellationToken);
         }
 
@@ -511,10 +583,12 @@ public sealed class MerchantResolutionService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Merchant resolved through investigation normalizedDescriptor={NormalizedDescriptor} merchantId={MerchantId} decision={Decision}",
+            "Merchant resolved through investigation normalizedDescriptor={NormalizedDescriptor} merchantId={MerchantId} decision={Decision} aliasesAutoAttached={AliasesAutoAttached} aliasesSkipped={AliasesSkipped}",
             normalizedDescriptor,
             merchant.Id,
-            decision.DecisionType);
+            decision.DecisionType,
+            autoAttachedAliases,
+            skippedAliases);
 
         return new MerchantResolutionResult(
             MerchantId: merchant.Id,
@@ -567,5 +641,41 @@ public sealed class MerchantResolutionService(
         }
 
         return DangerousFamilyRoots.Contains(token.Trim().ToLowerInvariant());
+    }
+
+    private static MerchantAliasType MapAliasType(string aliasType)
+    {
+        return Enum.TryParse<MerchantAliasType>(aliasType, ignoreCase: true, out var parsed)
+            ? parsed
+            : MerchantAliasType.BillingDescriptor;
+    }
+
+    private static bool IsSafeAliasSuggestion(MerchantInvestigationAliasSuggestion suggestion)
+    {
+        if (string.IsNullOrWhiteSpace(suggestion.AliasText)
+            || suggestion.AliasText.Length < 6
+            || suggestion.Confidence < 0.80d)
+        {
+            return false;
+        }
+
+        if (!SafeAliasTypes.Contains(suggestion.AliasType))
+        {
+            return false;
+        }
+
+        return !IsBroadDangerousAliasText(suggestion.AliasText);
+    }
+
+    private static bool IsBroadDangerousAliasText(string aliasText)
+    {
+        var normalized = aliasText.Trim().ToLowerInvariant();
+        if (DangerousFamilyRoots.Contains(normalized))
+        {
+            return true;
+        }
+
+        var tokens = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return tokens.Length == 1 && DangerousFamilyRoots.Contains(tokens[0]);
     }
 }
