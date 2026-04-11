@@ -27,6 +27,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IUserChatComplexityClassifier, UserChatComplexityClassifier>();
         services.AddScoped<IConversationContextService, ConversationContextService>();
         services.AddScoped<IConversationThreadService, ConversationThreadService>();
+        services.AddScoped<IConversationTurnService, ConversationTurnService>();
         services.AddScoped<IConversationMessageService, ConversationMessageService>();
         services.AddScoped<IConversationStateService, ConversationStateService>();
         services.AddScoped<IConversationSummaryGenerator, DeterministicConversationSummaryGenerator>();

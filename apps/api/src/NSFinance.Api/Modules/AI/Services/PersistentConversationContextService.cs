@@ -7,7 +7,6 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed class PersistentConversationContextService(
     AppDbContext dbContext,
-    IConversationMessageService conversationMessageService,
     IConversationStateService conversationStateService,
     IConversationSummaryService conversationSummaryService,
     IOptions<AIIntegrationOptions> options,
@@ -50,11 +49,14 @@ public sealed class PersistentConversationContextService(
             budget.MaxRecentMessages,
             500);
 
-        var fetchedMessages = await conversationMessageService.GetRecentMessagesAsync(
-            request.UserId,
-            request.ConversationThreadId,
-            fetchCount,
-            cancellationToken);
+        var fetchedMessages = await dbContext.ConversationMessages
+            .AsNoTracking()
+            .Include(x => x.ConversationTurn)
+            .Where(x => x.ConversationThreadId == request.ConversationThreadId)
+            .OrderByDescending(x => x.MessageOrder)
+            .Take(fetchCount)
+            .ToListAsync(cancellationToken);
+        fetchedMessages = fetchedMessages.OrderBy(x => x.MessageOrder).ToList();
 
         var filteredResult = FilterMessages(fetchedMessages, latestState?.State, budget.MaxRecentMessages);
         reasonCodes.AddRange(filteredResult.ReasonCodes);
@@ -149,40 +151,9 @@ public sealed class PersistentConversationContextService(
     {
         var reasonCodes = new List<string>();
         var activeTopic = state?.ActiveTopic;
-        var deduped = new List<ConversationMessage>(messages.Count);
         var excluded = new List<ConversationMessage>();
-        var seen = new Dictionary<string, ConversationMessage>(StringComparer.Ordinal);
-
-        foreach (var message in messages)
-        {
-            var dedupeKey = $"{message.Role}:{NormalizeForDedup(message.Content)}";
-            if (!seen.TryGetValue(dedupeKey, out var existing))
-            {
-                seen[dedupeKey] = message;
-                deduped.Add(message);
-                continue;
-            }
-
-            if (existing.MessageOrder < message.MessageOrder)
-            {
-                deduped.Remove(existing);
-                excluded.Add(existing);
-                seen[dedupeKey] = message;
-                deduped.Add(message);
-            }
-            else
-            {
-                excluded.Add(message);
-            }
-        }
-
-        if (excluded.Count > 0)
-        {
-            reasonCodes.Add("deduplicated_messages");
-        }
-
-        var filtered = new List<ConversationMessage>(deduped.Count);
-        foreach (var message in deduped.OrderBy(x => x.MessageOrder))
+        var filtered = new List<ConversationMessage>(messages.Count);
+        foreach (var message in messages.OrderBy(x => x.MessageOrder))
         {
             if (ShouldExcludeMessage(message, activeTopic))
             {
@@ -193,9 +164,31 @@ public sealed class PersistentConversationContextService(
             filtered.Add(message);
         }
 
-        if (filtered.Count < deduped.Count)
+        if (filtered.Count < messages.Count)
         {
             reasonCodes.Add("trimmed_low_value_messages");
+        }
+
+        var duplicateByRequest = filtered
+            .Where(x => x.Role == ConversationMessageRole.User
+                        && x.ConversationTurn is not null
+                        && !string.IsNullOrWhiteSpace(x.ConversationTurn.ClientRequestId))
+            .GroupBy(x => x.ConversationTurn!.ClientRequestId, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .ToArray();
+
+        if (duplicateByRequest.Length > 0)
+        {
+            foreach (var group in duplicateByRequest)
+            {
+                foreach (var duplicate in group.OrderBy(x => x.MessageOrder).Skip(1))
+                {
+                    filtered.Remove(duplicate);
+                    excluded.Add(duplicate);
+                }
+            }
+
+            reasonCodes.Add("deduped_duplicate_request_messages");
         }
 
         var included = filtered.Count > maxRecentMessages
@@ -233,6 +226,19 @@ public sealed class PersistentConversationContextService(
         }
 
         if (message.IsResolved && message.Role != ConversationMessageRole.User)
+        {
+            return true;
+        }
+
+        if (message.Role == ConversationMessageRole.Assistant
+            && message.ConversationTurn is not null
+            && message.ConversationTurn.Status is ConversationTurnStatus.Received
+                or ConversationTurnStatus.PersistedUserTurn
+                or ConversationTurnStatus.ContextBuilt
+                or ConversationTurnStatus.AIInProgress
+                or ConversationTurnStatus.Failed
+                or ConversationTurnStatus.Cancelled
+                or ConversationTurnStatus.TimedOut)
         {
             return true;
         }
@@ -436,6 +442,7 @@ public sealed class PersistentConversationContextService(
         {
             Id = Guid.NewGuid(),
             ConversationThreadId = request.ConversationThreadId,
+            ConversationTurnId = request.ConversationTurnId,
             CorrelationId = request.CorrelationId,
             TaskType = request.TaskType.ToString(),
             ModelClass = request.ModelClass.ToString(),

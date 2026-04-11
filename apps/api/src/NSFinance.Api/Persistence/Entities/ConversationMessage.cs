@@ -4,6 +4,7 @@ public class ConversationMessage
 {
     public Guid Id { get; set; }
     public Guid ConversationThreadId { get; set; }
+    public Guid? ConversationTurnId { get; set; }
     public ConversationMessageRole Role { get; set; } = ConversationMessageRole.User;
     public string Content { get; set; } = string.Empty;
     public int MessageOrder { get; set; }
@@ -17,4 +18,5 @@ public class ConversationMessage
     public DateTime CreatedUtc { get; set; }
 
     public ConversationThread ConversationThread { get; set; } = null!;
+    public ConversationTurn? ConversationTurn { get; set; }
 }

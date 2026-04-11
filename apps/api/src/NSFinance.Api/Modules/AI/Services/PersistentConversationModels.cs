@@ -5,6 +5,7 @@ namespace NSFinance.Api.Modules.AI.Services;
 public sealed record ConversationMessageAppendRequest(
     ConversationMessageRole Role,
     string Content,
+    Guid? ConversationTurnId = null,
     string? Topic = null,
     bool IsResolved = false,
     bool WasTrimEligible = true,
@@ -12,6 +13,16 @@ public sealed record ConversationMessageAppendRequest(
     string? ModelUsed = null,
     string? TaskType = null,
     string? CorrelationId = null);
+
+public sealed record ConversationTurnStartResult(
+    ConversationTurn Turn,
+    bool IsDuplicateRequest,
+    bool IsNewTurn);
+
+public sealed record ConversationTurnTransitionResult(
+    ConversationTurn Turn,
+    ConversationTurnStatus PreviousStatus,
+    ConversationTurnStatus CurrentStatus);
 
 public sealed record PersistedConversationState(
     ConversationStateSnapshot State,
@@ -32,6 +43,7 @@ public sealed record PersistentConversationContextBuildRequest(
     AITaskType TaskType,
     AIModelClass ModelClass,
     string CorrelationId,
+    Guid? ConversationTurnId,
     string? CurrentUserMessage,
     bool IncludeCurrentUserMessage = false,
     int? MaxPromptTokensOverride = null);
@@ -58,6 +70,85 @@ public interface IConversationThreadService
     Task TouchThreadAsync(Guid userId, Guid threadId, DateTime timestampUtc, CancellationToken cancellationToken);
 }
 
+public interface IConversationTurnService
+{
+    Task<ConversationTurnStartResult> StartOrGetAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        string clientRequestId,
+        string correlationId,
+        AITaskType taskType,
+        AIModelClass modelClass,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurn?> GetTurnAsync(Guid userId, Guid conversationThreadId, Guid turnId, CancellationToken cancellationToken);
+    Task<ConversationTurnTransitionResult> MarkPersistedUserTurnAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        Guid userMessageId,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkContextBuiltAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        string contextSource,
+        int estimatedPromptTokens,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkAIInProgressAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        AIModelRoute route,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkAICompletedAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        long responseLatencyMs,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkPersistedAssistantTurnAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        Guid assistantMessageId,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkCompletedAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkFailedAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        string failureCode,
+        string failureReason,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkTimedOutAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        string failureCode,
+        string failureReason,
+        CancellationToken cancellationToken);
+
+    Task<ConversationTurnTransitionResult> MarkCancelledAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        string failureCode,
+        string failureReason,
+        CancellationToken cancellationToken);
+}
+
 public interface IConversationMessageService
 {
     Task<ConversationMessage> AppendMessageAsync(
@@ -77,6 +168,12 @@ public interface IConversationMessageService
         Guid conversationThreadId,
         int startOrder,
         int endOrder,
+        CancellationToken cancellationToken);
+
+    Task<ConversationMessage?> GetMessageByIdAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid messageId,
         CancellationToken cancellationToken);
 }
 

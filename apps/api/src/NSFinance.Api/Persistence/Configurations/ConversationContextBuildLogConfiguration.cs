@@ -18,6 +18,7 @@ public class ConversationContextBuildLogConfiguration : IEntityTypeConfiguration
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
 
         builder.HasIndex(x => x.ConversationThreadId);
+        builder.HasIndex(x => x.ConversationTurnId);
         builder.HasIndex(x => x.CreatedUtc);
         builder.HasIndex(x => x.CorrelationId);
 
@@ -25,5 +26,10 @@ public class ConversationContextBuildLogConfiguration : IEntityTypeConfiguration
             .WithMany(x => x.ContextBuildLogs)
             .HasForeignKey(x => x.ConversationThreadId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.ConversationTurn)
+            .WithMany(x => x.ContextBuildLogs)
+            .HasForeignKey(x => x.ConversationTurnId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

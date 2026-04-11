@@ -23,6 +23,7 @@ public class ConversationMessageConfiguration : IEntityTypeConfiguration<Convers
         builder.Property(x => x.IsResolved).HasDefaultValue(false);
 
         builder.HasIndex(x => x.ConversationThreadId);
+        builder.HasIndex(x => x.ConversationTurnId);
         builder.HasIndex(x => new { x.ConversationThreadId, x.MessageOrder }).IsUnique();
         builder.HasIndex(x => x.CreatedUtc);
 
@@ -30,5 +31,10 @@ public class ConversationMessageConfiguration : IEntityTypeConfiguration<Convers
             .WithMany(x => x.Messages)
             .HasForeignKey(x => x.ConversationThreadId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.ConversationTurn)
+            .WithMany(x => x.Messages)
+            .HasForeignKey(x => x.ConversationTurnId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

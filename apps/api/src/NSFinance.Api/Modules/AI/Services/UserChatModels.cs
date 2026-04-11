@@ -1,3 +1,5 @@
+using NSFinance.Api.Persistence.Entities;
+
 namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed record UserChatTurn(
@@ -23,9 +25,11 @@ public sealed record UserChatRequest(
     ConversationStateSnapshot? State,
     string CorrelationId,
     IReadOnlyDictionary<string, string>? Metadata = null,
+    string? ClientRequestId = null,
     Guid? UserId = null,
     Guid? ConversationThreadId = null,
-    bool UsePersistentMemory = false);
+    bool UsePersistentMemory = false,
+    bool AllowTransientFallbackOnPersistentFailure = false);
 
 public sealed record UserChatResponse(
     string ReplyText,
@@ -37,4 +41,8 @@ public sealed record UserChatResponse(
     IReadOnlyList<string> FollowUpIntentHints,
     bool Succeeded,
     string? FailureReason,
-    Guid? ConversationThreadId = null);
+    Guid? ConversationThreadId = null,
+    Guid? ConversationTurnId = null,
+    ConversationTurnStatus? TurnStatus = null,
+    bool IsDuplicateRequest = false,
+    bool IsTurnInProgress = false);

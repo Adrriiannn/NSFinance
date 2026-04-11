@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
+using System.Data;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
@@ -16,6 +17,60 @@ public sealed class ConversationMessageService(
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            throw new ArgumentException("Message content cannot be empty.", nameof(request));
+        }
+
+        var safeContent = request.Content.Trim();
+        if (safeContent.Length > 6000)
+        {
+            throw new ArgumentException("Message content exceeds the maximum supported length (6000).", nameof(request));
+        }
+
+        if (!dbContext.Database.IsRelational())
+        {
+            return await AppendMessageOnceAsync(
+                userId,
+                conversationThreadId,
+                request,
+                safeContent,
+                cancellationToken);
+        }
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken);
+            try
+            {
+                var message = await AppendMessageOnceAsync(
+                    userId,
+                    conversationThreadId,
+                    request,
+                    safeContent,
+                    cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return message;
+            }
+            catch (DbUpdateException ex) when (attempt < 3 && IsMessageOrderUniqueViolation(ex))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                dbContext.ChangeTracker.Clear();
+            }
+        }
+
+        throw new InvalidOperationException("Failed to append conversation message due to repeated ordering conflicts.");
+    }
+
+    private async Task<ConversationMessage> AppendMessageOnceAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        ConversationMessageAppendRequest request,
+        string safeContent,
+        CancellationToken cancellationToken)
+    {
         var thread = await dbContext.ConversationThreads
             .SingleOrDefaultAsync(
                 x => x.Id == conversationThreadId && x.UserId == userId,
@@ -42,8 +97,9 @@ public sealed class ConversationMessageService(
         {
             Id = Guid.NewGuid(),
             ConversationThreadId = conversationThreadId,
+            ConversationTurnId = request.ConversationTurnId,
             Role = request.Role,
-            Content = request.Content.Trim(),
+            Content = safeContent,
             MessageOrder = nextOrder,
             Topic = string.IsNullOrWhiteSpace(request.Topic) ? null : request.Topic.Trim(),
             ModelUsed = string.IsNullOrWhiteSpace(request.ModelUsed) ? null : request.ModelUsed.Trim(),
@@ -102,6 +158,20 @@ public sealed class ConversationMessageService(
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<ConversationMessage?> GetMessageByIdAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid messageId,
+        CancellationToken cancellationToken)
+    {
+        await EnsureThreadOwnershipAsync(userId, conversationThreadId, cancellationToken);
+        return await dbContext.ConversationMessages
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.Id == messageId && x.ConversationThreadId == conversationThreadId,
+                cancellationToken);
+    }
+
     private async Task EnsureThreadOwnershipAsync(Guid userId, Guid threadId, CancellationToken cancellationToken)
     {
         var exists = await dbContext.ConversationThreads
@@ -111,5 +181,11 @@ public sealed class ConversationMessageService(
         {
             throw new InvalidOperationException("Conversation thread not found for user.");
         }
+    }
+
+    private static bool IsMessageOrderUniqueViolation(DbUpdateException ex)
+    {
+        var message = ex.InnerException?.Message ?? ex.Message;
+        return message.Contains("IX_ConversationMessages_ConversationThreadId_MessageOrder", StringComparison.OrdinalIgnoreCase);
     }
 }

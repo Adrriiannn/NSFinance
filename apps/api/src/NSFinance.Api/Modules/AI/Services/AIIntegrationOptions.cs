@@ -10,6 +10,7 @@ public sealed class AIIntegrationOptions
     public AIModelRoutingOptions Routing { get; set; } = new();
     public AIExecutionOptions Execution { get; set; } = new();
     public ConversationMemoryOptions Memory { get; set; } = new();
+    public ChatTurnOptions ChatTurns { get; set; } = new();
     public AzureOpenAIOptions AzureOpenAI { get; set; } = new();
     public MockAIProviderOptions Mock { get; set; } = new();
 }
@@ -98,4 +99,11 @@ public sealed class TaskContextBudgetOptions
     public int MaxPromptTokens { get; set; } = 1800;
     public int MaxSummaryChars { get; set; } = 600;
     public int MaxStateEntries { get; set; } = 10;
+}
+
+public sealed class ChatTurnOptions
+{
+    public int MaxUserMessageChars { get; set; } = 4000;
+    public int MaxClientRequestIdLength { get; set; } = 128;
+    public bool AllowImplicitTransientFallback { get; set; }
 }

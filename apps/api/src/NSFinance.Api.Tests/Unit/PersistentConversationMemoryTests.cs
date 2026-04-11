@@ -59,7 +59,6 @@ public sealed class PersistentConversationMemoryTests
             new DeterministicConversationSummaryGenerator());
         var contextService = new PersistentConversationContextService(
             dbContext,
-            messageService,
             stateService,
             summaryService,
             Options.Create(options),
@@ -113,6 +112,7 @@ public sealed class PersistentConversationMemoryTests
                 TaskType: AITaskType.UserChatComplex,
                 ModelClass: AIModelClass.HeavyReasoning,
                 CorrelationId: "ctx-1",
+                ConversationTurnId: null,
                 CurrentUserMessage: null,
                 IncludeCurrentUserMessage: false),
             CancellationToken.None);
@@ -142,7 +142,6 @@ public sealed class PersistentConversationMemoryTests
             new DeterministicConversationSummaryGenerator());
         var contextService = new PersistentConversationContextService(
             dbContext,
-            messageService,
             stateService,
             summaryService,
             Options.Create(options),
@@ -167,6 +166,7 @@ public sealed class PersistentConversationMemoryTests
                 TaskType: AITaskType.UserChatComplex,
                 ModelClass: AIModelClass.HeavyReasoning,
                 CorrelationId: "ctx-2",
+                ConversationTurnId: null,
                 CurrentUserMessage: null,
                 IncludeCurrentUserMessage: false,
                 MaxPromptTokensOverride: 80),
@@ -236,6 +236,214 @@ public sealed class PersistentConversationMemoryTests
         Assert.True(await dbContext.ConversationMessages.CountAsync(x => x.ConversationThreadId == threadId) >= 4);
         Assert.True(await dbContext.ConversationStateSnapshots.CountAsync(x => x.ConversationThreadId == threadId) >= 1);
         Assert.True(await dbContext.ConversationContextBuildLogs.CountAsync(x => x.ConversationThreadId == threadId) >= 2);
+    }
+
+    [Fact]
+    public async Task UserChatOrchestrator_DedupesCompletedTurn_ByClientRequestId()
+    {
+        var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple"
+        });
+
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await SeedUserAsync(dbContext, "chat-dedupe-completed");
+        var orchestrator = scope.ServiceProvider.GetRequiredService<IUserChatOrchestrator>();
+
+        var first = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Help me optimize my budget.",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-dedupe-1",
+                ClientRequestId: "req-dedupe-1",
+                UserId: userId,
+                UsePersistentMemory: true),
+            CancellationToken.None);
+
+        var second = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Help me optimize my budget.",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-dedupe-2",
+                ClientRequestId: "req-dedupe-1",
+                UserId: userId,
+                ConversationThreadId: first.ConversationThreadId,
+                UsePersistentMemory: true),
+            CancellationToken.None);
+
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+        Assert.True(second.IsDuplicateRequest);
+        Assert.False(second.IsTurnInProgress);
+        Assert.Equal(first.ConversationThreadId, second.ConversationThreadId);
+        Assert.Equal(first.ConversationTurnId, second.ConversationTurnId);
+
+        var threadId = first.ConversationThreadId!.Value;
+        var turnId = first.ConversationTurnId!.Value;
+        var turns = await dbContext.ConversationTurns.Where(x => x.ConversationThreadId == threadId).ToListAsync();
+        var messages = await dbContext.ConversationMessages.Where(x => x.ConversationThreadId == threadId).ToListAsync();
+
+        Assert.Single(turns);
+        Assert.Equal(ConversationTurnStatus.Completed, turns[0].Status);
+        Assert.True(turns[0].WasDeduplicated);
+        Assert.Equal(2, turns[0].AttemptCount);
+        Assert.Equal(turnId, turns[0].Id);
+        Assert.Equal(2, messages.Count); // 1 user + 1 assistant only once
+    }
+
+    [Fact]
+    public async Task UserChatOrchestrator_DuplicateWhileInProgress_ReturnsTurnInProgress()
+    {
+        var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple"
+        });
+
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await SeedUserAsync(dbContext, "chat-dedupe-inprogress");
+
+        var threadService = scope.ServiceProvider.GetRequiredService<IConversationThreadService>();
+        var turnService = scope.ServiceProvider.GetRequiredService<IConversationTurnService>();
+        var orchestrator = scope.ServiceProvider.GetRequiredService<IUserChatOrchestrator>();
+
+        var thread = await threadService.CreateThreadAsync(userId, "In progress thread", CancellationToken.None);
+        var started = await turnService.StartOrGetAsync(
+            userId,
+            thread.Id,
+            "req-in-progress",
+            "corr-turn-start",
+            AITaskType.UserChatSimple,
+            AIModelClass.Fast,
+            CancellationToken.None);
+
+        Assert.False(started.IsDuplicateRequest);
+        Assert.Equal(ConversationTurnStatus.Received, started.Turn.Status);
+
+        var duplicateResponse = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "This should dedupe while in progress.",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-dup-in-progress",
+                ClientRequestId: "req-in-progress",
+                UserId: userId,
+                ConversationThreadId: thread.Id,
+                UsePersistentMemory: true),
+            CancellationToken.None);
+
+        Assert.False(duplicateResponse.Succeeded);
+        Assert.True(duplicateResponse.IsDuplicateRequest);
+        Assert.True(duplicateResponse.IsTurnInProgress);
+        Assert.Equal("turn_in_progress", duplicateResponse.FailureReason);
+        Assert.Equal(thread.Id, duplicateResponse.ConversationThreadId);
+        Assert.Equal(started.Turn.Id, duplicateResponse.ConversationTurnId);
+
+        Assert.Empty(await dbContext.ConversationMessages.Where(x => x.ConversationThreadId == thread.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task PersistentConversationContextService_ExcludesFailedAssistantMessagesFromContext()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = await SeedUserAsync(dbContext, "context-failed-turn-filter");
+        var options = CreateAiOptionsWithMemory();
+
+        var threadService = new ConversationThreadService(dbContext, NullLogger<ConversationThreadService>.Instance);
+        var turnService = new ConversationTurnService(dbContext, NullLogger<ConversationTurnService>.Instance);
+        var messageService = new ConversationMessageService(dbContext);
+        var stateService = new ConversationStateService(dbContext, Options.Create(options));
+        var summaryService = new ConversationSummaryService(
+            dbContext,
+            Options.Create(options),
+            new DeterministicConversationSummaryGenerator());
+        var contextService = new PersistentConversationContextService(
+            dbContext,
+            stateService,
+            summaryService,
+            Options.Create(options),
+            NullLogger<PersistentConversationContextService>.Instance);
+
+        var thread = await threadService.CreateThreadAsync(userId, "Failed turn filtering", CancellationToken.None);
+
+        var failedTurn = await turnService.StartOrGetAsync(
+            userId,
+            thread.Id,
+            "req-failed-turn",
+            "corr-failed-turn",
+            AITaskType.UserChatSimple,
+            AIModelClass.Fast,
+            CancellationToken.None);
+        await turnService.MarkPersistedUserTurnAsync(
+            userId,
+            thread.Id,
+            failedTurn.Turn.Id,
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        var failedAssistant = await messageService.AppendMessageAsync(
+            userId,
+            thread.Id,
+            new ConversationMessageAppendRequest(
+                ConversationMessageRole.Assistant,
+                "This assistant message belongs to a failed turn.",
+                ConversationTurnId: failedTurn.Turn.Id),
+            CancellationToken.None);
+        await turnService.MarkFailedAsync(
+            userId,
+            thread.Id,
+            failedTurn.Turn.Id,
+            "forced_failure_for_test",
+            "forced failure for filtering",
+            CancellationToken.None);
+
+        var healthyTurn = await turnService.StartOrGetAsync(
+            userId,
+            thread.Id,
+            "req-healthy-turn",
+            "corr-healthy-turn",
+            AITaskType.UserChatSimple,
+            AIModelClass.Fast,
+            CancellationToken.None);
+        var userMessage = await messageService.AppendMessageAsync(
+            userId,
+            thread.Id,
+            new ConversationMessageAppendRequest(
+                ConversationMessageRole.User,
+                "What should I do next for my budget?",
+                ConversationTurnId: healthyTurn.Turn.Id),
+            CancellationToken.None);
+        await turnService.MarkPersistedUserTurnAsync(
+            userId,
+            thread.Id,
+            healthyTurn.Turn.Id,
+            userMessage.Id,
+            CancellationToken.None);
+
+        var result = await contextService.BuildContextAsync(
+            new PersistentConversationContextBuildRequest(
+                UserId: userId,
+                ConversationThreadId: thread.Id,
+                TaskType: AITaskType.UserChatSimple,
+                ModelClass: AIModelClass.Fast,
+                CorrelationId: "ctx-failed-filter",
+                ConversationTurnId: healthyTurn.Turn.Id,
+                CurrentUserMessage: null,
+                IncludeCurrentUserMessage: false),
+            CancellationToken.None);
+
+        Assert.DoesNotContain(failedAssistant.Id, result.IncludedMessageIds);
+        Assert.Contains(failedAssistant.Id, result.ExcludedMessageIds);
     }
 
     private static AIIntegrationOptions CreateAiOptionsWithMemory()

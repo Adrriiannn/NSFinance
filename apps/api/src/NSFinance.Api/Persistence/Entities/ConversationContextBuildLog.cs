@@ -4,6 +4,7 @@ public class ConversationContextBuildLog
 {
     public Guid Id { get; set; }
     public Guid ConversationThreadId { get; set; }
+    public Guid? ConversationTurnId { get; set; }
     public string? CorrelationId { get; set; }
     public string TaskType { get; set; } = string.Empty;
     public string ModelClass { get; set; } = string.Empty;
@@ -15,4 +16,5 @@ public class ConversationContextBuildLog
     public DateTime CreatedUtc { get; set; }
 
     public ConversationThread ConversationThread { get; set; } = null!;
+    public ConversationTurn? ConversationTurn { get; set; }
 }
