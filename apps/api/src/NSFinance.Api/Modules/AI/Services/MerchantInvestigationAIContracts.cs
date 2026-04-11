@@ -25,16 +25,13 @@ public static class MerchantInvestigationContract
 }
 
 public sealed record MerchantInvestigationStructuredResponse(
-    MerchantInvestigationSummary Summary,
-    IReadOnlyList<MerchantInvestigationStructuredCandidate> Candidates,
-    IReadOnlyList<MerchantInvestigationAliasSuggestionPayload> AliasSuggestions,
-    IReadOnlyList<MerchantInvestigationStructuredEvidence> Evidence);
-
-public sealed record MerchantInvestigationSummary(
     double OverallConfidence,
     double AmbiguityLevel,
     string Recommendation,
-    string Summary);
+    string Summary,
+    IReadOnlyList<MerchantInvestigationStructuredCandidate> Candidates,
+    IReadOnlyList<MerchantInvestigationAliasSuggestionPayload> AliasSuggestions,
+    IReadOnlyList<MerchantInvestigationStructuredEvidence> Evidence);
 
 public sealed record MerchantInvestigationStructuredCandidate(
     string CanonicalName,
@@ -84,4 +81,5 @@ public sealed record MerchantInvestigationParseResult(
     MerchantInvestigationStructuredResponse? Structured,
     NSFinance.Api.Modules.Banking.Services.MerchantIntelligence.MerchantInvestigationResult InvestigationResult,
     IReadOnlyList<string> ReasonCodes,
-    string? FailureReason);
+    string? FailureReason,
+    string? FailureCode);

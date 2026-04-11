@@ -88,6 +88,10 @@ public sealed class MerchantAcceptancePolicy : IMerchantAcceptancePolicy
         {
             reasonCodes.Add("ai_recommendation_trust_seeking");
         }
+        else
+        {
+            reasonCodes.Add("ai_recommendation_non_trust");
+        }
 
         var compositeConfidence = Math.Clamp(
             (Math.Clamp(topCandidate.Confidence, 0d, 1d) * 0.42d)
@@ -117,7 +121,18 @@ public sealed class MerchantAcceptancePolicy : IMerchantAcceptancePolicy
                 reasonCodes);
         }
 
-        var trustedEligible = topCandidate.Confidence >= 0.92d
+        if (!recommendationIsTrustSeeking)
+        {
+            reasonCodes.Add("acceptance_blocked_by_recommendation");
+            return new MerchantAcceptanceDecision(
+                MerchantAcceptanceDecisionType.Unresolved,
+                compositeConfidence,
+                topCandidate,
+                reasonCodes);
+        }
+
+        var trustedEligible = result.Recommendation == MerchantInvestigationRecommendation.AcceptCandidate
+                             && topCandidate.Confidence >= 0.92d
                              && descriptorEntityStrength >= 0.88d
                              && ambiguityLevel <= 0.18d
                              && dominanceGap >= 0.12d

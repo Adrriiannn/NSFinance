@@ -119,6 +119,8 @@ public sealed record MerchantInvestigationCandidate(
     string? OfficialWebsite,
     string? DescriptionSummary,
     IReadOnlyList<string> AliasCandidates,
+    string WhyItMayMatch = "",
+    string WhyItMayBeWrong = "",
     double DescriptorMatchStrength = 0d,
     double EntityMatchStrength = 0d,
     IReadOnlyList<MerchantInvestigationAliasSuggestion>? AliasSuggestions = null,

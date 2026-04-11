@@ -79,11 +79,10 @@ internal sealed class MockAIProviderTransport(
         var descriptor = ResolveDescriptor(request);
 
         var response = new MerchantInvestigationStructuredResponse(
-            Summary: new MerchantInvestigationSummary(
-                OverallConfidence: 0.94d,
-                AmbiguityLevel: 0.08d,
-                Recommendation: MerchantInvestigationContract.RecommendationAcceptCandidate,
-                Summary: "Strong narrow-use merchant signature match with low ambiguity."),
+            OverallConfidence: 0.94d,
+            AmbiguityLevel: 0.08d,
+            Recommendation: MerchantInvestigationContract.RecommendationAcceptCandidate,
+            Summary: "Strong narrow-use merchant signature match with low ambiguity.",
             Candidates:
             [
                 BuildCandidate(
@@ -125,11 +124,10 @@ internal sealed class MockAIProviderTransport(
         var descriptor = ResolveDescriptor(request);
 
         var response = new MerchantInvestigationStructuredResponse(
-            Summary: new MerchantInvestigationSummary(
-                OverallConfidence: 0.63d,
-                AmbiguityLevel: 0.47d,
-                Recommendation: MerchantInvestigationContract.RecommendationUnresolved,
-                Summary: "Descriptor likely belongs to a mixed-use merchant family with ambiguous entity mapping."),
+            OverallConfidence: 0.63d,
+            AmbiguityLevel: 0.47d,
+            Recommendation: MerchantInvestigationContract.RecommendationUnresolved,
+            Summary: "Descriptor likely belongs to a mixed-use merchant family with ambiguous entity mapping.",
             Candidates:
             [
                 BuildCandidate(
@@ -184,11 +182,10 @@ internal sealed class MockAIProviderTransport(
         var descriptor = ResolveDescriptor(request);
 
         var response = new MerchantInvestigationStructuredResponse(
-            Summary: new MerchantInvestigationSummary(
-                OverallConfidence: 0.24d,
-                AmbiguityLevel: 0.10d,
-                Recommendation: MerchantInvestigationContract.RecommendationInsufficientEvidence,
-                Summary: "Insufficient evidence to map descriptor to a trusted merchant."),
+            OverallConfidence: 0.24d,
+            AmbiguityLevel: 0.10d,
+            Recommendation: MerchantInvestigationContract.RecommendationInsufficientEvidence,
+            Summary: "Insufficient evidence to map descriptor to a trusted merchant.",
             Candidates: [],
             AliasSuggestions:
             [
@@ -204,11 +201,10 @@ internal sealed class MockAIProviderTransport(
         var descriptor = ResolveDescriptor(request);
 
         var response = new MerchantInvestigationStructuredResponse(
-            Summary: new MerchantInvestigationSummary(
-                OverallConfidence: 0.71d,
-                AmbiguityLevel: 0.52d,
-                Recommendation: MerchantInvestigationContract.RecommendationConflictingCandidates,
-                Summary: "Two strong candidates conflict without sufficient dominance gap."),
+            OverallConfidence: 0.71d,
+            AmbiguityLevel: 0.52d,
+            Recommendation: MerchantInvestigationContract.RecommendationConflictingCandidates,
+            Summary: "Two strong candidates conflict without sufficient dominance gap.",
             Candidates:
             [
                 BuildCandidate(
@@ -260,11 +256,10 @@ internal sealed class MockAIProviderTransport(
         var descriptor = ResolveDescriptor(request);
 
         var response = new MerchantInvestigationStructuredResponse(
-            Summary: new MerchantInvestigationSummary(
-                OverallConfidence: 0.84d,
-                AmbiguityLevel: 0.26d,
-                Recommendation: MerchantInvestigationContract.RecommendationAcceptCautiously,
-                Summary: "Likely merchant match exists but includes broad risky alias suggestions."),
+            OverallConfidence: 0.84d,
+            AmbiguityLevel: 0.26d,
+            Recommendation: MerchantInvestigationContract.RecommendationAcceptCautiously,
+            Summary: "Likely merchant match exists but includes broad risky alias suggestions.",
             Candidates:
             [
                 BuildCandidate(
@@ -310,11 +305,10 @@ internal sealed class MockAIProviderTransport(
         var descriptor = ResolveDescriptor(request);
 
         var response = new MerchantInvestigationStructuredResponse(
-            Summary: new MerchantInvestigationSummary(
-                OverallConfidence: 0.79d,
-                AmbiguityLevel: 0.18d,
-                Recommendation: MerchantInvestigationContract.RecommendationAcceptCautiously,
-                Summary: "Coherent narrow-use descriptor pattern with weaker official-source signals."),
+            OverallConfidence: 0.79d,
+            AmbiguityLevel: 0.18d,
+            Recommendation: MerchantInvestigationContract.RecommendationAcceptCautiously,
+            Summary: "Coherent narrow-use descriptor pattern with weaker official-source signals.",
             Candidates:
             [
                 BuildCandidate(
@@ -355,11 +349,10 @@ internal sealed class MockAIProviderTransport(
         var descriptor = ResolveDescriptor(request);
 
         var response = new MerchantInvestigationStructuredResponse(
-            Summary: new MerchantInvestigationSummary(
-                OverallConfidence: 0.72d,
-                AmbiguityLevel: 0.33d,
-                Recommendation: MerchantInvestigationContract.RecommendationUnresolved,
-                Summary: "Likely intermediary or marketplace descriptor requiring conservative handling."),
+            OverallConfidence: 0.72d,
+            AmbiguityLevel: 0.33d,
+            Recommendation: MerchantInvestigationContract.RecommendationUnresolved,
+            Summary: "Likely intermediary or marketplace descriptor requiring conservative handling.",
             Candidates:
             [
                 BuildCandidate(

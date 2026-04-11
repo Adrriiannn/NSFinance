@@ -93,13 +93,14 @@ public sealed class MerchantInvestigationOrchestrator(
         }
 
         logger.LogWarning(
-            "Merchant investigation parse failure correlationId={CorrelationId} task={TaskType} modelClass={ModelClass} routeModel={Model} routeDeployment={Deployment} mock={WasMocked} parseReasonCodes={ReasonCodes} failureReason={FailureReason}",
+            "Merchant investigation parse failure correlationId={CorrelationId} task={TaskType} modelClass={ModelClass} routeModel={Model} routeDeployment={Deployment} mock={WasMocked} parseFailureCode={FailureCode} parseReasonCodes={ReasonCodes} failureReason={FailureReason}",
             correlationId,
             AITaskType.MerchantInvestigation,
             route.ModelClass,
             route.Model,
             route.Deployment,
             response.WasMocked,
+            parsed.FailureCode ?? "unknown",
             string.Join(',', parsed.ReasonCodes),
             parsed.FailureReason ?? parsedResult.FailureReason);
 

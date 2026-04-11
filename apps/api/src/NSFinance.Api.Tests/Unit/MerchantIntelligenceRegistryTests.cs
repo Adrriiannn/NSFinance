@@ -527,7 +527,10 @@ public class MerchantIntelligenceRegistryTests
                     AliasCandidates: ["CONFLICTED MERCHANT"])
             ],
             Evidence: [],
-            FailureReason: null);
+            FailureReason: null,
+            Recommendation: MerchantInvestigationRecommendation.AcceptCautiously,
+            OverallConfidence: 0.69d,
+            AmbiguityLevel: 0.31d);
 
         var decision = policy.Evaluate(result);
 
@@ -574,7 +577,10 @@ public class MerchantIntelligenceRegistryTests
                     AliasCandidates: ["ACME SERVICES"])
             ],
             Evidence: [],
-            FailureReason: null);
+            FailureReason: null,
+            Recommendation: MerchantInvestigationRecommendation.AcceptCautiously,
+            OverallConfidence: 0.69d,
+            AmbiguityLevel: 0.31d);
 
         var decision = policy.Evaluate(result);
 

@@ -32,12 +32,10 @@ public sealed class AIPromptBuilder : IPromptBuilder
 
         sb.AppendLine("Return JSON with this exact top-level shape:");
         sb.AppendLine("{");
-        sb.AppendLine("  \"summary\": {");
-        sb.AppendLine("    \"overallConfidence\": number(0..1),");
-        sb.AppendLine("    \"ambiguityLevel\": number(0..1),");
-        sb.AppendLine("    \"recommendation\": one of [\"accept_candidate\",\"accept_cautiously\",\"unresolved\",\"insufficient_evidence\",\"conflicting_candidates\"],");
-        sb.AppendLine("    \"summary\": non-empty string");
-        sb.AppendLine("  },");
+        sb.AppendLine("  \"overallConfidence\": number(0..1),");
+        sb.AppendLine("  \"ambiguityLevel\": number(0..1),");
+        sb.AppendLine("  \"recommendation\": one of [\"accept_candidate\",\"accept_cautiously\",\"unresolved\",\"insufficient_evidence\",\"conflicting_candidates\"],");
+        sb.AppendLine("  \"summary\": non-empty string,");
         sb.AppendLine("  \"candidates\": [");
         sb.AppendLine("    {");
         sb.AppendLine("      \"canonicalName\": required string,");
@@ -67,7 +65,11 @@ public sealed class AIPromptBuilder : IPromptBuilder
         sb.AppendLine("  \"aliasSuggestions\": [{\"aliasText\": string, \"aliasType\": string, \"confidence\": number(0..1), \"notes\": optional string, \"isPreferred\": optional bool}],");
         sb.AppendLine("  \"evidence\": [{\"evidenceType\": enum string, \"sourceClass\": string, \"summary\": string, \"confidence\": number(0..1), \"relevance\": number(0..1), \"sourceReference\": optional string}]");
         sb.AppendLine("}");
-        sb.AppendLine("Use conservative outputs. If uncertain, return recommendation=insufficient_evidence or unresolved.");
+        sb.AppendLine("Rules:");
+        sb.AppendLine("- Output must be strict valid JSON only.");
+        sb.AppendLine("- Do not include fields outside this schema.");
+        sb.AppendLine("- Do not use broad dangerous aliases such as single-token amazon/google/apple/microsoft/paypal.");
+        sb.AppendLine("- If uncertain, return recommendation=insufficient_evidence or unresolved.");
 
         return new PromptBuildResult(
             SystemInstructions: systemInstructions,

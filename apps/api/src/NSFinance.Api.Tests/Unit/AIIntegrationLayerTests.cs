@@ -147,6 +147,7 @@ public sealed class AIIntegrationLayerTests
         Assert.False(parsed.InvestigationResult.Succeeded);
         Assert.True(parsed.InvestigationResult.ParserRejected);
         Assert.Contains("invalid_json_payload", parsed.ReasonCodes);
+        Assert.Equal("invalid_json_payload", parsed.FailureCode);
     }
 
     [Fact]
@@ -155,12 +156,10 @@ public sealed class AIIntegrationLayerTests
         var parser = new MerchantInvestigationResponseParser(NullLogger<MerchantInvestigationResponseParser>.Instance);
         var payload = """
             {
-              "summary": {
-                "overallConfidence": 0.90,
-                "ambiguityLevel": 0.10,
-                "recommendation": "accept_candidate",
-                "summary": "Trust this"
-              },
+              "overallConfidence": 0.90,
+              "ambiguityLevel": 0.10,
+              "recommendation": "accept_candidate",
+              "summary": "Trust this",
               "candidates": [],
               "aliasSuggestions": [],
               "evidence": []
@@ -184,6 +183,7 @@ public sealed class AIIntegrationLayerTests
 
         Assert.False(parsed.ParsedSuccessfully);
         Assert.Contains("invalid_recommendation_accept_without_candidates", parsed.ReasonCodes);
+        Assert.Equal("invalid_recommendation_accept_without_candidates", parsed.FailureCode);
     }
 
     [Fact]
@@ -192,12 +192,10 @@ public sealed class AIIntegrationLayerTests
         var parser = new MerchantInvestigationResponseParser(NullLogger<MerchantInvestigationResponseParser>.Instance);
         var payload = """
             {
-              "summary": {
-                "overallConfidence": 0.62,
-                "ambiguityLevel": 0.40,
-                "recommendation": "unresolved",
-                "summary": "Ambiguous descriptor"
-              },
+              "overallConfidence": 0.62,
+              "ambiguityLevel": 0.40,
+              "recommendation": "unresolved",
+              "summary": "Ambiguous descriptor",
               "candidates": [
                 {
                   "canonicalName": "Acme",
@@ -235,6 +233,41 @@ public sealed class AIIntegrationLayerTests
         Assert.True(parsed.ParsedSuccessfully);
         Assert.True(parsed.IsLowTrustValid);
         Assert.Equal(MerchantInvestigationRecommendation.Unresolved, parsed.InvestigationResult.Recommendation);
+    }
+
+    [Fact]
+    public void MerchantInvestigationParser_RejectsOutOfRangeConfidence()
+    {
+        var parser = new MerchantInvestigationResponseParser(NullLogger<MerchantInvestigationResponseParser>.Instance);
+        var payload = """
+            {
+              "overallConfidence": 1.20,
+              "ambiguityLevel": 0.30,
+              "recommendation": "accept_candidate",
+              "summary": "Invalid confidence",
+              "candidates": [],
+              "aliasSuggestions": [],
+              "evidence": []
+            }
+            """;
+
+        var parsed = parser.Parse(new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "Mock",
+            Model: "gpt-5-chat",
+            Deployment: "merchant-investigation",
+            InputTokenEstimate: 10,
+            OutputTokenEstimate: 20,
+            LatencyMs: 1,
+            WasMocked: true,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null));
+
+        Assert.False(parsed.ParsedSuccessfully);
+        Assert.Equal("invalid_overall_confidence", parsed.FailureCode);
     }
 
     [Fact]
@@ -360,6 +393,56 @@ public sealed class AIIntegrationLayerTests
 
         var decision = new MerchantAcceptancePolicy().Evaluate(result);
 
+        Assert.NotEqual(MerchantAcceptanceDecisionType.AcceptedTrusted, decision.DecisionType);
+    }
+
+    [Fact]
+    public async Task MerchantInvestigationResolutionFlow_ConflictingCandidates_RemainsUnresolved()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultMerchantScenario"] = "MerchantConflictingCandidates"
+        });
+
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = new MerchantRegistryService(dbContext, normalizer, NullLogger<MerchantRegistryService>.Instance);
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            services.GetRequiredService<IMerchantInvestigationService>(),
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance);
+
+        var result = await resolver.ResolveAsync("ACME*PAY", CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.NotNull(result.UnresolvedMerchantId);
+    }
+
+    [Fact]
+    public async Task MerchantInvestigationResolutionFlow_IntermediaryMerchant_IsNotOvertrusted()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultMerchantScenario"] = "MerchantIntermediaryMarketplace"
+        });
+
+        var investigation = services.GetRequiredService<IMerchantInvestigationService>();
+        var result = await investigation.InvestigateAsync(
+            new MerchantInvestigationRequest("PAYPAL*MERCHANT", "paypal merchant", "unit-test"),
+            CancellationToken.None);
+
+        var decision = new MerchantAcceptancePolicy().Evaluate(result);
         Assert.NotEqual(MerchantAcceptanceDecisionType.AcceptedTrusted, decision.DecisionType);
     }
 
