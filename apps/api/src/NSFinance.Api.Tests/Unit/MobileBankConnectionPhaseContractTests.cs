@@ -50,6 +50,33 @@ public class MobileBankConnectionPhaseContractTests
         Assert.Contains("sync_taking_longer_than_expected", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ConnectBankScreen_UsesPassiveSafeCloseMessaging()
+    {
+        var source = ReadConnectBankSource();
+        Assert.Contains("safeCloseMessage", source, StringComparison.Ordinal);
+        Assert.Contains("You can close this page now", source, StringComparison.Ordinal);
+        Assert.Contains("You can leave this page at any time", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConnectBankScreen_RendersLifecycleTimelineStages()
+    {
+        var source = ReadConnectBankSource();
+        Assert.Contains("Authorized with bank", source, StringComparison.Ordinal);
+        Assert.Contains("Connection secured", source, StringComparison.Ordinal);
+        Assert.Contains("Balances fetched", source, StringComparison.Ordinal);
+        Assert.Contains("Transactions imported", source, StringComparison.Ordinal);
+        Assert.Contains("Activity organized", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConnectBankScreen_CloseActionRemainsOptionalDuringSync()
+    {
+        var source = ReadConnectBankSource();
+        Assert.DoesNotContain("disabled={isSyncingInProgress}", source, StringComparison.Ordinal);
+    }
+
     private static string ReadConnectBankSource()
     {
         var repoRoot = ResolveRepoRoot();

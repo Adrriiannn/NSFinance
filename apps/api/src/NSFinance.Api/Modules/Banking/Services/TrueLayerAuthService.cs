@@ -120,7 +120,11 @@ public sealed class TrueLayerAuthService(
                 "The callback query is invalid. Please restart the bank connection flow.",
                 StatusCodes.Status400BadRequest,
                 null,
-                null);
+                null,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: "callback_query_invalid");
         }
 
         var appReturnUri = ExtractAppReturnUri(query.State);
@@ -131,10 +135,14 @@ public sealed class TrueLayerAuthService(
             return new TrueLayerCallbackOutcome(
                 false,
                 "callback_state_invalid",
-                "The authorization state is invalid or expired. Restart connection from the app.",
+                "This callback has already been handled or expired. Return to NSFinance to continue.",
                 StatusCodes.Status400BadRequest,
                 null,
-                appReturnUri);
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.CompletedWithWarnings,
+                CallbackLifecycleReason: "callback_state_invalid_or_already_consumed");
         }
 
         logger.LogInformation(
@@ -189,7 +197,11 @@ public sealed class TrueLayerAuthService(
                 "Bank consent was not completed. Please reconnect from the app.",
                 StatusCodes.Status400BadRequest,
                 connection.Id,
-                appReturnUri);
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: "provider_declined_or_cancelled");
         }
 
         var configResult = configurationService.Resolve();
@@ -208,7 +220,11 @@ public sealed class TrueLayerAuthService(
                 "Banking provider configuration is incomplete. Contact support.",
                 configResult.Error.StatusCode,
                 connection.Id,
-                appReturnUri);
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: "provider_configuration_unavailable");
         }
 
         if (!string.Equals(connection.ProviderEnvironment, configResult.Value!.Environment, StringComparison.OrdinalIgnoreCase))
@@ -226,7 +242,11 @@ public sealed class TrueLayerAuthService(
                 "Environment mismatch detected. Restart the connect flow in the active environment.",
                 StatusCodes.Status409Conflict,
                 connection.Id,
-                appReturnUri);
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: "environment_mismatch");
         }
 
         await bankConnectionService.MarkConnectionStateAsync(
@@ -278,7 +298,11 @@ public sealed class TrueLayerAuthService(
                 "Authorization code could not be exchanged. Please reconnect from the app.",
                 tokenResult.Error.StatusCode,
                 connection.Id,
-                appReturnUri);
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: "token_exchange_failed");
         }
 
         logger.LogInformation(
@@ -302,7 +326,11 @@ public sealed class TrueLayerAuthService(
                 "Bank linked, but secure token storage failed. Please reconnect from the app.",
                 persistResult.Error.StatusCode,
                 connection.Id,
-                appReturnUri);
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: "token_persistence_failed");
         }
 
         await bankConnectionService.MarkConnectionStateAsync(
@@ -378,7 +406,11 @@ public sealed class TrueLayerAuthService(
                 "Bank linked successfully. Return to the app and tap Sync now to complete the first import.",
                 StatusCodes.Status200OK,
                 connection.Id,
-                appReturnUri);
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: true,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.CompletedWithWarnings,
+                CallbackLifecycleReason: "initial_sync_queue_unavailable");
         }
 
         return new TrueLayerCallbackOutcome(
@@ -387,7 +419,11 @@ public sealed class TrueLayerAuthService(
             "Bank linked successfully. Return to the app while we start the first sync.",
             StatusCodes.Status200OK,
             connection.Id,
-            appReturnUri);
+            appReturnUri,
+            SafeToClose: true,
+            ShouldAutoReturn: true,
+            CallbackLifecycleStage: BankConnectionLifecycleStages.ReturnedToApp,
+            CallbackLifecycleReason: "authorization_completed");
     }
 
     private static string BuildCallbackState(string nonce, string appReturnUri)

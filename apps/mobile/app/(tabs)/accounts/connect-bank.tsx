@@ -117,6 +117,138 @@ type UiPhaseEvidence = {
   updatedUtc: string | null;
 };
 
+type StageVisualState = "complete" | "in_progress" | "pending" | "delayed" | "warning";
+
+type ConnectionTimelineStage = {
+  key: string;
+  label: string;
+  state: StageVisualState;
+};
+
+const timelineStageOrder = [
+  "authorized",
+  "connection_secured",
+  "balances_fetched",
+  "transactions_imported",
+  "activity_organized"
+] as const;
+
+const timelineStageLabels: Record<(typeof timelineStageOrder)[number], string> = {
+  authorized: "Authorized with bank",
+  connection_secured: "Connection secured",
+  balances_fetched: "Balances fetched",
+  transactions_imported: "Transactions imported",
+  activity_organized: "Activity organized"
+};
+
+function buildTimelineStages(
+  stageState: Partial<Record<(typeof timelineStageOrder)[number], StageVisualState>>
+): ConnectionTimelineStage[] {
+  return timelineStageOrder.map((key) => ({
+    key,
+    label: timelineStageLabels[key],
+    state: stageState[key] ?? "pending"
+  }));
+}
+
+function deriveTimelineStages(
+  uiState: ConnectionStatus,
+  evidence: UiPhaseEvidence | null,
+  connection: BankConnectionDto | null
+): ConnectionTimelineStage[] {
+  const hasImportedTransactions = (evidence?.importedTransactionCount ?? 0) > 0;
+
+  switch (uiState) {
+    case "opening_bank":
+    case "awaiting_consent":
+      return buildTimelineStages({
+        authorized: "in_progress"
+      });
+    case "connected_pending_sync":
+      return buildTimelineStages({
+        authorized: "complete",
+        connection_secured: "complete",
+        balances_fetched: "in_progress"
+      });
+    case "syncing_data":
+      return buildTimelineStages({
+        authorized: "complete",
+        connection_secured: "complete",
+        balances_fetched: "complete",
+        transactions_imported: "in_progress"
+      });
+    case "import_complete_enrichment_queued":
+      return buildTimelineStages({
+        authorized: "complete",
+        connection_secured: "complete",
+        balances_fetched: "complete",
+        transactions_imported: "complete",
+        activity_organized: "in_progress"
+      });
+    case "organizing_transactions":
+      return buildTimelineStages({
+        authorized: "complete",
+        connection_secured: "complete",
+        balances_fetched: "complete",
+        transactions_imported: "complete",
+        activity_organized: "in_progress"
+      });
+    case "sync_taking_longer_than_expected":
+      return buildTimelineStages({
+        authorized: "complete",
+        connection_secured: "complete",
+        balances_fetched: "complete",
+        transactions_imported: hasImportedTransactions ? "complete" : "delayed",
+        activity_organized: hasImportedTransactions ? "delayed" : "pending"
+      });
+    case "synced":
+      return buildTimelineStages({
+        authorized: "complete",
+        connection_secured: "complete",
+        balances_fetched: "complete",
+        transactions_imported: "complete",
+        activity_organized: "complete"
+      });
+    case "failed":
+    case "reauth_required":
+      return buildTimelineStages({
+        authorized: "warning",
+        connection_secured: connection ? "complete" : "warning",
+        balances_fetched: hasImportedTransactions ? "complete" : "warning",
+        transactions_imported: hasImportedTransactions ? "complete" : "warning",
+        activity_organized: "warning"
+      });
+    case "not_connected":
+    default:
+      return buildTimelineStages({});
+  }
+}
+
+function formatSafeCloseMessage(
+  uiState: ConnectionStatus,
+  safeToLeave: boolean,
+  safeToClose: boolean,
+  userActionRequired: boolean
+) {
+  if (userActionRequired) {
+    return "Action is needed in NSFinance, but you can close this page now.";
+  }
+
+  if (!safeToLeave) {
+    return "We are preparing your secure connection. Keep this page open for a moment.";
+  }
+
+  if (safeToClose) {
+    return "You can close this page now. NSFinance will keep going in the background.";
+  }
+
+  if (uiState === "awaiting_consent" || uiState === "opening_bank") {
+    return "Finish bank authorization in your browser. You can return to this page whenever you want.";
+  }
+
+  return "You can leave this page at any time while we finish the remaining steps.";
+}
+
 function shouldThrottleBankingLog(event: string, metadata?: Record<string, unknown>) {
   if (BANKING_ONGOING_LOG_EVENTS.has(event)) {
     return true;
@@ -1040,6 +1172,17 @@ export default function AddAccountModalScreen() {
       ? connectionsQuery.isError
       : false;
   const completionReached = completionStatuses.has(activeConnection?.status ?? "not_connected");
+  const userActionRequired = activeConnection?.userActionRequired === true;
+  const safeToLeave = activeConnection?.safeToLeave ?? true;
+  const safeToClose = activeConnection?.safeToClose
+    ?? !(uiState === "opening_bank" || uiState === "awaiting_consent");
+  const safeCloseMessage = formatSafeCloseMessage(
+    uiState,
+    safeToLeave,
+    safeToClose,
+    userActionRequired
+  );
+  const timelineStages = deriveTimelineStages(uiState, uiPhaseEvidence, activeConnection);
   const showResumeAction =
     uiState === "awaiting_consent" &&
     (pendingActionStatuses.has(activeConnection?.status ?? "not_connected") ||
@@ -1051,32 +1194,38 @@ export default function AddAccountModalScreen() {
     uiState === "import_complete_enrichment_queued" ||
     uiState === "organizing_transactions" ||
     uiState === "sync_taking_longer_than_expected";
-  const isSyncingInProgress = uiState === "connected_pending_sync" || uiState === "syncing_data";
   const isCompletedSynced = activeConnection?.status === "synced";
-  const primaryActionLabel = isCompletedSynced
+  const showPrimaryConnectAction =
+    uiState === "not_connected"
+    || uiState === "reauth_required"
+    || uiState === "failed"
+    || isCompletedSynced;
+  const primaryActionLabel = uiState === "reauth_required" || uiState === "failed"
+    ? "Reconnect bank account"
+    : isCompletedSynced
     ? "Connect another bank account"
     : connectBankCta.primaryLabel;
-  const secondaryActionLabel = isCompletedSynced ? "Done" : "Cancel";
+  const secondaryActionLabel = completionReached ? "Return to activity" : "Close";
 
   const statusHelperText =
     uiState === "opening_bank"
-      ? "Opening the secure bank consent page now. Stay here if your browser does not launch immediately."
+      ? "Opening your secure bank authorization. If the browser does not open automatically, use the action below."
       : uiState === "awaiting_consent" && consentTimedOut
-        ? "We still have not seen the completed bank connection. If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
+        ? "We have not received the completed authorization yet. If you already finished in the browser, refresh status."
         : uiState === "awaiting_consent"
-          ? "Finish the bank consent flow in your browser. As soon as you return, we will start checking the saved connection."
+          ? "Finish the secure bank authorization in your browser. We will continue automatically when you return."
         : uiState === "connected_pending_sync" || uiState === "syncing_data"
-          ? "We are currently syncing your data. Please wait as this may take a while."
+          ? "Your bank connection is secure. We are importing balances and transactions now."
           : uiState === "import_complete_enrichment_queued"
-            ? "Bank data import is complete. Transaction organization is queued and will continue automatically."
+            ? "Import is complete and organization is queued. You can leave this page at any time."
             : uiState === "organizing_transactions"
-              ? "Bank data import is complete. We are organizing and categorizing transactions now."
+              ? "Import is complete. NSFinance is now organizing your activity."
               : uiState === "sync_taking_longer_than_expected"
-                ? "Sync is taking longer than expected. Tap Refresh to reconcile status. If import already completed, organization will continue in the background."
+                ? "This bank is taking longer than usual. NSFinance will keep retrying and continue in the background."
               : uiState === "failed"
-                ? "The bank connection exists, but data sync failed. Retry from the Accounts or Activity sync icon without reconnecting."
+                ? "The connection was created, but sync did not finish. Reconnect or retry from the app."
                 : uiState === "reauth_required"
-                  ? "Provider access expired or failed. Your imported history is still saved. Reconnect your bank to resume syncing."
+                  ? "Bank access expired or was interrupted. Reconnect to resume syncing."
                   : undefined;
   const providerFreshnessNote =
     "Provider note: balances/transactions can be briefly cached, and pending payments appear only after booking.";
@@ -1143,6 +1292,42 @@ export default function AddAccountModalScreen() {
 
         <ConnectionStatusIndicator status={uiState} helperText={statusHelperText} />
 
+        <View style={styles.safeCloseCard}>
+          <Text style={styles.safeCloseTitle}>
+            {safeToClose ? "Safe to close" : "Still finishing up"}
+          </Text>
+          <Text style={styles.safeCloseCopy}>{safeCloseMessage}</Text>
+        </View>
+
+        <View style={styles.timelineCard}>
+          {timelineStages.map((stage) => (
+            <View key={stage.key} style={styles.timelineRow}>
+              <View
+                style={[
+                  styles.timelineDot,
+                  stage.state === "complete"
+                    ? styles.timelineDotComplete
+                    : stage.state === "in_progress"
+                      ? styles.timelineDotInProgress
+                      : stage.state === "delayed"
+                        ? styles.timelineDotDelayed
+                        : stage.state === "warning"
+                          ? styles.timelineDotWarning
+                          : styles.timelineDotPending
+                ]}
+              />
+              <Text
+                style={[
+                  styles.timelineLabel,
+                  stage.state === "pending" ? styles.timelineLabelPending : null
+                ]}
+              >
+                {stage.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+
         <View style={styles.metadataCard}>
           <Text style={styles.metadataRow}>
             <Text style={styles.metadataLabel}>Bank: </Text>
@@ -1203,18 +1388,18 @@ export default function AddAccountModalScreen() {
           <View style={styles.resumeCard}>
             <Text style={styles.resumeTitle}>
               {uiState === "connected_pending_sync"
-                ? "The bank connection is confirmed. Tap Refresh if you want to check the projected accounts and balances now."
+                ? "Your connection is confirmed. Refresh is optional if you want to check progress right now."
                 : uiState === "syncing_data"
-                  ? "We are still syncing your bank data. You can keep waiting or tap Refresh to reconcile now."
+                  ? "NSFinance is importing your bank data. You can keep using the app while this runs."
                   : uiState === "import_complete_enrichment_queued"
-                    ? "Bank data is already imported and enrichment is queued. Tap Refresh to check organization progress."
+                    ? "Import finished and organization is queued. Refresh if you want a live update now."
                     : uiState === "organizing_transactions"
-                      ? "Your bank data is imported and transactions are being organized. You can keep using the app while this runs."
+                      ? "Transactions are being organized. You can leave this page and come back later."
                       : uiState === "sync_taking_longer_than_expected"
-                        ? "Sync has taken longer than expected. Tap Refresh to reconcile status and continue."
+                        ? "This provider is slower than usual right now. Refresh is optional while automatic retries continue."
                     : consentTimedOut
-                      ? "If you already finished in the browser, tap Refresh. Otherwise reopen the bank consent page and try again."
-                      : "If you already finished in the browser, tap Refresh to check the latest bank connection status."}
+                      ? "If you already finished in the browser, refresh status. Otherwise reopen bank authorization."
+                      : "Refresh is optional. NSFinance is already handling this flow."}
             </Text>
             <View style={styles.resumeActions}>
               <SecondaryButton
@@ -1244,22 +1429,20 @@ export default function AddAccountModalScreen() {
         ) : null}
 
         <View style={styles.primaryActions}>
-          <PrimaryButton
-            label={primaryActionLabel}
-            onPress={() => {
-              void handleConnectBank();
-            }}
-            isLoading={startLinkMutation.isPending}
-            style={styles.connectBankButton}
-          />
+          {showPrimaryConnectAction ? (
+            <PrimaryButton
+              label={primaryActionLabel}
+              onPress={() => {
+                void handleConnectBank();
+              }}
+              isLoading={startLinkMutation.isPending}
+              style={styles.connectBankButton}
+            />
+          ) : null}
 
           <SecondaryButton
             label={secondaryActionLabel}
             onPress={() => {
-              if (isSyncingInProgress) {
-                return;
-              }
-
               logBankingEvent("modal_close", {
                 connectionId: pendingConnectionId,
                 uiState,
@@ -1280,7 +1463,6 @@ export default function AddAccountModalScreen() {
 
               router.replace("/(tabs)" as never);
             }}
-            disabled={isSyncingInProgress}
           />
         </View>
       </View>
@@ -1305,6 +1487,63 @@ const styles = createRuntimeStyleSheet(() => ({
   title: {
     color: palette.textPrimary,
     ...typography.title1
+  },
+  safeCloseCard: {
+    borderWidth: 1,
+    borderColor: "rgba(29,186,114,0.35)",
+    backgroundColor: "rgba(16,34,24,0.55)",
+    borderRadius: 6,
+    padding: spacing[12],
+    gap: spacing[6]
+  },
+  safeCloseTitle: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "600"
+  },
+  safeCloseCopy: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  timelineCard: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: surfaces.card,
+    borderRadius: 6,
+    padding: spacing[12],
+    gap: spacing[8]
+  },
+  timelineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  timelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5
+  },
+  timelineDotComplete: {
+    backgroundColor: palette.success
+  },
+  timelineDotInProgress: {
+    backgroundColor: palette.caution
+  },
+  timelineDotPending: {
+    backgroundColor: palette.textMuted
+  },
+  timelineDotDelayed: {
+    backgroundColor: "#F28C28"
+  },
+  timelineDotWarning: {
+    backgroundColor: palette.negative
+  },
+  timelineLabel: {
+    color: palette.textPrimary,
+    ...typography.body2
+  },
+  timelineLabelPending: {
+    color: palette.textSecondary
   },
   metadataCard: {
     borderWidth: 1,

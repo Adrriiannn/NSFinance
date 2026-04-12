@@ -620,6 +620,48 @@ export type BankConnectionDto = {
   historicalEnrichmentCompleted?: boolean | null;
   historicalEnrichmentProgressPercent?: number | null;
   historicalEnrichmentCheckpointUtc?: string | null;
+  connectionLifecycleStage?:
+    | "idle"
+    | "launching_authorization"
+    | "awaiting_bank_authorization"
+    | "authorization_returned"
+    | "authorization_confirmed"
+    | "deep_link_return_initiated"
+    | "returned_to_app"
+    | "connection_created"
+    | "fetching_accounts"
+    | "fetching_balances"
+    | "fetching_transactions"
+    | "transactions_fetched"
+    | "categorization_pending"
+    | "categorization_running"
+    | "post_processing_running"
+    | "completed"
+    | "completed_with_limited_history"
+    | "completed_with_warnings"
+    | "delayed_retrying"
+    | "cooldown_wait"
+    | "provider_slow"
+    | "partial_failure"
+    | "failed"
+    | "reauth_required"
+    | "disconnected"
+    | "disconnecting"
+    | null;
+  connectionLifecycleReason?: string | null;
+  safeToLeave?: boolean | null;
+  safeToClose?: boolean | null;
+  backgroundContinuationGuaranteed?: boolean | null;
+  userActionRequired?: boolean | null;
+  userActionKind?: "none" | "reconnect" | "retry_sync" | "retry_disconnect" | null;
+  completionSemantics?:
+    | "in_progress"
+    | "completed"
+    | "completed_with_limited_history"
+    | "completed_with_warnings"
+    | "needs_attention"
+    | null;
+  lifecycleLastUpdatedUtc?: string | null;
 };
 
 export type ConnectedBanksOverviewDto = {

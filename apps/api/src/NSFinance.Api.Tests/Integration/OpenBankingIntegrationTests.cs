@@ -5805,6 +5805,200 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task DisconnectCleanup_ClearsStaleSurvivingTransferLinksAndMarksReclassification()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.disconnect.stale-counterpart@test.local");
+        var now = DateTime.UtcNow;
+
+        var removedConnectionId = Guid.NewGuid();
+        var survivingConnectionId = Guid.NewGuid();
+        var removedFinancialAccountId = Guid.NewGuid();
+        var survivingFinancialAccountId = Guid.NewGuid();
+        var removedLinkedAccountId = Guid.NewGuid();
+        var survivingLinkedAccountId = Guid.NewGuid();
+        var removedTransactionId = Guid.NewGuid();
+        var survivingTransactionId = Guid.NewGuid();
+
+        harness.DbContext.OpenBankingConnections.AddRange(
+            new OpenBankingConnection
+            {
+                Id = removedConnectionId,
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Disconnected Bank",
+                Status = BankConnectionStatuses.Synced,
+                CreatedUtc = now.AddMinutes(-30),
+                UpdatedUtc = now.AddMinutes(-10)
+            },
+            new OpenBankingConnection
+            {
+                Id = survivingConnectionId,
+                UserId = user.Id,
+                ProviderName = BankingProviders.TrueLayer,
+                ProviderEnvironment = "sandbox",
+                ProviderDisplayName = "Surviving Bank",
+                Status = BankConnectionStatuses.Synced,
+                CreatedUtc = now.AddMinutes(-30),
+                UpdatedUtc = now.AddMinutes(-10),
+                NeedsHistoricalReclassification = false,
+                HistoricalEnrichmentCompletedUtc = now.AddMinutes(-5),
+                HistoricalEnrichmentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion
+            });
+
+        harness.DbContext.FinancialAccounts.AddRange(
+            new FinancialAccount
+            {
+                Id = removedFinancialAccountId,
+                UserId = user.Id,
+                Name = "Removed projection account",
+                Type = "Current",
+                Currency = "EUR",
+                CreatedUtc = now.AddMinutes(-30)
+            },
+            new FinancialAccount
+            {
+                Id = survivingFinancialAccountId,
+                UserId = user.Id,
+                Name = "Surviving projection account",
+                Type = "Current",
+                Currency = "EUR",
+                CreatedUtc = now.AddMinutes(-30)
+            });
+
+        harness.DbContext.LinkedBankAccounts.AddRange(
+            new LinkedBankAccount
+            {
+                Id = removedLinkedAccountId,
+                ConnectionId = removedConnectionId,
+                ProviderAccountId = "acc-remove",
+                DisplayName = "Removed account",
+                Currency = "EUR",
+                CurrentConnectionHealth = "healthy",
+                RawPayloadJson = "{}",
+                FinancialAccountId = removedFinancialAccountId,
+                CreatedUtc = now.AddMinutes(-30),
+                UpdatedUtc = now.AddMinutes(-10)
+            },
+            new LinkedBankAccount
+            {
+                Id = survivingLinkedAccountId,
+                ConnectionId = survivingConnectionId,
+                ProviderAccountId = "acc-survive",
+                DisplayName = "Surviving account",
+                Currency = "EUR",
+                CurrentConnectionHealth = "healthy",
+                RawPayloadJson = "{}",
+                FinancialAccountId = survivingFinancialAccountId,
+                CreatedUtc = now.AddMinutes(-30),
+                UpdatedUtc = now.AddMinutes(-10)
+            });
+
+        harness.DbContext.Transactions.AddRange(
+            new Transaction
+            {
+                Id = removedTransactionId,
+                FinancialAccountId = removedFinancialAccountId,
+                Amount = -125m,
+                Currency = "EUR",
+                Description = "Transfer to own account",
+                BookedAtUtc = now.AddDays(-2),
+                TransferKind = TransactionTransferKind.LinkedInternal,
+                LinkedTransferTransactionId = survivingTransactionId,
+                DeterministicLinkedTransactionId = survivingTransactionId,
+                DeterministicRelationshipType = "internal_transfer",
+                DeterministicClassificationStatus = DeterministicClassificationStatus.ClassifiedMatchedRule,
+                DeterministicClassificationTerminal = true,
+                DeterministicClassificationVersion = DeterministicCategorizationConstants.CurrentClassificationVersion,
+                CreatedUtc = now.AddDays(-2)
+            },
+            new Transaction
+            {
+                Id = survivingTransactionId,
+                FinancialAccountId = survivingFinancialAccountId,
+                Amount = 125m,
+                Currency = "EUR",
+                Description = "Transfer from own account",
+                BookedAtUtc = now.AddDays(-2),
+                TransferKind = TransactionTransferKind.LinkedInternal,
+                LinkedTransferTransactionId = removedTransactionId,
+                DeterministicLinkedTransactionId = removedTransactionId,
+                DeterministicRelationshipType = "internal_transfer",
+                DeterministicRelationshipGroupId = Guid.NewGuid(),
+                DeterministicClassificationStatus = DeterministicClassificationStatus.ClassifiedMatchedRule,
+                DeterministicClassificationTerminal = true,
+                DeterministicClassificationVersion = DeterministicCategorizationConstants.CurrentClassificationVersion,
+                NeedsDeterministicReclassification = false,
+                CreatedUtc = now.AddDays(-2)
+            });
+
+        harness.DbContext.TransactionRelationships.Add(new TransactionRelationship
+        {
+            Id = Guid.NewGuid(),
+            RelationshipKey = $"internal:{survivingTransactionId:N}:{removedTransactionId:N}",
+            RelationshipType = TransactionRelationshipType.InternalAccountTransfer,
+            RelationshipStatus = TransactionRelationshipStatus.Active,
+            RelationshipDirection = TransactionRelationshipDirection.OutflowToInflow,
+            SourceTransactionId = survivingTransactionId,
+            TargetTransactionId = removedTransactionId,
+            SourceFinancialAccountId = survivingFinancialAccountId,
+            TargetFinancialAccountId = removedFinancialAccountId,
+            SourceConnectionId = survivingConnectionId,
+            TargetConnectionId = removedConnectionId,
+            ConfidenceScore = 12,
+            ConfidenceTier = "high",
+            CreatedUtc = now.AddDays(-2),
+            UpdatedUtc = now.AddDays(-2)
+        });
+
+        await harness.DbContext.SaveChangesAsync();
+
+        var service = harness.CreateConnectionService();
+        var disconnectResult = await service.DisconnectAsync(user.Id, removedConnectionId, CancellationToken.None);
+        Assert.True(disconnectResult.Succeeded);
+
+        await service.RunDisconnectCleanupAsync(user.Id, removedConnectionId, CancellationToken.None);
+
+        var removedConnection = await harness.DbContext.OpenBankingConnections
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == removedConnectionId);
+        Assert.Equal(BankConnectionStatuses.Revoked, removedConnection.Status);
+
+        var survivingTransaction = await harness.DbContext.Transactions
+            .SingleAsync(x => x.Id == survivingTransactionId);
+        Assert.Null(survivingTransaction.LinkedTransferTransactionId);
+        Assert.Null(survivingTransaction.LinkedTransferMatchedUtc);
+        Assert.Null(survivingTransaction.DeterministicLinkedTransactionId);
+        Assert.Null(survivingTransaction.DeterministicRelationshipType);
+        Assert.Null(survivingTransaction.DeterministicRelationshipGroupId);
+        Assert.True(survivingTransaction.NeedsDeterministicReclassification);
+        Assert.Equal(
+            DeterministicClassificationStatus.SupersededRecomputeRequired,
+            survivingTransaction.DeterministicClassificationStatus);
+        Assert.False(survivingTransaction.DeterministicClassificationTerminal);
+        Assert.Equal("universe_contraction_connection_removed", survivingTransaction.DeterministicReasonCode);
+
+        var survivingConnection = await harness.DbContext.OpenBankingConnections
+            .SingleAsync(x => x.Id == survivingConnectionId);
+        Assert.True(survivingConnection.NeedsHistoricalReclassification);
+        Assert.Null(survivingConnection.HistoricalEnrichmentStartedUtc);
+        Assert.Null(survivingConnection.HistoricalEnrichmentCompletedUtc);
+        Assert.Null(survivingConnection.HistoricalEnrichmentCheckpointUtc);
+
+        var removedTransactionStillExists = await harness.DbContext.Transactions
+            .AnyAsync(x => x.Id == removedTransactionId);
+        Assert.False(removedTransactionStillExists);
+
+        var staleRelationshipStillExists = await harness.DbContext.TransactionRelationships
+            .AnyAsync(x => x.SourceTransactionId == survivingTransactionId);
+        Assert.False(staleRelationshipStillExists);
+    }
+
+    [Fact]
     public async Task DisconnectAsync_MarksPendingAndRevokesTokenBeforeBackgroundCleanup()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -8885,6 +9079,7 @@ public class OpenBankingIntegrationTests
                 DbContext,
                 _auditService,
                 new NoOpBankDisconnectQueue(),
+                enrichmentQueue: null,
                 scopeFactory: null,
                 NullLogger<BankConnectionService>.Instance);
         }

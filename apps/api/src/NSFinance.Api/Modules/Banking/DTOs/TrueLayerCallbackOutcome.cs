@@ -6,4 +6,8 @@ public sealed record TrueLayerCallbackOutcome(
     string Message,
     int HttpStatusCode,
     Guid? ConnectionId,
-    string? AppReturnUri);
+    string? AppReturnUri,
+    bool SafeToClose = true,
+    bool ShouldAutoReturn = false,
+    string? CallbackLifecycleStage = null,
+    string? CallbackLifecycleReason = null);

@@ -32,52 +32,52 @@ const statusConfig: Record<
   opening_bank: {
     label: "Opening bank",
     color: palette.caution,
-    helper: "Launching the secure TrueLayer consent page."
+    helper: "Launching secure bank authorization."
   },
   awaiting_consent: {
     label: "Awaiting consent",
     color: palette.caution,
-    helper: "Finish the secure bank consent flow in your browser."
+    helper: "Finish authorization in your browser."
   },
   connected_pending_sync: {
-    label: "Connected",
+    label: "Connection secured",
     color: palette.success,
-    helper: "Your bank connection is confirmed. Initial sync is about to start."
+    helper: "Your account connection is secured. Import is starting."
   },
   syncing_data: {
-    label: "Syncing data",
+    label: "Importing activity",
     color: palette.success,
-    helper: "Your bank is connected. We are importing account details and transactions now."
+    helper: "Fetching balances and transactions."
   },
   import_complete_enrichment_queued: {
     label: "Import complete",
     color: palette.success,
-    helper: "Bank data is imported. Transaction organization is queued."
+    helper: "Organization is queued and will continue in the background."
   },
   organizing_transactions: {
     label: "Organizing transactions",
     color: palette.success,
-    helper: "Bank data is imported. We are categorizing and linking transactions now."
+    helper: "NSFinance is categorizing and linking your activity."
   },
   sync_taking_longer_than_expected: {
-    label: "Sync taking longer",
+    label: "Provider delay",
     color: palette.caution,
-    helper: "Status reconciliation is in progress. Tap Refresh to update now."
+    helper: "This bank is taking longer than usual. NSFinance keeps retrying."
   },
   synced: {
-    label: "Synced",
+    label: "Everything is ready",
     color: palette.success,
-    helper: "Connection is active and account data is up to date."
+    helper: "Your connection is active and activity is organized."
   },
   failed: {
-    label: "Sync failed",
+    label: "Sync needs attention",
     color: palette.negative,
-    helper: "Connection exists but the data sync failed. Retry sync."
+    helper: "Connection exists but import did not complete. Reconnect or retry."
   },
   reauth_required: {
     label: "Reconnect required",
     color: palette.negative,
-    helper: "Provider access expired or was interrupted. Your imported history is kept. Reconnect to resume syncing."
+    helper: "Provider access expired or was interrupted. Reconnect to resume syncing."
   }
 };
 

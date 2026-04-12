@@ -36,25 +36,39 @@ public static class TrueLayerCallbackEndpoint
 
     private static string BuildSafeHtml(TrueLayerCallbackOutcome outcome, string appReturnUrl)
     {
-        const int autoReturnDelayMs = 3000;
+        const int autoReturnDelayMs = 650;
+        const int autoCloseDelayMs = 2800;
 
-        var title = outcome.Succeeded ? "Bank Connected" : "Bank Connection Failed";
+        var title = outcome.Succeeded
+            ? "Bank authorization completed"
+            : outcome.Code == "callback_state_invalid"
+                ? "This callback was already handled"
+                : "Bank connection needs attention";
         var message = WebUtility.HtmlEncode(outcome.Message);
         var statusCode = WebUtility.HtmlEncode(outcome.Code);
+        var lifecycleStage = WebUtility.HtmlEncode(outcome.CallbackLifecycleStage ?? string.Empty);
+        var lifecycleReason = WebUtility.HtmlEncode(outcome.CallbackLifecycleReason ?? string.Empty);
+        var connectionId = WebUtility.HtmlEncode(outcome.ConnectionId?.ToString() ?? "none");
         var appReturnUrlForHref = WebUtility.HtmlEncode(appReturnUrl);
         var appReturnUrlForScript = appReturnUrl.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
-        var headingColor = outcome.Succeeded ? "#1DBA72" : "#E25A5A";
-        var buttonLabel = outcome.Succeeded ? "Return to NSFinance" : "Return to NSFinance and retry";
+        var headingColor = outcome.Succeeded ? "#1DBA72" : "#F28C28";
+        var buttonLabel = outcome.Succeeded ? "Return to NSFinance" : "Open NSFinance";
         var helperText = outcome.Succeeded
-            ? "If NSFinance does not open automatically, use the button below and the app will continue from your saved connection state."
-            : "If NSFinance does not open automatically, return to the app and retry the bank connection there.";
+            ? "Your connection has been handed back to NSFinance. You do not need to keep this tab open."
+            : outcome.Code == "callback_state_invalid"
+                ? "This callback link has already been consumed. No new sync will be started from this tab."
+                : "NSFinance has the latest callback result. Continue in the app to reconnect or retry safely.";
         var nextStepText = outcome.Succeeded
-            ? "Return to the app. Your bank connection is saved and the first sync will continue in the background."
-            : "Return to the app, start the bank connection again, and complete the consent flow without refreshing this page.";
-        var autoReturnMessage = outcome.Succeeded
-            ? "We will try to reopen the app in 3 seconds."
-            : "We will keep this page open. When you are ready, use the button above to return to the app.";
-        var autoReturnFlag = outcome.Succeeded ? "true" : "false";
+            ? "You can leave this page at any time. NSFinance will continue importing and organizing activity in the background."
+            : "Return to the app to review status. If action is required, NSFinance will show the exact next step.";
+        var autoReturnMessage = outcome.ShouldAutoReturn
+            ? "Reopening NSFinance now."
+            : "Return to NSFinance when you are ready.";
+        var closeHintMessage = outcome.SafeToClose
+            ? "You can close this tab now."
+            : "Keep this tab open for a moment while NSFinance resumes.";
+        var autoReturnFlag = outcome.ShouldAutoReturn ? "true" : "false";
+        var safeToCloseFlag = outcome.SafeToClose ? "true" : "false";
 
         return $$"""
                 <!DOCTYPE html>
@@ -181,6 +195,13 @@ public static class TrueLayerCallbackEndpoint
                     .meta + .meta {
                       margin-top: 8px;
                     }
+
+                    .close-hint {
+                      margin: 8px 0 0;
+                      color: #B5B5B5;
+                      font-size: 13px;
+                      line-height: 1.4;
+                    }
                   </style>
                 </head>
                 <body>
@@ -198,40 +219,88 @@ public static class TrueLayerCallbackEndpoint
                     </a>
                     <p class="meta">Code: {{statusCode}}</p>
                     <p class="meta" id="return-status">{{autoReturnMessage}}</p>
+                    <p class="close-hint" id="close-hint">{{closeHintMessage}}</p>
+                    <p class="meta">Lifecycle: {{lifecycleStage}}</p>
+                    <p class="meta">Reason: {{lifecycleReason}}</p>
                   </main>
                   <script>
                     (function () {
                       var target = "{{appReturnUrlForScript}}";
                       var isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
                       var shouldAutoReturn = {{autoReturnFlag}};
+                      var safeToClose = {{safeToCloseFlag}};
                       var returnStatus = document.getElementById("return-status");
-                      var countdownSeconds = 3;
-                      if (!isMobile) {
+                      var closeHint = document.getElementById("close-hint");
+                      var callbackKey = "nsfinance.banking.callback.{{connectionId}}.{{statusCode}}";
+                      var seenBefore = false;
+                      try {
+                        seenBefore = window.sessionStorage.getItem(callbackKey) === "handled";
+                        window.sessionStorage.setItem(callbackKey, "handled");
+                      } catch (_) {
+                        seenBefore = false;
+                      }
+
+                      if (seenBefore) {
+                        if (returnStatus) {
+                          returnStatus.textContent = "This tab was already handled. Return to NSFinance.";
+                        }
+                        if (closeHint) {
+                          closeHint.textContent = "You can close this tab now.";
+                        }
                         return;
                       }
 
-                      if (!shouldAutoReturn) {
+                      if (!isMobile || !shouldAutoReturn) {
+                        if (closeHint && safeToClose) {
+                          closeHint.textContent = "You can close this tab now.";
+                        }
                         return;
                       }
 
-                      var countdownTimer = setInterval(function () {
-                        countdownSeconds -= 1;
-                        if (!returnStatus) {
+                      if (returnStatus) {
+                        returnStatus.textContent = "Reopening NSFinance now.";
+                      }
+
+                      var attempted = false;
+                      var attemptReturn = function () {
+                        if (attempted) {
                           return;
                         }
+                        attempted = true;
+                        window.location.href = target;
+                      };
 
-                        if (countdownSeconds <= 0) {
-                          clearInterval(countdownTimer);
-                          returnStatus.textContent = "Reopening NSFinance now...";
-                          return;
-                        }
-
-                        returnStatus.textContent = "We will try to reopen the app in " + countdownSeconds + " seconds.";
-                      }, 1000);
+                      attemptReturn();
 
                       setTimeout(function () {
-                        window.location.href = target;
+                        if (document.visibilityState !== "hidden") {
+                          attempted = false;
+                          attemptReturn();
+                        }
                       }, {{autoReturnDelayMs}});
+
+                      setTimeout(function () {
+                        if (!safeToClose) {
+                          if (closeHint) {
+                            closeHint.textContent = "NSFinance is still resuming. You can return shortly.";
+                          }
+                          return;
+                        }
+
+                        var closed = false;
+                        try {
+                          window.close();
+                          closed = window.closed;
+                        } catch (_) {
+                          closed = false;
+                        }
+
+                        if (closeHint) {
+                          closeHint.textContent = closed
+                            ? "This tab can be closed."
+                            : "You can close this tab now.";
+                        }
+                      }, {{autoCloseDelayMs}});
                     })();
                   </script>
                 </body>

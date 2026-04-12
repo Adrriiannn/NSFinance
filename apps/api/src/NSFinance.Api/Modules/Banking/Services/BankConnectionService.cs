@@ -16,6 +16,7 @@ public sealed class BankConnectionService(
     AppDbContext dbContext,
     IAuditService auditService,
     IBankDisconnectQueue disconnectQueue,
+    IBankDeterministicEnrichmentQueue? enrichmentQueue,
     IServiceScopeFactory? scopeFactory,
     ILogger<BankConnectionService> logger)
 {
@@ -48,6 +49,7 @@ public sealed class BankConnectionService(
     private static readonly TimeSpan DeterministicRescueCooldown = TimeSpan.FromSeconds(90);
     private static readonly ConcurrentDictionary<Guid, byte> DeterministicRescueInFlight = new();
     private static readonly ConcurrentDictionary<Guid, DateTime> DeterministicRescueLastAttemptUtc = new();
+    private const string UniverseContractionReasonCode = "universe_contraction_connection_removed";
 
     private sealed record EnrichmentConnectionRow(
         Guid Id,
@@ -75,6 +77,16 @@ public sealed class BankConnectionService(
         string Reason,
         bool Reconciled,
         bool StaleProtectionApplied);
+
+    private sealed record ConnectionLifecycleResolution(
+        string Stage,
+        string Reason,
+        bool SafeToLeave,
+        bool SafeToClose,
+        bool BackgroundContinuationGuaranteed,
+        bool UserActionRequired,
+        string UserActionKind,
+        string CompletionSemantics);
     public async Task<OpenBankingConnection> CreateConnectionStartedAsync(
         Guid userId,
         string providerName,
@@ -1540,6 +1552,82 @@ public sealed class BankConnectionService(
                 .Where(x => x.ConnectionId == connectionId && x.FinancialAccountId.HasValue)
                 .Select(x => x.FinancialAccountId!.Value)
                 .Distinct();
+            var projectedTransactionIdsQuery = dbContext.Transactions
+                .Where(x => projectedFinancialAccountIdsQuery.Contains(x.FinancialAccountId))
+                .Select(x => x.Id);
+
+            var removedProjectedFinancialAccountIds = await projectedFinancialAccountIdsQuery
+                .ToListAsync(cancellationToken);
+            var removedProjectedTransactionIds = await projectedTransactionIdsQuery
+                .ToListAsync(cancellationToken);
+            var removedProjectedTransactionIdSet = removedProjectedTransactionIds.ToHashSet();
+
+            var staleRelationshipSurvivorTransactionIds = await dbContext.TransactionRelationships
+                .Where(x =>
+                    x.SourceConnectionId != connectionId
+                    && (
+                        (x.TargetTransactionId.HasValue
+                         && removedProjectedTransactionIds.Contains(x.TargetTransactionId.Value))
+                        || (x.TargetFinancialAccountId.HasValue
+                            && removedProjectedFinancialAccountIds.Contains(x.TargetFinancialAccountId.Value))
+                        || x.TargetConnectionId == connectionId))
+                .Select(x => x.SourceTransactionId)
+                .Union(
+                    dbContext.TransactionRelationships
+                        .Where(x =>
+                            x.TargetTransactionId.HasValue
+                            && x.TargetConnectionId != connectionId
+                            && (
+                                removedProjectedTransactionIds.Contains(x.SourceTransactionId)
+                                || removedProjectedFinancialAccountIds.Contains(x.SourceFinancialAccountId)
+                                || x.SourceConnectionId == connectionId))
+                        .Select(x => x.TargetTransactionId!.Value))
+                .Distinct()
+                .ToListAsync(cancellationToken);
+
+            var staleLinkedSurvivorRows = (removedProjectedTransactionIdSet.Count == 0
+                                           && staleRelationshipSurvivorTransactionIds.Count == 0)
+                ? new List<Transaction>()
+                : await dbContext.Transactions
+                    .Where(x =>
+                        !removedProjectedFinancialAccountIds.Contains(x.FinancialAccountId)
+                        && (
+                            (x.LinkedTransferTransactionId.HasValue
+                             && removedProjectedTransactionIds.Contains(x.LinkedTransferTransactionId.Value))
+                            || (x.DeterministicLinkedTransactionId.HasValue
+                                && removedProjectedTransactionIds.Contains(x.DeterministicLinkedTransactionId.Value))
+                            || staleRelationshipSurvivorTransactionIds.Contains(x.Id)))
+                    .ToListAsync(cancellationToken);
+
+            var impactedSurvivingFinancialAccountIds = staleLinkedSurvivorRows
+                .Select(x => x.FinancialAccountId)
+                .Distinct()
+                .ToArray();
+
+            var impactedSurvivingConnections = impactedSurvivingFinancialAccountIds.Length == 0
+                ? Array.Empty<Guid>()
+                : await dbContext.LinkedBankAccounts
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.FinancialAccountId.HasValue
+                        && impactedSurvivingFinancialAccountIds.Contains(x.FinancialAccountId.Value)
+                        && x.Connection != null
+                        && x.Connection.UserId == userId
+                        && x.ConnectionId != connectionId)
+                    .Select(x => x.ConnectionId)
+                    .Distinct()
+                    .ToArrayAsync(cancellationToken);
+
+            var staleRelationshipRowsTargeted = await dbContext.TransactionRelationships
+                .Where(x =>
+                    x.SourceConnectionId != connectionId
+                    && (
+                        (x.TargetTransactionId.HasValue
+                         && removedProjectedTransactionIds.Contains(x.TargetTransactionId.Value))
+                        || (x.TargetFinancialAccountId.HasValue
+                            && removedProjectedFinancialAccountIds.Contains(x.TargetFinancialAccountId.Value))
+                        || x.TargetConnectionId == connectionId))
+                .CountAsync(cancellationToken);
 
             var linkedAccountsTargeted = await dbContext.LinkedBankAccounts
                 .Where(x => x.ConnectionId == connectionId)
@@ -1574,9 +1662,11 @@ public sealed class BankConnectionService(
             var identityRowsTargeted = await dbContext.BankConnectionIdentityInfos
                 .Where(x => x.ConnectionId == connectionId)
                 .CountAsync(cancellationToken);
+            var staleSurvivingRowsTargeted = staleLinkedSurvivorRows.Count;
+            var impactedSurvivingConnectionsTargeted = impactedSurvivingConnections.Length;
 
             logger.LogInformation(
-                "Disconnect cleanup started for connectionId={ConnectionId} linkedAccountsTargeted={LinkedAccountsTargeted} projectedAccountsTargeted={ProjectedAccountsTargeted} rawTransactionsTargeted={RawTransactionsTargeted} balancesTargeted={BalanceSnapshotsTargeted} projectionTransactionsTargeted={ProjectionTransactionsTargeted} linkedCardsTargeted={LinkedCardsTargeted} cardTransactionsTargeted={CardTransactionsTargeted} cardBalancesTargeted={CardBalancesTargeted} directDebitsTargeted={DirectDebitsTargeted} standingOrdersTargeted={StandingOrdersTargeted} identityRowsTargeted={IdentityRowsTargeted}",
+                "Disconnect cleanup started for connectionId={ConnectionId} linkedAccountsTargeted={LinkedAccountsTargeted} projectedAccountsTargeted={ProjectedAccountsTargeted} rawTransactionsTargeted={RawTransactionsTargeted} balancesTargeted={BalanceSnapshotsTargeted} projectionTransactionsTargeted={ProjectionTransactionsTargeted} linkedCardsTargeted={LinkedCardsTargeted} cardTransactionsTargeted={CardTransactionsTargeted} cardBalancesTargeted={CardBalancesTargeted} directDebitsTargeted={DirectDebitsTargeted} standingOrdersTargeted={StandingOrdersTargeted} identityRowsTargeted={IdentityRowsTargeted} staleSurvivingRowsTargeted={StaleSurvivingRowsTargeted} staleRelationshipRowsTargeted={StaleRelationshipRowsTargeted} impactedSurvivingConnectionsTargeted={ImpactedSurvivingConnectionsTargeted}",
                 connectionId,
                 linkedAccountsTargeted,
                 projectedAccountsTargeted,
@@ -1588,21 +1678,77 @@ public sealed class BankConnectionService(
                 cardBalanceSnapshotsTargeted,
                 directDebitsTargeted,
                 standingOrdersTargeted,
-                identityRowsTargeted);
+                identityRowsTargeted,
+                staleSurvivingRowsTargeted,
+                staleRelationshipRowsTargeted,
+                impactedSurvivingConnectionsTargeted);
 
-            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-            var identityRowsDeleted = await dbContext.BankConnectionIdentityInfos
-                .Where(x => x.ConnectionId == connectionId)
-                .ExecuteDeleteAsync(cancellationToken);
-            var linkedCardsDeleted = await dbContext.LinkedBankCards
-                .Where(x => x.ConnectionId == connectionId)
-                .ExecuteDeleteAsync(cancellationToken);
-            var projectedAccountsDeleted = await dbContext.FinancialAccounts
-                .Where(x => x.UserId == userId && projectedFinancialAccountIdsQuery.Contains(x.Id))
-                .ExecuteDeleteAsync(cancellationToken);
-            var linkedAccountsDeleted = await dbContext.LinkedBankAccounts
-                .Where(x => x.ConnectionId == connectionId)
-                .ExecuteDeleteAsync(cancellationToken);
+            var supportsTransactions = !string.Equals(
+                dbContext.Database.ProviderName,
+                "Microsoft.EntityFrameworkCore.InMemory",
+                StringComparison.Ordinal);
+            await using Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = supportsTransactions
+                ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
+                : null;
+            var staleTransferLinksCleared = 0;
+            var staleDeterministicLinksCleared = 0;
+            var staleDeterministicFamiliesCleared = 0;
+            var staleRowsMarkedForReclassification = 0;
+            if (staleLinkedSurvivorRows.Count > 0)
+            {
+                var invalidationNow = DateTime.UtcNow;
+                foreach (var row in staleLinkedSurvivorRows)
+                {
+                    staleTransferLinksCleared += InvalidateLinkedTransferCounterpart(
+                        row,
+                        removedProjectedTransactionIdSet);
+                    staleDeterministicLinksCleared += InvalidateDeterministicCounterpart(
+                        row,
+                        removedProjectedTransactionIdSet);
+                    staleDeterministicFamiliesCleared += InvalidateDeterministicRelationshipFamily(row);
+                    staleRowsMarkedForReclassification += MarkForUniverseContractionReclassification(row, invalidationNow);
+                }
+
+                if (impactedSurvivingConnections.Length > 0)
+                {
+                    var impactedConnections = await dbContext.OpenBankingConnections
+                        .Where(x => impactedSurvivingConnections.Contains(x.Id) && x.UserId == userId)
+                        .ToListAsync(cancellationToken);
+
+                    foreach (var impactedConnection in impactedConnections)
+                    {
+                        impactedConnection.NeedsHistoricalReclassification = true;
+                        impactedConnection.HistoricalEnrichmentStartedUtc = null;
+                        impactedConnection.HistoricalEnrichmentCompletedUtc = null;
+                        impactedConnection.HistoricalEnrichmentCheckpointUtc = null;
+                        impactedConnection.UpdatedUtc = invalidationNow;
+                    }
+                }
+            }
+
+            var staleRelationshipRowsDeleted = await ExecuteDeleteWithProviderFallbackAsync(
+                dbContext.TransactionRelationships.Where(x =>
+                    x.SourceConnectionId != connectionId
+                    && (
+                        (x.TargetTransactionId.HasValue
+                         && removedProjectedTransactionIds.Contains(x.TargetTransactionId.Value))
+                        || (x.TargetFinancialAccountId.HasValue
+                            && removedProjectedFinancialAccountIds.Contains(x.TargetFinancialAccountId.Value))
+                        || x.TargetConnectionId == connectionId)),
+                cancellationToken);
+
+            var identityRowsDeleted = await ExecuteDeleteWithProviderFallbackAsync(
+                dbContext.BankConnectionIdentityInfos.Where(x => x.ConnectionId == connectionId),
+                cancellationToken);
+            var linkedCardsDeleted = await ExecuteDeleteWithProviderFallbackAsync(
+                dbContext.LinkedBankCards.Where(x => x.ConnectionId == connectionId),
+                cancellationToken);
+            var projectedAccountsDeleted = await ExecuteDeleteWithProviderFallbackAsync(
+                dbContext.FinancialAccounts.Where(x => x.UserId == userId && projectedFinancialAccountIdsQuery.Contains(x.Id)),
+                cancellationToken);
+            var linkedAccountsDeleted = await ExecuteDeleteWithProviderFallbackAsync(
+                dbContext.LinkedBankAccounts.Where(x => x.ConnectionId == connectionId),
+                cancellationToken);
 
             var now = DateTime.UtcNow;
             connection.Status = BankConnectionStatuses.Revoked;
@@ -1611,10 +1757,36 @@ public sealed class BankConnectionService(
             connection.UpdatedUtc = now;
             RevokeConnectionToken(connection, now);
             await dbContext.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+
+            if (staleRowsMarkedForReclassification > 0 && enrichmentQueue is not null)
+            {
+                foreach (var impactedConnectionId in impactedSurvivingConnections)
+                {
+                    try
+                    {
+                        await enrichmentQueue.QueueConnectionAsync(
+                            userId,
+                            impactedConnectionId,
+                            "disconnect_universe_contraction",
+                            CancellationToken.None);
+                    }
+                    catch (Exception queueException)
+                    {
+                        logger.LogWarning(
+                            queueException,
+                            "Failed to queue deterministic reclassification after disconnect universe contraction connectionId={ConnectionId} impactedConnectionId={ImpactedConnectionId}",
+                            connectionId,
+                            impactedConnectionId);
+                    }
+                }
+            }
 
             logger.LogInformation(
-                "Disconnect cleanup completed for connectionId={ConnectionId} linkedAccountsDeleted={LinkedAccountsDeleted} projectedAccountsDeleted={ProjectedAccountsDeleted} linkedCardsDeleted={LinkedCardsDeleted} identityRowsDeleted={IdentityRowsDeleted} targetedRawTransactions={RawTransactionsTargeted} targetedBalanceSnapshots={BalanceSnapshotsTargeted} targetedProjectionTransactions={ProjectionTransactionsTargeted} targetedCardTransactions={CardTransactionsTargeted} targetedCardBalances={CardBalancesTargeted} targetedDirectDebits={DirectDebitsTargeted} targetedStandingOrders={StandingOrdersTargeted} elapsedMs={ElapsedMs}",
+                "Disconnect cleanup completed for connectionId={ConnectionId} linkedAccountsDeleted={LinkedAccountsDeleted} projectedAccountsDeleted={ProjectedAccountsDeleted} linkedCardsDeleted={LinkedCardsDeleted} identityRowsDeleted={IdentityRowsDeleted} targetedRawTransactions={RawTransactionsTargeted} targetedBalanceSnapshots={BalanceSnapshotsTargeted} targetedProjectionTransactions={ProjectionTransactionsTargeted} targetedCardTransactions={CardTransactionsTargeted} targetedCardBalances={CardBalancesTargeted} targetedDirectDebits={DirectDebitsTargeted} targetedStandingOrders={StandingOrdersTargeted} staleSurvivingRowsTargeted={StaleSurvivingRowsTargeted} staleTransferLinksCleared={StaleTransferLinksCleared} staleDeterministicLinksCleared={StaleDeterministicLinksCleared} staleDeterministicFamiliesCleared={StaleDeterministicFamiliesCleared} staleRowsMarkedForReclassification={StaleRowsMarkedForReclassification} staleRelationshipRowsDeleted={StaleRelationshipRowsDeleted} impactedSurvivingConnectionsTargeted={ImpactedSurvivingConnectionsTargeted} elapsedMs={ElapsedMs}",
                 connectionId,
                 linkedAccountsDeleted,
                 projectedAccountsDeleted,
@@ -1627,6 +1799,13 @@ public sealed class BankConnectionService(
                 cardBalanceSnapshotsTargeted,
                 directDebitsTargeted,
                 standingOrdersTargeted,
+                staleSurvivingRowsTargeted,
+                staleTransferLinksCleared,
+                staleDeterministicLinksCleared,
+                staleDeterministicFamiliesCleared,
+                staleRowsMarkedForReclassification,
+                staleRelationshipRowsDeleted,
+                impactedSurvivingConnectionsTargeted,
                 startedAt.ElapsedMilliseconds);
 
             await WriteAuditSafeAsync(
@@ -1649,7 +1828,14 @@ public sealed class BankConnectionService(
                     cardTransactionsTargeted,
                     cardBalanceSnapshotsTargeted,
                     directDebitsTargeted,
-                    standingOrdersTargeted
+                    standingOrdersTargeted,
+                    staleSurvivingRowsTargeted,
+                    staleTransferLinksCleared,
+                    staleDeterministicLinksCleared,
+                    staleDeterministicFamiliesCleared,
+                    staleRowsMarkedForReclassification,
+                    staleRelationshipRowsDeleted,
+                    impactedSurvivingConnectionsTargeted
                 },
                 cancellationToken);
         }
@@ -1684,6 +1870,112 @@ public sealed class BankConnectionService(
                 },
                 cancellationToken);
         }
+    }
+
+    private async Task<int> ExecuteDeleteWithProviderFallbackAsync<TEntity>(
+        IQueryable<TEntity> query,
+        CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        if (!string.Equals(
+                dbContext.Database.ProviderName,
+                "Microsoft.EntityFrameworkCore.InMemory",
+                StringComparison.Ordinal))
+        {
+            return await query.ExecuteDeleteAsync(cancellationToken);
+        }
+
+        var entities = await query.ToListAsync(cancellationToken);
+        if (entities.Count == 0)
+        {
+            return 0;
+        }
+
+        dbContext.RemoveRange(entities);
+        return entities.Count;
+    }
+
+    private static int InvalidateLinkedTransferCounterpart(
+        Transaction row,
+        IReadOnlySet<Guid> removedProjectedTransactionIds)
+    {
+        if (!row.LinkedTransferTransactionId.HasValue
+            || !removedProjectedTransactionIds.Contains(row.LinkedTransferTransactionId.Value))
+        {
+            return 0;
+        }
+
+        row.LinkedTransferTransactionId = null;
+        row.LinkedTransferMatchedUtc = null;
+        row.TransferMatchConfidenceScore = null;
+        row.TransferMatchConfidenceTier = null;
+        row.TransferMatchReason = null;
+        if (row.TransferKind == TransactionTransferKind.LinkedInternal)
+        {
+            row.TransferKind = null;
+        }
+
+        return 1;
+    }
+
+    private static int InvalidateDeterministicCounterpart(
+        Transaction row,
+        IReadOnlySet<Guid> removedProjectedTransactionIds)
+    {
+        if (!row.DeterministicLinkedTransactionId.HasValue
+            || !removedProjectedTransactionIds.Contains(row.DeterministicLinkedTransactionId.Value))
+        {
+            return 0;
+        }
+
+        row.DeterministicLinkedTransactionId = null;
+        return 1;
+    }
+
+    private static int InvalidateDeterministicRelationshipFamily(Transaction row)
+    {
+        if (!string.Equals(row.DeterministicRelationshipType, "internal_transfer", StringComparison.Ordinal)
+            && !string.Equals(row.DeterministicRelationshipType, "savings_transfer", StringComparison.Ordinal))
+        {
+            return 0;
+        }
+
+        row.DeterministicRelationshipType = null;
+        row.DeterministicRelationshipGroupId = null;
+        return 1;
+    }
+
+    private static int MarkForUniverseContractionReclassification(Transaction row, DateTime now)
+    {
+        var touched = 0;
+        if (!row.NeedsDeterministicReclassification)
+        {
+            row.NeedsDeterministicReclassification = true;
+            touched++;
+        }
+
+        if (row.DeterministicClassificationStatus != DeterministicClassificationStatus.SupersededRecomputeRequired)
+        {
+            row.DeterministicClassificationStatus = DeterministicClassificationStatus.SupersededRecomputeRequired;
+            touched++;
+        }
+
+        if (row.DeterministicClassificationTerminal)
+        {
+            row.DeterministicClassificationTerminal = false;
+            touched++;
+        }
+
+        row.DeterministicDeferredRetryEligible = false;
+        row.DeterministicLastRetryConsideredUtc = null;
+        row.DeterministicReasonCode = UniverseContractionReasonCode;
+        row.DeterministicReasonDetailJson = JsonSerializer.Serialize(new
+        {
+            reason = UniverseContractionReasonCode
+        });
+        row.DeterministicClassificationEvaluatedUtc = now;
+
+        return touched > 0 ? 1 : 0;
     }
 
     private static IReadOnlyList<BankConnectionDto> DeduplicateUserVisibleConnections(
@@ -2114,9 +2406,17 @@ public sealed class BankConnectionService(
                 importedTransactionCount,
                 enrichmentStage,
                 nowUtc);
+            var lifecycle = ResolveConnectionLifecyclePhase(
+                connection.Status,
+                resolution.Phase,
+                resolution.StaleProtectionApplied,
+                linkedAccountCount,
+                importedTransactionCount,
+                normalizedEnrichmentStage,
+                hasExplicitZeroRowImportCompletion);
 
             logger.LogInformation(
-                "Connection lifecycle resolution connectionId={ConnectionId} userId={UserId} status={Status} enrichmentStage={EnrichmentStage} linkedAccountCount={LinkedAccountCount} importedTransactionCount={ImportedTransactionCount} hasMaterialImportEvidence={HasMaterialImportEvidence} hasExplicitZeroRowImportCompletion={HasExplicitZeroRowImportCompletion} queueVisibleWithoutMaterialImportEvidence={QueueVisibleWithoutMaterialImportEvidence} resolvedPhase={ResolvedPhase} resolvedReason={ResolvedReason} reconciled={Reconciled} staleProtectionApplied={StaleProtectionApplied} lastSyncAttemptedUtc={LastSyncAttemptedUtc} lastSuccessfulSyncUtc={LastSuccessfulSyncUtc} updatedUtc={UpdatedUtc}",
+                "Connection lifecycle resolution connectionId={ConnectionId} userId={UserId} status={Status} enrichmentStage={EnrichmentStage} linkedAccountCount={LinkedAccountCount} importedTransactionCount={ImportedTransactionCount} hasMaterialImportEvidence={HasMaterialImportEvidence} hasExplicitZeroRowImportCompletion={HasExplicitZeroRowImportCompletion} queueVisibleWithoutMaterialImportEvidence={QueueVisibleWithoutMaterialImportEvidence} resolvedPhase={ResolvedPhase} resolvedReason={ResolvedReason} lifecycleStage={LifecycleStage} lifecycleReason={LifecycleReason} safeToLeave={SafeToLeave} safeToClose={SafeToClose} userActionRequired={UserActionRequired} userActionKind={UserActionKind} completionSemantics={CompletionSemantics} reconciled={Reconciled} staleProtectionApplied={StaleProtectionApplied} lastSyncAttemptedUtc={LastSyncAttemptedUtc} lastSuccessfulSyncUtc={LastSuccessfulSyncUtc} updatedUtc={UpdatedUtc}",
                 connection.Id,
                 userId,
                 connection.Status,
@@ -2128,6 +2428,13 @@ public sealed class BankConnectionService(
                 queueVisibleWithoutMaterialImportEvidence,
                 resolution.Phase,
                 resolution.Reason,
+                lifecycle.Stage,
+                lifecycle.Reason,
+                lifecycle.SafeToLeave,
+                lifecycle.SafeToClose,
+                lifecycle.UserActionRequired,
+                lifecycle.UserActionKind,
+                lifecycle.CompletionSemantics,
                 resolution.Reconciled,
                 resolution.StaleProtectionApplied,
                 connection.LastSyncAttemptedUtc,
@@ -2142,7 +2449,16 @@ public sealed class BankConnectionService(
                 LinkedAccountCount = linkedAccountCount,
                 ImportedTransactionCount = importedTransactionCount,
                 SyncStateReconciled = resolution.Reconciled,
-                SyncStateStaleProtectionApplied = resolution.StaleProtectionApplied
+                SyncStateStaleProtectionApplied = resolution.StaleProtectionApplied,
+                ConnectionLifecycleStage = lifecycle.Stage,
+                ConnectionLifecycleReason = lifecycle.Reason,
+                SafeToLeave = lifecycle.SafeToLeave,
+                SafeToClose = lifecycle.SafeToClose,
+                BackgroundContinuationGuaranteed = lifecycle.BackgroundContinuationGuaranteed,
+                UserActionRequired = lifecycle.UserActionRequired,
+                UserActionKind = lifecycle.UserActionKind,
+                CompletionSemantics = lifecycle.CompletionSemantics,
+                LifecycleLastUpdatedUtc = MaxUtc(connection.LastSuccessfulSyncUtc, MaxUtc(connection.LastSyncAttemptedUtc, connection.UpdatedUtc))
             });
         }
 
@@ -2312,6 +2628,210 @@ public sealed class BankConnectionService(
             "default_connecting_fallback",
             Reconciled: false,
             StaleProtectionApplied: false);
+    }
+
+    private static ConnectionLifecycleResolution ResolveConnectionLifecyclePhase(
+        string status,
+        string syncLifecyclePhase,
+        bool syncLifecycleStaleProtectionApplied,
+        int linkedAccountCount,
+        int importedTransactionCount,
+        string? normalizedEnrichmentStage,
+        bool hasExplicitZeroRowImportCompletion)
+    {
+        if (status == BankConnectionStatuses.ConnectionStarted)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.AwaitingBankAuthorization,
+                "authorization_not_completed",
+                SafeToLeave: true,
+                SafeToClose: false,
+                BackgroundContinuationGuaranteed: false,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        if (status == BankConnectionStatuses.ConsentInProgress)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.AuthorizationConfirmed,
+                "authorization_callback_confirmed",
+                SafeToLeave: true,
+                SafeToClose: false,
+                BackgroundContinuationGuaranteed: false,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        if (status == BankConnectionStatuses.DisconnectPending)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.Disconnecting,
+                "disconnect_cleanup_pending",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        if (status == BankConnectionStatuses.Revoked)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.Disconnected,
+                "connection_revoked",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.CompletedWithWarnings);
+        }
+
+        if (status == BankConnectionStatuses.ReauthRequired || status == BankConnectionStatuses.Expired)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.ReauthRequired,
+                "provider_reauthorization_required",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: true,
+                UserActionKind: BankConnectionRequiredActionKinds.Reconnect,
+                CompletionSemantics: BankConnectionCompletionSemantics.NeedsAttention);
+        }
+
+        if (status == BankConnectionStatuses.DisconnectFailed)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.PartialFailure,
+                "disconnect_cleanup_failed",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: true,
+                UserActionKind: BankConnectionRequiredActionKinds.RetryDisconnect,
+                CompletionSemantics: BankConnectionCompletionSemantics.NeedsAttention);
+        }
+
+        if (status == BankConnectionStatuses.Failed)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.Failed,
+                "sync_or_provider_failure",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: true,
+                UserActionKind: BankConnectionRequiredActionKinds.RetrySync,
+                CompletionSemantics: BankConnectionCompletionSemantics.NeedsAttention);
+        }
+
+        if (syncLifecyclePhase == SyncLifecyclePhaseSyncTakingLongerThanExpected || syncLifecycleStaleProtectionApplied)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.ProviderSlow,
+                "provider_or_sync_delay_detected",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        var hasLinkedAccounts = linkedAccountCount > 0;
+        var hasImportedTransactions = importedTransactionCount > 0;
+        var hasImportedFootprint = hasImportedTransactions || hasExplicitZeroRowImportCompletion;
+
+        if (!hasLinkedAccounts && !hasImportedFootprint)
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.ConnectionCreated,
+                "connection_established_waiting_for_accounts",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        if (hasLinkedAccounts && !hasImportedFootprint)
+        {
+            var stage = status == BankConnectionStatuses.SyncPending
+                ? BankConnectionLifecycleStages.FetchingTransactions
+                : BankConnectionLifecycleStages.FetchingBalances;
+
+            return new ConnectionLifecycleResolution(
+                stage,
+                "accounts_materialized_waiting_for_import",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        if (normalizedEnrichmentStage is "categorizing" or "waiting_for_counterparty")
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.CategorizationRunning,
+                $"enrichment_stage_{normalizedEnrichmentStage}",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        if (normalizedEnrichmentStage is "queued_for_sync" or "needs_reclassification" or "waiting_for_first_sync")
+        {
+            return new ConnectionLifecycleResolution(
+                BankConnectionLifecycleStages.CategorizationPending,
+                $"enrichment_stage_{normalizedEnrichmentStage}",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
+        }
+
+        if (normalizedEnrichmentStage == "completed" || syncLifecyclePhase == SyncLifecyclePhaseCompleted || status == BankConnectionStatuses.Synced)
+        {
+            var completedLimited = importedTransactionCount == 0;
+            return new ConnectionLifecycleResolution(
+                completedLimited
+                    ? BankConnectionLifecycleStages.CompletedWithLimitedHistory
+                    : BankConnectionLifecycleStages.Completed,
+                completedLimited
+                    ? "sync_completed_limited_visible_history"
+                    : "sync_completed",
+                SafeToLeave: true,
+                SafeToClose: true,
+                BackgroundContinuationGuaranteed: true,
+                UserActionRequired: false,
+                UserActionKind: BankConnectionRequiredActionKinds.None,
+                CompletionSemantics: completedLimited
+                    ? BankConnectionCompletionSemantics.CompletedWithLimitedHistory
+                    : BankConnectionCompletionSemantics.Completed);
+        }
+
+        return new ConnectionLifecycleResolution(
+            BankConnectionLifecycleStages.FetchingTransactions,
+            "default_fetching_transactions_fallback",
+            SafeToLeave: true,
+            SafeToClose: true,
+            BackgroundContinuationGuaranteed: true,
+            UserActionRequired: false,
+            UserActionKind: BankConnectionRequiredActionKinds.None,
+            CompletionSemantics: BankConnectionCompletionSemantics.InProgress);
     }
 
     private static string? NormalizeEnrichmentStage(string? enrichmentStage)

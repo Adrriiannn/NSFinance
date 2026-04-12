@@ -29,4 +29,13 @@ public sealed record BankConnectionDto(
     int? LinkedAccountCount = null,
     int? ImportedTransactionCount = null,
     bool? SyncStateReconciled = null,
-    bool? SyncStateStaleProtectionApplied = null);
+    bool? SyncStateStaleProtectionApplied = null,
+    string? ConnectionLifecycleStage = null,
+    string? ConnectionLifecycleReason = null,
+    bool? SafeToLeave = null,
+    bool? SafeToClose = null,
+    bool? BackgroundContinuationGuaranteed = null,
+    bool? UserActionRequired = null,
+    string? UserActionKind = null,
+    string? CompletionSemantics = null,
+    DateTime? LifecycleLastUpdatedUtc = null);
