@@ -330,6 +330,35 @@ public sealed partial class MerchantInvestigationResponseParser
         return !string.IsNullOrWhiteSpace(token) && Enum.TryParse(token, ignoreCase: true, out value);
     }
 
+    private static bool TryGetOptionalEnumString<TEnum>(JsonElement element, string propertyName, out TEnum? value)
+        where TEnum : struct, Enum
+    {
+        value = null;
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        var token = property.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return true;
+        }
+
+        if (!Enum.TryParse<TEnum>(token, ignoreCase: true, out var parsed))
+        {
+            return false;
+        }
+
+        value = parsed;
+        return true;
+    }
+
     private static bool TryGetStringArray(
         JsonElement element,
         string propertyName,
@@ -413,7 +442,10 @@ public sealed partial class MerchantInvestigationResponseParser
             PrimaryCountryCode: string.IsNullOrWhiteSpace(candidate.PrimaryCountryCode) ? null : candidate.PrimaryCountryCode,
             AliasCandidates: candidate.AliasCandidates,
             AliasSuggestions: candidate.AliasSuggestions?.Select(MapAliasSuggestion).ToArray(),
-            EvidenceItems: candidate.EvidenceItems?.Select(MapEvidence).ToArray());
+            EvidenceItems: candidate.EvidenceItems?.Select(MapEvidence).ToArray(),
+            DomainNameMismatchRisk: candidate.DomainNameMismatchRisk,
+            WeakSourceRisk: candidate.WeakSourceRisk,
+            SuspiciousIdentityRisk: candidate.SuspiciousIdentityRisk);
     }
 
     private static MerchantInvestigationAliasSuggestionPayload MapAliasSuggestion(MerchantInvestigationAliasSuggestion alias)
@@ -434,6 +466,54 @@ public sealed partial class MerchantInvestigationResponseParser
             Summary: evidence.EvidenceSummary,
             Confidence: evidence.Confidence,
             Relevance: evidence.Relevance,
-            SourceReference: evidence.SourceReference);
+            SourceReference: evidence.SourceReference,
+            SourceTrustLevel: evidence.SourceTrustLevel);
+    }
+
+    private static MerchantSourceTrustLevel InferSourceTrustLevel(string? sourceClass)
+    {
+        if (string.IsNullOrWhiteSpace(sourceClass))
+        {
+            return MerchantSourceTrustLevel.Unknown;
+        }
+
+        var token = sourceClass.Trim().ToLowerInvariant();
+        if (token.Contains("official", StringComparison.Ordinal)
+            || token.Contains("regulatory", StringComparison.Ordinal))
+        {
+            return MerchantSourceTrustLevel.OfficialDomain;
+        }
+
+        if (token.Contains("authoritative", StringComparison.Ordinal)
+            || token.Contains("platform", StringComparison.Ordinal))
+        {
+            return MerchantSourceTrustLevel.AuthoritativeListing;
+        }
+
+        if (token.Contains("directory", StringComparison.Ordinal)
+            || token.Contains("listing", StringComparison.Ordinal))
+        {
+            return MerchantSourceTrustLevel.PublicDirectory;
+        }
+
+        if (token.Contains("weak", StringComparison.Ordinal)
+            || token.Contains("mention", StringComparison.Ordinal)
+            || token.Contains("social", StringComparison.Ordinal)
+            || token.Contains("forum", StringComparison.Ordinal))
+        {
+            return MerchantSourceTrustLevel.WeakWebMention;
+        }
+
+        if (token.Contains("ai", StringComparison.Ordinal))
+        {
+            return MerchantSourceTrustLevel.AIInferenceOnly;
+        }
+
+        if (token.Contains("none", StringComparison.Ordinal))
+        {
+            return MerchantSourceTrustLevel.NoSource;
+        }
+
+        return MerchantSourceTrustLevel.Unknown;
     }
 }

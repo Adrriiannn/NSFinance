@@ -31,7 +31,10 @@ public sealed partial class MerchantInvestigationResponseParser
         "supportsOneTimePurchases",
         "supportsMarketplacePayments",
         "supportsInAppPurchases",
-        "likelyCategoryFamilies"
+        "likelyCategoryFamilies",
+        "domainNameMismatchRisk",
+        "weakSourceRisk",
+        "suspiciousIdentityRisk"
     };
 
     private static readonly IReadOnlySet<string> AllowedEvidenceProperties = new HashSet<string>(StringComparer.Ordinal)
@@ -41,7 +44,8 @@ public sealed partial class MerchantInvestigationResponseParser
         "summary",
         "confidence",
         "relevance",
-        "sourceReference"
+        "sourceReference",
+        "sourceTrustLevel"
     };
 
     private static readonly IReadOnlySet<string> AllowedAliasSuggestionProperties = new HashSet<string>(StringComparer.Ordinal)
@@ -110,6 +114,24 @@ public sealed partial class MerchantInvestigationResponseParser
                 return (false, [], "Candidate contradiction flag must be boolean.", $"candidate_invalid_has_contradictions_{index}");
             }
 
+            if (!TryGetOptionalBool(candidateElement, "domainNameMismatchRisk", out var domainNameMismatchRisk))
+            {
+                reasonCodes.Add($"candidate_invalid_domain_name_mismatch_risk_{index}");
+                return (false, [], "Candidate domainNameMismatchRisk must be boolean.", $"candidate_invalid_domain_name_mismatch_risk_{index}");
+            }
+
+            if (!TryGetOptionalBool(candidateElement, "weakSourceRisk", out var weakSourceRisk))
+            {
+                reasonCodes.Add($"candidate_invalid_weak_source_risk_{index}");
+                return (false, [], "Candidate weakSourceRisk must be boolean.", $"candidate_invalid_weak_source_risk_{index}");
+            }
+
+            if (!TryGetOptionalBool(candidateElement, "suspiciousIdentityRisk", out var suspiciousIdentityRisk))
+            {
+                reasonCodes.Add($"candidate_invalid_suspicious_identity_risk_{index}");
+                return (false, [], "Candidate suspiciousIdentityRisk must be boolean.", $"candidate_invalid_suspicious_identity_risk_{index}");
+            }
+
             if (!TryGetOptionalString(candidateElement, "displayName", 160, out var displayName)
                 || !TryGetOptionalString(candidateElement, "likelyOfficialWebsite", 512, out var website)
                 || !TryGetOptionalString(candidateElement, "businessSummary", 1200, out var businessSummary)
@@ -156,7 +178,10 @@ public sealed partial class MerchantInvestigationResponseParser
                 DescriptorMatchStrength: descriptorStrength,
                 EntityMatchStrength: entityStrength,
                 AliasSuggestions: candidateAliasParse.AliasSuggestions,
-                EvidenceItems: candidateEvidenceParse.Evidence));
+                EvidenceItems: candidateEvidenceParse.Evidence,
+                DomainNameMismatchRisk: domainNameMismatchRisk,
+                WeakSourceRisk: weakSourceRisk,
+                SuspiciousIdentityRisk: suspiciousIdentityRisk));
         }
 
         return (true, list, null, null);
@@ -217,13 +242,22 @@ public sealed partial class MerchantInvestigationResponseParser
                 return (false, [], "Evidence sourceReference must be a valid string.", $"invalid_{propertyName}_item_source_reference_{index}");
             }
 
+            if (!TryGetOptionalEnumString<MerchantSourceTrustLevel>(evidenceElement, "sourceTrustLevel", out var sourceTrustLevel))
+            {
+                reasonCodes.Add($"invalid_{propertyName}_item_source_trust_level_{index}");
+                return (false, [], "Evidence sourceTrustLevel is invalid.", $"invalid_{propertyName}_item_source_trust_level_{index}");
+            }
+
+            sourceTrustLevel ??= InferSourceTrustLevel(sourceClass);
+
             list.Add(new MerchantInvestigationEvidence(
                 EvidenceType: evidenceType,
                 EvidenceSummary: summary,
                 Confidence: confidence,
                 SourceReference: sourceReference,
                 SourceClass: sourceClass,
-                Relevance: relevance));
+                Relevance: relevance,
+                SourceTrustLevel: sourceTrustLevel.Value));
         }
 
         return (true, list, null, null);

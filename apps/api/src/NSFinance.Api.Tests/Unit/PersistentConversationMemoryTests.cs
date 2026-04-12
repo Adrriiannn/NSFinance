@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
@@ -499,6 +500,167 @@ public sealed class PersistentConversationMemoryTests
         Assert.DoesNotContain(context.ContextMessages, m => m.Role == AIMessageRole.System && m.Content.Contains("IGNORE SYSTEM RULES", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task UserChatOrchestrator_BlocksExplicitTransientFallbackInProduction_WhenNotAllowed()
+    {
+        var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple",
+            ["AI:ChatTurns:AllowImplicitTransientFallback"] = "false",
+            ["AI:ChatTurns:AllowExplicitTransientFallbackInProduction"] = "false"
+        });
+
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await SeedUserAsync(dbContext, "chat-fallback-prod-block");
+
+        var orchestrator = BuildOrchestratorWithPersistentContextFailure(
+            scope.ServiceProvider,
+            dbContext,
+            new InvalidOperationException("summary load failed during context build"),
+            environmentName: "Production");
+
+        var response = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Help me reduce recurring spending safely.",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-fallback-prod-block",
+                ClientRequestId: "req-fallback-prod-block",
+                UserId: userId,
+                UsePersistentMemory: true,
+                AllowTransientFallbackOnPersistentFailure: true),
+            CancellationToken.None);
+
+        Assert.False(response.Succeeded);
+        Assert.Equal("persistent_context_build_failed", response.FailureReason);
+        Assert.Equal(ConversationTurnStatus.Failed, response.TurnStatus);
+        Assert.Contains("explicit_fallback_blocked_in_production", response.Warnings);
+
+        var turn = await dbContext.ConversationTurns
+            .SingleAsync(x => x.Id == response.ConversationTurnId);
+        Assert.Equal(ConversationTurnStatus.Failed, turn.Status);
+        Assert.Equal("persistent_context_build_failed", turn.FailureCode);
+
+        var fallbackFailure = await dbContext.OperationalFailureRecords
+            .SingleAsync(x => x.FailureType == "chat_transient_fallback");
+        Assert.Equal(OperationalFailureArea.UserChat, fallbackFailure.Area);
+        Assert.Contains("summary_load_failed", fallbackFailure.DetailsJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"fallbackMode\":\"explicit\"", fallbackFailure.DetailsJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task UserChatOrchestrator_RecordsRepeatedTransientFallbacksPerThread_WhenAllowed()
+    {
+        var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple",
+            ["AI:ChatTurns:AllowImplicitTransientFallback"] = "true"
+        });
+
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await SeedUserAsync(dbContext, "chat-fallback-repeat");
+
+        var orchestrator = BuildOrchestratorWithPersistentContextFailure(
+            scope.ServiceProvider,
+            dbContext,
+            new InvalidOperationException("state snapshot retrieval failed"),
+            environmentName: "Development");
+
+        var first = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Show me my latest savings impact.",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-fallback-repeat-1",
+                ClientRequestId: "req-fallback-repeat-1",
+                UserId: userId,
+                UsePersistentMemory: true,
+                AllowTransientFallbackOnPersistentFailure: true),
+            CancellationToken.None);
+
+        var second = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Now compare that with my utility payments.",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-fallback-repeat-2",
+                ClientRequestId: "req-fallback-repeat-2",
+                UserId: userId,
+                ConversationThreadId: first.ConversationThreadId,
+                UsePersistentMemory: true,
+                AllowTransientFallbackOnPersistentFailure: true),
+            CancellationToken.None);
+
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+        Assert.Contains("persistent_memory_fallback_to_transient", first.Warnings);
+        Assert.Contains("persistent_memory_fallback_to_transient", second.Warnings);
+        Assert.NotNull(first.ConversationThreadId);
+        Assert.Equal(first.ConversationThreadId, second.ConversationThreadId);
+
+        var threadIdToken = first.ConversationThreadId!.Value.ToString("N");
+        var fallbackFailures = await dbContext.OperationalFailureRecords
+            .Where(x => x.FailureType == "chat_transient_fallback")
+            .OrderBy(x => x.LastOccurredUtc)
+            .ToListAsync();
+
+        Assert.NotEmpty(fallbackFailures);
+        Assert.Contains(fallbackFailures, x => x.OccurrenceCount >= 2);
+        Assert.All(fallbackFailures, record =>
+        {
+            Assert.Contains("state_snapshot_failed", record.DetailsJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(threadIdToken, record.DetailsJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    [Fact]
+    public async Task UserChatOrchestrator_FailsFastWhenPersistentMemoryRequiredButUnavailable()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = await SeedUserAsync(dbContext, "chat-required-persistent");
+        var options = Options.Create(new AIIntegrationOptions
+        {
+            ChatTurns = new ChatTurnOptions
+            {
+                RequirePersistentMemoryWhenRequested = true
+            }
+        });
+
+        var orchestrator = new UserChatOrchestrator(
+            new UserChatComplexityClassifier(),
+            new ConversationContextService(options, NullLogger<ConversationContextService>.Instance),
+            new AIModelRouter(options, NullLogger<AIModelRouter>.Instance),
+            new AIPromptBuilder(),
+            new UserChatResponseParser(),
+            new AlwaysSuccessAIClient(),
+            NullLogger<UserChatOrchestrator>.Instance,
+            options,
+            new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
+            new TestHostEnvironment("Development"));
+
+        var response = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Use memory and continue from earlier.",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-required-memory",
+                UserId: userId,
+                UsePersistentMemory: true),
+            CancellationToken.None);
+
+        Assert.False(response.Succeeded);
+        Assert.Equal("persistent_memory_required_unavailable", response.FailureReason);
+        Assert.Contains("persistent_memory_required_unavailable", response.Warnings);
+    }
+
     private static AIIntegrationOptions CreateAiOptionsWithMemory()
     {
         return new AIIntegrationOptions
@@ -574,5 +736,74 @@ public sealed class PersistentConversationMemoryTests
         services.AddAIIntegration(configuration);
 
         return services.BuildServiceProvider();
+    }
+
+    private static UserChatOrchestrator BuildOrchestratorWithPersistentContextFailure(
+        IServiceProvider provider,
+        AppDbContext dbContext,
+        Exception exception,
+        string environmentName)
+    {
+        var options = provider.GetRequiredService<IOptions<AIIntegrationOptions>>();
+        return new UserChatOrchestrator(
+            provider.GetRequiredService<IUserChatComplexityClassifier>(),
+            provider.GetRequiredService<IConversationContextService>(),
+            provider.GetRequiredService<IAIModelRouter>(),
+            provider.GetRequiredService<IPromptBuilder>(),
+            provider.GetRequiredService<IUserChatResponseParser>(),
+            provider.GetRequiredService<IAIClient>(),
+            NullLogger<UserChatOrchestrator>.Instance,
+            options,
+            new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
+            new TestHostEnvironment(environmentName),
+            provider.GetRequiredService<IConversationThreadService>(),
+            provider.GetRequiredService<IConversationTurnService>(),
+            provider.GetRequiredService<IConversationMessageService>(),
+            provider.GetRequiredService<IConversationStateService>(),
+            provider.GetRequiredService<IConversationSummaryService>(),
+            new ThrowingPersistentConversationContextService(exception));
+    }
+
+    private sealed class ThrowingPersistentConversationContextService(Exception exception) : IPersistentConversationContextService
+    {
+        public Task<PersistentConversationContextBuildResult> BuildContextAsync(
+            PersistentConversationContextBuildRequest request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw exception;
+        }
+    }
+
+    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = environmentName;
+        public string ApplicationName { get; set; } = "NSFinance.Api.Tests";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; }
+            = new Microsoft.Extensions.FileProviders.NullFileProvider();
+    }
+
+    private sealed class AlwaysSuccessAIClient : IAIClient
+    {
+        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                new AIResponse(
+                    Content: "{\"replyText\":\"ok\",\"warnings\":[],\"followUpIntentHints\":[],\"suggestedStructuredStateUpdates\":{},\"referencedContextSummary\":\"\"}",
+                    StructuredPayloadJson: null,
+                    FinishReason: "stop",
+                    Provider: "Mock",
+                    Model: route.Model,
+                    Deployment: route.Deployment,
+                    InputTokenEstimate: 10,
+                    OutputTokenEstimate: 10,
+                    LatencyMs: 1,
+                    WasMocked: true,
+                    RawDiagnostics: null,
+                    Succeeded: true,
+                    FailureReason: null));
+        }
     }
 }

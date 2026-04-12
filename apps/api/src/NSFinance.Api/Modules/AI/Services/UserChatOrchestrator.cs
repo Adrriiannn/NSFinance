@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
 using NSFinance.Api.Persistence.Entities;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
@@ -14,6 +16,7 @@ public sealed class UserChatOrchestrator(
     ILogger<UserChatOrchestrator> logger,
     IOptions<AIIntegrationOptions> options,
     IOperationalFailureRecorder? failureRecorder = null,
+    IHostEnvironment? hostEnvironment = null,
     IConversationThreadService? conversationThreadService = null,
     IConversationTurnService? conversationTurnService = null,
     IConversationMessageService? conversationMessageService = null,
@@ -44,19 +47,52 @@ public sealed class UserChatOrchestrator(
         var warnings = new List<string>();
         var conversationThreadId = request.ConversationThreadId;
         Guid? conversationTurnId = null;
+        var canUsePersistentMemory = CanUsePersistentMemory(request);
+
+        if (request.UsePersistentMemory && !canUsePersistentMemory)
+        {
+            warnings.Add("persistent_memory_unavailable_transient");
+            await RecordTransientFallbackEventAsync(
+                request,
+                taskType,
+                route,
+                conversationThreadId,
+                conversationTurnId,
+                reasonCategory: "persistent_memory_unavailable",
+                fallbackMode: "forced_transient",
+                allowedByConfig: true,
+                exception: null,
+                cancellationToken);
+
+            if (options.Value.ChatTurns.RequirePersistentMemoryWhenRequested)
+            {
+                return BuildFailedTurnResponse(
+                    "Persistent memory was requested but is not available for this request.",
+                    route,
+                    warnings.Append("persistent_memory_required_unavailable").ToArray(),
+                    "persistent_memory_required_unavailable",
+                    conversationThreadId,
+                    conversationTurnId,
+                    turnStatus: null,
+                    isDuplicateRequest: false,
+                    isTurnInProgress: false);
+            }
+        }
 
         IReadOnlyList<AIMessage> contextMessages;
         string? contextSummary;
         IReadOnlyDictionary<string, string> structuredState;
         IReadOnlyList<string> contextReasonCodes;
 
-        if (CanUsePersistentMemory(request))
+        if (canUsePersistentMemory)
         {
+            var persistentUserId = request.UserId!.Value;
             conversationThreadId = await EnsureConversationThreadAsync(request, cancellationToken);
+            var persistentThreadId = conversationThreadId.Value;
             var clientRequestId = ResolveClientRequestId(request, options.Value.ChatTurns.MaxClientRequestIdLength);
-                var turnStart = await conversationTurnService!.StartOrGetAsync(
-                request.UserId!.Value,
-                conversationThreadId.Value,
+            var turnStart = await conversationTurnService!.StartOrGetAsync(
+                persistentUserId,
+                persistentThreadId,
                 clientRequestId,
                 request.CorrelationId,
                 taskType,
@@ -83,7 +119,7 @@ public sealed class UserChatOrchestrator(
 
                 return await BuildDuplicateTurnResponseAsync(
                     request,
-                    conversationThreadId.Value,
+                    persistentThreadId,
                     turnStart.Turn,
                     warnings,
                     cancellationToken);
@@ -95,13 +131,13 @@ public sealed class UserChatOrchestrator(
                 var userMessage = await PersistUserTurnContextAsync(
                     request,
                     taskType,
-                    conversationThreadId.Value,
+                    persistentThreadId,
                     activeTurn.Id,
                     cancellationToken);
 
                 activeTurn = (await conversationTurnService.MarkPersistedUserTurnAsync(
-                    request.UserId.Value,
-                    conversationThreadId.Value,
+                    persistentUserId,
+                    persistentThreadId,
                     activeTurn.Id,
                     userMessage.Id,
                     cancellationToken)).Turn;
@@ -110,13 +146,22 @@ public sealed class UserChatOrchestrator(
                     request,
                     taskType,
                     route,
-                    conversationThreadId.Value,
+                    persistentThreadId,
                     activeTurn.Id,
                     warnings,
                     cancellationToken);
 
                 if (!persistentContextResult.Succeeded)
                 {
+                    var failedResponse = persistentContextResult.Response!;
+                    activeTurn = (await conversationTurnService.MarkFailedAsync(
+                        persistentUserId,
+                        persistentThreadId,
+                        activeTurn.Id,
+                        failedResponse.FailureReason ?? "persistent_context_build_failed",
+                        failedResponse.ReplyText,
+                        cancellationToken)).Turn;
+
                     return persistentContextResult.Response!;
                 }
 
@@ -126,8 +171,8 @@ public sealed class UserChatOrchestrator(
                 contextReasonCodes = persistentContextResult.ContextReasonCodes!;
 
                 activeTurn = (await conversationTurnService.MarkContextBuiltAsync(
-                    request.UserId.Value,
-                    conversationThreadId.Value,
+                    persistentUserId,
+                    persistentThreadId,
                     activeTurn.Id,
                     persistentContextResult.ContextSource!,
                     persistentContextResult.EstimatedTokens,
@@ -142,7 +187,7 @@ public sealed class UserChatOrchestrator(
                             OperationalFailureArea.UserChat,
                             OperationalFailureSeverity.Warning,
                             "chat_turn_cancelled_during_setup",
-                            $"chat_turn_cancelled_during_setup:{conversationThreadId.Value:N}",
+                            $"chat_turn_cancelled_during_setup:{persistentThreadId:N}",
                             request.CorrelationId,
                             conversationTurnId?.ToString("N"),
                             ex.Message,
@@ -151,8 +196,8 @@ public sealed class UserChatOrchestrator(
                 }
 
                 await conversationTurnService.MarkCancelledAsync(
-                    request.UserId!.Value,
-                    conversationThreadId.Value,
+                    persistentUserId,
+                    persistentThreadId,
                     activeTurn.Id,
                     "request_cancelled",
                     ex.Message,
@@ -178,7 +223,7 @@ public sealed class UserChatOrchestrator(
                             OperationalFailureArea.UserChat,
                             OperationalFailureSeverity.Error,
                             "chat_turn_setup_failed",
-                            $"chat_turn_setup_failed:{conversationThreadId.Value:N}",
+                            $"chat_turn_setup_failed:{persistentThreadId:N}",
                             request.CorrelationId,
                             conversationTurnId?.ToString("N"),
                             ex.Message,
@@ -187,8 +232,8 @@ public sealed class UserChatOrchestrator(
                 }
 
                 await conversationTurnService.MarkFailedAsync(
-                    request.UserId!.Value,
-                    conversationThreadId.Value,
+                    persistentUserId,
+                    persistentThreadId,
                     activeTurn.Id,
                     "turn_setup_failed",
                     ex.Message,
@@ -243,12 +288,15 @@ public sealed class UserChatOrchestrator(
                     cancellationToken);
             }
 
-            if (CanUsePersistentMemory(request) && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
+            if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
             {
+                var persistentUserId = request.UserId.Value;
+                var persistentThreadId = conversationThreadId.Value;
+                var persistentTurnId = conversationTurnId.Value;
                 await conversationTurnService!.MarkFailedAsync(
-                    request.UserId.Value,
-                    conversationThreadId.Value,
-                    conversationTurnId.Value,
+                    persistentUserId,
+                    persistentThreadId,
+                    persistentTurnId,
                     "heavy_model_unavailable",
                     "Heavy model unavailable and fail-fast policy configured.",
                     cancellationToken);
@@ -266,15 +314,18 @@ public sealed class UserChatOrchestrator(
                 FailureReason: "heavy_model_unavailable",
                 ConversationThreadId: conversationThreadId,
                 ConversationTurnId: conversationTurnId,
-                TurnStatus: CanUsePersistentMemory(request) ? ConversationTurnStatus.Failed : null);
+                TurnStatus: canUsePersistentMemory ? ConversationTurnStatus.Failed : null);
         }
 
-        if (CanUsePersistentMemory(request) && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
+        if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
         {
+            var persistentUserId = request.UserId.Value;
+            var persistentThreadId = conversationThreadId.Value;
+            var persistentTurnId = conversationTurnId.Value;
             await conversationTurnService!.MarkAIInProgressAsync(
-                request.UserId.Value,
-                conversationThreadId.Value,
-                conversationTurnId.Value,
+                persistentUserId,
+                persistentThreadId,
+                persistentTurnId,
                 route,
                 cancellationToken);
         }
@@ -313,12 +364,15 @@ public sealed class UserChatOrchestrator(
                     CancellationToken.None);
             }
 
-            if (CanUsePersistentMemory(request) && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
+            if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
             {
+                var persistentUserId = request.UserId.Value;
+                var persistentThreadId = conversationThreadId.Value;
+                var persistentTurnId = conversationTurnId.Value;
                 await conversationTurnService!.MarkCancelledAsync(
-                    request.UserId.Value,
-                    conversationThreadId.Value,
-                    conversationTurnId.Value,
+                    persistentUserId,
+                    persistentThreadId,
+                    persistentTurnId,
                     "request_cancelled",
                     ex.Message,
                     CancellationToken.None);
@@ -344,8 +398,11 @@ public sealed class UserChatOrchestrator(
         responseParser.TryParse(response, route, out var parsedResponse, out var reasonCodes);
         warnings.AddRange(parsedResponse.Warnings);
 
-        if (CanUsePersistentMemory(request) && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
+        if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
         {
+            var persistentUserId = request.UserId.Value;
+            var persistentThreadId = conversationThreadId.Value;
+            var persistentTurnId = conversationTurnId.Value;
             if (!response.Succeeded || !parsedResponse.Succeeded)
             {
                 var failureCode = ResolveFailureCode(response, parsedResponse);
@@ -369,9 +426,9 @@ public sealed class UserChatOrchestrator(
                 if (isTimeout)
                 {
                     await conversationTurnService!.MarkTimedOutAsync(
-                        request.UserId.Value,
-                        conversationThreadId.Value,
-                        conversationTurnId.Value,
+                        persistentUserId,
+                        persistentThreadId,
+                        persistentTurnId,
                         failureCode,
                         failureReason,
                         cancellationToken);
@@ -379,9 +436,9 @@ public sealed class UserChatOrchestrator(
                 else
                 {
                     await conversationTurnService!.MarkFailedAsync(
-                        request.UserId.Value,
-                        conversationThreadId.Value,
-                        conversationTurnId.Value,
+                        persistentUserId,
+                        persistentThreadId,
+                        persistentTurnId,
                         failureCode,
                         failureReason,
                         cancellationToken);
@@ -398,20 +455,20 @@ public sealed class UserChatOrchestrator(
             }
 
             await conversationTurnService!.MarkAICompletedAsync(
-                request.UserId.Value,
-                conversationThreadId.Value,
-                conversationTurnId.Value,
+                persistentUserId,
+                persistentThreadId,
+                persistentTurnId,
                 stopwatch.ElapsedMilliseconds,
                 cancellationToken);
 
             try
             {
                 await PersistAssistantTurnContextAsync(
-                    request.UserId.Value,
-                    conversationThreadId.Value,
+                    persistentUserId,
+                    persistentThreadId,
                     taskType,
                     route,
-                    conversationTurnId.Value,
+                    persistentTurnId,
                     parsedResponse,
                     cancellationToken);
             }
@@ -433,9 +490,9 @@ public sealed class UserChatOrchestrator(
                 }
 
                 await conversationTurnService.MarkFailedAsync(
-                    request.UserId.Value,
-                    conversationThreadId.Value,
-                    conversationTurnId.Value,
+                    persistentUserId,
+                    persistentThreadId,
+                    persistentTurnId,
                     "assistant_persistence_failed",
                     ex.Message,
                     CancellationToken.None);
@@ -461,9 +518,9 @@ public sealed class UserChatOrchestrator(
             }
 
             await conversationTurnService.MarkCompletedAsync(
-                request.UserId.Value,
-                conversationThreadId.Value,
-                conversationTurnId.Value,
+                persistentUserId,
+                persistentThreadId,
+                persistentTurnId,
                 cancellationToken);
         }
 
@@ -484,7 +541,7 @@ public sealed class UserChatOrchestrator(
             Warnings = warnings.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
             ConversationThreadId = conversationThreadId,
             ConversationTurnId = conversationTurnId,
-            TurnStatus = CanUsePersistentMemory(request) ? ConversationTurnStatus.Completed : null
+            TurnStatus = canUsePersistentMemory ? ConversationTurnStatus.Completed : null
         };
     }
 
@@ -649,13 +706,68 @@ public sealed class UserChatOrchestrator(
                 "persistent",
                 persistentContext.EstimatedPromptTokenCount);
         }
-        catch (Exception ex) when (request.AllowTransientFallbackOnPersistentFailure || options.Value.ChatTurns.AllowImplicitTransientFallback)
+        catch (Exception ex)
         {
+            var reasonCategory = ClassifyPersistentContextFailure(ex);
+            var fallbackPolicy = ResolveTransientFallbackPolicy(request);
+            if (!fallbackPolicy.Allowed)
+            {
+                logger.LogError(
+                    ex,
+                    "Persistent context build failed and transient fallback denied correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} reason={ReasonCategory} policyReason={PolicyReason}",
+                    request.CorrelationId,
+                    conversationThreadId,
+                    conversationTurnId,
+                    reasonCategory,
+                    fallbackPolicy.DenyReason ?? "none");
+
+                await RecordTransientFallbackEventAsync(
+                    request,
+                    taskType,
+                    route,
+                    conversationThreadId,
+                    conversationTurnId,
+                    reasonCategory,
+                    fallbackPolicy.Mode,
+                    fallbackPolicy.AllowedByConfig,
+                    ex,
+                    cancellationToken);
+
+                return ContextBuildResult.Failure(BuildFailedTurnResponse(
+                    "I couldn't build context safely for this request.",
+                    route,
+                    warnings.Append("persistent_context_build_failed").Append(fallbackPolicy.DenyReason ?? "transient_fallback_denied").ToArray(),
+                    "persistent_context_build_failed",
+                    conversationThreadId,
+                    conversationTurnId,
+                    ConversationTurnStatus.Failed,
+                    isDuplicateRequest: false,
+                    isTurnInProgress: false));
+            }
+
             logger.LogWarning(
                 ex,
-                "Persistent context build failed; transient fallback explicitly allowed correlationId={CorrelationId}",
-                request.CorrelationId);
+                "Persistent context build failed; transient fallback allowed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} reason={ReasonCategory} mode={FallbackMode}",
+                request.CorrelationId,
+                conversationThreadId,
+                conversationTurnId,
+                reasonCategory,
+                fallbackPolicy.Mode);
             warnings.Add("persistent_memory_fallback_to_transient");
+            warnings.Add(reasonCategory);
+
+            await RecordTransientFallbackEventAsync(
+                request,
+                taskType,
+                route,
+                conversationThreadId,
+                conversationTurnId,
+                reasonCategory,
+                fallbackPolicy.Mode,
+                fallbackPolicy.AllowedByConfig,
+                ex,
+                cancellationToken);
+
             var transient = BuildTransientContext(request, taskType);
             return ContextBuildResult.Success(
                 transient.ContextMessages,
@@ -665,23 +777,105 @@ public sealed class UserChatOrchestrator(
                 "transient_fallback",
                 EstimateTokens(transient.ContextMessages));
         }
-        catch (Exception ex)
+    }
+
+    private (bool Allowed, string Mode, bool AllowedByConfig, string? DenyReason) ResolveTransientFallbackPolicy(UserChatRequest request)
+    {
+        var chatOptions = options.Value.ChatTurns;
+        var isProduction = hostEnvironment?.IsProduction() == true;
+
+        if (request.AllowTransientFallbackOnPersistentFailure)
         {
-            logger.LogError(
-                ex,
-                "Persistent context build failed and fallback disabled correlationId={CorrelationId}",
-                request.CorrelationId);
-            return ContextBuildResult.Failure(BuildFailedTurnResponse(
-                "I couldn't build context safely for this request.",
-                route,
-                warnings.Append("persistent_context_build_failed").ToArray(),
-                "persistent_context_build_failed",
-                conversationThreadId,
-                conversationTurnId,
-                ConversationTurnStatus.Failed,
-                isDuplicateRequest: false,
-                isTurnInProgress: false));
+            if (!isProduction || chatOptions.AllowExplicitTransientFallbackInProduction)
+            {
+                return (true, "explicit", true, null);
+            }
+
+            return (false, "explicit", false, "explicit_fallback_blocked_in_production");
         }
+
+        if (chatOptions.AllowImplicitTransientFallback)
+        {
+            if (!isProduction || chatOptions.AllowImplicitTransientFallbackInProduction)
+            {
+                return (true, "implicit", true, null);
+            }
+
+            return (false, "implicit", false, "implicit_fallback_blocked_in_production");
+        }
+
+        return (false, "none", false, "transient_fallback_disabled");
+    }
+
+    private static string ClassifyPersistentContextFailure(Exception exception)
+    {
+        var message = exception.Message;
+        if (message.Contains("thread", StringComparison.OrdinalIgnoreCase)
+            && message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return "persistent_thread_invalid";
+        }
+
+        if (message.Contains("summary", StringComparison.OrdinalIgnoreCase))
+        {
+            return "summary_load_failed";
+        }
+
+        if (message.Contains("state", StringComparison.OrdinalIgnoreCase)
+            && message.Contains("snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            return "state_snapshot_failed";
+        }
+
+        return "persistent_context_build_failed";
+    }
+
+    private async Task RecordTransientFallbackEventAsync(
+        UserChatRequest request,
+        AITaskType taskType,
+        AIModelRoute route,
+        Guid? conversationThreadId,
+        Guid? conversationTurnId,
+        string reasonCategory,
+        string fallbackMode,
+        bool allowedByConfig,
+        Exception? exception,
+        CancellationToken cancellationToken)
+    {
+        if (failureRecorder is null)
+        {
+            return;
+        }
+
+        var details = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["reasonCategory"] = reasonCategory,
+            ["fallbackMode"] = fallbackMode,
+            ["allowedByConfig"] = allowedByConfig,
+            ["environment"] = hostEnvironment?.EnvironmentName,
+            ["threadId"] = conversationThreadId?.ToString("N"),
+            ["turnId"] = conversationTurnId?.ToString("N"),
+            ["requestId"] = ResolveClientRequestId(request, options.Value.ChatTurns.MaxClientRequestIdLength),
+            ["taskType"] = taskType.ToString(),
+            ["modelClass"] = route.ModelClass.ToString(),
+            ["model"] = route.Model,
+            ["deployment"] = route.Deployment,
+            ["usePersistentMemory"] = request.UsePersistentMemory,
+            ["allowTransientFallbackOnPersistentFailure"] = request.AllowTransientFallbackOnPersistentFailure,
+            ["exceptionType"] = exception?.GetType().Name
+        });
+
+        await failureRecorder.RecordAsync(
+            new OperationalFailureRecordInput(
+                Area: OperationalFailureArea.UserChat,
+                Severity: OperationalFailureSeverity.Warning,
+                FailureType: "chat_transient_fallback",
+                Fingerprint: $"chat_transient_fallback:{reasonCategory}:{conversationThreadId?.ToString("N") ?? "no_thread"}",
+                CorrelationId: request.CorrelationId,
+                SubjectKey: conversationTurnId?.ToString("N") ?? conversationThreadId?.ToString("N") ?? request.UserId?.ToString("N"),
+                FailureMessage: exception?.Message ?? $"Transient fallback ({fallbackMode}) for {reasonCategory}",
+                DetailsJson: details),
+            cancellationToken);
     }
 
     private async Task<UserChatResponse> BuildDuplicateTurnResponseAsync(

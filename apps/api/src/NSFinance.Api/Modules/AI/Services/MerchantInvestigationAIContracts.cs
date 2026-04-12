@@ -1,4 +1,5 @@
 using NSFinance.Api.Persistence.Entities;
+using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
@@ -57,7 +58,10 @@ public sealed record MerchantInvestigationStructuredCandidate(
     string? PrimaryCountryCode,
     IReadOnlyList<string>? AliasCandidates,
     IReadOnlyList<MerchantInvestigationAliasSuggestionPayload>? AliasSuggestions,
-    IReadOnlyList<MerchantInvestigationStructuredEvidence>? EvidenceItems);
+    IReadOnlyList<MerchantInvestigationStructuredEvidence>? EvidenceItems,
+    bool? DomainNameMismatchRisk = null,
+    bool? WeakSourceRisk = null,
+    bool? SuspiciousIdentityRisk = null);
 
 public sealed record MerchantInvestigationAliasSuggestionPayload(
     string AliasText,
@@ -72,7 +76,8 @@ public sealed record MerchantInvestigationStructuredEvidence(
     string Summary,
     double Confidence,
     double Relevance,
-    string? SourceReference);
+    string? SourceReference,
+    MerchantSourceTrustLevel? SourceTrustLevel = null);
 
 public sealed record MerchantInvestigationParseResult(
     bool ParsedSuccessfully,

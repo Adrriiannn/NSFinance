@@ -113,4 +113,7 @@ public sealed class ChatTurnOptions
     public int MaxUserMessageChars { get; set; } = 4000;
     public int MaxClientRequestIdLength { get; set; } = 128;
     public bool AllowImplicitTransientFallback { get; set; }
+    public bool AllowExplicitTransientFallbackInProduction { get; set; }
+    public bool AllowImplicitTransientFallbackInProduction { get; set; }
+    public bool RequirePersistentMemoryWhenRequested { get; set; }
 }

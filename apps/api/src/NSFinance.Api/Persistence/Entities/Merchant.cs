@@ -26,4 +26,5 @@ public class Merchant
     public MerchantBehaviorProfile? BehaviorProfile { get; set; }
     public ICollection<MerchantCategoryHint> CategoryHints { get; set; } = [];
     public ICollection<MerchantEvidence> Evidence { get; set; } = [];
+    public ICollection<MerchantRevalidationRecord> RevalidationRecords { get; set; } = [];
 }

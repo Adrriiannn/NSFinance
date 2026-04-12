@@ -74,12 +74,15 @@ public sealed class AIPromptBuilder : IPromptBuilder
         sb.AppendLine("      \"supportsInAppPurchases\": optional bool,");
         sb.AppendLine("      \"likelyCategoryFamilies\": optional string[],");
         sb.AppendLine("      \"aliasCandidates\": optional string[],");
+        sb.AppendLine("      \"domainNameMismatchRisk\": optional bool,");
+        sb.AppendLine("      \"weakSourceRisk\": optional bool,");
+        sb.AppendLine("      \"suspiciousIdentityRisk\": optional bool,");
         sb.AppendLine("      \"aliasSuggestions\": optional [{\"aliasText\": string, \"aliasType\": string, \"confidence\": number(0..1), \"notes\": optional string, \"isPreferred\": optional bool}],");
-        sb.AppendLine("      \"evidenceItems\": optional [{\"evidenceType\": enum string, \"sourceClass\": string, \"summary\": string, \"confidence\": number(0..1), \"relevance\": number(0..1), \"sourceReference\": optional string}]");
+        sb.AppendLine("      \"evidenceItems\": optional [{\"evidenceType\": enum string, \"sourceClass\": string, \"sourceTrustLevel\": optional enum string, \"summary\": string, \"confidence\": number(0..1), \"relevance\": number(0..1), \"sourceReference\": optional string}]");
         sb.AppendLine("    }");
         sb.AppendLine("  ],");
         sb.AppendLine("  \"aliasSuggestions\": [{\"aliasText\": string, \"aliasType\": string, \"confidence\": number(0..1), \"notes\": optional string, \"isPreferred\": optional bool}],");
-        sb.AppendLine("  \"evidence\": [{\"evidenceType\": enum string, \"sourceClass\": string, \"summary\": string, \"confidence\": number(0..1), \"relevance\": number(0..1), \"sourceReference\": optional string}]");
+        sb.AppendLine("  \"evidence\": [{\"evidenceType\": enum string, \"sourceClass\": string, \"sourceTrustLevel\": optional enum string, \"summary\": string, \"confidence\": number(0..1), \"relevance\": number(0..1), \"sourceReference\": optional string}]");
         sb.AppendLine("}");
         sb.AppendLine("Rules:");
         sb.AppendLine("- Output must be strict valid JSON only.");

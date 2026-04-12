@@ -126,7 +126,10 @@ public sealed record MerchantInvestigationCandidate(
     double DescriptorMatchStrength = 0d,
     double EntityMatchStrength = 0d,
     IReadOnlyList<MerchantInvestigationAliasSuggestion>? AliasSuggestions = null,
-    IReadOnlyList<MerchantInvestigationEvidence>? EvidenceItems = null);
+    IReadOnlyList<MerchantInvestigationEvidence>? EvidenceItems = null,
+    bool DomainNameMismatchRisk = false,
+    bool WeakSourceRisk = false,
+    bool SuspiciousIdentityRisk = false);
 
 public sealed record MerchantInvestigationEvidence(
     MerchantEvidenceType EvidenceType,
@@ -134,7 +137,8 @@ public sealed record MerchantInvestigationEvidence(
     double Confidence,
     string? SourceReference,
     string? SourceClass = null,
-    double Relevance = 0d);
+    double Relevance = 0d,
+    MerchantSourceTrustLevel SourceTrustLevel = MerchantSourceTrustLevel.Unknown);
 
 public sealed record MerchantInvestigationAliasSuggestion(
     string AliasText,

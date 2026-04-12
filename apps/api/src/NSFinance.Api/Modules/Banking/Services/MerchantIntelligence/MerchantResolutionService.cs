@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
+using System.Text.Json;
 
 namespace NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 
@@ -791,24 +792,412 @@ public sealed class MerchantResolutionService(
 
         merchant.NextValidationDueUtc ??= nowUtc.AddDays(Math.Max(14, _resilienceOptions.ActiveMerchantValidationDays));
 
-        var isStale = merchant.NextValidationDueUtc.HasValue && merchant.NextValidationDueUtc.Value <= nowUtc;
-        if (isStale)
+        var revalidationReasons = await ResolveRevalidationReasonsAsync(merchant, nowUtc, resolutionSource, cancellationToken);
+        if (revalidationReasons.Count == 0)
         {
-            merchant.ValidationAttemptCount += 1;
-            merchant.LastValidationResultCode = "stale_revalidation_due";
-            merchant.NextValidationDueUtc = nowUtc.AddDays(Math.Max(7, _resilienceOptions.CautiousMerchantValidationDays));
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        var canRevalidateNow = !merchant.LastValidatedUtc.HasValue
+                               || merchant.LastValidatedUtc.Value.AddMinutes(Math.Max(15, _resilienceOptions.RevalidationMinimumIntervalMinutes)) <= nowUtc;
+        if (!canRevalidateNow)
+        {
+            var deferredDueUtc = nowUtc.AddMinutes(Math.Max(15, _resilienceOptions.RevalidationMinimumIntervalMinutes));
+            merchant.LastValidationResultCode = "revalidation_deferred_interval_guard";
+            if (!merchant.NextValidationDueUtc.HasValue || merchant.NextValidationDueUtc.Value > deferredDueUtc)
+            {
+                merchant.NextValidationDueUtc = deferredDueUtc;
+            }
+
+            dbContext.MerchantRevalidationRecords.Add(new MerchantRevalidationRecord
+            {
+                Id = Guid.NewGuid(),
+                MerchantId = merchant.Id,
+                AttemptedUtc = nowUtc,
+                TriggerReason = string.Join(",", revalidationReasons),
+                Outcome = MerchantRevalidationOutcome.Failed,
+                DecisionCode = null,
+                PreviousStatus = merchant.MerchantStatus,
+                NewStatus = merchant.MerchantStatus,
+                StatusChanged = false,
+                AliasTrustChanges = 0,
+                RequiresUnresolvedReview = false,
+                ContradictionDetected = false,
+                LeadingEvidenceSummary = "Revalidation deferred by minimum interval guard.",
+                ResultCode = "revalidation_deferred_interval_guard",
+                DetailsJson = JsonSerializer.Serialize(new
+                {
+                    reasons = revalidationReasons,
+                    minIntervalMinutes = _resilienceOptions.RevalidationMinimumIntervalMinutes
+                })
+            });
 
             await RecordOperationalFailureAsync(
                 OperationalFailureArea.MerchantResolution,
                 OperationalFailureSeverity.Info,
-                "merchant_stale_revalidation_due",
-                $"merchant_stale_revalidation_due:{merchant.Id:N}",
+                "merchant_revalidation_deferred",
+                $"merchant_revalidation_deferred:{merchant.Id:N}",
                 merchant.Id.ToString("N"),
-                $"merchant resolved via {resolutionSource} while stale; revalidation scheduled",
+                $"merchant resolved via {resolutionSource}; revalidation deferred due to interval guard",
+                cancellationToken);
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        await ExecuteMerchantRevalidationAsync(
+            merchant,
+            revalidationReasons,
+            resolutionSource,
+            nowUtc,
+            cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<string>> ResolveRevalidationReasonsAsync(
+        Merchant merchant,
+        DateTime nowUtc,
+        string resolutionSource,
+        CancellationToken cancellationToken)
+    {
+        var reasons = new List<string>();
+        var isStale = merchant.NextValidationDueUtc.HasValue && merchant.NextValidationDueUtc.Value <= nowUtc;
+        if (isStale)
+        {
+            reasons.Add("stale_validation_due");
+        }
+
+        if (merchant.MerchantStatus == MerchantStatus.LowConfidence)
+        {
+            reasons.Add("low_confidence_status");
+        }
+
+        if (resolutionSource is "fuzzy_alias" or "family_match")
+        {
+            reasons.Add("non_exact_resolution_touch");
+        }
+
+        var conflictLookbackUtc = nowUtc.AddDays(-Math.Max(1, _resilienceOptions.RevalidationAliasConflictLookbackDays));
+        var hasConflictPressure = await dbContext.MerchantAliasConflicts
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.Status == MerchantAliasConflictStatus.Open
+                     && (x.ExistingMerchantId == merchant.Id || x.ProposedMerchantId == merchant.Id)
+                     && x.LastSeenUtc >= conflictLookbackUtc,
+                cancellationToken);
+        if (hasConflictPressure)
+        {
+            reasons.Add("alias_conflict_activity");
+        }
+
+        var unresolvedThreshold = Math.Max(2, _resilienceOptions.RevalidationUnresolvedPressureThreshold);
+        if (unresolvedThreshold > 0)
+        {
+            var merchantTokens = normalizer.Tokenize(merchant.NormalizedCanonicalName).Take(3).ToArray();
+            if (merchantTokens.Length > 0)
+            {
+                var unresolvedCandidates = await dbContext.UnresolvedMerchants
+                    .AsNoTracking()
+                    .Where(x => x.OccurrenceCount >= unresolvedThreshold)
+                    .Where(x => x.LastSeenUtc >= nowUtc.AddDays(-45))
+                    .OrderByDescending(x => x.OccurrenceCount)
+                    .Take(200)
+                    .ToListAsync(cancellationToken);
+
+                var unresolvedPressure = unresolvedCandidates.Any(candidate =>
+                    merchantTokens.Any(token => candidate.NormalizedDescriptor.Contains(token, StringComparison.Ordinal)));
+                if (unresolvedPressure)
+                {
+                    reasons.Add("related_unresolved_pressure");
+                }
+            }
+        }
+
+        return reasons;
+    }
+
+    private async Task ExecuteMerchantRevalidationAsync(
+        Merchant merchant,
+        IReadOnlyList<string> reasons,
+        string resolutionSource,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var previousStatus = merchant.MerchantStatus;
+        var revalidationDescriptor = BuildRevalidationDescriptor(merchant);
+        MerchantInvestigationResult investigationResult;
+        MerchantAcceptanceDecision decision;
+
+        try
+        {
+            investigationResult = await investigationService.InvestigateAsync(
+                new MerchantInvestigationRequest(
+                    RawDescriptor: revalidationDescriptor,
+                    NormalizedDescriptor: normalizer.Normalize(revalidationDescriptor),
+                    TriggerSource: "merchant_revalidation"),
+                cancellationToken);
+            decision = acceptancePolicy.Evaluate(investigationResult);
+        }
+        catch (Exception ex)
+        {
+            merchant.ValidationAttemptCount += 1;
+            merchant.LastValidatedUtc = nowUtc;
+            merchant.LastValidationResultCode = "revalidation_investigation_failed";
+            merchant.NextValidationDueUtc = nowUtc.AddDays(Math.Max(7, _resilienceOptions.CautiousMerchantValidationDays));
+            merchant.UpdatedUtc = nowUtc;
+
+            dbContext.MerchantRevalidationRecords.Add(new MerchantRevalidationRecord
+            {
+                Id = Guid.NewGuid(),
+                MerchantId = merchant.Id,
+                AttemptedUtc = nowUtc,
+                TriggerReason = string.Join(",", reasons),
+                Outcome = MerchantRevalidationOutcome.Failed,
+                DecisionCode = null,
+                PreviousStatus = previousStatus,
+                NewStatus = merchant.MerchantStatus,
+                StatusChanged = false,
+                AliasTrustChanges = 0,
+                RequiresUnresolvedReview = true,
+                ContradictionDetected = false,
+                LeadingEvidenceSummary = ex.Message,
+                ResultCode = "revalidation_investigation_failed",
+                DetailsJson = JsonSerializer.Serialize(new
+                {
+                    reasons,
+                    resolutionSource,
+                    exception = ex.GetType().Name
+                })
+            });
+
+            await RecordOperationalFailureAsync(
+                OperationalFailureArea.MerchantResolution,
+                OperationalFailureSeverity.Error,
+                "merchant_revalidation_failed",
+                $"merchant_revalidation_failed:{merchant.Id:N}",
+                merchant.Id.ToString("N"),
+                ex.Message,
+                cancellationToken);
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        var outcome = ResolveRevalidationOutcome(previousStatus, decision.DecisionType);
+        var requiresUnresolvedReview = decision.DecisionType is MerchantAcceptanceDecisionType.Unresolved
+            or MerchantAcceptanceDecisionType.LowConfidence
+            or MerchantAcceptanceDecisionType.Rejected;
+        var contradictionDetected = decision.ReasonCodes.Contains("contradictory_evidence", StringComparer.OrdinalIgnoreCase);
+        var sourceRiskDetected = decision.ReasonCodes.Any(code =>
+            code is "weak_source_trust_profile"
+                or "domain_name_mismatch_risk"
+                or "suspicious_identity_signal"
+                or "generic_merchant_name_risk"
+                or "single_source_overconfidence_risk");
+        var aliasTrustChanges = await ApplyRevalidationAliasSafetyAsync(
+            merchant.Id,
+            decision.DecisionType,
+            sourceRiskDetected,
+            nowUtc,
+            cancellationToken);
+
+        merchant.ValidationAttemptCount += 1;
+        merchant.LastValidatedUtc = nowUtc;
+        merchant.MerchantStatus = outcome.NewStatus;
+        merchant.LastValidationResultCode = outcome.ResultCode;
+        merchant.NextValidationDueUtc = nowUtc.AddDays(ResolveValidationDueDays(merchant.MerchantStatus, decision.DecisionType));
+        merchant.UpdatedUtc = nowUtc;
+
+        if (requiresUnresolvedReview || contradictionDetected || sourceRiskDetected)
+        {
+            dbContext.MerchantEvidence.Add(new MerchantEvidence
+            {
+                Id = Guid.NewGuid(),
+                MerchantId = merchant.Id,
+                EvidenceType = MerchantEvidenceType.Deterministic,
+                EvidenceSummary = BuildTrustEvidenceSummary(decision, requiresUnresolvedReview, sourceRiskDetected),
+                Confidence = Math.Clamp(decision.Confidence, 0d, 1d),
+                SourceReference = $"revalidation:{string.Join(",", reasons)}",
+                CapturedUtc = nowUtc
+            });
+        }
+
+        dbContext.MerchantRevalidationRecords.Add(new MerchantRevalidationRecord
+        {
+            Id = Guid.NewGuid(),
+            MerchantId = merchant.Id,
+            AttemptedUtc = nowUtc,
+            TriggerReason = string.Join(",", reasons),
+            Outcome = outcome.Outcome,
+            DecisionCode = decision.DecisionType.ToString(),
+            PreviousStatus = previousStatus,
+            NewStatus = outcome.NewStatus,
+            StatusChanged = previousStatus != outcome.NewStatus,
+            AliasTrustChanges = aliasTrustChanges,
+            RequiresUnresolvedReview = requiresUnresolvedReview,
+            ContradictionDetected = contradictionDetected,
+            LeadingEvidenceSummary = investigationResult.Evidence.FirstOrDefault()?.EvidenceSummary
+                                     ?? decision.SelectedCandidate?.WhyItMayMatch
+                                     ?? investigationResult.FailureReason,
+            ResultCode = outcome.ResultCode,
+            DetailsJson = JsonSerializer.Serialize(new
+            {
+                reasons,
+                decision = decision.DecisionType.ToString(),
+                confidence = decision.Confidence,
+                reasonCodes = decision.ReasonCodes,
+                recommendation = investigationResult.Recommendation.ToString(),
+                sourceRiskDetected,
+                resolutionSource
+            })
+        });
+
+        if (requiresUnresolvedReview || contradictionDetected || sourceRiskDetected || aliasTrustChanges > 0)
+        {
+            await RecordOperationalFailureAsync(
+                OperationalFailureArea.MerchantResolution,
+                contradictionDetected ? OperationalFailureSeverity.Warning : OperationalFailureSeverity.Info,
+                "merchant_revalidation_signal",
+                $"merchant_revalidation_signal:{merchant.Id:N}:{outcome.ResultCode}",
+                merchant.Id.ToString("N"),
+                $"Revalidation outcome={outcome.ResultCode} reasonCodes={string.Join(",", decision.ReasonCodes)} aliasChanges={aliasTrustChanges}",
                 cancellationToken);
         }
 
+        logger.LogInformation(
+            "Merchant revalidation executed merchantId={MerchantId} previousStatus={PreviousStatus} newStatus={NewStatus} outcome={Outcome} decision={Decision} reasons={Reasons} requiresUnresolvedReview={RequiresUnresolvedReview} aliasChanges={AliasChanges}",
+            merchant.Id,
+            previousStatus,
+            outcome.NewStatus,
+            outcome.Outcome,
+            decision.DecisionType,
+            string.Join(",", reasons),
+            requiresUnresolvedReview,
+            aliasTrustChanges);
+
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<int> ApplyRevalidationAliasSafetyAsync(
+        Guid merchantId,
+        MerchantAcceptanceDecisionType decisionType,
+        bool sourceRiskDetected,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var aliases = await dbContext.MerchantAliases
+            .Where(x => x.MerchantId == merchantId && x.IsActive)
+            .ToListAsync(cancellationToken);
+
+        var changes = 0;
+        foreach (var alias in aliases)
+        {
+            var isBroadDangerous = IsBroadDangerousAliasText(alias.NormalizedAliasText);
+            var lowConfidenceAlias = alias.Confidence < 0.70d;
+
+            if (decisionType == MerchantAcceptanceDecisionType.AcceptedTrusted && !sourceRiskDetected)
+            {
+                if (alias.TrustLevel == MerchantAliasTrustLevel.Observed && alias.Confidence >= 0.88d && !isBroadDangerous)
+                {
+                    alias.TrustLevel = MerchantAliasTrustLevel.Cautious;
+                    alias.LifecycleReason = "revalidation_promoted_alias_trust";
+                    alias.LastSeenUtc = nowUtc;
+                    changes += 1;
+                }
+
+                continue;
+            }
+
+            if (isBroadDangerous || lowConfidenceAlias || sourceRiskDetected)
+            {
+                alias.IsActive = false;
+                alias.TrustLevel = MerchantAliasTrustLevel.Rejected;
+                alias.SupersededUtc = nowUtc;
+                alias.LifecycleReason = "revalidation_risky_alias_deactivated";
+                alias.LastSeenUtc = nowUtc;
+                changes += 1;
+                continue;
+            }
+
+            if (alias.TrustLevel == MerchantAliasTrustLevel.Trusted)
+            {
+                alias.TrustLevel = MerchantAliasTrustLevel.Cautious;
+                alias.LifecycleReason = "revalidation_trust_downgraded";
+                alias.LastSeenUtc = nowUtc;
+                changes += 1;
+            }
+        }
+
+        return changes;
+    }
+
+    private static (MerchantRevalidationOutcome Outcome, MerchantStatus NewStatus, string ResultCode) ResolveRevalidationOutcome(
+        MerchantStatus previousStatus,
+        MerchantAcceptanceDecisionType decisionType)
+    {
+        return decisionType switch
+        {
+            MerchantAcceptanceDecisionType.AcceptedTrusted when previousStatus == MerchantStatus.LowConfidence
+                => (MerchantRevalidationOutcome.PromotedToTrusted, MerchantStatus.Active, "promote_cautious_to_trusted"),
+            MerchantAcceptanceDecisionType.AcceptedTrusted
+                => (MerchantRevalidationOutcome.KeepTrusted, MerchantStatus.Active, "keep_trusted"),
+            MerchantAcceptanceDecisionType.AcceptedCautious when previousStatus == MerchantStatus.Active
+                => (MerchantRevalidationOutcome.DowngradedToCautious, MerchantStatus.LowConfidence, "downgrade_to_cautious"),
+            MerchantAcceptanceDecisionType.AcceptedCautious
+                => (MerchantRevalidationOutcome.KeepCautious, MerchantStatus.LowConfidence, "keep_cautious"),
+            MerchantAcceptanceDecisionType.LowConfidence
+                => (MerchantRevalidationOutcome.MarkedForUnresolvedReview, MerchantStatus.LowConfidence, "mark_for_unresolved_review"),
+            MerchantAcceptanceDecisionType.Unresolved
+                => (MerchantRevalidationOutcome.MarkedForUnresolvedReview, MerchantStatus.LowConfidence, "mark_for_unresolved_review"),
+            MerchantAcceptanceDecisionType.Rejected
+                => (MerchantRevalidationOutcome.MarkedForUnresolvedReview, MerchantStatus.LowConfidence, "mark_for_unresolved_review"),
+            _ => (MerchantRevalidationOutcome.Failed, previousStatus, "revalidation_failed")
+        };
+    }
+
+    private static string BuildTrustEvidenceSummary(
+        MerchantAcceptanceDecision decision,
+        bool requiresUnresolvedReview,
+        bool sourceRiskDetected)
+    {
+        var reasons = decision.ReasonCodes.Count == 0
+            ? "no_reason_codes"
+            : string.Join(",", decision.ReasonCodes);
+        if (requiresUnresolvedReview && sourceRiskDetected)
+        {
+            return $"Revalidation flagged unresolved-review and source trust risk. reasons={reasons}";
+        }
+
+        if (requiresUnresolvedReview)
+        {
+            return $"Revalidation flagged unresolved review. reasons={reasons}";
+        }
+
+        if (sourceRiskDetected)
+        {
+            return $"Revalidation flagged source trust mismatch. reasons={reasons}";
+        }
+
+        return $"Revalidation completed with caution. reasons={reasons}";
+    }
+
+    private static string BuildRevalidationDescriptor(Merchant merchant)
+    {
+        var descriptorParts = new List<string>(3) { merchant.CanonicalName };
+        if (!string.IsNullOrWhiteSpace(merchant.DisplayName)
+            && !merchant.DisplayName.Equals(merchant.CanonicalName, StringComparison.OrdinalIgnoreCase))
+        {
+            descriptorParts.Add(merchant.DisplayName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(merchant.OfficialWebsite)
+            && Uri.TryCreate(merchant.OfficialWebsite, UriKind.Absolute, out var uri)
+            && !string.IsNullOrWhiteSpace(uri.Host))
+        {
+            descriptorParts.Add(uri.Host);
+        }
+
+        return string.Join(' ', descriptorParts);
     }
 
     private async Task RecordOperationalFailureAsync(

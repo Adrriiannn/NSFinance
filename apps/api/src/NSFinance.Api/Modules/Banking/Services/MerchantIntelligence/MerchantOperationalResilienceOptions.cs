@@ -12,4 +12,7 @@ public sealed class MerchantOperationalResilienceOptions
     public int ActiveMerchantValidationDays { get; set; } = 120;
     public int LowConfidenceMerchantValidationDays { get; set; } = 30;
     public int CautiousMerchantValidationDays { get; set; } = 21;
+    public int RevalidationMinimumIntervalMinutes { get; set; } = 60;
+    public int RevalidationAliasConflictLookbackDays { get; set; } = 14;
+    public int RevalidationUnresolvedPressureThreshold { get; set; } = 8;
 }

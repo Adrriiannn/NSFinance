@@ -405,7 +405,7 @@ public class MerchantIntelligenceRegistryTests
     }
 
     [Fact]
-    public async Task ResolveAsync_StaleResolvedMerchant_SchedulesRevalidationAndPersistsOperationalRecord()
+    public async Task ResolveAsync_StaleResolvedMerchant_ExecutesRevalidationAndPersistsOutcomeRecord()
     {
         await using var dbContext = CreateDbContext();
         var normalizer = new MerchantDescriptorNormalizer();
@@ -456,13 +456,21 @@ public class MerchantIntelligenceRegistryTests
         Assert.True(result.IsResolved);
 
         var refreshed = await dbContext.Merchants.SingleAsync(x => x.Id == merchant.Id);
-        Assert.Equal("stale_revalidation_due", refreshed.LastValidationResultCode);
+        Assert.Equal("mark_for_unresolved_review", refreshed.LastValidationResultCode);
+        Assert.Equal(MerchantStatus.LowConfidence, refreshed.MerchantStatus);
         Assert.Equal(1, refreshed.ValidationAttemptCount);
         Assert.True(refreshed.NextValidationDueUtc.HasValue);
         Assert.True(refreshed.NextValidationDueUtc.Value > DateTime.UtcNow);
 
+        var revalidation = await dbContext.MerchantRevalidationRecords
+            .SingleOrDefaultAsync(x => x.MerchantId == merchant.Id);
+        Assert.NotNull(revalidation);
+        Assert.Equal(MerchantRevalidationOutcome.MarkedForUnresolvedReview, revalidation!.Outcome);
+        Assert.Equal("mark_for_unresolved_review", revalidation.ResultCode);
+        Assert.True(revalidation.RequiresUnresolvedReview);
+
         var failure = await dbContext.OperationalFailureRecords
-            .SingleOrDefaultAsync(x => x.FailureType == "merchant_stale_revalidation_due");
+            .SingleOrDefaultAsync(x => x.FailureType == "merchant_revalidation_signal");
         Assert.NotNull(failure);
         Assert.Equal(OperationalFailureArea.MerchantResolution, failure!.Area);
     }
@@ -710,16 +718,17 @@ public class MerchantIntelligenceRegistryTests
                     DescriptorMatchStrength: 0.66d,
                     EntityMatchStrength: 0.63d)
             ],
-            Evidence:
-            [
-                new MerchantInvestigationEvidence(
-                    MerchantEvidenceType.OfficialSource,
-                    "Official billing descriptor matches insurer name.",
-                    0.92d,
-                    "https://acme-insurance.test/help",
-                    SourceClass: "official_source",
-                    Relevance: 0.95d)
-            ],
+                    Evidence:
+                    [
+                        new MerchantInvestigationEvidence(
+                            MerchantEvidenceType.OfficialSource,
+                            "Official billing descriptor matches insurer name.",
+                            0.92d,
+                            "https://acme-insurance.test/help",
+                            SourceClass: "official_source",
+                            Relevance: 0.95d,
+                            SourceTrustLevel: MerchantSourceTrustLevel.OfficialDomain)
+                    ],
             FailureReason: null,
             Recommendation: MerchantInvestigationRecommendation.AcceptCandidate,
             OverallConfidence: 0.95d,
@@ -833,6 +842,234 @@ public class MerchantIntelligenceRegistryTests
         Assert.Contains("insufficient_evidence", decision.ReasonCodes);
     }
 
+    [Fact]
+    public void AcceptancePolicy_ReturnsUnresolved_ForHighConfidenceButWeakSourceTrust()
+    {
+        var policy = new MerchantAcceptancePolicy();
+        var result = new MerchantInvestigationResult(
+            Succeeded: true,
+            InsufficientEvidence: false,
+            Candidates:
+            [
+                new MerchantInvestigationCandidate(
+                    ExistingMerchantId: null,
+                    CanonicalName: "Acme Premium Protect",
+                    DisplayName: "Acme Premium Protect",
+                    MerchantType: MerchantType.Merchant,
+                    MerchantUsageType: MerchantUsageType.NarrowUse,
+                    PrimaryCountryCode: "US",
+                    Confidence: 0.95d,
+                    AmbiguityScore: 0.12d,
+                    MixedUseRisk: false,
+                    HasContradictions: false,
+                    OfficialWebsite: "https://acme-premium-protect.example",
+                    DescriptionSummary: "Protection add-on",
+                    AliasCandidates: ["ACME PREMIUM PROTECT"],
+                    DescriptorMatchStrength: 0.93d,
+                    EntityMatchStrength: 0.90d)
+            ],
+            Evidence:
+            [
+                new MerchantInvestigationEvidence(
+                    MerchantEvidenceType.AI,
+                    "Model inferred likely match from public snippets.",
+                    0.87d,
+                    null,
+                    SourceClass: "ai_inference",
+                    Relevance: 0.74d,
+                    SourceTrustLevel: MerchantSourceTrustLevel.AIInferenceOnly)
+            ],
+            FailureReason: null,
+            Recommendation: MerchantInvestigationRecommendation.AcceptCandidate,
+            OverallConfidence: 0.94d,
+            AmbiguityLevel: 0.12d);
+
+        var decision = policy.Evaluate(result);
+
+        Assert.Equal(MerchantAcceptanceDecisionType.Unresolved, decision.DecisionType);
+        Assert.Contains("weak_source_trust_profile", decision.ReasonCodes);
+        Assert.Contains("acceptance_blocked_identity_trust", decision.ReasonCodes);
+    }
+
+    [Fact]
+    public void AcceptancePolicy_ReturnsUnresolved_ForDomainNameMismatchAndWeakSources()
+    {
+        var policy = new MerchantAcceptancePolicy();
+        var result = new MerchantInvestigationResult(
+            Succeeded: true,
+            InsufficientEvidence: false,
+            Candidates:
+            [
+                new MerchantInvestigationCandidate(
+                    ExistingMerchantId: null,
+                    CanonicalName: "Northbridge Energy Services",
+                    DisplayName: "Northbridge Energy Services",
+                    MerchantType: MerchantType.Utility,
+                    MerchantUsageType: MerchantUsageType.NarrowUse,
+                    PrimaryCountryCode: "GB",
+                    Confidence: 0.90d,
+                    AmbiguityScore: 0.18d,
+                    MixedUseRisk: false,
+                    HasContradictions: false,
+                    OfficialWebsite: "https://nbx-payments.co",
+                    DescriptionSummary: "Utility billing descriptor",
+                    AliasCandidates: ["NORTHBRIDGE ENERGY"],
+                    DescriptorMatchStrength: 0.87d,
+                    EntityMatchStrength: 0.84d,
+                    DomainNameMismatchRisk: true)
+            ],
+            Evidence:
+            [
+                new MerchantInvestigationEvidence(
+                    MerchantEvidenceType.TransactionObservation,
+                    "Descriptor overlap only.",
+                    0.71d,
+                    null,
+                    SourceClass: "web_mention",
+                    Relevance: 0.62d,
+                    SourceTrustLevel: MerchantSourceTrustLevel.WeakWebMention)
+            ],
+            FailureReason: null,
+            Recommendation: MerchantInvestigationRecommendation.AcceptCandidate,
+            OverallConfidence: 0.90d,
+            AmbiguityLevel: 0.18d);
+
+        var decision = policy.Evaluate(result);
+
+        Assert.Equal(MerchantAcceptanceDecisionType.Unresolved, decision.DecisionType);
+        Assert.Contains("domain_name_mismatch_risk", decision.ReasonCodes);
+        Assert.Contains("weak_source_trust_profile", decision.ReasonCodes);
+    }
+
+    [Fact]
+    public void AcceptancePolicy_ReturnsUnresolved_ForGenericMerchantNameWithoutAuthoritativeSource()
+    {
+        var policy = new MerchantAcceptancePolicy();
+        var result = new MerchantInvestigationResult(
+            Succeeded: true,
+            InsufficientEvidence: false,
+            Candidates:
+            [
+                new MerchantInvestigationCandidate(
+                    ExistingMerchantId: null,
+                    CanonicalName: "Digital Services",
+                    DisplayName: "Digital Services",
+                    MerchantType: MerchantType.Merchant,
+                    MerchantUsageType: MerchantUsageType.MixedUse,
+                    PrimaryCountryCode: "US",
+                    Confidence: 0.83d,
+                    AmbiguityScore: 0.30d,
+                    MixedUseRisk: true,
+                    HasContradictions: false,
+                    OfficialWebsite: "https://digital-services-hub.info",
+                    DescriptionSummary: "Generic merchant candidate",
+                    AliasCandidates: ["DIGITAL SERVICES"],
+                    DescriptorMatchStrength: 0.79d,
+                    EntityMatchStrength: 0.77d)
+            ],
+            Evidence:
+            [
+                new MerchantInvestigationEvidence(
+                    MerchantEvidenceType.TransactionObservation,
+                    "Recurring descriptor found in user history.",
+                    0.66d,
+                    null,
+                    SourceClass: "public_listing",
+                    Relevance: 0.60d,
+                    SourceTrustLevel: MerchantSourceTrustLevel.PublicDirectory)
+            ],
+            FailureReason: null,
+            Recommendation: MerchantInvestigationRecommendation.AcceptCautiously,
+            OverallConfidence: 0.78d,
+            AmbiguityLevel: 0.30d);
+
+        var decision = policy.Evaluate(result);
+
+        Assert.Equal(MerchantAcceptanceDecisionType.Unresolved, decision.DecisionType);
+        Assert.Contains("generic_merchant_name_risk", decision.ReasonCodes);
+        Assert.Contains(
+            decision.ReasonCodes,
+            code => code is "acceptance_blocked_generic_name_without_authoritative_source" or "acceptance_blocked_identity_trust");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_RevalidationContradiction_PersistsSignalsWithoutSilentOverwrite()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var merchant = await registry.CreateMerchantAsync(
+            new MerchantCreateRequest(
+                "Prime Utilities",
+                "Prime Utilities",
+                MerchantStatus.Active,
+                MerchantType.Utility,
+                MerchantUsageType.NarrowUse,
+                "GB",
+                "https://prime-utilities.test",
+                "Seed merchant for revalidation contradiction test",
+                null),
+            CancellationToken.None);
+
+        merchant.NextValidationDueUtc = DateTime.UtcNow.AddDays(-1);
+        merchant.LastValidatedUtc = DateTime.UtcNow.AddDays(-60);
+        merchant.ValidationAttemptCount = 0;
+        await dbContext.SaveChangesAsync();
+
+        await registry.AttachAliasAsync(
+            new MerchantAliasCreateRequest(
+                merchant.Id,
+                "PRIME UTILITIES DD",
+                MerchantAliasType.BillingDescriptor,
+                0.97d,
+                true,
+                "seed",
+                true,
+                MerchantAliasTrustLevel.Trusted),
+            CancellationToken.None);
+
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            new ContradictoryRevalidationInvestigationService(),
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance,
+            Options.Create(new MerchantOperationalResilienceOptions
+            {
+                CautiousMerchantValidationDays = 14
+            }),
+            new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance));
+
+        var resolve = await resolver.ResolveAsync("PRIME UTILITIES DD", CancellationToken.None);
+
+        Assert.True(resolve.IsResolved);
+        Assert.Equal(MerchantResolutionType.ExactAlias, resolve.ResolutionType);
+
+        var refreshed = await dbContext.Merchants.SingleAsync(x => x.Id == merchant.Id);
+        Assert.Equal(MerchantStatus.LowConfidence, refreshed.MerchantStatus);
+        Assert.Equal("mark_for_unresolved_review", refreshed.LastValidationResultCode);
+        Assert.Equal(1, refreshed.ValidationAttemptCount);
+
+        var revalidation = await dbContext.MerchantRevalidationRecords.SingleAsync(x => x.MerchantId == merchant.Id);
+        Assert.Equal(MerchantRevalidationOutcome.MarkedForUnresolvedReview, revalidation.Outcome);
+        Assert.True(revalidation.ContradictionDetected);
+        Assert.True(revalidation.StatusChanged);
+        Assert.True(revalidation.RequiresUnresolvedReview);
+
+        var alias = await dbContext.MerchantAliases.SingleAsync(x => x.MerchantId == merchant.Id);
+        Assert.Equal(MerchantAliasTrustLevel.Cautious, alias.TrustLevel);
+        Assert.True(alias.IsActive);
+
+        var revalidationEvidence = await dbContext.MerchantEvidence
+            .Where(x => x.MerchantId == merchant.Id)
+            .ToListAsync();
+        Assert.Contains(
+            revalidationEvidence,
+            x => x.EvidenceSummary.Contains("Revalidation flagged", StringComparison.OrdinalIgnoreCase));
+        Assert.True(await dbContext.OperationalFailureRecords.AnyAsync(x => x.FailureType == "merchant_revalidation_signal"));
+    }
+
     private static AppDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -900,7 +1137,8 @@ public class MerchantIntelligenceRegistryTests
                             0.92d,
                             "https://acme-life-insurance.test/help",
                             SourceClass: "official_source",
-                            Relevance: 0.93d)
+                            Relevance: 0.93d,
+                            SourceTrustLevel: MerchantSourceTrustLevel.OfficialDomain)
                     ],
                     FailureReason: null,
                     Recommendation: MerchantInvestigationRecommendation.AcceptCandidate,
@@ -932,6 +1170,55 @@ public class MerchantIntelligenceRegistryTests
             cancellationToken.ThrowIfCancellationRequested();
             CallCount += 1;
             return Task.FromResult(responseFactory(request));
+        }
+    }
+
+    private sealed class ContradictoryRevalidationInvestigationService : IMerchantInvestigationService
+    {
+        public Task<MerchantInvestigationResult> InvestigateAsync(
+            MerchantInvestigationRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(
+                new MerchantInvestigationResult(
+                    Succeeded: true,
+                    InsufficientEvidence: false,
+                    Candidates:
+                    [
+                        new MerchantInvestigationCandidate(
+                            ExistingMerchantId: null,
+                            CanonicalName: "Prime Utilities",
+                            DisplayName: "Prime Utilities",
+                            MerchantType: MerchantType.Utility,
+                            MerchantUsageType: MerchantUsageType.NarrowUse,
+                            PrimaryCountryCode: "GB",
+                            Confidence: 0.91d,
+                            AmbiguityScore: 0.20d,
+                            MixedUseRisk: false,
+                            HasContradictions: true,
+                            OfficialWebsite: "https://prime-utilities.test",
+                            DescriptionSummary: "Contradictory revalidation candidate",
+                            AliasCandidates: [request.RawDescriptor],
+                            DescriptorMatchStrength: 0.86d,
+                            EntityMatchStrength: 0.82d,
+                            WhyItMayMatch: "Descriptor is close to known merchant.",
+                            WhyItMayBeWrong: "Contradictory legal identity surfaced during review.")
+                    ],
+                    Evidence:
+                    [
+                        new MerchantInvestigationEvidence(
+                            MerchantEvidenceType.TransactionObservation,
+                            "Contradictory legal ownership records detected.",
+                            0.78d,
+                            "unit-test",
+                            SourceClass: "authoritative_listing",
+                            Relevance: 0.72d,
+                            SourceTrustLevel: MerchantSourceTrustLevel.AuthoritativeListing)
+                    ],
+                    FailureReason: null,
+                    Recommendation: MerchantInvestigationRecommendation.AcceptCautiously,
+                    OverallConfidence: 0.82d,
+                    AmbiguityLevel: 0.24d));
         }
     }
 }

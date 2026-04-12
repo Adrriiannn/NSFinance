@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
+using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.AI.Services;
@@ -434,7 +435,8 @@ internal sealed class MockAIProviderTransport(
         string summary,
         double confidence,
         double relevance,
-        string? sourceReference)
+        string? sourceReference,
+        MerchantSourceTrustLevel? sourceTrustLevel = null)
     {
         return new MerchantInvestigationStructuredEvidence(
             EvidenceType: evidenceType,
@@ -442,7 +444,8 @@ internal sealed class MockAIProviderTransport(
             Summary: summary,
             Confidence: confidence,
             Relevance: relevance,
-            SourceReference: sourceReference);
+            SourceReference: sourceReference,
+            SourceTrustLevel: sourceTrustLevel);
     }
 
     private static string ResolveDescriptor(AIRequest request)
