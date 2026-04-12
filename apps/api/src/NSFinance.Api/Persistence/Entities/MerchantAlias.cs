@@ -13,6 +13,10 @@ public class MerchantAlias
     public DateTime LastSeenUtc { get; set; }
     public string Source { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
+    public MerchantAliasTrustLevel TrustLevel { get; set; } = MerchantAliasTrustLevel.Observed;
+    public string? LifecycleReason { get; set; }
+    public DateTime? SupersededUtc { get; set; }
+    public Guid? SupersededByAliasId { get; set; }
 
     public Merchant? Merchant { get; set; }
 }

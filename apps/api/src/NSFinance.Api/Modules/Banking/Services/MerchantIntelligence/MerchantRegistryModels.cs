@@ -31,7 +31,9 @@ public sealed record MerchantAliasCreateRequest(
     double Confidence,
     bool IsExactMatchPreferred,
     string Source,
-    bool IsActive);
+    bool IsActive,
+    MerchantAliasTrustLevel TrustLevel = MerchantAliasTrustLevel.Observed,
+    string? LifecycleReason = null);
 
 public sealed record MerchantEvidenceCreateRequest(
     Guid MerchantId,

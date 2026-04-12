@@ -121,6 +121,51 @@ public static class ServiceCollectionExtensions
                 options.ProviderRateLimitBackoffMinutes = 10;
             }
         });
+        services.Configure<MerchantOperationalResilienceOptions>(options =>
+        {
+            configuration.GetSection(MerchantOperationalResilienceOptions.SectionName).Bind(options);
+            if (options.UnresolvedBaseCooldownMinutes <= 0)
+            {
+                options.UnresolvedBaseCooldownMinutes = 30;
+            }
+
+            if (options.UnresolvedMaxCooldownMinutes < options.UnresolvedBaseCooldownMinutes)
+            {
+                options.UnresolvedMaxCooldownMinutes = Math.Max(
+                    options.UnresolvedBaseCooldownMinutes,
+                    1_440);
+            }
+
+            if (options.RejectedCooldownMinutes <= 0)
+            {
+                options.RejectedCooldownMinutes = 240;
+            }
+
+            if (options.HighOccurrenceAccelerationThreshold <= 1)
+            {
+                options.HighOccurrenceAccelerationThreshold = 10;
+            }
+
+            if (options.HighOccurrenceAccelerationMinutes <= 0)
+            {
+                options.HighOccurrenceAccelerationMinutes = 30;
+            }
+
+            if (options.ActiveMerchantValidationDays <= 0)
+            {
+                options.ActiveMerchantValidationDays = 120;
+            }
+
+            if (options.LowConfidenceMerchantValidationDays <= 0)
+            {
+                options.LowConfidenceMerchantValidationDays = 30;
+            }
+
+            if (options.CautiousMerchantValidationDays <= 0)
+            {
+                options.CautiousMerchantValidationDays = 21;
+            }
+        });
         ValidateTrueLayerConfigurationForNonDevelopment(configuration, hostEnvironment);
 
         services.Configure<GoogleAuthOptions>(options =>

@@ -9,6 +9,10 @@ public sealed class MerchantRegistryService(
     MerchantDescriptorNormalizer normalizer,
     ILogger<MerchantRegistryService> logger) : IMerchantRegistryService
 {
+    private const int ActiveValidationDays = 120;
+    private const int LowConfidenceValidationDays = 30;
+    private const int CautiousValidationDays = 21;
+
     public async Task<Merchant> CreateMerchantAsync(MerchantCreateRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -45,6 +49,9 @@ public sealed class MerchantRegistryService(
             OfficialWebsite = NormalizeOptional(request.OfficialWebsite, 512),
             DescriptionSummary = NormalizeOptional(request.DescriptionSummary, 1024),
             ParentMerchantId = request.ParentMerchantId,
+            LastValidatedUtc = nowUtc,
+            NextValidationDueUtc = ComputeNextValidationDue(request.MerchantStatus, nowUtc),
+            LastValidationResultCode = "created",
             CreatedUtc = nowUtc,
             UpdatedUtc = nowUtc
         };
@@ -104,6 +111,8 @@ public sealed class MerchantRegistryService(
         merchant.OfficialWebsite = NormalizeOptional(request.OfficialWebsite, 512);
         merchant.DescriptionSummary = NormalizeOptional(request.DescriptionSummary, 1024);
         merchant.ParentMerchantId = request.ParentMerchantId;
+        merchant.LastValidationResultCode = "updated";
+        merchant.NextValidationDueUtc = ComputeNextValidationDue(merchant.MerchantStatus, DateTime.UtcNow);
         merchant.UpdatedUtc = DateTime.UtcNow;
 
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -129,16 +138,34 @@ public sealed class MerchantRegistryService(
             throw new ArgumentException("Alias cannot normalize to empty value.", nameof(request.AliasText));
         }
 
-        var conflictingAliasExists = await dbContext.MerchantAliases
-            .AnyAsync(
+        var conflictingAlias = await dbContext.MerchantAliases
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
                 x => x.MerchantId != request.MerchantId
                      && x.IsActive
                      && x.NormalizedAliasText == normalizedAliasText
                      && x.AliasType == request.AliasType,
                 cancellationToken);
 
-        if (conflictingAliasExists)
+        if (conflictingAlias is not null)
         {
+            await PersistAliasConflictAsync(
+                normalizedAliasText,
+                request.AliasType,
+                conflictingAlias.MerchantId,
+                request.MerchantId,
+                request.Source,
+                request.TrustLevel,
+                cancellationToken);
+
+            logger.LogWarning(
+                "Merchant alias conflict detected normalizedAlias={NormalizedAlias} aliasType={AliasType} existingMerchantId={ExistingMerchantId} proposedMerchantId={ProposedMerchantId} proposedTrust={ProposedTrust}",
+                normalizedAliasText,
+                request.AliasType,
+                conflictingAlias.MerchantId,
+                request.MerchantId,
+                request.TrustLevel);
+
             throw new InvalidOperationException(
                 "Alias is already linked to a different active merchant. Manual review is required.");
         }
@@ -159,6 +186,8 @@ public sealed class MerchantRegistryService(
             existing.Source = NormalizeRequired(request.Source, 120, nameof(request.Source));
             existing.LastSeenUtc = nowUtc;
             existing.IsActive = request.IsActive;
+            existing.TrustLevel = NormalizeAliasTrust(request.TrustLevel, request.IsActive);
+            existing.LifecycleReason = NormalizeOptional(request.LifecycleReason, 240);
             merchant.UpdatedUtc = nowUtc;
             await dbContext.SaveChangesAsync(cancellationToken);
             return existing;
@@ -176,7 +205,9 @@ public sealed class MerchantRegistryService(
             FirstSeenUtc = nowUtc,
             LastSeenUtc = nowUtc,
             Source = NormalizeRequired(request.Source, 120, nameof(request.Source)),
-            IsActive = request.IsActive
+            IsActive = request.IsActive,
+            TrustLevel = NormalizeAliasTrust(request.TrustLevel, request.IsActive),
+            LifecycleReason = NormalizeOptional(request.LifecycleReason, 240)
         };
 
         dbContext.MerchantAliases.Add(alias);
@@ -396,5 +427,78 @@ public sealed class MerchantRegistryService(
         }
 
         return normalized[..2];
+    }
+
+    private static MerchantAliasTrustLevel NormalizeAliasTrust(MerchantAliasTrustLevel requested, bool isActive)
+    {
+        if (!isActive)
+        {
+            return MerchantAliasTrustLevel.Inactive;
+        }
+
+        return requested;
+    }
+
+    private static DateTime ComputeNextValidationDue(MerchantStatus status, DateTime nowUtc)
+    {
+        return status switch
+        {
+            MerchantStatus.Active => nowUtc.AddDays(ActiveValidationDays),
+            MerchantStatus.LowConfidence => nowUtc.AddDays(LowConfidenceValidationDays),
+            MerchantStatus.Unresolved => nowUtc.AddDays(CautiousValidationDays),
+            MerchantStatus.Retired => nowUtc.AddDays(365),
+            _ => nowUtc.AddDays(LowConfidenceValidationDays)
+        };
+    }
+
+    private async Task PersistAliasConflictAsync(
+        string normalizedAliasText,
+        MerchantAliasType aliasType,
+        Guid existingMerchantId,
+        Guid proposedMerchantId,
+        string source,
+        MerchantAliasTrustLevel proposedTrustLevel,
+        CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var existingConflict = await dbContext.MerchantAliasConflicts
+            .SingleOrDefaultAsync(
+                x => x.NormalizedAliasText == normalizedAliasText
+                     && x.AliasType == aliasType
+                     && x.ExistingMerchantId == existingMerchantId
+                     && x.ProposedMerchantId == proposedMerchantId,
+                cancellationToken);
+
+        if (existingConflict is null)
+        {
+            dbContext.MerchantAliasConflicts.Add(new MerchantAliasConflict
+            {
+                Id = Guid.NewGuid(),
+                NormalizedAliasText = normalizedAliasText,
+                AliasType = aliasType,
+                ExistingMerchantId = existingMerchantId,
+                ProposedMerchantId = proposedMerchantId,
+                ProposedSource = NormalizeRequired(source, 120, nameof(source)),
+                ProposedTrustLevel = proposedTrustLevel,
+                Status = MerchantAliasConflictStatus.Open,
+                OccurrenceCount = 1,
+                CreatedUtc = nowUtc,
+                LastSeenUtc = nowUtc,
+                Notes = "auto_recorded_conflict"
+            });
+        }
+        else
+        {
+            existingConflict.LastSeenUtc = nowUtc;
+            existingConflict.OccurrenceCount += 1;
+            existingConflict.ProposedTrustLevel = proposedTrustLevel;
+            existingConflict.ProposedSource = NormalizeRequired(source, 120, nameof(source));
+            if (existingConflict.Status != MerchantAliasConflictStatus.Open)
+            {
+                existingConflict.Status = MerchantAliasConflictStatus.Open;
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 }

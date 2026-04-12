@@ -20,6 +20,8 @@ public class MerchantConfiguration : IEntityTypeConfiguration<Merchant>
         builder.Property(x => x.PrimaryCountryCode).HasMaxLength(2).IsRequired();
         builder.Property(x => x.OfficialWebsite).HasMaxLength(512);
         builder.Property(x => x.DescriptionSummary).HasMaxLength(1024);
+        builder.Property(x => x.LastValidationResultCode).HasMaxLength(120);
+        builder.Property(x => x.ValidationAttemptCount).HasDefaultValue(0);
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedUtc).HasDefaultValueSql("timezone('utc', now())");
 
@@ -28,6 +30,7 @@ public class MerchantConfiguration : IEntityTypeConfiguration<Merchant>
         builder.HasIndex(x => x.MerchantType);
         builder.HasIndex(x => x.MerchantUsageType);
         builder.HasIndex(x => x.ParentMerchantId);
+        builder.HasIndex(x => x.NextValidationDueUtc);
 
         builder.HasOne(x => x.ParentMerchant)
             .WithMany(x => x.ChildMerchants)

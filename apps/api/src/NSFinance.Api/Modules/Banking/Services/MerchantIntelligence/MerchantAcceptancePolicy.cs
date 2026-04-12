@@ -115,7 +115,7 @@ public sealed class MerchantAcceptancePolicy : IMerchantAcceptancePolicy
         {
             reasonCodes.Add("trusted_blocked_due_to_alias_risk");
             return new MerchantAcceptanceDecision(
-                MerchantAcceptanceDecisionType.LowConfidence,
+                MerchantAcceptanceDecisionType.Rejected,
                 compositeConfidence,
                 topCandidate,
                 reasonCodes);
@@ -155,6 +155,12 @@ public sealed class MerchantAcceptancePolicy : IMerchantAcceptancePolicy
                               && ambiguityLevel <= 0.42d
                               && dominanceGap >= 0.05d
                               && evidenceStrength >= 0.42d;
+        if (cautiousEligible && topCandidate.MixedUseRisk)
+        {
+            cautiousEligible = ambiguityLevel <= 0.30d
+                              && dominanceGap >= 0.10d
+                              && evidenceStrength >= 0.50d;
+        }
 
         if (cautiousEligible)
         {

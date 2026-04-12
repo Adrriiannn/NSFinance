@@ -45,6 +45,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MerchantCategoryHint> MerchantCategoryHints => Set<MerchantCategoryHint>();
     public DbSet<MerchantEvidence> MerchantEvidence => Set<MerchantEvidence>();
     public DbSet<UnresolvedMerchant> UnresolvedMerchants => Set<UnresolvedMerchant>();
+    public DbSet<MerchantAliasConflict> MerchantAliasConflicts => Set<MerchantAliasConflict>();
+    public DbSet<OperationalFailureRecord> OperationalFailureRecords => Set<OperationalFailureRecord>();
     public DbSet<ConversationThread> ConversationThreads => Set<ConversationThread>();
     public DbSet<ConversationTurn> ConversationTurns => Set<ConversationTurn>();
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();

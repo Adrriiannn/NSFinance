@@ -6,6 +6,53 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed partial class MerchantInvestigationResponseParser
 {
+    private static readonly IReadOnlySet<string> AllowedCandidateProperties = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "canonicalName",
+        "displayName",
+        "merchantType",
+        "merchantUsageType",
+        "confidence",
+        "descriptorMatchStrength",
+        "entityMatchStrength",
+        "mixedUseRisk",
+        "whyItMayMatch",
+        "whyItMayBeWrong",
+        "hasContradictions",
+        "likelyOfficialWebsite",
+        "businessSummary",
+        "primaryCountryCode",
+        "aliasCandidates",
+        "aliasSuggestions",
+        "evidenceItems",
+        "parentBrand",
+        "supportsSubscriptions",
+        "supportsRecurringPayments",
+        "supportsOneTimePurchases",
+        "supportsMarketplacePayments",
+        "supportsInAppPurchases",
+        "likelyCategoryFamilies"
+    };
+
+    private static readonly IReadOnlySet<string> AllowedEvidenceProperties = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "evidenceType",
+        "sourceClass",
+        "summary",
+        "confidence",
+        "relevance",
+        "sourceReference"
+    };
+
+    private static readonly IReadOnlySet<string> AllowedAliasSuggestionProperties = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "aliasText",
+        "aliasType",
+        "confidence",
+        "notes",
+        "isPreferred"
+    };
+
     private static (
         bool Succeeded,
         IReadOnlyList<MerchantInvestigationCandidate> Candidates,
@@ -35,6 +82,12 @@ public sealed partial class MerchantInvestigationResponseParser
             {
                 reasonCodes.Add("candidate_not_object");
                 return (false, [], "Candidate entry must be an object.", "candidate_not_object");
+            }
+
+            if (!ValidateNoUnexpectedProperties(candidateElement, AllowedCandidateProperties, out var unexpectedCandidateProperty))
+            {
+                reasonCodes.Add($"unexpected_candidate_property_{index}");
+                return (false, [], $"Candidate contains unexpected property '{unexpectedCandidateProperty}'.", $"unexpected_candidate_property_{index}");
             }
 
             if (!TryGetRequiredString(candidateElement, "canonicalName", 160, out var canonicalName)
@@ -152,6 +205,12 @@ public sealed partial class MerchantInvestigationResponseParser
                 return (false, [], "Evidence item has invalid required fields.", $"invalid_{propertyName}_item_{index}");
             }
 
+            if (!ValidateNoUnexpectedProperties(evidenceElement, AllowedEvidenceProperties, out var unexpectedEvidenceProperty))
+            {
+                reasonCodes.Add($"unexpected_{propertyName}_property_{index}");
+                return (false, [], $"Evidence item contains unexpected property '{unexpectedEvidenceProperty}'.", $"unexpected_{propertyName}_property_{index}");
+            }
+
             if (!TryGetOptionalString(evidenceElement, "sourceReference", 1024, out var sourceReference))
             {
                 reasonCodes.Add($"invalid_{propertyName}_item_source_reference_{index}");
@@ -209,6 +268,12 @@ public sealed partial class MerchantInvestigationResponseParser
             {
                 reasonCodes.Add($"invalid_{propertyName}_item_{index}");
                 return (false, [], "Alias suggestion item is invalid.", $"invalid_{propertyName}_item_{index}");
+            }
+
+            if (!ValidateNoUnexpectedProperties(aliasElement, AllowedAliasSuggestionProperties, out var unexpectedAliasProperty))
+            {
+                reasonCodes.Add($"unexpected_{propertyName}_property_{index}");
+                return (false, [], $"Alias suggestion contains unexpected property '{unexpectedAliasProperty}'.", $"unexpected_{propertyName}_property_{index}");
             }
 
             if (!Enum.TryParse<MerchantAliasType>(aliasTypeRaw, ignoreCase: true, out var aliasType))

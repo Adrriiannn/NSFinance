@@ -9,6 +9,10 @@ public class UnresolvedMerchant
     public DateTime LastSeenUtc { get; set; }
     public int OccurrenceCount { get; set; }
     public DateTime? LastInvestigationUtc { get; set; }
+    public DateTime? NextEligibleInvestigationUtc { get; set; }
+    public int InvestigationAttemptCount { get; set; }
+    public DateTime? LastInvestigationFailureUtc { get; set; }
+    public string? LastInvestigationFailureCode { get; set; }
     public UnresolvedMerchantStatus Status { get; set; } = UnresolvedMerchantStatus.New;
     public string? Notes { get; set; }
 }

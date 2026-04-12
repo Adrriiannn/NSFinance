@@ -10,6 +10,16 @@ public sealed partial class MerchantInvestigationResponseParser(
     private const int MaxSummaryLength = 1200;
     private const int MaxReasonCodes = 24;
     private const double MinViableCandidateConfidence = 0.60d;
+    private static readonly IReadOnlySet<string> AllowedTopLevelProperties = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "overallConfidence",
+        "ambiguityLevel",
+        "recommendation",
+        "summary",
+        "candidates",
+        "aliasSuggestions",
+        "evidence"
+    };
 
     private static readonly HashSet<string> DangerousBroadAliasTokens = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -56,6 +66,15 @@ public sealed partial class MerchantInvestigationResponseParser(
             {
                 reasonCodes.Add("root_not_object");
                 return BuildFailure(reasonCodes, "AI response schema mismatch: root must be an object.", "root_not_object");
+            }
+
+            if (!ValidateNoUnexpectedProperties(root, AllowedTopLevelProperties, out var unexpectedTopLevel))
+            {
+                reasonCodes.Add("unexpected_top_level_property");
+                return BuildFailure(
+                    reasonCodes,
+                    $"AI response schema mismatch: unexpected top-level property '{unexpectedTopLevel}'.",
+                    "unexpected_top_level_property");
             }
 
             if (!TryGetBoundedDouble(root, "overallConfidence", 0d, 1d, out var overallConfidence))

@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 
@@ -10,7 +12,9 @@ public sealed class MerchantResolutionService(
     IMerchantRegistryService merchantRegistryService,
     IMerchantInvestigationService investigationService,
     IMerchantAcceptancePolicy acceptancePolicy,
-    ILogger<MerchantResolutionService> logger) : IMerchantResolutionService
+    ILogger<MerchantResolutionService> logger,
+    IOptions<MerchantOperationalResilienceOptions>? resilienceOptions = null,
+    IOperationalFailureRecorder? failureRecorder = null) : IMerchantResolutionService
 {
     private const int MaxFuzzyAliasCandidates = 80;
     private const int MaxFamilyCandidates = 30;
@@ -32,6 +36,9 @@ public sealed class MerchantResolutionService(
         "ProcessorDescriptor",
         "Domain"
     };
+
+    private readonly MerchantOperationalResilienceOptions _resilienceOptions = resilienceOptions?.Value ?? new MerchantOperationalResilienceOptions();
+    private readonly IOperationalFailureRecorder? _failureRecorder = failureRecorder;
 
     public async Task<MerchantResolutionResult> ResolveAsync(string rawDescriptor, CancellationToken cancellationToken)
     {
@@ -55,6 +62,7 @@ public sealed class MerchantResolutionService(
         var exact = await TryResolveExactAliasAsync(normalizedDescriptor, cancellationToken);
         if (exact.IsResolved)
         {
+            await TouchResolvedMerchantAsync(exact.MerchantId!.Value, "exact_alias", cancellationToken);
             logger.LogDebug(
                 "Merchant resolution short-circuit exact alias; fuzzy/family paths skipped normalizedDescriptor={NormalizedDescriptor}",
                 normalizedDescriptor);
@@ -64,12 +72,14 @@ public sealed class MerchantResolutionService(
         var fuzzy = await TryResolveFuzzyAliasAsync(normalizedDescriptor, cancellationToken);
         if (fuzzy.IsResolved)
         {
+            await TouchResolvedMerchantAsync(fuzzy.MerchantId!.Value, "fuzzy_alias", cancellationToken);
             return fuzzy;
         }
 
         var family = await TryResolveFamilyMatchAsync(normalizedDescriptor, cancellationToken);
         if (family.IsResolved)
         {
+            await TouchResolvedMerchantAsync(family.MerchantId!.Value, "family_match", cancellationToken);
             return family;
         }
 
@@ -371,6 +381,7 @@ public sealed class MerchantResolutionService(
         var nowUtc = DateTime.UtcNow;
         var unresolved = await dbContext.UnresolvedMerchants
             .SingleOrDefaultAsync(x => x.NormalizedDescriptor == normalizedDescriptor, cancellationToken);
+        var previousLastSeenUtc = unresolved?.LastSeenUtc ?? nowUtc;
         if (unresolved is null)
         {
             unresolved = new UnresolvedMerchant
@@ -381,7 +392,8 @@ public sealed class MerchantResolutionService(
                 FirstSeenUtc = nowUtc,
                 LastSeenUtc = nowUtc,
                 OccurrenceCount = 1,
-                Status = UnresolvedMerchantStatus.New
+                Status = UnresolvedMerchantStatus.New,
+                InvestigationAttemptCount = 0
             };
             dbContext.UnresolvedMerchants.Add(unresolved);
         }
@@ -391,8 +403,41 @@ public sealed class MerchantResolutionService(
             unresolved.OccurrenceCount += 1;
         }
 
+        var cooldownSkipped = ShouldSkipInvestigationDueToCooldown(
+            unresolved,
+            nowUtc,
+            previousLastSeenUtc,
+            out var cooldownReason);
+        if (cooldownSkipped)
+        {
+            unresolved.Status = UnresolvedMerchantStatus.AwaitingEvidence;
+            unresolved.Notes = cooldownReason;
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            logger.LogInformation(
+                "Merchant unresolved cooldown active normalizedDescriptor={NormalizedDescriptor} unresolvedId={UnresolvedMerchantId} nextEligible={NextEligible} occurrenceCount={OccurrenceCount} reason={Reason}",
+                normalizedDescriptor,
+                unresolved.Id,
+                unresolved.NextEligibleInvestigationUtc,
+                unresolved.OccurrenceCount,
+                cooldownReason);
+
+            return new MerchantResolutionResult(
+                MerchantId: null,
+                ResolutionConfidence: 0d,
+                ResolutionType: MerchantResolutionType.None,
+                MatchedAlias: null,
+                IsResolved: false,
+                UnresolvedMerchantId: unresolved.Id,
+                NormalizedDescriptor: normalizedDescriptor,
+                AcceptanceDecisionType: MerchantAcceptanceDecisionType.Unresolved,
+                ReasonCodes: ["investigation_cooldown_active"]);
+        }
+
         unresolved.Status = UnresolvedMerchantStatus.Investigating;
         unresolved.LastInvestigationUtc = nowUtc;
+        unresolved.InvestigationAttemptCount += 1;
+        unresolved.NextEligibleInvestigationUtc = nowUtc.AddMinutes(ResolveBackoffMinutes(unresolved.InvestigationAttemptCount, isRejected: false));
         await dbContext.SaveChangesAsync(cancellationToken);
 
         var investigationResult = await investigationService.InvestigateAsync(
@@ -404,7 +449,7 @@ public sealed class MerchantResolutionService(
 
         var decision = acceptancePolicy.Evaluate(investigationResult);
         logger.LogInformation(
-            "Merchant investigation decision normalizedDescriptor={NormalizedDescriptor} unresolvedId={UnresolvedMerchantId} recommendation={Recommendation} candidates={CandidateCount} overallConfidence={OverallConfidence} ambiguity={AmbiguityLevel} parserRejected={ParserRejected} decision={Decision} reasonCodes={ReasonCodes}",
+            "Merchant investigation decision normalizedDescriptor={NormalizedDescriptor} unresolvedId={UnresolvedMerchantId} recommendation={Recommendation} candidates={CandidateCount} overallConfidence={OverallConfidence} ambiguity={AmbiguityLevel} parserRejected={ParserRejected} decision={Decision} reasonCodes={ReasonCodes} attemptCount={AttemptCount}",
             normalizedDescriptor,
             unresolved.Id,
             investigationResult.Recommendation,
@@ -413,7 +458,8 @@ public sealed class MerchantResolutionService(
             investigationResult.AmbiguityLevel,
             investigationResult.ParserRejected,
             decision.DecisionType,
-            string.Join(",", decision.ReasonCodes));
+            string.Join(",", decision.ReasonCodes),
+            unresolved.InvestigationAttemptCount);
 
         if (decision.DecisionType is MerchantAcceptanceDecisionType.AcceptedTrusted or MerchantAcceptanceDecisionType.AcceptedCautious
             && decision.SelectedCandidate is not null)
@@ -434,7 +480,19 @@ public sealed class MerchantResolutionService(
             {
                 unresolved.Status = UnresolvedMerchantStatus.AwaitingEvidence;
                 unresolved.Notes = "apply_accepted_investigation_failed";
+                unresolved.LastInvestigationFailureCode = "apply_accepted_investigation_failed";
+                unresolved.LastInvestigationFailureUtc = nowUtc;
+                unresolved.NextEligibleInvestigationUtc = nowUtc.AddMinutes(ResolveBackoffMinutes(unresolved.InvestigationAttemptCount, isRejected: true));
                 await dbContext.SaveChangesAsync(cancellationToken);
+
+                await RecordOperationalFailureAsync(
+                    OperationalFailureArea.MerchantResolution,
+                    OperationalFailureSeverity.Error,
+                    "apply_accepted_investigation_failed",
+                    $"apply_accepted_investigation_failed:{normalizedDescriptor}",
+                    normalizedDescriptor,
+                    ex.Message,
+                    cancellationToken);
 
                 logger.LogError(
                     ex,
@@ -459,17 +517,42 @@ public sealed class MerchantResolutionService(
         unresolved.Status = decision.DecisionType == MerchantAcceptanceDecisionType.Rejected
             ? UnresolvedMerchantStatus.AwaitingEvidence
             : UnresolvedMerchantStatus.Investigating;
+        unresolved.NextEligibleInvestigationUtc = nowUtc.AddMinutes(ResolveBackoffMinutes(
+            unresolved.InvestigationAttemptCount,
+            decision.DecisionType == MerchantAcceptanceDecisionType.Rejected));
+
+        if (decision.DecisionType == MerchantAcceptanceDecisionType.Rejected)
+        {
+            unresolved.LastInvestigationFailureCode = "decision_rejected";
+            unresolved.LastInvestigationFailureUtc = nowUtc;
+        }
+
         unresolved.Notes = decision.ReasonCodes.Count == 0
             ? null
             : string.Join(",", decision.ReasonCodes);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        if (decision.DecisionType is MerchantAcceptanceDecisionType.Rejected or MerchantAcceptanceDecisionType.LowConfidence)
+        {
+            await RecordOperationalFailureAsync(
+                OperationalFailureArea.MerchantResolution,
+                decision.DecisionType == MerchantAcceptanceDecisionType.Rejected
+                    ? OperationalFailureSeverity.Warning
+                    : OperationalFailureSeverity.Info,
+                $"decision_{decision.DecisionType.ToString().ToLowerInvariant()}",
+                $"decision_{decision.DecisionType.ToString().ToLowerInvariant()}:{normalizedDescriptor}",
+                normalizedDescriptor,
+                string.Join(",", decision.ReasonCodes),
+                cancellationToken);
+        }
+
         logger.LogInformation(
-            "Merchant unresolved normalizedDescriptor={NormalizedDescriptor} unresolvedId={UnresolvedMerchantId} decision={Decision} reasonCodes={ReasonCodes}",
+            "Merchant unresolved normalizedDescriptor={NormalizedDescriptor} unresolvedId={UnresolvedMerchantId} decision={Decision} reasonCodes={ReasonCodes} nextEligible={NextEligible}",
             normalizedDescriptor,
             unresolved.Id,
             decision.DecisionType,
-            string.Join(",", decision.ReasonCodes));
+            string.Join(",", decision.ReasonCodes),
+            unresolved.NextEligibleInvestigationUtc);
 
         return new MerchantResolutionResult(
             MerchantId: null,
@@ -527,8 +610,30 @@ public sealed class MerchantResolutionService(
                     OfficialWebsite: selectedCandidate.OfficialWebsite,
                     DescriptionSummary: selectedCandidate.DescriptionSummary,
                     ParentMerchantId: null),
-                cancellationToken);
+                          cancellationToken);
         }
+
+        var nowUtc = DateTime.UtcNow;
+        merchant.ValidationAttemptCount += 1;
+        merchant.LastValidatedUtc = nowUtc;
+        merchant.LastValidationResultCode = decision.DecisionType switch
+        {
+            MerchantAcceptanceDecisionType.AcceptedTrusted => "investigation_trusted",
+            MerchantAcceptanceDecisionType.AcceptedCautious => "investigation_cautious",
+            _ => merchant.LastValidationResultCode
+        };
+        merchant.NextValidationDueUtc = nowUtc.AddDays(ResolveValidationDueDays(merchant.MerchantStatus, decision.DecisionType));
+        if (decision.DecisionType == MerchantAcceptanceDecisionType.AcceptedTrusted && merchant.MerchantStatus == MerchantStatus.LowConfidence)
+        {
+            merchant.MerchantStatus = MerchantStatus.Active;
+        }
+        else if (decision.DecisionType == MerchantAcceptanceDecisionType.AcceptedCautious && merchant.MerchantStatus == MerchantStatus.Active)
+        {
+            merchant.MerchantStatus = MerchantStatus.LowConfidence;
+        }
+
+        merchant.UpdatedUtc = nowUtc;
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         await merchantRegistryService.AttachAliasAsync(
             new MerchantAliasCreateRequest(
@@ -538,7 +643,11 @@ public sealed class MerchantResolutionService(
                 Confidence: Math.Clamp(decision.Confidence, 0.6d, 1d),
                 IsExactMatchPreferred: false,
                 Source: $"investigation:{decision.DecisionType}",
-                IsActive: true),
+                IsActive: true,
+                TrustLevel: decision.DecisionType == MerchantAcceptanceDecisionType.AcceptedTrusted
+                    ? MerchantAliasTrustLevel.Trusted
+                    : MerchantAliasTrustLevel.Cautious,
+                LifecycleReason: "investigation_primary_descriptor"),
             cancellationToken);
 
         var autoAttachedAliases = 0;
@@ -559,7 +668,9 @@ public sealed class MerchantResolutionService(
                     Confidence: Math.Clamp(suggestion.Confidence, 0.55d, 0.93d),
                     IsExactMatchPreferred: false,
                     Source: $"investigation:{decision.DecisionType}:alias_suggestion",
-                    IsActive: true),
+                    IsActive: true,
+                    TrustLevel: MerchantAliasTrustLevel.Cautious,
+                    LifecycleReason: "investigation_alias_suggestion"),
                 cancellationToken);
             autoAttachedAliases += 1;
         }
@@ -580,6 +691,9 @@ public sealed class MerchantResolutionService(
 
         unresolved.Status = UnresolvedMerchantStatus.Resolved;
         unresolved.Notes = $"resolved:{merchant.Id:N}";
+        unresolved.NextEligibleInvestigationUtc = nowUtc.AddDays(30);
+        unresolved.LastInvestigationFailureCode = null;
+        unresolved.LastInvestigationFailureUtc = null;
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
@@ -600,6 +714,128 @@ public sealed class MerchantResolutionService(
             NormalizedDescriptor: normalizedDescriptor,
             AcceptanceDecisionType: decision.DecisionType,
             ReasonCodes: decision.ReasonCodes);
+    }
+
+    private bool ShouldSkipInvestigationDueToCooldown(
+        UnresolvedMerchant unresolved,
+        DateTime nowUtc,
+        DateTime referenceLastSeenUtc,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (!unresolved.NextEligibleInvestigationUtc.HasValue || unresolved.NextEligibleInvestigationUtc.Value <= nowUtc)
+        {
+            return false;
+        }
+
+        var accelerationThreshold = Math.Max(2, _resilienceOptions.HighOccurrenceAccelerationThreshold);
+        if (unresolved.OccurrenceCount >= accelerationThreshold)
+        {
+            var acceleratedEligibleUtc = referenceLastSeenUtc.AddMinutes(Math.Max(5, _resilienceOptions.HighOccurrenceAccelerationMinutes));
+            if (acceleratedEligibleUtc <= nowUtc)
+            {
+                return false;
+            }
+        }
+
+        reason = $"cooldown_active_until:{unresolved.NextEligibleInvestigationUtc.Value:O}";
+        return true;
+    }
+
+    private int ResolveBackoffMinutes(int attemptCount, bool isRejected)
+    {
+        if (isRejected)
+        {
+            return Math.Max(10, _resilienceOptions.RejectedCooldownMinutes);
+        }
+
+        var safeAttempt = Math.Max(1, attemptCount);
+        var baseMinutes = Math.Max(5, _resilienceOptions.UnresolvedBaseCooldownMinutes);
+        var multiplier = Math.Pow(2d, Math.Min(6, safeAttempt - 1));
+        var backoff = (int)Math.Round(baseMinutes * multiplier, MidpointRounding.AwayFromZero);
+        return Math.Min(Math.Max(baseMinutes, backoff), Math.Max(baseMinutes, _resilienceOptions.UnresolvedMaxCooldownMinutes));
+    }
+
+    private int ResolveValidationDueDays(MerchantStatus status, MerchantAcceptanceDecisionType decisionType)
+    {
+        if (decisionType == MerchantAcceptanceDecisionType.AcceptedTrusted)
+        {
+            return Math.Max(14, _resilienceOptions.ActiveMerchantValidationDays);
+        }
+
+        if (decisionType == MerchantAcceptanceDecisionType.AcceptedCautious)
+        {
+            return Math.Max(7, _resilienceOptions.CautiousMerchantValidationDays);
+        }
+
+        return status == MerchantStatus.LowConfidence
+            ? Math.Max(7, _resilienceOptions.LowConfidenceMerchantValidationDays)
+            : Math.Max(14, _resilienceOptions.ActiveMerchantValidationDays);
+    }
+
+    private async Task TouchResolvedMerchantAsync(Guid merchantId, string resolutionSource, CancellationToken cancellationToken)
+    {
+        var merchant = await dbContext.Merchants
+            .SingleOrDefaultAsync(x => x.Id == merchantId, cancellationToken);
+        if (merchant is null)
+        {
+            return;
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        merchant.UpdatedUtc = nowUtc;
+        if (!merchant.LastValidatedUtc.HasValue)
+        {
+            merchant.LastValidatedUtc = nowUtc;
+        }
+
+        merchant.NextValidationDueUtc ??= nowUtc.AddDays(Math.Max(14, _resilienceOptions.ActiveMerchantValidationDays));
+
+        var isStale = merchant.NextValidationDueUtc.HasValue && merchant.NextValidationDueUtc.Value <= nowUtc;
+        if (isStale)
+        {
+            merchant.ValidationAttemptCount += 1;
+            merchant.LastValidationResultCode = "stale_revalidation_due";
+            merchant.NextValidationDueUtc = nowUtc.AddDays(Math.Max(7, _resilienceOptions.CautiousMerchantValidationDays));
+
+            await RecordOperationalFailureAsync(
+                OperationalFailureArea.MerchantResolution,
+                OperationalFailureSeverity.Info,
+                "merchant_stale_revalidation_due",
+                $"merchant_stale_revalidation_due:{merchant.Id:N}",
+                merchant.Id.ToString("N"),
+                $"merchant resolved via {resolutionSource} while stale; revalidation scheduled",
+                cancellationToken);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task RecordOperationalFailureAsync(
+        OperationalFailureArea area,
+        OperationalFailureSeverity severity,
+        string failureType,
+        string fingerprint,
+        string? subjectKey,
+        string? message,
+        CancellationToken cancellationToken)
+    {
+        if (_failureRecorder is null)
+        {
+            return;
+        }
+
+        await _failureRecorder.RecordAsync(
+            new OperationalFailureRecordInput(
+                Area: area,
+                Severity: severity,
+                FailureType: failureType,
+                Fingerprint: fingerprint,
+                CorrelationId: null,
+                SubjectKey: subjectKey,
+                FailureMessage: message,
+                DetailsJson: null),
+            cancellationToken);
     }
 
     private static MerchantResolutionResult UnresolvedResult(string normalizedDescriptor, IReadOnlyList<string> reasonCodes)

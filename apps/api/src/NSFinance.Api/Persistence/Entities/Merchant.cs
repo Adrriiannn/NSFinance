@@ -13,6 +13,10 @@ public class Merchant
     public string? OfficialWebsite { get; set; }
     public string? DescriptionSummary { get; set; }
     public Guid? ParentMerchantId { get; set; }
+    public DateTime? LastValidatedUtc { get; set; }
+    public DateTime? NextValidationDueUtc { get; set; }
+    public int ValidationAttemptCount { get; set; }
+    public string? LastValidationResultCode { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 

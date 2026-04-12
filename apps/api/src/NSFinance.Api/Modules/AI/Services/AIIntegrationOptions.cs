@@ -30,6 +30,13 @@ public sealed class AIExecutionOptions
     public int TimeoutSeconds { get; set; } = 30;
     public int MaxRetryAttempts { get; set; } = 2;
     public int RetryBaseDelayMs { get; set; } = 200;
+    public bool CircuitBreakerEnabled { get; set; } = true;
+    public int CircuitBreakerFailureThreshold { get; set; } = 4;
+    public int CircuitBreakerOpenSeconds { get; set; } = 60;
+    public int CircuitBreakerRateLimitOpenSeconds { get; set; } = 180;
+    public int CircuitBreakerAuthOpenSeconds { get; set; } = 300;
+    public int MerchantInvestigationResultCacheSeconds { get; set; } = 300;
+    public int MerchantInvestigationFailureCacheSeconds { get; set; } = 120;
     public int MaxContextTurns { get; set; } = 12;
     public int MaxSummaryEntries { get; set; } = 2;
 }

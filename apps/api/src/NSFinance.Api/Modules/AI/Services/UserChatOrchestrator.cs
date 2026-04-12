@@ -13,6 +13,7 @@ public sealed class UserChatOrchestrator(
     IAIClient aiClient,
     ILogger<UserChatOrchestrator> logger,
     IOptions<AIIntegrationOptions> options,
+    IOperationalFailureRecorder? failureRecorder = null,
     IConversationThreadService? conversationThreadService = null,
     IConversationTurnService? conversationTurnService = null,
     IConversationMessageService? conversationMessageService = null,
@@ -53,7 +54,7 @@ public sealed class UserChatOrchestrator(
         {
             conversationThreadId = await EnsureConversationThreadAsync(request, cancellationToken);
             var clientRequestId = ResolveClientRequestId(request, options.Value.ChatTurns.MaxClientRequestIdLength);
-            var turnStart = await conversationTurnService!.StartOrGetAsync(
+                var turnStart = await conversationTurnService!.StartOrGetAsync(
                 request.UserId!.Value,
                 conversationThreadId.Value,
                 clientRequestId,
@@ -65,6 +66,21 @@ public sealed class UserChatOrchestrator(
             conversationTurnId = turnStart.Turn.Id;
             if (turnStart.IsDuplicateRequest)
             {
+                if (failureRecorder is not null)
+                {
+                    await failureRecorder.RecordAsync(
+                        new OperationalFailureRecordInput(
+                            OperationalFailureArea.UserChat,
+                            OperationalFailureSeverity.Info,
+                            "chat_duplicate_request_deduped",
+                            $"chat_duplicate_request_deduped:{turnStart.Turn.ConversationThreadId:N}:{turnStart.Turn.ClientRequestId}",
+                            request.CorrelationId,
+                            turnStart.Turn.ClientRequestId,
+                            $"Duplicate request deduped with status {turnStart.Turn.Status}.",
+                            null),
+                        cancellationToken);
+                }
+
                 return await BuildDuplicateTurnResponseAsync(
                     request,
                     conversationThreadId.Value,
@@ -119,6 +135,21 @@ public sealed class UserChatOrchestrator(
             }
             catch (OperationCanceledException ex)
             {
+                if (failureRecorder is not null)
+                {
+                    await failureRecorder.RecordAsync(
+                        new OperationalFailureRecordInput(
+                            OperationalFailureArea.UserChat,
+                            OperationalFailureSeverity.Warning,
+                            "chat_turn_cancelled_during_setup",
+                            $"chat_turn_cancelled_during_setup:{conversationThreadId.Value:N}",
+                            request.CorrelationId,
+                            conversationTurnId?.ToString("N"),
+                            ex.Message,
+                            null),
+                        CancellationToken.None);
+                }
+
                 await conversationTurnService.MarkCancelledAsync(
                     request.UserId!.Value,
                     conversationThreadId.Value,
@@ -140,6 +171,21 @@ public sealed class UserChatOrchestrator(
             }
             catch (Exception ex)
             {
+                if (failureRecorder is not null)
+                {
+                    await failureRecorder.RecordAsync(
+                        new OperationalFailureRecordInput(
+                            OperationalFailureArea.UserChat,
+                            OperationalFailureSeverity.Error,
+                            "chat_turn_setup_failed",
+                            $"chat_turn_setup_failed:{conversationThreadId.Value:N}",
+                            request.CorrelationId,
+                            conversationTurnId?.ToString("N"),
+                            ex.Message,
+                            null),
+                        CancellationToken.None);
+                }
+
                 await conversationTurnService.MarkFailedAsync(
                     request.UserId!.Value,
                     conversationThreadId.Value,
@@ -182,6 +228,21 @@ public sealed class UserChatOrchestrator(
 
         if (route.Reason == "heavy_model_disabled_fail_fast")
         {
+            if (failureRecorder is not null)
+            {
+                await failureRecorder.RecordAsync(
+                    new OperationalFailureRecordInput(
+                        OperationalFailureArea.UserChat,
+                        OperationalFailureSeverity.Warning,
+                        "chat_heavy_model_unavailable",
+                        "chat_heavy_model_unavailable",
+                        request.CorrelationId,
+                        conversationTurnId?.ToString("N"),
+                        "Heavy model unavailable for complex chat request.",
+                        null),
+                    cancellationToken);
+            }
+
             if (CanUsePersistentMemory(request) && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
             {
                 await conversationTurnService!.MarkFailedAsync(
@@ -237,6 +298,21 @@ public sealed class UserChatOrchestrator(
         }
         catch (OperationCanceledException ex)
         {
+            if (failureRecorder is not null)
+            {
+                await failureRecorder.RecordAsync(
+                    new OperationalFailureRecordInput(
+                        OperationalFailureArea.UserChat,
+                        OperationalFailureSeverity.Warning,
+                        "chat_ai_call_cancelled",
+                        $"chat_ai_call_cancelled:{route.ModelClass}:{route.Deployment}",
+                        request.CorrelationId,
+                        conversationTurnId?.ToString("N"),
+                        ex.Message,
+                        null),
+                    CancellationToken.None);
+            }
+
             if (CanUsePersistentMemory(request) && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
             {
                 await conversationTurnService!.MarkCancelledAsync(
@@ -275,6 +351,21 @@ public sealed class UserChatOrchestrator(
                 var failureCode = ResolveFailureCode(response, parsedResponse);
                 var failureReason = parsedResponse.FailureReason ?? response.FailureReason ?? "ai_response_failed";
                 var isTimeout = IsTimeoutFailure(failureReason);
+                if (failureRecorder is not null)
+                {
+                    await failureRecorder.RecordAsync(
+                        new OperationalFailureRecordInput(
+                            OperationalFailureArea.UserChat,
+                            isTimeout ? OperationalFailureSeverity.Warning : OperationalFailureSeverity.Error,
+                            isTimeout ? "chat_ai_timeout" : "chat_ai_response_failed",
+                            $"{(isTimeout ? "chat_ai_timeout" : "chat_ai_response_failed")}:{route.ModelClass}:{route.Deployment}",
+                            request.CorrelationId,
+                            conversationTurnId?.ToString("N"),
+                            failureReason,
+                            null),
+                        cancellationToken);
+                }
+
                 if (isTimeout)
                 {
                     await conversationTurnService!.MarkTimedOutAsync(
@@ -326,6 +417,21 @@ public sealed class UserChatOrchestrator(
             }
             catch (Exception ex)
             {
+                if (failureRecorder is not null)
+                {
+                    await failureRecorder.RecordAsync(
+                        new OperationalFailureRecordInput(
+                            OperationalFailureArea.UserChat,
+                            OperationalFailureSeverity.Error,
+                            "chat_assistant_persistence_failed",
+                            "chat_assistant_persistence_failed",
+                            request.CorrelationId,
+                            conversationTurnId?.ToString("N"),
+                            ex.Message,
+                            null),
+                        CancellationToken.None);
+                }
+
                 await conversationTurnService.MarkFailedAsync(
                     request.UserId.Value,
                     conversationThreadId.Value,

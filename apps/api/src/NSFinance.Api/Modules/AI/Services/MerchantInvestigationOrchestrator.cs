@@ -1,4 +1,6 @@
 using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
+using NSFinance.Api.Persistence.Entities;
+using Microsoft.Extensions.Options;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
@@ -8,6 +10,9 @@ public sealed class MerchantInvestigationOrchestrator(
     IPromptBuilder promptBuilder,
     IAIClient aiClient,
     IMerchantInvestigationResponseParser responseParser,
+    IMerchantInvestigationResultCache resultCache,
+    IOptions<AIIntegrationOptions> options,
+    IOperationalFailureRecorder failureRecorder,
     ILogger<MerchantInvestigationOrchestrator> logger) : IMerchantInvestigationOrchestrator
 {
     public async Task<MerchantInvestigationResult> InvestigateAsync(
@@ -19,7 +24,24 @@ public sealed class MerchantInvestigationOrchestrator(
 
         var sanitizedDescriptor = merchantDescriptorNormalizer.SanitizeForStorage(request.RawDescriptor);
         var normalizedDescriptor = merchantDescriptorNormalizer.Normalize(request.NormalizedDescriptor);
+        if (string.IsNullOrWhiteSpace(normalizedDescriptor))
+        {
+            normalizedDescriptor = merchantDescriptorNormalizer.Normalize(request.RawDescriptor);
+        }
+
         var correlationId = Guid.NewGuid().ToString("N");
+        var nowUtc = DateTime.UtcNow;
+
+        if (resultCache.TryGet(normalizedDescriptor, nowUtc, out var cachedResult))
+        {
+            logger.LogInformation(
+                "Merchant investigation cache hit normalizedDescriptor={NormalizedDescriptor} correlationId={CorrelationId} recommendation={Recommendation} succeeded={Succeeded}",
+                normalizedDescriptor,
+                correlationId,
+                cachedResult.Recommendation,
+                cachedResult.Succeeded);
+            return cachedResult;
+        }
 
         var prompt = promptBuilder.BuildMerchantInvestigationPrompt(
             new MerchantInvestigationPromptInput(
@@ -43,6 +65,17 @@ public sealed class MerchantInvestigationOrchestrator(
             logger.LogWarning(
                 "Merchant investigation routing blocked by heavy model policy correlationId={CorrelationId}",
                 correlationId);
+            await failureRecorder.RecordAsync(
+                new OperationalFailureRecordInput(
+                    OperationalFailureArea.MerchantInvestigation,
+                    OperationalFailureSeverity.Warning,
+                    "routing_heavy_model_unavailable",
+                    $"routing_heavy_model_unavailable:{normalizedDescriptor}",
+                    correlationId,
+                    normalizedDescriptor,
+                    "Heavy reasoning model required but unavailable.",
+                    "{\"reason\":\"heavy_model_disabled_fail_fast\"}"),
+                cancellationToken);
 
             return new MerchantInvestigationResult(
                 Succeeded: false,
@@ -74,6 +107,8 @@ public sealed class MerchantInvestigationOrchestrator(
 
         if (parsed.ParsedSuccessfully && parsed.SemanticallyValid)
         {
+            resultCache.Set(normalizedDescriptor, parsedResult, nowUtc, options.Value.Execution);
+
             logger.LogInformation(
                 "Merchant investigation succeeded correlationId={CorrelationId} task={TaskType} modelClass={ModelClass} routeModel={Model} routeDeployment={Deployment} mock={WasMocked} parserLowTrust={ParserLowTrust} recommendation={Recommendation} candidates={CandidateCount} confidence={OverallConfidence} ambiguity={Ambiguity} parseReasonCodes={ReasonCodes}",
                 correlationId,
@@ -91,6 +126,19 @@ public sealed class MerchantInvestigationOrchestrator(
 
             return parsedResult;
         }
+
+        resultCache.Set(normalizedDescriptor, parsedResult, nowUtc, options.Value.Execution);
+        await failureRecorder.RecordAsync(
+            new OperationalFailureRecordInput(
+                OperationalFailureArea.MerchantInvestigation,
+                OperationalFailureSeverity.Warning,
+                "investigation_parse_failure",
+                $"investigation_parse_failure:{parsed.FailureCode ?? "unknown"}:{normalizedDescriptor}",
+                correlationId,
+                normalizedDescriptor,
+                parsed.FailureReason ?? parsedResult.FailureReason,
+                $"{{\"failureCode\":\"{parsed.FailureCode}\",\"provider\":\"{response.Provider}\",\"model\":\"{response.Model}\"}}"),
+            cancellationToken);
 
         logger.LogWarning(
             "Merchant investigation parse failure correlationId={CorrelationId} task={TaskType} modelClass={ModelClass} routeModel={Model} routeDeployment={Deployment} mock={WasMocked} parseFailureCode={FailureCode} parseReasonCodes={ReasonCodes} failureReason={FailureReason}",

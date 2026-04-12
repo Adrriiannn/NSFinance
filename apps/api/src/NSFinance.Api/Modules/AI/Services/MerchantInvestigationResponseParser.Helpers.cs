@@ -170,6 +170,24 @@ public sealed partial class MerchantInvestigationResponseParser
         return element.TryGetProperty(propertyName, out result) && result.ValueKind == JsonValueKind.Array;
     }
 
+    private static bool ValidateNoUnexpectedProperties(
+        JsonElement element,
+        IReadOnlySet<string> allowedProperties,
+        out string? unexpectedProperty)
+    {
+        unexpectedProperty = null;
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!allowedProperties.Contains(property.Name))
+            {
+                unexpectedProperty = property.Name;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static bool TryGetRequiredString(JsonElement element, string propertyName, int maxLength, out string value)
     {
         value = string.Empty;

@@ -18,9 +18,12 @@ public static class AIServiceCollectionExtensions
 
         services.AddSingleton<AzureOpenAIApiKeyAuthStrategy>();
         services.AddSingleton<AzureOpenAIManagedIdentityAuthStrategy>();
+        services.AddSingleton<IAIProviderCircuitBreaker, AIProviderCircuitBreaker>();
+        services.AddSingleton<IMerchantInvestigationResultCache, InMemoryMerchantInvestigationResultCache>();
 
         services.AddScoped<IAIProviderTransport, MockAIProviderTransport>();
         services.AddScoped<IAIProviderTransport, AzureOpenAIProviderTransport>();
+        services.AddScoped<IOperationalFailureRecorder, OperationalFailureRecorder>();
 
         services.AddScoped<IAIClient, AIClient>();
         services.AddScoped<IAIModelRouter, AIModelRouter>();

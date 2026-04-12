@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
@@ -311,6 +313,233 @@ public class MerchantIntelligenceRegistryTests
         Assert.Equal("Acme Life Insurance", merchant.CanonicalName);
         Assert.True(await dbContext.MerchantAliases.AnyAsync(x => x.MerchantId == merchant.Id));
         Assert.True(await dbContext.MerchantEvidence.AnyAsync(x => x.MerchantId == merchant.Id));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_UnresolvedCooldown_SkipsRepeatedInvestigationWithinWindow()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var investigation = new CountingMerchantInvestigationService(BuildInsufficientEvidenceResult);
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            investigation,
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance,
+            Options.Create(new MerchantOperationalResilienceOptions
+            {
+                UnresolvedBaseCooldownMinutes = 180,
+                UnresolvedMaxCooldownMinutes = 180,
+                HighOccurrenceAccelerationThreshold = 50,
+                HighOccurrenceAccelerationMinutes = 30
+            }));
+
+        var first = await resolver.ResolveAsync("MYSTERY*SHOP", CancellationToken.None);
+        var second = await resolver.ResolveAsync("MYSTERY*SHOP", CancellationToken.None);
+
+        Assert.False(first.IsResolved);
+        Assert.False(second.IsResolved);
+        Assert.Equal(1, investigation.CallCount);
+        Assert.Contains("investigation_cooldown_active", second.ReasonCodes);
+
+        var unresolved = await dbContext.UnresolvedMerchants.SingleAsync();
+        Assert.Equal(1, unresolved.InvestigationAttemptCount);
+        Assert.Equal(UnresolvedMerchantStatus.AwaitingEvidence, unresolved.Status);
+        Assert.True(unresolved.NextEligibleInvestigationUtc.HasValue);
+        Assert.True(unresolved.NextEligibleInvestigationUtc.Value > DateTime.UtcNow.AddMinutes(170));
+    }
+
+    [Fact]
+    public async Task ResolveAsync_HighOccurrenceAcceleration_AllowsRetryBeforeRegularCooldown()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var normalized = normalizer.Normalize("MYSTERY EURO SHOP");
+        var nowUtc = DateTime.UtcNow;
+        dbContext.UnresolvedMerchants.Add(new UnresolvedMerchant
+        {
+            Id = Guid.NewGuid(),
+            RawDescriptor = "MYSTERY EURO SHOP",
+            NormalizedDescriptor = normalized,
+            FirstSeenUtc = nowUtc.AddHours(-5),
+            LastSeenUtc = nowUtc.AddMinutes(-45),
+            OccurrenceCount = 12,
+            LastInvestigationUtc = nowUtc.AddMinutes(-45),
+            NextEligibleInvestigationUtc = nowUtc.AddMinutes(40),
+            InvestigationAttemptCount = 1,
+            Status = UnresolvedMerchantStatus.AwaitingEvidence,
+            Notes = "seeded_for_acceleration"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var investigation = new CountingMerchantInvestigationService(BuildInsufficientEvidenceResult);
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            investigation,
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance,
+            Options.Create(new MerchantOperationalResilienceOptions
+            {
+                UnresolvedBaseCooldownMinutes = 120,
+                UnresolvedMaxCooldownMinutes = 240,
+                HighOccurrenceAccelerationThreshold = 10,
+                HighOccurrenceAccelerationMinutes = 20
+            }));
+
+        var result = await resolver.ResolveAsync("MYSTERY EURO SHOP", CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal(1, investigation.CallCount);
+        Assert.DoesNotContain("investigation_cooldown_active", result.ReasonCodes);
+
+        var unresolved = await dbContext.UnresolvedMerchants.SingleAsync();
+        Assert.True(unresolved.InvestigationAttemptCount >= 2);
+        Assert.True(unresolved.LastInvestigationUtc.HasValue);
+        Assert.True(unresolved.NextEligibleInvestigationUtc.HasValue);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_StaleResolvedMerchant_SchedulesRevalidationAndPersistsOperationalRecord()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var merchant = await registry.CreateMerchantAsync(
+            new MerchantCreateRequest(
+                "Stale Utility Co",
+                "Stale Utility Co",
+                MerchantStatus.Active,
+                MerchantType.Utility,
+                MerchantUsageType.NarrowUse,
+                "IE",
+                null,
+                null,
+                null),
+            CancellationToken.None);
+        merchant.NextValidationDueUtc = DateTime.UtcNow.AddDays(-2);
+        merchant.LastValidatedUtc = DateTime.UtcNow.AddDays(-90);
+        merchant.ValidationAttemptCount = 0;
+        await dbContext.SaveChangesAsync();
+
+        await registry.AttachAliasAsync(
+            new MerchantAliasCreateRequest(
+                merchant.Id,
+                "STALE UTILITY DD",
+                MerchantAliasType.BillingDescriptor,
+                1d,
+                true,
+                "seed",
+                true),
+            CancellationToken.None);
+
+        var resolver = new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            new StubMerchantInvestigationService(NullLogger<StubMerchantInvestigationService>.Instance),
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance,
+            Options.Create(new MerchantOperationalResilienceOptions
+            {
+                CautiousMerchantValidationDays = 14
+            }),
+            new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance));
+
+        var result = await resolver.ResolveAsync("STALE UTILITY DD", CancellationToken.None);
+
+        Assert.True(result.IsResolved);
+
+        var refreshed = await dbContext.Merchants.SingleAsync(x => x.Id == merchant.Id);
+        Assert.Equal("stale_revalidation_due", refreshed.LastValidationResultCode);
+        Assert.Equal(1, refreshed.ValidationAttemptCount);
+        Assert.True(refreshed.NextValidationDueUtc.HasValue);
+        Assert.True(refreshed.NextValidationDueUtc.Value > DateTime.UtcNow);
+
+        var failure = await dbContext.OperationalFailureRecords
+            .SingleOrDefaultAsync(x => x.FailureType == "merchant_stale_revalidation_due");
+        Assert.NotNull(failure);
+        Assert.Equal(OperationalFailureArea.MerchantResolution, failure!.Area);
+    }
+
+    [Fact]
+    public async Task AttachAliasAsync_Conflict_PersistsConflictRecordAndIncrementsOccurrence()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var merchantA = await registry.CreateMerchantAsync(
+            new MerchantCreateRequest("Merchant A", "Merchant A", MerchantStatus.Active, MerchantType.Merchant, MerchantUsageType.NarrowUse, "IE", null, null, null),
+            CancellationToken.None);
+        var merchantB = await registry.CreateMerchantAsync(
+            new MerchantCreateRequest("Merchant B", "Merchant B", MerchantStatus.Active, MerchantType.Merchant, MerchantUsageType.NarrowUse, "IE", null, null, null),
+            CancellationToken.None);
+
+        await registry.AttachAliasAsync(
+            new MerchantAliasCreateRequest(
+                merchantA.Id,
+                "CONFLICT-ALIAS-TEST",
+                MerchantAliasType.BillingDescriptor,
+                0.95d,
+                true,
+                "seed",
+                true),
+            CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            registry.AttachAliasAsync(
+                new MerchantAliasCreateRequest(
+                    merchantB.Id,
+                    "CONFLICT-ALIAS-TEST",
+                    MerchantAliasType.BillingDescriptor,
+                    0.80d,
+                    false,
+                    "investigation",
+                    true,
+                    MerchantAliasTrustLevel.Cautious,
+                    "conflict_attempt"),
+                CancellationToken.None));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            registry.AttachAliasAsync(
+                new MerchantAliasCreateRequest(
+                    merchantB.Id,
+                    "CONFLICT-ALIAS-TEST",
+                    MerchantAliasType.BillingDescriptor,
+                    0.82d,
+                    false,
+                    "investigation",
+                    true,
+                    MerchantAliasTrustLevel.Cautious,
+                    "conflict_attempt_repeat"),
+                CancellationToken.None));
+
+        var conflict = await dbContext.MerchantAliasConflicts.SingleAsync();
+        Assert.Equal(2, conflict.OccurrenceCount);
+        Assert.Equal(MerchantAliasConflictStatus.Open, conflict.Status);
+        Assert.Equal(merchantA.Id, conflict.ExistingMerchantId);
+        Assert.Equal(merchantB.Id, conflict.ProposedMerchantId);
+        Assert.Equal(MerchantAliasTrustLevel.Cautious, conflict.ProposedTrustLevel);
+    }
+
+    [Fact]
+    public void MerchantDescriptorNormalizer_HandlesDiacriticsAndProcessorNoise()
+    {
+        var normalizer = new MerchantDescriptorNormalizer();
+
+        var normalized = normalizer.Normalize("DEBIT CARD PAYMENT: CAFÉ ÉNERGIE SÀRL 1234567");
+        var tokens = normalizer.Tokenize(normalized);
+
+        Assert.StartsWith("cafe energie", normalized, StringComparison.Ordinal);
+        Assert.DoesNotContain("debit", tokens);
+        Assert.DoesNotContain("payment", tokens);
+        Assert.Contains("cafe", tokens);
+        Assert.Contains("energie", tokens);
     }
 
     [Fact]
@@ -677,6 +906,32 @@ public class MerchantIntelligenceRegistryTests
                     Recommendation: MerchantInvestigationRecommendation.AcceptCandidate,
                     OverallConfidence: 0.94d,
                     AmbiguityLevel: 0.05d));
+        }
+    }
+
+    private static MerchantInvestigationResult BuildInsufficientEvidenceResult(MerchantInvestigationRequest _)
+    {
+        return new MerchantInvestigationResult(
+            Succeeded: true,
+            InsufficientEvidence: true,
+            Candidates: [],
+            Evidence: [],
+            FailureReason: null,
+            Recommendation: MerchantInvestigationRecommendation.InsufficientEvidence,
+            OverallConfidence: 0.22d,
+            AmbiguityLevel: 0.84d);
+    }
+
+    private sealed class CountingMerchantInvestigationService(Func<MerchantInvestigationRequest, MerchantInvestigationResult> responseFactory)
+        : IMerchantInvestigationService
+    {
+        public int CallCount { get; private set; }
+
+        public Task<MerchantInvestigationResult> InvestigateAsync(MerchantInvestigationRequest request, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount += 1;
+            return Task.FromResult(responseFactory(request));
         }
     }
 }

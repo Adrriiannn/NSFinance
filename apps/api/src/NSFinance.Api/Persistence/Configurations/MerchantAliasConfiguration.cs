@@ -16,12 +16,15 @@ public class MerchantAliasConfiguration : IEntityTypeConfiguration<MerchantAlias
         builder.Property(x => x.AliasType).HasConversion<int>();
         builder.Property(x => x.Confidence).HasColumnType("double precision");
         builder.Property(x => x.Source).HasMaxLength(120).IsRequired();
+        builder.Property(x => x.TrustLevel).HasConversion<int>();
+        builder.Property(x => x.LifecycleReason).HasMaxLength(240);
         builder.Property(x => x.FirstSeenUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.LastSeenUtc).HasDefaultValueSql("timezone('utc', now())");
 
         builder.HasIndex(x => x.MerchantId);
         builder.HasIndex(x => x.NormalizedAliasText);
         builder.HasIndex(x => new { x.NormalizedAliasText, x.IsActive });
+        builder.HasIndex(x => new { x.NormalizedAliasText, x.AliasType, x.TrustLevel });
         builder.HasIndex(x => new { x.MerchantId, x.NormalizedAliasText, x.AliasType }).IsUnique();
         builder.HasIndex(x => new { x.MerchantId, x.IsExactMatchPreferred, x.IsActive });
 
