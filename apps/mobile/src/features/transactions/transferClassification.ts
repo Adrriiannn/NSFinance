@@ -32,6 +32,29 @@ export type TransferReportingBucket =
   | "cash_in";
 
 export const TRANSFER_DOMAIN_ID = 920;
+const TRANSFER_CATEGORY_IDS = new Set([92010, 92020, 92030, 92040]);
+const TRANSFER_SUBCATEGORY_IDS = new Set([
+  920101,
+  920102,
+  920103,
+  920104,
+  920201,
+  920202,
+  920203,
+  920301,
+  920302,
+  920303,
+  920401,
+  920402,
+  920403
+]);
+const TRANSFER_SEMANTIC_MISMATCH_STATUSES = new Set([
+  "evaluated_no_matching_rule",
+  "deferred_waiting_for_counterparty",
+  "deferred_waiting_for_more_context",
+  "rejected_ambiguous_match",
+  "superseded_recompute_required"
+]);
 
 export type TransferPolicyInput = Pick<
   TransactionDto,
@@ -62,9 +85,13 @@ export type TransferPolicyEvaluation = {
 type SignedDirection = "none" | "outflow" | "inflow";
 
 export function getTransferPolicyEvaluation(input: TransferPolicyInput): TransferPolicyEvaluation {
-  const policyKind = normalizePolicyKind(input.transferPolicyKind);
-  const reportingBucket = normalizeReportingBucket(input.reportingBucket);
+  const policyKind = shouldSuppressStaleTransferPolicy(input)
+    ? "none"
+    : normalizePolicyKind(input.transferPolicyKind);
   const signedDirection = resolveSignedDirection(input.amount);
+  const reportingBucket: TransferReportingBucket = policyKind === "none"
+    ? (signedDirection === "inflow" ? "income" : "spending")
+    : normalizeReportingBucket(input.reportingBucket);
   const isTransferTransaction = policyKind !== "none";
   const isVerifiedLinkedTransfer =
     input.deterministicClassificationStatus === "classified_matched_rule"
@@ -187,6 +214,40 @@ function normalizePolicyKind(value: string | null | undefined): TransferPolicyKi
     default:
       return "none";
   }
+}
+
+function shouldSuppressStaleTransferPolicy(input: TransferPolicyInput): boolean {
+  if (!TRANSFER_SEMANTIC_MISMATCH_STATUSES.has(input.deterministicClassificationStatus ?? "")) {
+    return false;
+  }
+
+  if (input.transferKind === "manual_transfer") {
+    return false;
+  }
+
+  if (input.deterministicClassificationStatus === "classified_matched_rule") {
+    return false;
+  }
+
+  if (input.transferKind === "linked_internal_transfer"
+    || input.transferKind === "savings_roundup"
+    || input.transferKind === "savings_manual_deposit"
+    || input.transferKind === "savings_manual_withdrawal") {
+    return true;
+  }
+
+  if (input.taxonomyDomainId === TRANSFER_DOMAIN_ID) {
+    return true;
+  }
+
+  if (input.taxonomyCategoryId !== null && input.taxonomyCategoryId !== undefined
+    && TRANSFER_CATEGORY_IDS.has(input.taxonomyCategoryId)) {
+    return true;
+  }
+
+  return input.taxonomySubcategoryId !== null
+    && input.taxonomySubcategoryId !== undefined
+    && TRANSFER_SUBCATEGORY_IDS.has(input.taxonomySubcategoryId);
 }
 
 function normalizeReportingBucket(value: string | null | undefined): TransferReportingBucket {

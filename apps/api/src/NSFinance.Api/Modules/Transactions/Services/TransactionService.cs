@@ -480,7 +480,10 @@ public sealed class TransactionService(
             effectiveTransferMaterialization.TaxonomySubcategoryId,
             effectiveTransferMaterialization.TransferKind,
             effectiveTransferMaterialization.LinkedTransferTransactionId,
-            transaction.Amount);
+            transaction.Amount,
+            transaction.DeterministicClassificationStatus,
+            transaction.DeterministicRelationshipType,
+            transaction.DeterministicLinkedTransactionId);
 
         return new TransactionDto(
             transaction.Id,

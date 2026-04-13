@@ -34,6 +34,31 @@ export type CanonicalPresentationDiagnostics = {
   taxonomyFallbackUsed: boolean;
 };
 
+const TRANSFER_DOMAIN_ID = 920;
+const TRANSFER_CATEGORY_IDS = new Set([92010, 92020, 92030, 92040]);
+const TRANSFER_SUBCATEGORY_IDS = new Set([
+  920101,
+  920102,
+  920103,
+  920104,
+  920201,
+  920202,
+  920203,
+  920301,
+  920302,
+  920303,
+  920401,
+  920402,
+  920403
+]);
+const TRANSFER_SEMANTIC_MISMATCH_STATUSES = new Set([
+  "evaluated_no_matching_rule",
+  "deferred_waiting_for_counterparty",
+  "deferred_waiting_for_more_context",
+  "rejected_ambiguous_match",
+  "superseded_recompute_required"
+]);
+
 export function resolveCanonicalTransactionSemantic(transaction: TransactionDto): CanonicalTransactionSemantic {
   const defaultIconKind: CanonicalSemanticIconKind = transaction.direction === "Expense" ? "expense" : "income";
   const defaultSemantic: CanonicalTransactionSemantic = {
@@ -112,6 +137,42 @@ export function resolveCanonicalTransactionSemantic(transaction: TransactionDto)
   return defaultSemantic;
 }
 
+export function shouldSuppressTransferLikeTaxonomyFallback(transaction: TransactionDto): boolean {
+  if (!TRANSFER_SEMANTIC_MISMATCH_STATUSES.has(transaction.deterministicClassificationStatus)) {
+    return false;
+  }
+
+  if (transaction.transferKind === "manual_transfer") {
+    return false;
+  }
+
+  if (transaction.deterministicClassificationStatus === "classified_matched_rule") {
+    return false;
+  }
+
+  if (isTransferLikeTaxonomy(transaction)) {
+    return true;
+  }
+
+  return transaction.transferKind === "linked_internal_transfer"
+    || transaction.transferKind === "savings_roundup"
+    || transaction.transferKind === "savings_manual_deposit"
+    || transaction.transferKind === "savings_manual_withdrawal";
+}
+
+export function isTransferLikeLabel(label: string | null | undefined): boolean {
+  const normalized = normalizeLabel(label);
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.includes("transfer")
+    || normalized.includes("round up")
+    || normalized.includes("roundup")
+    || normalized.includes("internal move")
+    || normalized.includes("money movement");
+}
+
 export function resolveCanonicalPresentationDiagnostics(
   transaction: TransactionDto,
   semantic: CanonicalTransactionSemantic = resolveCanonicalTransactionSemantic(transaction)
@@ -126,4 +187,20 @@ export function resolveCanonicalPresentationDiagnostics(
     stylingSource,
     taxonomyFallbackUsed: stylingSource === "taxonomy_fallback"
   };
+}
+
+function isTransferLikeTaxonomy(transaction: TransactionDto): boolean {
+  if (transaction.taxonomyDomainId === TRANSFER_DOMAIN_ID) {
+    return true;
+  }
+
+  if (transaction.taxonomyCategoryId !== null && TRANSFER_CATEGORY_IDS.has(transaction.taxonomyCategoryId)) {
+    return true;
+  }
+
+  return transaction.taxonomySubcategoryId !== null && TRANSFER_SUBCATEGORY_IDS.has(transaction.taxonomySubcategoryId);
+}
+
+function normalizeLabel(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
 }

@@ -2546,6 +2546,67 @@ public class DeterministicCategorizationEngineTests
         Assert.False(transaction.NeedsDeterministicReclassification);
     }
 
+    [Fact]
+    public void ApplyClassificationOutcome_RejectedMatch_DematerializesStaleDeterministicTransferFields()
+    {
+        using var dbContext = CreateDbContext();
+        var service = CreatePersistenceService(dbContext);
+        var now = new DateTime(2026, 04, 10, 9, 15, 0, DateTimeKind.Utc);
+        var transaction = new Transaction
+        {
+            Id = Guid.NewGuid(),
+            FinancialAccountId = Guid.NewGuid(),
+            Amount = -120.00m,
+            Currency = "EUR",
+            Description = "Transfer to own account",
+            BookedAtUtc = now.AddMinutes(-20),
+            CreatedUtc = now.AddMinutes(-20),
+            TaxonomyDomainId = ExpenseTaxonomyService.TransferDomainId,
+            TaxonomyCategoryId = ExpenseTaxonomyService.TransferDefaultCategoryId,
+            TaxonomySubcategoryId = ExpenseTaxonomyService.TransferDefaultSubcategoryId,
+            TransferKind = TransactionTransferKind.LinkedInternal,
+            LinkedTransferTransactionId = Guid.NewGuid(),
+            LinkedTransferMatchedUtc = now.AddMinutes(-18),
+            TransferMatchConfidenceScore = 95,
+            TransferMatchConfidenceTier = "deterministic_match",
+            TransferMatchReason = "matched_exact_inverse_amount",
+            DeterministicClassificationVersion = DeterministicCategorizationConstants.CurrentClassificationVersion - 1,
+            DeterministicRelationshipType = "internal_transfer",
+            NeedsDeterministicReclassification = true
+        };
+        var feature = CreateFeature(
+            signedAmount: -120m,
+            hasProviderTransferHint: true,
+            hasCounterpartyAccounts: true,
+            tokens: ["transfer", "own", "account"]);
+        var outcome = new DeterministicClassificationOutcome(
+            Status: DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+            Terminal: true,
+            RetryEligible: false,
+            RuleKey: "bank_transfer.no_match_v3",
+            ReasonCode: DeterministicClassificationReasonCodes.TransferRejectedNoCounterpart,
+            EvidenceJson: "{\"family\":\"none\"}",
+            MatchScore: null,
+            ClassificationCategoryId: null,
+            ClassificationSubcategoryId: null,
+            LinkedTransactionId: null,
+            RelationshipType: null,
+            RelationshipGroupId: null);
+
+        var changed = InvokeApplyClassificationOutcome(service, transaction, feature, outcome, now);
+
+        Assert.True(changed);
+        Assert.Null(transaction.TransferKind);
+        Assert.Null(transaction.LinkedTransferTransactionId);
+        Assert.Null(transaction.LinkedTransferMatchedUtc);
+        Assert.Null(transaction.TransferMatchConfidenceScore);
+        Assert.Null(transaction.TransferMatchConfidenceTier);
+        Assert.Null(transaction.TransferMatchReason);
+        Assert.Null(transaction.TaxonomyDomainId);
+        Assert.Null(transaction.TaxonomyCategoryId);
+        Assert.Null(transaction.TaxonomySubcategoryId);
+    }
+
     private static DeterministicClassificationOutcome InvokeBuildOutcome(
         DeterministicClassificationPersistenceService service,
         Transaction transaction,

@@ -55,7 +55,10 @@ public sealed class DashboardService(
                 x.TaxonomyCategoryId,
                 x.TaxonomySubcategoryId,
                 x.TransferKind,
-                x.LinkedTransferTransactionId
+                x.LinkedTransferTransactionId,
+                x.DeterministicClassificationStatus,
+                x.DeterministicRelationshipType,
+                x.DeterministicLinkedTransactionId
             })
             .ToListAsync(cancellationToken);
 
@@ -67,7 +70,10 @@ public sealed class DashboardService(
                     x.TaxonomySubcategoryId,
                     x.TransferKind,
                     x.LinkedTransferTransactionId,
-                    x.Amount).CountsTowardExpense)
+                    x.Amount,
+                    x.DeterministicClassificationStatus,
+                    x.DeterministicRelationshipType,
+                    x.DeterministicLinkedTransactionId).CountsTowardExpense)
             .Sum(x => Math.Abs(x.Amount));
 
         var recentTransactions = await transactionQuery
@@ -128,7 +134,10 @@ public sealed class DashboardService(
                     x.TaxonomySubcategoryId,
                     x.TransferKind,
                     x.LinkedTransferTransactionId,
-                    x.Amount);
+                    x.Amount,
+                    x.DeterministicClassificationStatus,
+                    x.DeterministicRelationshipType,
+                    x.DeterministicLinkedTransactionId);
                 relationshipSummariesByTransactionId.TryGetValue(x.Id, out var relationshipSummary);
 
                 return new TransactionDto(

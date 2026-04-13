@@ -122,3 +122,21 @@ test("semantic helper line can still appear for non-transfer fallback-only scena
 
   assert.equal(showHelperLine, true);
 });
+
+test("rejected transfer-family rows do not render transfer taxonomy labels as canonical subtitles", () => {
+  const transaction = buildTransaction({
+    deterministicClassificationStatus: "rejected_ambiguous_match",
+    deterministicRelationshipType: null,
+    taxonomyDomainId: 920,
+    taxonomyDomainName: "Transfers",
+    taxonomyCategoryName: "Internal Transfers",
+    taxonomySubcategoryName: "Bank Account Transfer",
+    transferKind: "linked_internal_transfer"
+  });
+  const semantic = resolveCanonicalTransactionSemantic(transaction);
+  const labelResolution = resolveTransactionDisplayLabel(transaction, semantic.subtitle);
+
+  assert.equal(semantic.family, "none");
+  assert.equal(labelResolution.displayLabel, "Uncategorized");
+  assert.equal(labelResolution.hasCanonicalLabel, false);
+});

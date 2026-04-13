@@ -1,5 +1,9 @@
 import type { TransactionDto } from "../../types/api";
 import { formatLongDate, formatTime } from "../../lib/format";
+import {
+  isTransferLikeLabel,
+  shouldSuppressTransferLikeTaxonomyFallback
+} from "./semanticResolver";
 
 export type ActivityFilter =
   | "All"
@@ -149,10 +153,17 @@ export function buildTransactionDetailDate(transaction: TransactionDto): string 
 }
 
 export function resolveCanonicalTransactionLabels(transaction: TransactionDto): CanonicalTransactionLabels {
-  const subcategoryLabel = normalizeLabel(transaction.taxonomySubcategoryName);
-  const categoryLabel =
+  const suppressTransferFallback = shouldSuppressTransferLikeTaxonomyFallback(transaction);
+  const rawSubcategoryLabel = normalizeLabel(transaction.taxonomySubcategoryName);
+  const rawCategoryLabel =
     normalizeLabel(transaction.taxonomyCategoryName)
     ?? normalizeLabel(transaction.categoryName);
+  const subcategoryLabel = suppressTransferFallback && isTransferLikeLabel(rawSubcategoryLabel)
+    ? null
+    : rawSubcategoryLabel;
+  const categoryLabel = suppressTransferFallback && isTransferLikeLabel(rawCategoryLabel)
+    ? null
+    : rawCategoryLabel;
 
   return {
     categoryLabel,
@@ -164,14 +175,28 @@ export function resolveTransactionDisplayLabel(
   transaction: TransactionDto,
   semanticFallbackLabel?: string | null
 ): TransactionDisplayLabelResolution {
+  const suppressTransferFallback = shouldSuppressTransferLikeTaxonomyFallback(transaction);
   const { categoryLabel, subcategoryLabel } = resolveCanonicalTransactionLabels(transaction);
   const semanticLabel = normalizeLabel(semanticFallbackLabel);
-  const domainLabel = normalizeLabel(transaction.taxonomyDomainName);
-  const displayLabel = subcategoryLabel
-    ?? categoryLabel
-    ?? semanticLabel
-    ?? domainLabel
-    ?? "Uncategorized";
+  const rawDomainLabel = normalizeLabel(transaction.taxonomyDomainName);
+  const domainLabel = suppressTransferFallback && isTransferLikeLabel(rawDomainLabel)
+    ? null
+    : rawDomainLabel;
+  const deterministicTransferMatched =
+    transaction.deterministicClassificationStatus === "classified_matched_rule"
+    && (transaction.deterministicRelationshipType === "internal_transfer"
+      || transaction.deterministicRelationshipType === "savings_transfer");
+  const displayLabel = deterministicTransferMatched
+    ? semanticLabel
+      ?? subcategoryLabel
+      ?? categoryLabel
+      ?? domainLabel
+      ?? "Uncategorized"
+    : subcategoryLabel
+      ?? categoryLabel
+      ?? semanticLabel
+      ?? domainLabel
+      ?? "Uncategorized";
 
   return {
     categoryLabel,

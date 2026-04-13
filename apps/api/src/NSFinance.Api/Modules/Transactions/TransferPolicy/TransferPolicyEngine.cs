@@ -38,17 +38,42 @@ public static class TransferPolicyEngine
         int? taxonomySubcategoryId,
         TransactionTransferKind? transferKind,
         Guid? linkedTransferTransactionId,
-        decimal amount)
+        decimal amount,
+        DeterministicClassificationStatus? deterministicClassificationStatus = null,
+        string? deterministicRelationshipType = null,
+        Guid? deterministicLinkedTransactionId = null)
     {
+        var suppressTransferPolicy = ShouldSuppressTransferPolicyFromStaleDeterministicState(
+            taxonomyDomainId,
+            taxonomyCategoryId,
+            taxonomySubcategoryId,
+            transferKind,
+            deterministicClassificationStatus,
+            deterministicRelationshipType);
         var policyKind = ResolvePolicyKind(taxonomyDomainId, taxonomyCategoryId, taxonomySubcategoryId, transferKind);
+        if (suppressTransferPolicy)
+        {
+            policyKind = TransferPolicyKind.None;
+        }
+
         var isTransferLike = policyKind != TransferPolicyKind.None;
-        var isDerivedSavingsMovement = transferKind is
-            TransactionTransferKind.SavingsRoundup
-            or TransactionTransferKind.SavingsManualDeposit
-            or TransactionTransferKind.SavingsManualWithdrawal;
+        var deterministicMatchedSavingsTransfer =
+            deterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule
+            && string.Equals(deterministicRelationshipType, "savings_transfer", StringComparison.Ordinal);
+        var deterministicMatchedInternalTransfer =
+            deterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule
+            && string.Equals(deterministicRelationshipType, "internal_transfer", StringComparison.Ordinal);
+        var isDerivedSavingsMovement = deterministicClassificationStatus.HasValue
+            ? deterministicMatchedSavingsTransfer
+            : transferKind is
+                TransactionTransferKind.SavingsRoundup
+                or TransactionTransferKind.SavingsManualDeposit
+                or TransactionTransferKind.SavingsManualWithdrawal;
         var isManualUnverifiedTransfer = transferKind == TransactionTransferKind.Manual;
-        var isVerifiedLinkedTransfer = transferKind == TransactionTransferKind.LinkedInternal
-            && linkedTransferTransactionId.HasValue;
+        var hasLinkedCounterpart = deterministicLinkedTransactionId.HasValue || linkedTransferTransactionId.HasValue;
+        var isVerifiedLinkedTransfer = deterministicClassificationStatus.HasValue
+            ? deterministicMatchedInternalTransfer && hasLinkedCounterpart
+            : transferKind == TransactionTransferKind.LinkedInternal && linkedTransferTransactionId.HasValue;
         var signedDirection = amount < 0m ? TransferSignedDirection.Outflow : amount > 0m ? TransferSignedDirection.Inflow : TransferSignedDirection.None;
 
         if (!isTransferLike)
@@ -280,6 +305,93 @@ public static class TransferPolicyEngine
         }
 
         return TransferPolicyKind.None;
+    }
+
+    private static bool ShouldSuppressTransferPolicyFromStaleDeterministicState(
+        int? taxonomyDomainId,
+        int? taxonomyCategoryId,
+        int? taxonomySubcategoryId,
+        TransactionTransferKind? transferKind,
+        DeterministicClassificationStatus? deterministicClassificationStatus,
+        string? deterministicRelationshipType)
+    {
+        if (!deterministicClassificationStatus.HasValue)
+        {
+            return false;
+        }
+
+        if (deterministicClassificationStatus == DeterministicClassificationStatus.ClassifiedMatchedRule)
+        {
+            return false;
+        }
+
+        if (deterministicClassificationStatus is not (
+            DeterministicClassificationStatus.EvaluatedNoMatchingRule
+            or DeterministicClassificationStatus.DeferredWaitingForCounterparty
+            or DeterministicClassificationStatus.DeferredWaitingForMoreContext
+            or DeterministicClassificationStatus.RejectedAmbiguousMatch
+            or DeterministicClassificationStatus.SupersededRecomputeRequired))
+        {
+            return false;
+        }
+
+        if (string.Equals(deterministicRelationshipType, "internal_transfer", StringComparison.Ordinal)
+            || string.Equals(deterministicRelationshipType, "savings_transfer", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (transferKind == TransactionTransferKind.Manual)
+        {
+            return false;
+        }
+
+        if (transferKind is TransactionTransferKind.LinkedInternal
+            or TransactionTransferKind.SavingsRoundup
+            or TransactionTransferKind.SavingsManualDeposit
+            or TransactionTransferKind.SavingsManualWithdrawal)
+        {
+            return true;
+        }
+
+        return IsTransferLikeTaxonomy(taxonomyDomainId, taxonomyCategoryId, taxonomySubcategoryId);
+    }
+
+    private static bool IsTransferLikeTaxonomy(
+        int? taxonomyDomainId,
+        int? taxonomyCategoryId,
+        int? taxonomySubcategoryId)
+    {
+        if (taxonomyDomainId == TransferDomainId)
+        {
+            return true;
+        }
+
+        if (taxonomyCategoryId is InternalTransfersCategoryId
+            or LiabilityTransfersCategoryId
+            or CashMovementCategoryId
+            or LegacyOtherTransfersCategoryId)
+        {
+            return true;
+        }
+
+        return taxonomySubcategoryId is
+            BankAccountTransferSubcategoryId
+            or SavingsTransferSubcategoryId
+            or LegacySavingsTransferSubcategoryId
+            or CreditCardPaymentTransferSubcategoryId
+            or LoanAccountTransferSubcategoryId
+            or DebtConsolidationTransferSubcategoryId
+            or CashWithdrawalSubcategoryId
+            or CashDepositSubcategoryId
+            or CurrencyTransferSubcategoryId
+            or OtherInternalMoneyMovementSubcategoryId
+            or LegacyCurrencyTransferSubcategoryId
+            or LegacyOtherInternalMoneyMovementSubcategoryId
+            or LegacyAtmWithdrawalTransferSubcategoryId
+            or LegacyInvestmentTransferSubcategoryId
+            or LegacyBrokerageFundingTransferSubcategoryId
+            or LegacyWalletTransferSubcategoryId;
     }
 }
 

@@ -100,6 +100,40 @@ test("semantic fallback is used only when canonical labels are missing", () => {
   assert.equal(resolution.hasCanonicalLabel, false);
 });
 
+test("stale transfer taxonomy is suppressed when deterministic classification rejected transfer matching", () => {
+  const transaction = buildTransaction({
+    taxonomyDomainId: 920,
+    taxonomyDomainName: "Transfers",
+    taxonomyCategoryName: "Internal Transfers",
+    taxonomySubcategoryName: "Bank Account Transfer",
+    transferKind: "linked_internal_transfer",
+    deterministicClassificationStatus: "evaluated_no_matching_rule",
+    deterministicRelationshipType: null
+  });
+
+  const resolution = resolveTransactionDisplayLabel(transaction, null);
+
+  assert.equal(resolution.displayLabel, "Uncategorized");
+  assert.equal(resolution.hasCanonicalLabel, false);
+});
+
+test("manual transfer labeling is preserved when user selected manual transfer category", () => {
+  const transaction = buildTransaction({
+    taxonomyDomainId: 920,
+    taxonomyDomainName: "Transfers",
+    taxonomyCategoryName: "Internal Transfers",
+    taxonomySubcategoryName: "Bank Account Transfer",
+    transferKind: "manual_transfer",
+    deterministicClassificationStatus: "evaluated_no_matching_rule",
+    deterministicRelationshipType: null
+  });
+
+  const resolution = resolveTransactionDisplayLabel(transaction, null);
+
+  assert.equal(resolution.displayLabel, "Bank Account Transfer");
+  assert.equal(resolution.hasCanonicalLabel, true);
+});
+
 test("duplicate descriptor prevention treats near-identical labels as duplicates", () => {
   assert.equal(
     areDisplayLabelsMeaningfullyDistinct("General Savings Transfer", "Savings transfer"),

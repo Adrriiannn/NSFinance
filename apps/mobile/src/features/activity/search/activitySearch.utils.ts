@@ -1,6 +1,8 @@
 import type { TransactionPlannerAnnotation } from "../../../providers/PlannerProvider";
 import type { TransactionDto } from "../../../types/api";
 import { formatShortDate } from "../../../lib/format";
+import { resolveTransactionDisplayLabel } from "../../transactions/activityGrouping";
+import { resolveCanonicalTransactionSemantic } from "../../transactions/semanticResolver";
 import {
   formatActivityDateDisplay,
   toActivityIsoDate
@@ -40,12 +42,18 @@ export function resolveTransactionCategory(
   transaction: TransactionDto,
   annotations: Record<string, TransactionPlannerAnnotation>
 ) {
+  const annotationCategory = annotations[transaction.id]?.category?.trim();
+  if (annotationCategory) {
+    return annotationCategory;
+  }
+
+  const semantic = resolveCanonicalTransactionSemantic(transaction);
+  const displayLabel = resolveTransactionDisplayLabel(transaction, semantic.subtitle).displayLabel;
+
   return (
-    annotations[transaction.id]?.category?.trim() ??
-    transaction.taxonomySubcategoryName?.trim() ??
-    transaction.taxonomyCategoryName?.trim() ??
-    transaction.categoryName?.trim() ??
-    "Uncategorized"
+    displayLabel?.trim()
+    || transaction.categoryName?.trim()
+    || "Uncategorized"
   );
 }
 

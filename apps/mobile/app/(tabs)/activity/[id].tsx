@@ -285,6 +285,8 @@ export default function PlannerTransactionDetailScreen() {
     taxonomySubcategoryId: draftSubcategoryId,
     transferKind: draftTransferKind,
     linkedTransferTransactionId: draftLinkedTransferTransactionId,
+    deterministicClassificationStatus: transactionQuery.data?.deterministicClassificationStatus,
+    deterministicRelationshipType: transactionQuery.data?.deterministicRelationshipType,
     transferPolicyKind: transactionQuery.data?.transferPolicyKind ?? null,
     reportingBucket: transactionQuery.data?.reportingBucket ?? null,
     isGloballyNeutralized: transactionQuery.data?.isGloballyNeutralized ?? null

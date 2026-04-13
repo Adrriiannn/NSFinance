@@ -134,4 +134,42 @@ public class TransferPolicyEngineTests
         Assert.Equal(TransferPolicyKind.SavingsTransfer, evaluation.PolicyKind);
         Assert.Equal(TransferReportingBucket.SavingsAllocation, evaluation.ReportingBucket);
     }
+
+    [Fact]
+    public void StaleLinkedTransferTaxonomy_IsSuppressedWhenDeterministicStateRejected()
+    {
+        var evaluation = TransferPolicyEngine.Evaluate(
+            taxonomyDomainId: 920,
+            taxonomyCategoryId: 92010,
+            taxonomySubcategoryId: 920101,
+            transferKind: TransactionTransferKind.LinkedInternal,
+            linkedTransferTransactionId: null,
+            amount: -120m,
+            deterministicClassificationStatus: DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+            deterministicRelationshipType: null,
+            deterministicLinkedTransactionId: null);
+
+        Assert.Equal(TransferPolicyKind.None, evaluation.PolicyKind);
+        Assert.False(evaluation.IsTransferTransaction);
+        Assert.False(evaluation.IsGloballyNeutralized);
+        Assert.True(evaluation.CountsTowardExpense);
+    }
+
+    [Fact]
+    public void ManualTransferCategory_RemainsTransferWhenDeterministicStateRejected()
+    {
+        var evaluation = TransferPolicyEngine.Evaluate(
+            taxonomyDomainId: 920,
+            taxonomyCategoryId: 92010,
+            taxonomySubcategoryId: 920101,
+            transferKind: TransactionTransferKind.Manual,
+            linkedTransferTransactionId: null,
+            amount: -75m,
+            deterministicClassificationStatus: DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+            deterministicRelationshipType: null,
+            deterministicLinkedTransactionId: null);
+
+        Assert.True(evaluation.IsTransferTransaction);
+        Assert.Equal(TransferPolicyKind.BankAccountTransfer, evaluation.PolicyKind);
+    }
 }
