@@ -166,6 +166,34 @@ const BANK_LOGOS = {
 
 type BankLogoKey = keyof typeof BANK_LOGOS;
 
+type KnownProviderIdentity = {
+  shortCode: string | null;
+  fullName: string;
+};
+
+const KNOWN_PROVIDER_IDENTITIES: Partial<Record<BankLogoKey, KnownProviderIdentity>> = {
+  aib: { shortCode: "AIB", fullName: "Allied Irish Bank" },
+  boi: { shortCode: "BOI", fullName: "Bank of Ireland" },
+  ptsb: { shortCode: "PTSB", fullName: "Permanent TSB" },
+  ulsterBank: { shortCode: "Ulster", fullName: "Ulster Bank" },
+  revolut: { shortCode: "Revolut", fullName: "Revolut" },
+  hsbc: { shortCode: "HSBC", fullName: "HSBC" },
+  natWest: { shortCode: "NatWest", fullName: "NatWest" },
+  bankOfScotland: { shortCode: "BOS", fullName: "Bank of Scotland" },
+  royalBankOfScotland: { shortCode: "RBS", fullName: "Royal Bank of Scotland" },
+  santander: { shortCode: "Santander", fullName: "Santander" },
+  lloydsBank: { shortCode: "Lloyds", fullName: "Lloyds Bank" },
+  nationwide: { shortCode: "Nationwide", fullName: "Nationwide Building Society" },
+  danskeBank: { shortCode: "Danske", fullName: "Danske Bank" },
+  monzo: { shortCode: "Monzo", fullName: "Monzo" },
+  starlingBank: { shortCode: "Starling", fullName: "Starling Bank" },
+  virginMoney: { shortCode: "Virgin", fullName: "Virgin Money" },
+  wise: { shortCode: "Wise", fullName: "Wise" },
+  americanExpress: { shortCode: "Amex", fullName: "American Express" },
+  capitalOne: { shortCode: "Capital One", fullName: "Capital One" },
+  barclays: { shortCode: "Barclays", fullName: "Barclays" }
+};
+
 export type ProviderBadgeInput = {
   providerId?: string | null;
   providerDisplayName?: string | null;
@@ -180,6 +208,14 @@ export type ResolvedProviderBadge = {
   bankLogoKey: BankLogoKey | null;
 };
 
+export type ResolvedConnectedBankIdentity = {
+  title: string;
+  shortCode: string | null;
+  fullName: string | null;
+  friendlyName: string;
+  bankLogoKey: BankLogoKey | null;
+};
+
 export function resolveProviderBadge(input: ProviderBadgeInput): ResolvedProviderBadge {
   const providerName = normalizeLabel(input.providerDisplayName);
   const providerId = normalizeLabel(input.providerId);
@@ -191,6 +227,35 @@ export function resolveProviderBadge(input: ProviderBadgeInput): ResolvedProvide
     displayName: providerName,
     monogram: bankLogo?.fallbackMonogram ?? deriveMonogram(providerName ?? providerId),
     bankLogoKey
+  };
+}
+
+export function resolveConnectedBankIdentity(input: ProviderBadgeInput): ResolvedConnectedBankIdentity {
+  const badge = resolveProviderBadge(input);
+  const knownIdentity = badge.bankLogoKey ? KNOWN_PROVIDER_IDENTITIES[badge.bankLogoKey] ?? null : null;
+  if (knownIdentity) {
+    const fullName = knownIdentity.fullName.trim();
+    const shortCode = knownIdentity.shortCode?.trim() || null;
+    const title = shortCode && !equalsCaseInsensitive(shortCode, fullName)
+      ? `${shortCode} - ${fullName}`
+      : fullName;
+
+    return {
+      title,
+      shortCode,
+      fullName,
+      friendlyName: fullName,
+      bankLogoKey: badge.bankLogoKey
+    };
+  }
+
+  const friendlyName = toFriendlyProviderName(input.providerDisplayName ?? input.providerId) ?? "Connected bank";
+  return {
+    title: friendlyName,
+    shortCode: null,
+    fullName: friendlyName,
+    friendlyName,
+    bankLogoKey: badge.bankLogoKey
   };
 }
 
@@ -226,6 +291,43 @@ function normalizeLabel(value: string | null | undefined): string | null {
     .trim();
 
   return normalized.length > 0 ? normalized : null;
+}
+
+function toFriendlyProviderName(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const compact = value
+    .trim()
+    .replace(/^ob[-\s_]+/i, "")
+    .replace(/[-_\s]+(ie|uk|gb|eu)$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!compact) {
+    return null;
+  }
+
+  const upper = compact.toUpperCase();
+  const knownAcronyms = new Set(["AIB", "BOI", "PTSB", "TSB", "HSBC", "MBNA", "RBS", "IBAN"]);
+  if (knownAcronyms.has(upper)) {
+    return upper;
+  }
+
+  if (upper === "REVOLUT") {
+    return "Revolut";
+  }
+
+  return compact
+    .split(" ")
+    .map((word) => (word.length === 0 ? word : `${word[0].toUpperCase()}${word.slice(1).toLowerCase()}`))
+    .join(" ");
+}
+
+function equalsCaseInsensitive(left: string, right: string): boolean {
+  return left.localeCompare(right, undefined, { sensitivity: "accent" }) === 0
+    || left.toLowerCase() === right.toLowerCase();
 }
 
 function deriveMonogram(value: string | null): string | null {

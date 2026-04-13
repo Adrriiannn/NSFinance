@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Alert, Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
+import { AccountProviderBadge } from "../../../src/components/accounts/AccountProviderBadge";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
@@ -24,11 +25,13 @@ import {
 } from "../../../src/features/auth/authApi";
 import {
   useConnectedBanksQuery,
-  useDisconnectBankConnectionMutation
+  useDisconnectBankConnectionMutation,
+  useLinkedBankAccountsQuery
 } from "../../../src/features/banking/useBanking";
+import { resolveConnectedBankIdentity } from "../../../src/features/accounts/providerBranding";
 import { ApiClientError, formatUnknownError } from "../../../src/lib/api/errors";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
-import type { BankConnectionStatus } from "../../../src/types/api";
+import type { BankConnectionStatus, LinkedBankAccountDto } from "../../../src/types/api";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import {
   type PasswordBreachStatus,
@@ -87,27 +90,58 @@ function isSessionNotFoundError(error: unknown) {
   return error instanceof ApiClientError && (error.code === "session_not_found" || error.status === 404);
 }
 
-function formatBankConnectionStatus(status: BankConnectionStatus) {
+type BankConnectionStatusTone = "positive" | "warning" | "neutral" | "negative";
+
+function formatBankConnectionStatus(status: BankConnectionStatus): {
+  label: string;
+  tone: BankConnectionStatusTone;
+} {
   switch (status) {
     case "connected_pending_sync":
-      return "Connected - sync starting";
+      return { label: "Connecting", tone: "neutral" };
     case "connected":
-      return "Connected";
+      return { label: "Connected", tone: "neutral" };
     case "sync_pending":
-      return "Syncing";
+      return { label: "Updating", tone: "neutral" };
     case "synced":
-      return "Synced";
+      return { label: "Up to date", tone: "positive" };
     case "reauth_required":
-      return "Reconnect required";
+      return { label: "Reconnect required", tone: "warning" };
     case "expired":
-      return "Consent expired";
+      return { label: "Consent expired", tone: "warning" };
     case "disconnect_pending":
-      return "Disconnecting";
+      return { label: "Disconnecting", tone: "neutral" };
     case "disconnect_failed":
-      return "Disconnect failed";
+      return { label: "Needs attention", tone: "negative" };
+    case "failed":
+      return { label: "Needs attention", tone: "negative" };
+    case "connection_started":
+    case "consent_in_progress":
+      return { label: "Authorizing", tone: "neutral" };
+    case "revoked":
+      return { label: "Disconnected", tone: "neutral" };
+    case "not_connected":
+      return { label: "Not connected", tone: "neutral" };
     default:
-      return status;
+      return { label: status, tone: "neutral" };
   }
+}
+
+function buildLinkedAccountSummary(accounts: LinkedBankAccountDto[] | undefined) {
+  const summaries = new Map<string, { count: number; names: string[] }>();
+  for (const account of accounts ?? []) {
+    const current = summaries.get(account.connectionId) ?? { count: 0, names: [] };
+    current.count += 1;
+
+    const label = account.displayName.trim();
+    if (label.length > 0 && !current.names.includes(label)) {
+      current.names.push(label);
+    }
+
+    summaries.set(account.connectionId, current);
+  }
+
+  return summaries;
 }
 
 export default function SecuritySettingsScreen() {
@@ -118,6 +152,7 @@ export default function SecuritySettingsScreen() {
   const updateProfileMutation = useUpdateUserProfileMutation();
   const sessionsQuery = useQuery({ queryKey: sessionKey, queryFn: getSessions });
   const connectedBanksQuery = useConnectedBanksQuery();
+  const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
   const disconnectMutation = useDisconnectBankConnectionMutation();
   const deletionRequestsQuery = useMyDeletionRequestsQuery();
   const createDeletionMutation = useCreateDeletionRequestMutation();
@@ -386,6 +421,10 @@ export default function SecuritySettingsScreen() {
 
   const activeBankConnections = connectedBanksQuery.data?.activeConnections ?? [];
   const attentionBankConnections = connectedBanksQuery.data?.attentionConnections ?? [];
+  const linkedAccountSummaryByConnection = useMemo(
+    () => buildLinkedAccountSummary(linkedBankAccountsQuery.data),
+    [linkedBankAccountsQuery.data]
+  );
 
   const handleDisconnectBank = async (connectionId: string) => {
     showFlashMessage("Disconnection in progress.\nRemoving all the account data.", {
@@ -549,82 +588,84 @@ export default function SecuritySettingsScreen() {
 
         <GlassCard style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Connected banks</Text>
-          <Text style={styles.hintText}>
-            This list shows only currently usable bank links. Failed or abandoned attempts are hidden.
-          </Text>
           {connectedBanksQuery.isError ? (
             <Text style={styles.errorText}>{formatUnknownError(connectedBanksQuery.error)}</Text>
           ) : activeBankConnections.length === 0 ? (
             <Text style={styles.metaLine}>No connected banks right now.</Text>
           ) : (
-            activeBankConnections.map((connection) => (
-              <View key={connection.id} style={styles.bankRow}>
-                <Text style={styles.sessionTitle}>
-                  {connection.providerDisplayName || connection.provider}
-                </Text>
-                <Text style={styles.metaLine}>Provider: {connection.provider}</Text>
-                <Text style={styles.metaLine}>Connected: {formatDateTime(connection.createdUtc)}</Text>
-                <Text style={styles.metaLine}>Last synced at: {formatDateTime(connection.lastSuccessfulSyncUtc)}</Text>
-                <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
-                {connection.connectedFullName ? (
-                  <Text style={styles.metaLine}>Connected as: {connection.connectedFullName}</Text>
-                ) : null}
-                <SecondaryButton
-                  label={
-                    disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
-                      ? "Disconnecting..."
-                      : "Disconnect bank"
-                  }
-                  onPress={() => {
-                    if (connection.status === "disconnect_pending") {
-                      return;
-                    }
+            activeBankConnections.map((connection) => {
+              const identity = resolveConnectedBankIdentity({
+                providerId: connection.providerId,
+                providerDisplayName: connection.providerDisplayName ?? connection.provider,
+                providerIconUrl: connection.providerIconUrl,
+                providerLogoUrl: connection.providerLogoUrl
+              });
+              const linkedSummary = linkedAccountSummaryByConnection.get(connection.id);
+              const linkedAccountCount = Math.max(0, connection.linkedAccountCount ?? linkedSummary?.count ?? 0);
+              const accountCountLine = linkedAccountCount > 0
+                ? `${linkedAccountCount} linked account${linkedAccountCount === 1 ? "" : "s"}`
+                : "Waiting for accounts";
+              const previewNames = linkedSummary?.names.slice(0, 2) ?? [];
+              const accountPreview = previewNames.length === 0
+                ? null
+                : linkedAccountCount > previewNames.length
+                  ? `${previewNames.join(", ")} +${linkedAccountCount - previewNames.length} more`
+                  : previewNames.join(", ");
+              const status = formatBankConnectionStatus(connection.status);
+              const statusToneStyle = status.tone === "positive"
+                ? styles.statusPillPositive
+                : status.tone === "warning"
+                  ? styles.statusPillWarning
+                  : status.tone === "negative"
+                    ? styles.statusPillNegative
+                    : styles.statusPillNeutral;
+              const statusTextToneStyle = status.tone === "positive"
+                ? styles.statusPillTextPositive
+                : status.tone === "warning"
+                  ? styles.statusPillTextWarning
+                  : status.tone === "negative"
+                    ? styles.statusPillTextNegative
+                    : styles.statusPillTextNeutral;
+              const lastUpdatedUtc =
+                connection.lastSuccessfulSyncUtc ?? connection.lastSyncAttemptedUtc ?? connection.updatedUtc;
 
-                    Alert.alert(
-                      "Disconnect bank",
-                      "This disconnects the bank and removes imported accounts, transactions, balances, and summaries from the app.",
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Disconnect",
-                          style: "destructive",
-                          onPress: () => {
-                            void handleDisconnectBank(connection.id);
-                          }
-                        }
-                      ]
-                    );
-                  }}
-                  disabled={disconnectMutation.isPending || connection.status === "disconnect_pending"}
-                />
-              </View>
-            ))
-          )}
-
-          {attentionBankConnections.length > 0 ? (
-            <>
-              <Text style={styles.subSectionTitle}>Needs attention</Text>
-              <Text style={styles.hintText}>
-                These banks are no longer usable until they are reconnected. They are kept separate from active banks.
-              </Text>
-              {attentionBankConnections.map((connection) => (
+              return (
                 <View key={connection.id} style={styles.bankRow}>
-                  <Text style={styles.sessionTitle}>
-                    {connection.providerDisplayName || connection.provider}
-                  </Text>
-                  <Text style={styles.metaLine}>Provider: {connection.provider}</Text>
-                  <Text style={styles.metaLine}>Connected: {formatDateTime(connection.createdUtc)}</Text>
-                  <Text style={styles.metaLine}>Status: {formatBankConnectionStatus(connection.status)}</Text>
+                  <View style={styles.bankHeaderRow}>
+                    <Text style={styles.bankTitle}>{identity.title}</Text>
+                    <AccountProviderBadge
+                      account={{
+                        providerId: connection.providerId,
+                        providerDisplayName: connection.providerDisplayName,
+                        providerIconUrl: connection.providerIconUrl,
+                        providerLogoUrl: connection.providerLogoUrl
+                      }}
+                      compact
+                    />
+                  </View>
+
+                  <Text style={styles.metaLine}>Connected on: {formatDateTime(connection.createdUtc)}</Text>
+                  <Text style={styles.metaLine}>Last updated: {formatDateTime(lastUpdatedUtc)}</Text>
+                  <Text style={styles.metaLine}>Accounts linked: {accountCountLine}</Text>
+                  {accountPreview ? (
+                    <Text style={styles.metaLine}>Accounts: {accountPreview}</Text>
+                  ) : null}
                   {connection.connectedFullName ? (
                     <Text style={styles.metaLine}>Connected as: {connection.connectedFullName}</Text>
                   ) : null}
+
+                  <View style={styles.statusRow}>
+                    <Text style={styles.metaLine}>Status</Text>
+                    <View style={[styles.statusPill, statusToneStyle]}>
+                      <Text style={[styles.statusPillText, statusTextToneStyle]}>{status.label}</Text>
+                    </View>
+                  </View>
+
                   <SecondaryButton
                     label={
                       disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
                         ? "Disconnecting..."
-                        : connection.status === "disconnect_failed"
-                          ? "Retry remove bank"
-                          : "Remove bank"
+                        : "Disconnect bank"
                     }
                     onPress={() => {
                       if (connection.status === "disconnect_pending") {
@@ -632,12 +673,12 @@ export default function SecuritySettingsScreen() {
                       }
 
                       Alert.alert(
-                        connection.status === "disconnect_failed" ? "Retry remove bank" : "Remove bank",
-                        "This removes the stale bank link and all imported data that came from it.",
+                        "Disconnect bank",
+                        "This disconnects the bank and removes imported accounts, transactions, balances, and summaries from the app.",
                         [
                           { text: "Cancel", style: "cancel" },
                           {
-                            text: connection.status === "disconnect_failed" ? "Retry remove" : "Remove",
+                            text: "Disconnect",
                             style: "destructive",
                             onPress: () => {
                               void handleDisconnectBank(connection.id);
@@ -649,7 +690,117 @@ export default function SecuritySettingsScreen() {
                     disabled={disconnectMutation.isPending || connection.status === "disconnect_pending"}
                   />
                 </View>
-              ))}
+              );
+            })
+          )}
+
+          {attentionBankConnections.length > 0 ? (
+            <>
+              <Text style={styles.subSectionTitle}>Needs attention</Text>
+              <Text style={styles.hintText}>
+                Reconnect these banks to resume updates.
+              </Text>
+              {attentionBankConnections.map((connection) => {
+                const identity = resolveConnectedBankIdentity({
+                  providerId: connection.providerId,
+                  providerDisplayName: connection.providerDisplayName ?? connection.provider,
+                  providerIconUrl: connection.providerIconUrl,
+                  providerLogoUrl: connection.providerLogoUrl
+                });
+                const linkedSummary = linkedAccountSummaryByConnection.get(connection.id);
+                const linkedAccountCount = Math.max(0, connection.linkedAccountCount ?? linkedSummary?.count ?? 0);
+                const accountCountLine = linkedAccountCount > 0
+                  ? `${linkedAccountCount} linked account${linkedAccountCount === 1 ? "" : "s"}`
+                  : "Waiting for accounts";
+                const previewNames = linkedSummary?.names.slice(0, 2) ?? [];
+                const accountPreview = previewNames.length === 0
+                  ? null
+                  : linkedAccountCount > previewNames.length
+                    ? `${previewNames.join(", ")} +${linkedAccountCount - previewNames.length} more`
+                    : previewNames.join(", ");
+                const status = formatBankConnectionStatus(connection.status);
+                const statusToneStyle = status.tone === "positive"
+                  ? styles.statusPillPositive
+                  : status.tone === "warning"
+                    ? styles.statusPillWarning
+                    : status.tone === "negative"
+                      ? styles.statusPillNegative
+                      : styles.statusPillNeutral;
+                const statusTextToneStyle = status.tone === "positive"
+                  ? styles.statusPillTextPositive
+                  : status.tone === "warning"
+                    ? styles.statusPillTextWarning
+                    : status.tone === "negative"
+                      ? styles.statusPillTextNegative
+                      : styles.statusPillTextNeutral;
+                const lastUpdatedUtc =
+                  connection.lastSuccessfulSyncUtc ?? connection.lastSyncAttemptedUtc ?? connection.updatedUtc;
+
+                return (
+                  <View key={connection.id} style={styles.bankRow}>
+                    <View style={styles.bankHeaderRow}>
+                      <Text style={styles.bankTitle}>{identity.title}</Text>
+                      <AccountProviderBadge
+                        account={{
+                          providerId: connection.providerId,
+                          providerDisplayName: connection.providerDisplayName,
+                          providerIconUrl: connection.providerIconUrl,
+                          providerLogoUrl: connection.providerLogoUrl
+                        }}
+                        compact
+                      />
+                    </View>
+
+                    <Text style={styles.metaLine}>Connected on: {formatDateTime(connection.createdUtc)}</Text>
+                    <Text style={styles.metaLine}>Last updated: {formatDateTime(lastUpdatedUtc)}</Text>
+                    <Text style={styles.metaLine}>Accounts linked: {accountCountLine}</Text>
+                    {accountPreview ? (
+                      <Text style={styles.metaLine}>Accounts: {accountPreview}</Text>
+                    ) : null}
+                    {connection.connectedFullName ? (
+                      <Text style={styles.metaLine}>Connected as: {connection.connectedFullName}</Text>
+                    ) : null}
+
+                    <View style={styles.statusRow}>
+                      <Text style={styles.metaLine}>Status</Text>
+                      <View style={[styles.statusPill, statusToneStyle]}>
+                        <Text style={[styles.statusPillText, statusTextToneStyle]}>{status.label}</Text>
+                      </View>
+                    </View>
+
+                    <SecondaryButton
+                      label={
+                        disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
+                          ? "Disconnecting..."
+                          : connection.status === "disconnect_failed"
+                            ? "Retry remove bank"
+                            : "Remove bank"
+                      }
+                      onPress={() => {
+                        if (connection.status === "disconnect_pending") {
+                          return;
+                        }
+
+                        Alert.alert(
+                          connection.status === "disconnect_failed" ? "Retry remove bank" : "Remove bank",
+                          "This removes the stale bank link and all imported data that came from it.",
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: connection.status === "disconnect_failed" ? "Retry remove" : "Remove",
+                              style: "destructive",
+                              onPress: () => {
+                                void handleDisconnectBank(connection.id);
+                              }
+                            }
+                          ]
+                        );
+                      }}
+                      disabled={disconnectMutation.isPending || connection.status === "disconnect_pending"}
+                    />
+                  </View>
+                );
+              })}
             </>
           ) : null}
         </GlassCard>
@@ -880,10 +1031,69 @@ const styles = createRuntimeStyleSheet(() => ({
     backgroundColor: surfaces.field,
     padding: spacing[12]
   },
+  bankHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[10]
+  },
+  bankTitle: {
+    flex: 1,
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontWeight: "700"
+  },
   sessionTitle: {
     color: palette.textPrimary,
     ...typography.body2,
     fontWeight: "600"
+  },
+  statusRow: {
+    marginTop: spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[8]
+  },
+  statusPill: {
+    minHeight: 24,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing[10],
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  statusPillNeutral: {
+    borderColor: palette.border,
+    backgroundColor: "rgba(255,255,255,0.04)"
+  },
+  statusPillPositive: {
+    borderColor: "rgba(52, 211, 153, 0.45)",
+    backgroundColor: "rgba(34, 197, 94, 0.16)"
+  },
+  statusPillWarning: {
+    borderColor: "rgba(251, 191, 36, 0.42)",
+    backgroundColor: "rgba(245, 158, 11, 0.16)"
+  },
+  statusPillNegative: {
+    borderColor: "rgba(248, 113, 113, 0.45)",
+    backgroundColor: "rgba(239, 68, 68, 0.18)"
+  },
+  statusPillText: {
+    ...typography.caption,
+    fontWeight: "600"
+  },
+  statusPillTextNeutral: {
+    color: palette.textSecondary
+  },
+  statusPillTextPositive: {
+    color: "#86EFAC"
+  },
+  statusPillTextWarning: {
+    color: "#FCD34D"
+  },
+  statusPillTextNegative: {
+    color: "#FCA5A5"
   },
   metaLine: {
     color: palette.textSecondary,
