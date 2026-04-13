@@ -66,7 +66,8 @@ public sealed class TrueLayerSyncBackgroundWorker(
                 var result = await bankSyncService.SyncConnectionAsync(
                     workItem.UserId,
                     workItem.ConnectionId,
-                    stoppingToken);
+                    stoppingToken,
+                    trigger: "initial_sync");
 
                 if (!result.Succeeded)
                 {

@@ -55,26 +55,55 @@ public class MobileBankConnectionPhaseContractTests
     {
         var source = ReadConnectBankSource();
         Assert.Contains("safeCloseMessage", source, StringComparison.Ordinal);
-        Assert.Contains("You can close this page now", source, StringComparison.Ordinal);
-        Assert.Contains("You can leave this page at any time", source, StringComparison.Ordinal);
+        Assert.Contains("You can leave this page.", source, StringComparison.Ordinal);
+        Assert.Contains("finishing the connection in the background", source, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void ConnectBankScreen_RendersLifecycleTimelineStages()
+    public void ConnectBankScreen_HidesSafeCloseCardDuringIdleAndPreAuth()
     {
         var source = ReadConnectBankSource();
-        Assert.Contains("Authorized with bank", source, StringComparison.Ordinal);
-        Assert.Contains("Connection secured", source, StringComparison.Ordinal);
-        Assert.Contains("Balances fetched", source, StringComparison.Ordinal);
-        Assert.Contains("Transactions imported", source, StringComparison.Ordinal);
-        Assert.Contains("Activity organized", source, StringComparison.Ordinal);
+        Assert.Contains("showSafeCloseCard", source, StringComparison.Ordinal);
+        Assert.Contains("uiState !== \"not_connected\"", source, StringComparison.Ordinal);
+        Assert.Contains("uiState !== \"opening_bank\"", source, StringComparison.Ordinal);
+        Assert.Contains("uiState !== \"awaiting_consent\"", source, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ConnectBankScreen_CloseActionRemainsOptionalDuringSync()
+    public void ConnectBankScreen_RemovesLifecycleChecklistDuplication()
     {
         var source = ReadConnectBankSource();
-        Assert.DoesNotContain("disabled={isSyncingInProgress}", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("timelineCard", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Authorized with bank", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Balances fetched", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Activity organized", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConnectBankScreen_RemovesManualCloseAction()
+    {
+        var source = ReadConnectBankSource();
+        Assert.DoesNotContain("secondaryActionLabel", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("modal_close", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConnectBankScreen_DetailsCard_IsReducedAndUsesInlinePlaceholder()
+    {
+        var source = ReadConnectBankSource();
+        Assert.Contains("Waiting for accounts", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Provider note:", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Date added:", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Last sync:", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConnectBankScreen_UsesCenteredTitleAndAutoReturnOnSuccess()
+    {
+        var source = ReadConnectBankSource();
+        Assert.Contains("justifyContent: \"center\"", source, StringComparison.Ordinal);
+        Assert.Contains("autoReturnArmed", source, StringComparison.Ordinal);
+        Assert.Contains("navigateBackToOrigin(\"connection_success\")", source, StringComparison.Ordinal);
     }
 
     private static string ReadConnectBankSource()

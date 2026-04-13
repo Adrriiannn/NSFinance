@@ -432,7 +432,14 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
                 && x.Status != BankConnectionStatuses.DisconnectFailed
                 && x.Status != BankConnectionStatuses.Revoked)
             .OrderByDescending(x => x.UpdatedUtc)
-            .Select(x => new { x.UserId, x.Id })
+            .Select(x => new
+            {
+                x.UserId,
+                x.Id,
+                x.NeedsHistoricalReclassification,
+                x.HistoricalEnrichmentCompletedUtc,
+                x.HistoricalEnrichmentVersion
+            })
             .Take(32)
             .ToListAsync(cancellationToken);
 
@@ -474,7 +481,21 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
             .ToListAsync(cancellationToken);
 
         var pendingConnections = pendingByFlags
-            .Concat(actionableByRowTruth.Select(x => new { UserId = x.UserId, Id = x.ConnectionId }))
+            .Select(x => new
+            {
+                UserId = x.UserId,
+                Id = x.Id,
+                Reason = ResolvePendingFlagReason(
+                    x.NeedsHistoricalReclassification,
+                    x.HistoricalEnrichmentCompletedUtc,
+                    x.HistoricalEnrichmentVersion)
+            })
+            .Concat(actionableByRowTruth.Select(x => new
+            {
+                UserId = x.UserId,
+                Id = x.ConnectionId,
+                Reason = DeterministicReclassificationTriggerReasons.RowTruthReclassificationDebt
+            }))
             .Distinct()
             .Take(64)
             .ToList();
@@ -484,9 +505,32 @@ public sealed class BankDeterministicEnrichmentBackgroundWorker(
             await QueueConnectionAsync(
                 connection.UserId,
                 connection.Id,
-                "periodic_pending_scan",
+                connection.Reason,
                 cancellationToken);
         }
+    }
+
+    private static string ResolvePendingFlagReason(
+        bool needsHistoricalReclassification,
+        DateTime? historicalEnrichmentCompletedUtc,
+        int? historicalEnrichmentVersion)
+    {
+        if ((historicalEnrichmentVersion ?? 0) < DeterministicEnrichmentCurrentVersion)
+        {
+            return DeterministicReclassificationTriggerReasons.DeterministicRuleVersionChanged;
+        }
+
+        if (!historicalEnrichmentCompletedUtc.HasValue)
+        {
+            return DeterministicReclassificationTriggerReasons.SyncChangesInitialImport;
+        }
+
+        if (needsHistoricalReclassification)
+        {
+            return DeterministicReclassificationTriggerReasons.SyncChangesManualRefresh;
+        }
+
+        return DeterministicReclassificationTriggerReasons.RowTruthReclassificationDebt;
     }
 
     private static string BuildQueueKey(Guid userId, Guid connectionId)

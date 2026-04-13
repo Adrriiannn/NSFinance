@@ -470,7 +470,11 @@ public sealed class BankGlobalSyncService(
                 ServiceResult<BankSyncResult> syncResult;
                 try
                 {
-                    syncResult = await bankSyncService.SyncConnectionAsync(userId, candidate.Id, cancellationToken);
+                    syncResult = await bankSyncService.SyncConnectionAsync(
+                        userId,
+                        candidate.Id,
+                        cancellationToken,
+                        trigger: normalizedTrigger == TriggerAuto ? "auto_sync" : "manual_sync");
                 }
                 catch (Exception exception)
                 {

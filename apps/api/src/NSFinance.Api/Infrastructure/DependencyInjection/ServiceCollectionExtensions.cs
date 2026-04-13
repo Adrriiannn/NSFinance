@@ -346,6 +346,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DeterministicClassificationRetryPlanner>();
         services.AddScoped<DeterministicClassificationPersistenceService>();
         services.AddScoped<DeterministicTransactionCategorizationService>();
+        services.AddScoped<DeterministicReclassificationTriggerService>();
         services.AddScoped<BankSyncService>();
         services.AddScoped<BankGlobalSyncService>();
         services.AddSingleton<BankDeterministicEnrichmentBackgroundWorker>();

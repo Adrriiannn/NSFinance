@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.DTOs;
+using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Modules.Banking.Validators;
 using NSFinance.Api.Persistence.Entities;
 
@@ -13,6 +14,7 @@ public sealed class TrueLayerAuthService(
     BankConnectionService bankConnectionService,
     TrueLayerTokenService tokenService,
     BankSyncService bankSyncService,
+    DeterministicReclassificationTriggerService reclassificationTriggerService,
     ITrueLayerSyncQueue trueLayerSyncQueue,
     IAuditService auditService,
     ILogger<TrueLayerAuthService> logger)
@@ -344,6 +346,28 @@ public sealed class TrueLayerAuthService(
             "Bank connection marked as {Status} for connectionId={ConnectionId}",
             BankConnectionStatuses.ConnectedPendingSync,
             connection.Id);
+
+        try
+        {
+            await reclassificationTriggerService.TriggerAsync(
+                new DeterministicReclassificationTriggerRequest(
+                    UserId: connection.UserId,
+                    Source: "callback_reconnect_relink",
+                    ReasonCode: DeterministicReclassificationTriggerReasons.ReconnectRelink,
+                    SourceConnectionId: connection.Id,
+                    ConnectionIds: [connection.Id],
+                    MarkConnectionsForHistoricalReplay: true,
+                    QueueConnections: true,
+                    RequireImportedFootprint: true),
+                cancellationToken);
+        }
+        catch (Exception triggerException)
+        {
+            logger.LogWarning(
+                triggerException,
+                "Reconnect/relink deterministic trigger failed connectionId={ConnectionId}",
+                connection.Id);
+        }
 
         await auditService.WriteEventAsync(
             category: "banking",

@@ -30,32 +30,32 @@ const statusConfig: Record<
     helper: "Connect your bank to import linked accounts, balances, and transactions."
   },
   opening_bank: {
-    label: "Opening bank",
+    label: "Authorizing with bank",
     color: palette.caution,
-    helper: "Launching secure bank authorization."
+    helper: "Complete the bank consent flow in your browser."
   },
   awaiting_consent: {
-    label: "Awaiting consent",
+    label: "Authorizing with bank",
     color: palette.caution,
-    helper: "Finish authorization in your browser."
+    helper: "Finish consent in your browser to continue."
   },
   connected_pending_sync: {
     label: "Connection secured",
     color: palette.success,
-    helper: "Your account connection is secured. Import is starting."
+    helper: "Your bank connection is active. We are preparing your data."
   },
   syncing_data: {
-    label: "Importing activity",
+    label: "Importing transactions",
     color: palette.success,
-    helper: "Fetching balances and transactions."
+    helper: "Balances and activity are being brought into NSFinance."
   },
   import_complete_enrichment_queued: {
-    label: "Import complete",
+    label: "Organizing activity",
     color: palette.success,
-    helper: "Organization is queued and will continue in the background."
+    helper: "Import is complete and organization is queued in the background."
   },
   organizing_transactions: {
-    label: "Organizing transactions",
+    label: "Organizing activity",
     color: palette.success,
     helper: "NSFinance is categorizing and linking your activity."
   },

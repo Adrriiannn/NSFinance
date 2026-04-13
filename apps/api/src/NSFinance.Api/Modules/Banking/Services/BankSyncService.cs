@@ -20,7 +20,7 @@ public sealed class BankSyncService(
     TrueLayerDataService dataService,
     ISecretProtector secretProtector,
     IAuditService auditService,
-    IBankDeterministicEnrichmentQueue enrichmentQueue,
+    DeterministicReclassificationTriggerService reclassificationTriggerService,
     DeterministicTransactionCategorizationService deterministicCategorizationService,
     DeterministicCategorizationMetrics deterministicMetrics,
     ILogger<BankSyncService> logger)
@@ -44,8 +44,7 @@ public sealed class BankSyncService(
     private const int DeferredCounterpartyExpiryHours = 48;
     private const int DeferredMoreContextExpiryHours = 24;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
-    private const string DeterministicEnqueueReasonIngestionInsert = "ingestion_insert_enqueue";
-    private const string DeterministicEnqueueReasonPostSync = "post_sync_enqueue";
+    private const string DeterministicEnqueueReasonIngestionInsert = DeterministicReclassificationTriggerReasons.ProjectedRowRemapOrDedupeCorrection;
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
         "account",
@@ -174,7 +173,8 @@ public sealed class BankSyncService(
     public async Task<ServiceResult<BankSyncResult>> SyncConnectionAsync(
         Guid userId,
         Guid connectionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string trigger = "manual_sync")
     {
         var connectionResult = await bankConnectionService.GetConnectionForSyncAsync(userId, connectionId, cancellationToken);
         if (!connectionResult.Succeeded)
@@ -344,7 +344,7 @@ public sealed class BankSyncService(
             connection,
             configResult.Value,
             tokenResult.Value!.AccessToken,
-            trigger: "manual_sync",
+            trigger,
             cancellationToken);
     }
 
@@ -1034,6 +1034,10 @@ public sealed class BankSyncService(
                     ingestionKickoffPendingProjectedRows,
                     ingestionKickoffPendingProjectedTransactionIds,
                     ingestionKickoffPendingFinancialAccountIds,
+                    ResolveSyncReclassificationReason(
+                        trigger,
+                        universeExpanded: false,
+                        remapOrDedupeCorrection: false),
                     now,
                     cancellationToken);
                 ingestionKickoffRowsInserted += ingestionKickoffOutcome.InsertedRows;
@@ -1227,6 +1231,10 @@ public sealed class BankSyncService(
                 ingestionKickoffPendingProjectedRows,
                 ingestionKickoffPendingProjectedTransactionIds,
                 ingestionKickoffPendingFinancialAccountIds,
+                ResolveSyncReclassificationReason(
+                    trigger,
+                    universeExpanded: false,
+                    remapOrDedupeCorrection: false),
                 now,
                 cancellationToken);
             ingestionKickoffRowsInserted += ingestionKickoffOutcome.InsertedRows;
@@ -1339,13 +1347,23 @@ public sealed class BankSyncService(
             sameUserUniverseExpanded,
             universeExpansionRowsInvalidated);
 
+        var syncReclassificationReasonCode = ResolveSyncReclassificationReason(
+            trigger,
+            sameUserUniverseExpanded,
+            remapOrDedupeCorrection: projectedTransactionsPromoted > 0 || projectedTransactionsBackfilled > 0);
+
         if (newlyImportedRowsMarkedForDeterministicReclassification > 0 || universeExpansionRowsInvalidated > 0)
         {
-            connection.NeedsHistoricalReclassification = true;
-            connection.HistoricalEnrichmentStartedUtc = null;
-            connection.HistoricalEnrichmentCompletedUtc = null;
-            connection.HistoricalEnrichmentCheckpointUtc = null;
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await reclassificationTriggerService.TriggerAsync(
+                new DeterministicReclassificationTriggerRequest(
+                    UserId: connection.UserId,
+                    Source: "sync_changed_scope_marking",
+                    ReasonCode: syncReclassificationReasonCode,
+                    SourceConnectionId: connection.Id,
+                    ConnectionIds: [connection.Id],
+                    MarkConnectionsForHistoricalReplay: true,
+                    QueueConnections: false),
+                cancellationToken);
         }
 
         var dataChanged =
@@ -1385,14 +1403,21 @@ public sealed class BankSyncService(
         var shouldQueuePostSync = requiresHistoricalReplayWithImportedRows || shouldContinueFromRowTruthDebt;
         var postSyncQueueReason = ingestionKickoffRowsInserted > 0
             ? DeterministicEnqueueReasonIngestionInsert
-            : DeterministicEnqueueReasonPostSync;
+            : syncReclassificationReasonCode;
         var postSyncQueueAccepted = false;
         if (shouldQueuePostSync)
         {
-            postSyncQueueAccepted = TryQueueDeterministicEnrichmentNonBlocking(
-                connection.UserId,
-                connection.Id,
-                postSyncQueueReason);
+            var queueTrigger = await reclassificationTriggerService.TriggerAsync(
+                new DeterministicReclassificationTriggerRequest(
+                    UserId: connection.UserId,
+                    Source: "sync_post_completion_queue",
+                    ReasonCode: postSyncQueueReason,
+                    SourceConnectionId: connection.Id,
+                    ConnectionIds: [connection.Id],
+                    MarkConnectionsForHistoricalReplay: false,
+                    QueueConnections: true),
+                cancellationToken);
+            postSyncQueueAccepted = queueTrigger.QueueRequestsAttempted > 0 && queueTrigger.QueueFailures == 0;
 
             logger.LogInformation(
                 "Deterministic kickoff queue outcome connectionId={ConnectionId} userId={UserId} queueAccepted={QueueAccepted} markedRows={MarkedRows} universeExpansionRowsInvalidated={UniverseExpansionRowsInvalidated} rowsInDeterministicScopeAfterSync={RowsInDeterministicScopeAfterSync} actionableRowsRemainingAfterSync={ActionableRowsRemainingAfterSync} requiresHistoricalReplayWithImportedRows={RequiresHistoricalReplayWithImportedRows} reason={Reason}",
@@ -3539,6 +3564,7 @@ public sealed class BankSyncService(
         int insertedRows,
         IReadOnlyCollection<Guid> projectedTransactionIds,
         IReadOnlyCollection<Guid> affectedFinancialAccountIds,
+        string reasonCode,
         DateTime now,
         CancellationToken cancellationToken)
     {
@@ -3552,24 +3578,20 @@ public sealed class BankSyncService(
             now,
             cancellationToken);
 
-        if (markedRows > 0)
-        {
-            connection.NeedsHistoricalReclassification = true;
-            connection.HistoricalEnrichmentStartedUtc = null;
-            connection.HistoricalEnrichmentCompletedUtc = null;
-            connection.HistoricalEnrichmentCheckpointUtc = null;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
         var queueDeferred = connection.Status == BankConnectionStatuses.SyncPending;
-        var queueAccepted = false;
-        if (!queueDeferred)
-        {
-            queueAccepted = TryQueueDeterministicEnrichmentNonBlocking(
-                connection.UserId,
-                connection.Id,
-                DeterministicEnqueueReasonIngestionInsert);
-        }
+        var queueTrigger = await reclassificationTriggerService.TriggerAsync(
+            new DeterministicReclassificationTriggerRequest(
+                UserId: connection.UserId,
+                Source: "ingestion_kickoff",
+                ReasonCode: reasonCode,
+                SourceConnectionId: connection.Id,
+                ConnectionIds: [connection.Id],
+                MarkConnectionsForHistoricalReplay: markedRows > 0,
+                QueueConnections: !queueDeferred),
+            cancellationToken);
+        var queueAccepted = !queueDeferred
+            && queueTrigger.QueueRequestsAttempted > 0
+            && queueTrigger.QueueFailures == 0;
         var affectedAccountIdsText = affectedFinancialAccountIds.Count == 0
             ? "none"
             : string.Join(
@@ -3591,7 +3613,7 @@ public sealed class BankSyncService(
             queueDeferred,
             connection.Status,
             queueAccepted,
-            DeterministicEnqueueReasonIngestionInsert);
+            reasonCode);
 
         return new IngestionDeterministicKickoffOutcome(insertedRows, markedRows, queueAccepted);
     }
@@ -8284,72 +8306,27 @@ public sealed class BankSyncService(
         return left.Value >= right.Value ? left : right;
     }
 
-    private bool TryQueueDeterministicEnrichmentNonBlocking(
-        Guid userId,
-        Guid connectionId,
-        string reason)
+    private static string ResolveSyncReclassificationReason(
+        string trigger,
+        bool universeExpanded,
+        bool remapOrDedupeCorrection)
     {
-        try
+        if (universeExpanded)
         {
-            var queueTask = enrichmentQueue.QueueConnectionAsync(
-                userId,
-                connectionId,
-                reason,
-                CancellationToken.None);
-
-            if (queueTask.IsCompleted)
-            {
-                try
-                {
-                    queueTask.GetAwaiter().GetResult();
-                    return true;
-                }
-                catch (Exception queueException)
-                {
-                    logger.LogWarning(
-                        queueException,
-                        "Unable to enqueue deterministic enrichment connectionId={ConnectionId} reason={Reason}",
-                        connectionId,
-                        reason);
-                    return false;
-                }
-            }
-
-            if (!queueTask.IsCompletedSuccessfully)
-            {
-                _ = ObserveQueueCompletionAsync(queueTask, connectionId, reason);
-            }
-
-            return true;
+            return DeterministicReclassificationTriggerReasons.ConnectionCreatedUniverseExpansion;
         }
-        catch (Exception queueException)
+
+        if (remapOrDedupeCorrection)
         {
-            logger.LogWarning(
-                queueException,
-                "Unable to enqueue deterministic enrichment connectionId={ConnectionId} reason={Reason}",
-                connectionId,
-                reason);
-            return false;
+            return DeterministicReclassificationTriggerReasons.ProjectedRowRemapOrDedupeCorrection;
         }
-    }
 
-    private async Task ObserveQueueCompletionAsync(
-        ValueTask queueTask,
-        Guid connectionId,
-        string reason)
-    {
-        try
+        return trigger switch
         {
-            await queueTask;
-        }
-        catch (Exception queueException)
-        {
-            logger.LogWarning(
-                queueException,
-                "Deterministic enrichment enqueue completed with failure connectionId={ConnectionId} reason={Reason}",
-                connectionId,
-                reason);
-        }
+            "initial_sync" => DeterministicReclassificationTriggerReasons.SyncChangesInitialImport,
+            "manual_sync" => DeterministicReclassificationTriggerReasons.SyncChangesManualRefresh,
+            _ => DeterministicReclassificationTriggerReasons.SyncChangesAutoRefresh
+        };
     }
 }
 

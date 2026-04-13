@@ -298,7 +298,8 @@ public class OpenBankingIntegrationTests
         Assert.Contains(queue.Items, item =>
             item.ConnectionId == start.Value.ConnectionId
             && item.UserId == user.Id
-            && item.Reason == "ingestion_insert_enqueue");
+            && (item.Reason == DeterministicReclassificationTriggerReasons.SyncChangesInitialImport
+                || item.Reason == DeterministicReclassificationTriggerReasons.ProjectedRowRemapOrDedupeCorrection));
 
         var rows = await harness.DbContext.Transactions.ToListAsync();
         Assert.NotEmpty(rows);
@@ -339,7 +340,8 @@ public class OpenBankingIntegrationTests
         Assert.Contains(queue.Items, item =>
             item.ConnectionId == secondStart.Value!.ConnectionId
             && item.UserId == user.Id
-            && item.Reason == "ingestion_insert_enqueue");
+            && (item.Reason == DeterministicReclassificationTriggerReasons.SyncChangesInitialImport
+                || item.Reason == DeterministicReclassificationTriggerReasons.ProjectedRowRemapOrDedupeCorrection));
 
         var secondConnectionFinancialAccountIds = await harness.DbContext.LinkedBankAccounts
             .Where(x => x.ConnectionId == secondStart.Value.ConnectionId && x.FinancialAccountId.HasValue)
@@ -398,7 +400,8 @@ public class OpenBankingIntegrationTests
         Assert.Contains(queue.Items, item =>
             item.ConnectionId == start.Value.ConnectionId
             && item.UserId == user.Id
-            && item.Reason == "ingestion_insert_enqueue");
+            && (item.Reason == DeterministicReclassificationTriggerReasons.SyncChangesManualRefresh
+                || item.Reason == DeterministicReclassificationTriggerReasons.ProjectedRowRemapOrDedupeCorrection));
     }
 
     [Fact]
@@ -471,7 +474,8 @@ public class OpenBankingIntegrationTests
         Assert.Contains(queue.Items, item =>
             item.ConnectionId == secondStart.Value.ConnectionId
             && item.UserId == user.Id
-            && item.Reason == "ingestion_insert_enqueue");
+            && (item.Reason == DeterministicReclassificationTriggerReasons.SyncChangesInitialImport
+                || item.Reason == DeterministicReclassificationTriggerReasons.ProjectedRowRemapOrDedupeCorrection));
     }
 
     [Fact]
@@ -8980,12 +8984,18 @@ public class OpenBankingIntegrationTests
             var tokenService = new TrueLayerTokenService(
                 new TrueLayerHttpClient(new HttpClient(_httpHandler)),
                 NullLogger<TrueLayerTokenService>.Instance);
+            var triggerQueue = enrichmentQueueOverride ?? new NoOpDeterministicEnrichmentQueue();
+            var reclassificationTriggerService = new DeterministicReclassificationTriggerService(
+                DbContext,
+                triggerQueue,
+                NullLogger<DeterministicReclassificationTriggerService>.Instance);
 
             return new TrueLayerAuthService(
                 configurationService,
-                CreateConnectionService(),
+                CreateConnectionService(triggerQueue),
                 tokenService,
                 syncService,
+                reclassificationTriggerService,
                 new TestTrueLayerSyncQueue(syncService),
                 _auditService,
                 NullLogger<TrueLayerAuthService>.Instance);
@@ -9023,8 +9033,12 @@ public class OpenBankingIntegrationTests
             var httpClient = new TrueLayerHttpClient(new HttpClient(_httpHandler));
             var tokenService = new TrueLayerTokenService(httpClient, NullLogger<TrueLayerTokenService>.Instance);
             var dataService = new TrueLayerDataService(httpClient, NullLogger<TrueLayerDataService>.Instance);
-            var connectionService = CreateConnectionService();
             var enrichmentQueue = enrichmentQueueOverride ?? new ImmediateBankDeterministicEnrichmentQueue();
+            var reclassificationTriggerService = new DeterministicReclassificationTriggerService(
+                DbContext,
+                enrichmentQueue,
+                NullLogger<DeterministicReclassificationTriggerService>.Instance);
+            var connectionService = CreateConnectionService(enrichmentQueue);
             var normalizationService = new TransactionNormalizationService();
             var featureExtractor = new TransactionFeatureExtractor(
                 normalizationService,
@@ -9060,7 +9074,7 @@ public class OpenBankingIntegrationTests
                 dataService,
                 new TestSecretProtector(),
                 _auditService,
-                enrichmentQueue,
+                reclassificationTriggerService,
                 categorizationService,
                 metrics,
                 NullLogger<BankSyncService>.Instance);
@@ -9073,13 +9087,19 @@ public class OpenBankingIntegrationTests
             return syncService;
         }
 
-        public BankConnectionService CreateConnectionService()
+        public BankConnectionService CreateConnectionService(
+            IBankDeterministicEnrichmentQueue? enrichmentQueueOverride = null)
         {
+            var enrichmentQueue = enrichmentQueueOverride ?? new NoOpDeterministicEnrichmentQueue();
+            var reclassificationTriggerService = new DeterministicReclassificationTriggerService(
+                DbContext,
+                enrichmentQueue,
+                NullLogger<DeterministicReclassificationTriggerService>.Instance);
             return new BankConnectionService(
                 DbContext,
                 _auditService,
                 new NoOpBankDisconnectQueue(),
-                enrichmentQueue: null,
+                reclassificationTriggerService,
                 scopeFactory: null,
                 NullLogger<BankConnectionService>.Instance);
         }
@@ -9142,7 +9162,7 @@ public class OpenBankingIntegrationTests
     {
         public async ValueTask QueueInitialSyncAsync(Guid userId, Guid connectionId, CancellationToken cancellationToken = default)
         {
-            await syncService.SyncConnectionAsync(userId, connectionId, cancellationToken);
+            await syncService.SyncConnectionAsync(userId, connectionId, cancellationToken, trigger: "initial_sync");
         }
     }
 
@@ -9170,6 +9190,18 @@ public class OpenBankingIntegrationTests
             CancellationToken cancellationToken = default)
         {
             await ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class NoOpDeterministicEnrichmentQueue : IBankDeterministicEnrichmentQueue
+    {
+        public ValueTask QueueConnectionAsync(
+            Guid userId,
+            Guid connectionId,
+            string reason,
+            CancellationToken cancellationToken = default)
+        {
+            return ValueTask.CompletedTask;
         }
     }
 

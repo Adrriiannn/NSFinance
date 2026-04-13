@@ -40,18 +40,6 @@ const pendingActionStatuses = new Set<BankConnectionStatus>([
   "consent_in_progress"
 ]);
 
-const completionStatuses = new Set<BankConnectionStatus>([
-  "connected_pending_sync",
-  "connected",
-  "synced",
-  "disconnect_pending",
-  "disconnect_failed",
-  "failed",
-  "reauth_required",
-  "expired",
-  "revoked"
-]);
-
 const successStatuses = new Set<BankConnectionStatus>([
   "connected_pending_sync",
   "connected",
@@ -117,113 +105,6 @@ type UiPhaseEvidence = {
   updatedUtc: string | null;
 };
 
-type StageVisualState = "complete" | "in_progress" | "pending" | "delayed" | "warning";
-
-type ConnectionTimelineStage = {
-  key: string;
-  label: string;
-  state: StageVisualState;
-};
-
-const timelineStageOrder = [
-  "authorized",
-  "connection_secured",
-  "balances_fetched",
-  "transactions_imported",
-  "activity_organized"
-] as const;
-
-const timelineStageLabels: Record<(typeof timelineStageOrder)[number], string> = {
-  authorized: "Authorized with bank",
-  connection_secured: "Connection secured",
-  balances_fetched: "Balances fetched",
-  transactions_imported: "Transactions imported",
-  activity_organized: "Activity organized"
-};
-
-function buildTimelineStages(
-  stageState: Partial<Record<(typeof timelineStageOrder)[number], StageVisualState>>
-): ConnectionTimelineStage[] {
-  return timelineStageOrder.map((key) => ({
-    key,
-    label: timelineStageLabels[key],
-    state: stageState[key] ?? "pending"
-  }));
-}
-
-function deriveTimelineStages(
-  uiState: ConnectionStatus,
-  evidence: UiPhaseEvidence | null,
-  connection: BankConnectionDto | null
-): ConnectionTimelineStage[] {
-  const hasImportedTransactions = (evidence?.importedTransactionCount ?? 0) > 0;
-
-  switch (uiState) {
-    case "opening_bank":
-    case "awaiting_consent":
-      return buildTimelineStages({
-        authorized: "in_progress"
-      });
-    case "connected_pending_sync":
-      return buildTimelineStages({
-        authorized: "complete",
-        connection_secured: "complete",
-        balances_fetched: "in_progress"
-      });
-    case "syncing_data":
-      return buildTimelineStages({
-        authorized: "complete",
-        connection_secured: "complete",
-        balances_fetched: "complete",
-        transactions_imported: "in_progress"
-      });
-    case "import_complete_enrichment_queued":
-      return buildTimelineStages({
-        authorized: "complete",
-        connection_secured: "complete",
-        balances_fetched: "complete",
-        transactions_imported: "complete",
-        activity_organized: "in_progress"
-      });
-    case "organizing_transactions":
-      return buildTimelineStages({
-        authorized: "complete",
-        connection_secured: "complete",
-        balances_fetched: "complete",
-        transactions_imported: "complete",
-        activity_organized: "in_progress"
-      });
-    case "sync_taking_longer_than_expected":
-      return buildTimelineStages({
-        authorized: "complete",
-        connection_secured: "complete",
-        balances_fetched: "complete",
-        transactions_imported: hasImportedTransactions ? "complete" : "delayed",
-        activity_organized: hasImportedTransactions ? "delayed" : "pending"
-      });
-    case "synced":
-      return buildTimelineStages({
-        authorized: "complete",
-        connection_secured: "complete",
-        balances_fetched: "complete",
-        transactions_imported: "complete",
-        activity_organized: "complete"
-      });
-    case "failed":
-    case "reauth_required":
-      return buildTimelineStages({
-        authorized: "warning",
-        connection_secured: connection ? "complete" : "warning",
-        balances_fetched: hasImportedTransactions ? "complete" : "warning",
-        transactions_imported: hasImportedTransactions ? "complete" : "warning",
-        activity_organized: "warning"
-      });
-    case "not_connected":
-    default:
-      return buildTimelineStages({});
-  }
-}
-
 function formatSafeCloseMessage(
   uiState: ConnectionStatus,
   safeToLeave: boolean,
@@ -234,19 +115,15 @@ function formatSafeCloseMessage(
     return "Action is needed in NSFinance, but you can close this page now.";
   }
 
-  if (!safeToLeave) {
-    return "We are preparing your secure connection. Keep this page open for a moment.";
+  if (!safeToLeave && (uiState === "connected_pending_sync" || uiState === "syncing_data")) {
+    return "We are still finishing the connection. Keep this page open for a moment.";
   }
 
   if (safeToClose) {
-    return "You can close this page now. NSFinance will keep going in the background.";
+    return "You can leave this page. NSFinance will keep going in the background.";
   }
 
-  if (uiState === "awaiting_consent" || uiState === "opening_bank") {
-    return "Finish bank authorization in your browser. You can return to this page whenever you want.";
-  }
-
-  return "You can leave this page at any time while we finish the remaining steps.";
+  return "We are finishing the connection in the background.";
 }
 
 function shouldThrottleBankingLog(event: string, metadata?: Record<string, unknown>) {
@@ -260,32 +137,6 @@ function shouldThrottleBankingLog(event: string, metadata?: Record<string, unkno
   }
 
   return false;
-}
-
-function formatDateAdded(createdUtc?: string | null) {
-  if (!createdUtc) {
-    return "Pending";
-  }
-
-  const parsed = new Date(createdUtc);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Pending";
-  }
-
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).formatToParts(parsed);
-
-  const byType = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-
-  return `${byType("weekday")}, ${byType("day")} ${byType("month")} ${byType("year")}, ${byType("hour")}:${byType("minute")}`;
 }
 
 function normalizeText(value?: string | null) {
@@ -588,6 +439,9 @@ export default function AddAccountModalScreen() {
   const [consentStartedAtMs, setConsentStartedAtMs] = useState<number | null>(null);
   const [returnStartedAtMs, setReturnStartedAtMs] = useState<number | null>(null);
   const [consentTimedOut, setConsentTimedOut] = useState(false);
+  const [autoReturnArmed, setAutoReturnArmed] = useState(
+    forceNewConnectionFlow || typeof params.bankingResult === "string"
+  );
 
   const connectionsQuery = useBankConnectionsQuery(!pendingConnectionId && !forceNewConnectionFlow);
   const activeConnectionQuery = useBankConnectionQuery(pendingConnectionId);
@@ -605,6 +459,7 @@ export default function AddAccountModalScreen() {
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const lastRefreshStartedAtRef = useRef(0);
   const processedDeepLinkRef = useRef<string | null>(null);
+  const successAutoReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const logBankingEvent = useCallback((event: string, metadata?: Record<string, unknown>) => {
     if (shouldThrottleBankingLog(event, metadata)) {
@@ -638,6 +493,29 @@ export default function AddAccountModalScreen() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary })
     ]);
   }, [queryClient]);
+
+  const navigateBackToOrigin = useCallback(
+    (reason: string) => {
+      logBankingEvent("auto_return", {
+        reason,
+        connectionId: pendingConnectionId,
+        returnTo: cancelReturnPath
+      });
+
+      if (cancelReturnPath) {
+        router.replace(cancelReturnPath as never);
+        return;
+      }
+
+      if (typeof router.canGoBack === "function" && router.canGoBack()) {
+        router.back();
+        return;
+      }
+
+      router.replace("/(tabs)/accounts" as never);
+    },
+    [cancelReturnPath, logBankingEvent, pendingConnectionId, router]
+  );
 
   const latestConnection = useMemo(() => {
     if (forceNewConnectionFlow && !pendingConnectionId) {
@@ -875,6 +753,7 @@ export default function AddAccountModalScreen() {
   const beginConsentSession = useCallback(
     async (response: StartTrueLayerLinkResponse) => {
       successPlayedRef.current = false;
+      setAutoReturnArmed(true);
       setAwaitingConsentReturn(true);
       setBrowserPhase("opening_bank");
       setPendingConnectionId(response.connectionId);
@@ -899,6 +778,7 @@ export default function AddAccountModalScreen() {
 
   const handleConnectBank = async () => {
     try {
+      setAutoReturnArmed(true);
       setBrowserPhase("opening_bank");
       const response = await startLinkMutation.mutateAsync({
         appReturnUri: buildBankConnectReturnUri(cancelReturnPath),
@@ -1043,6 +923,7 @@ export default function AddAccountModalScreen() {
     }
 
     if (bankingResult === "success") {
+      setAutoReturnArmed(true);
       setAwaitingConsentReturn(true);
       markReturnAttempt("deep_link_return_success", returnedConnectionId);
       void refreshBankingState("deep_link_return_success", { force: true });
@@ -1156,6 +1037,41 @@ export default function AddAccountModalScreen() {
     }
   }, [activeConnection, invalidatePortfolioQueries, playSuccess]);
 
+  useEffect(() => {
+    return () => {
+      if (successAutoReturnTimerRef.current) {
+        clearTimeout(successAutoReturnTimerRef.current);
+        successAutoReturnTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!autoReturnArmed || !activeConnection) {
+      return;
+    }
+
+    if (!successStatuses.has(activeConnection.status) || activeConnection.userActionRequired) {
+      return;
+    }
+
+    if (successAutoReturnTimerRef.current) {
+      clearTimeout(successAutoReturnTimerRef.current);
+    }
+
+    successAutoReturnTimerRef.current = setTimeout(() => {
+      setAutoReturnArmed(false);
+      navigateBackToOrigin("connection_success");
+    }, 900);
+
+    return () => {
+      if (successAutoReturnTimerRef.current) {
+        clearTimeout(successAutoReturnTimerRef.current);
+        successAutoReturnTimerRef.current = null;
+      }
+    };
+  }, [activeConnection, autoReturnArmed, navigateBackToOrigin]);
+
   if (!isBootstrapping && !isAuthenticated) {
     return <Redirect href={"/login" as never} />;
   }
@@ -1171,18 +1087,21 @@ export default function AddAccountModalScreen() {
     : canUseConnectionsQueryState
       ? connectionsQuery.isError
       : false;
-  const completionReached = completionStatuses.has(activeConnection?.status ?? "not_connected");
   const userActionRequired = activeConnection?.userActionRequired === true;
-  const safeToLeave = activeConnection?.safeToLeave ?? true;
+  const safeToLeave = activeConnection?.safeToLeave ?? false;
   const safeToClose = activeConnection?.safeToClose
     ?? !(uiState === "opening_bank" || uiState === "awaiting_consent");
+  const lifecycleActive = Boolean(activeConnection || pendingConnectionId || awaitingConsentReturn);
+  const showSafeCloseCard = lifecycleActive
+    && uiState !== "not_connected"
+    && uiState !== "opening_bank"
+    && uiState !== "awaiting_consent";
   const safeCloseMessage = formatSafeCloseMessage(
     uiState,
     safeToLeave,
     safeToClose,
     userActionRequired
   );
-  const timelineStages = deriveTimelineStages(uiState, uiPhaseEvidence, activeConnection);
   const showResumeAction =
     uiState === "awaiting_consent" &&
     (pendingActionStatuses.has(activeConnection?.status ?? "not_connected") ||
@@ -1205,21 +1124,20 @@ export default function AddAccountModalScreen() {
     : isCompletedSynced
     ? "Connect another bank account"
     : connectBankCta.primaryLabel;
-  const secondaryActionLabel = completionReached ? "Return to activity" : "Close";
 
   const statusHelperText =
     uiState === "opening_bank"
-      ? "Opening your secure bank authorization. If the browser does not open automatically, use the action below."
+      ? "Complete the bank consent flow in your browser."
       : uiState === "awaiting_consent" && consentTimedOut
-        ? "We have not received the completed authorization yet. If you already finished in the browser, refresh status."
+        ? "We have not received consent yet. If you already finished in your browser, refresh status."
         : uiState === "awaiting_consent"
-          ? "Finish the secure bank authorization in your browser. We will continue automatically when you return."
+          ? "Authorize with your bank in the browser. NSFinance will continue when you return."
         : uiState === "connected_pending_sync" || uiState === "syncing_data"
-          ? "Your bank connection is secure. We are importing balances and transactions now."
+          ? "Your bank connection is active. We are preparing balances and transactions."
           : uiState === "import_complete_enrichment_queued"
-            ? "Import is complete and organization is queued. You can leave this page at any time."
+            ? "Import is complete. NSFinance is now organizing activity in the background."
             : uiState === "organizing_transactions"
-              ? "Import is complete. NSFinance is now organizing your activity."
+              ? "Transactions are being categorized in the background."
               : uiState === "sync_taking_longer_than_expected"
                 ? "This bank is taking longer than usual. NSFinance will keep retrying and continue in the background."
               : uiState === "failed"
@@ -1227,14 +1145,8 @@ export default function AddAccountModalScreen() {
                 : uiState === "reauth_required"
                   ? "Bank access expired or was interrupted. Reconnect to resume syncing."
                   : undefined;
-  const providerFreshnessNote =
-    "Provider note: balances/transactions can be briefly cached, and pending payments appear only after booking.";
 
   const bankName = activeConnection?.providerDisplayName?.trim() || "Waiting for institution details";
-  const lastSyncUtc =
-    activeConnection?.lastSuccessfulSyncUtc ?? activeConnection?.lastSyncAttemptedUtc ?? null;
-  const dateAdded = formatDateAdded(activeConnection?.createdUtc);
-  const lastSyncLabel = lastSyncUtc ? formatDateAdded(lastSyncUtc) : "Not synced yet";
   const meaningfulCapabilities = [
     activeConnection?.supportsInfo ? "Identity info available" : null,
     activeConnection?.supportsCards ? "Cards available" : null,
@@ -1292,63 +1204,37 @@ export default function AddAccountModalScreen() {
 
         <ConnectionStatusIndicator status={uiState} helperText={statusHelperText} />
 
-        <View style={styles.safeCloseCard}>
-          <Text style={styles.safeCloseTitle}>
-            {safeToClose ? "Safe to close" : "Still finishing up"}
-          </Text>
-          <Text style={styles.safeCloseCopy}>{safeCloseMessage}</Text>
-        </View>
-
-        <View style={styles.timelineCard}>
-          {timelineStages.map((stage) => (
-            <View key={stage.key} style={styles.timelineRow}>
-              <View
-                style={[
-                  styles.timelineDot,
-                  stage.state === "complete"
-                    ? styles.timelineDotComplete
-                    : stage.state === "in_progress"
-                      ? styles.timelineDotInProgress
-                      : stage.state === "delayed"
-                        ? styles.timelineDotDelayed
-                        : stage.state === "warning"
-                          ? styles.timelineDotWarning
-                          : styles.timelineDotPending
-                ]}
-              />
-              <Text
-                style={[
-                  styles.timelineLabel,
-                  stage.state === "pending" ? styles.timelineLabelPending : null
-                ]}
-              >
-                {stage.label}
-              </Text>
-            </View>
-          ))}
-        </View>
+        {showSafeCloseCard ? (
+          <View style={styles.safeCloseCard}>
+            <Text style={styles.safeCloseTitle}>
+              {safeToClose ? "Safe to leave" : "Still finishing up"}
+            </Text>
+            <Text style={styles.safeCloseCopy}>{safeCloseMessage}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.metadataCard}>
           <Text style={styles.metadataRow}>
             <Text style={styles.metadataLabel}>Bank: </Text>
             {bankName}
           </Text>
-          <Text style={styles.metadataRow}>
-            <Text style={styles.metadataLabel}>Bank account name(s): </Text>
-          </Text>
           {linkedAccountNames.length > 0 ? (
-            linkedAccountNames.map((accountName) => (
-              <Text key={accountName} style={styles.metadataListItem}>
-                - {accountName}
+            <>
+              <Text style={styles.metadataRow}>
+                <Text style={styles.metadataLabel}>Bank account name(s): </Text>
               </Text>
-            ))
+              {linkedAccountNames.map((accountName) => (
+                <Text key={accountName} style={styles.metadataListItem}>
+                  - {accountName}
+                </Text>
+              ))}
+            </>
           ) : (
-            <Text style={styles.metadataRow}>Waiting for account sync</Text>
+            <Text style={styles.metadataRow}>
+              <Text style={styles.metadataLabel}>Bank account name(s): </Text>
+              Waiting for accounts
+            </Text>
           )}
-          <Text style={styles.metadataRow}>
-            <Text style={styles.metadataLabel}>Last sync: </Text>
-            {lastSyncLabel}
-          </Text>
           <Text style={styles.metadataRow}>
             <Text style={styles.metadataLabel}>Connection provider: </Text>
             TrueLayer
@@ -1365,10 +1251,6 @@ export default function AddAccountModalScreen() {
               {meaningfulCapabilities.join(", ")}
             </Text>
           ) : null}
-          <Text style={styles.metadataRow}>
-            <Text style={styles.metadataLabel}>Date added: </Text>
-            {dateAdded}
-          </Text>
           {linkedCardNames.length > 0 ? (
             <>
               <Text style={styles.metadataRow}>
@@ -1381,7 +1263,6 @@ export default function AddAccountModalScreen() {
               ))}
             </>
           ) : null}
-          <Text style={styles.metadataHint}>{providerFreshnessNote}</Text>
         </View>
 
         {showRefreshAction ? (
@@ -1428,8 +1309,8 @@ export default function AddAccountModalScreen() {
           </View>
         ) : null}
 
-        <View style={styles.primaryActions}>
-          {showPrimaryConnectAction ? (
+        {showPrimaryConnectAction ? (
+          <View style={styles.primaryActions}>
             <PrimaryButton
               label={primaryActionLabel}
               onPress={() => {
@@ -1438,33 +1319,8 @@ export default function AddAccountModalScreen() {
               isLoading={startLinkMutation.isPending}
               style={styles.connectBankButton}
             />
-          ) : null}
-
-          <SecondaryButton
-            label={secondaryActionLabel}
-            onPress={() => {
-              logBankingEvent("modal_close", {
-                connectionId: pendingConnectionId,
-                uiState,
-                backendStatus: activeConnection?.status ?? null,
-                linkedAccountCount: linkedAccountNames.length,
-                completionReached,
-                returnTo: cancelReturnPath
-              });
-              if (cancelReturnPath) {
-                router.replace(cancelReturnPath as never);
-                return;
-              }
-
-              if (typeof router.canGoBack === "function" && router.canGoBack()) {
-                router.back();
-                return;
-              }
-
-              router.replace("/(tabs)" as never);
-            }}
-          />
-        </View>
+          </View>
+        ) : null}
       </View>
     </ScreenContainer>
   );
@@ -1482,11 +1338,12 @@ const styles = createRuntimeStyleSheet(() => ({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between"
+    justifyContent: "center"
   },
   title: {
     color: palette.textPrimary,
-    ...typography.title1
+    ...typography.title1,
+    textAlign: "center"
   },
   safeCloseCard: {
     borderWidth: 1,
@@ -1504,46 +1361,6 @@ const styles = createRuntimeStyleSheet(() => ({
   safeCloseCopy: {
     color: palette.textSecondary,
     ...typography.caption
-  },
-  timelineCard: {
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: surfaces.card,
-    borderRadius: 6,
-    padding: spacing[12],
-    gap: spacing[8]
-  },
-  timelineRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  timelineDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5
-  },
-  timelineDotComplete: {
-    backgroundColor: palette.success
-  },
-  timelineDotInProgress: {
-    backgroundColor: palette.caution
-  },
-  timelineDotPending: {
-    backgroundColor: palette.textMuted
-  },
-  timelineDotDelayed: {
-    backgroundColor: "#F28C28"
-  },
-  timelineDotWarning: {
-    backgroundColor: palette.negative
-  },
-  timelineLabel: {
-    color: palette.textPrimary,
-    ...typography.body2
-  },
-  timelineLabelPending: {
-    color: palette.textSecondary
   },
   metadataCard: {
     borderWidth: 1,
@@ -1566,10 +1383,6 @@ const styles = createRuntimeStyleSheet(() => ({
     color: palette.textSecondary,
     ...typography.body2,
     marginLeft: spacing[8]
-  },
-  metadataHint: {
-    color: palette.textSecondary,
-    ...typography.caption
   },
   resumeCard: {
     borderWidth: 1,

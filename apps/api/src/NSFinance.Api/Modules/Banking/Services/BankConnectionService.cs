@@ -16,7 +16,7 @@ public sealed class BankConnectionService(
     AppDbContext dbContext,
     IAuditService auditService,
     IBankDisconnectQueue disconnectQueue,
-    IBankDeterministicEnrichmentQueue? enrichmentQueue,
+    DeterministicReclassificationTriggerService reclassificationTriggerService,
     IServiceScopeFactory? scopeFactory,
     ILogger<BankConnectionService> logger)
 {
@@ -1708,22 +1708,6 @@ public sealed class BankConnectionService(
                     staleDeterministicFamiliesCleared += InvalidateDeterministicRelationshipFamily(row);
                     staleRowsMarkedForReclassification += MarkForUniverseContractionReclassification(row, invalidationNow);
                 }
-
-                if (impactedSurvivingConnections.Length > 0)
-                {
-                    var impactedConnections = await dbContext.OpenBankingConnections
-                        .Where(x => impactedSurvivingConnections.Contains(x.Id) && x.UserId == userId)
-                        .ToListAsync(cancellationToken);
-
-                    foreach (var impactedConnection in impactedConnections)
-                    {
-                        impactedConnection.NeedsHistoricalReclassification = true;
-                        impactedConnection.HistoricalEnrichmentStartedUtc = null;
-                        impactedConnection.HistoricalEnrichmentCompletedUtc = null;
-                        impactedConnection.HistoricalEnrichmentCheckpointUtc = null;
-                        impactedConnection.UpdatedUtc = invalidationNow;
-                    }
-                }
             }
 
             var staleRelationshipRowsDeleted = await ExecuteDeleteWithProviderFallbackAsync(
@@ -1762,27 +1746,19 @@ public sealed class BankConnectionService(
                 await transaction.CommitAsync(cancellationToken);
             }
 
-            if (staleRowsMarkedForReclassification > 0 && enrichmentQueue is not null)
+            if (staleRowsMarkedForReclassification > 0 && impactedSurvivingConnections.Length > 0)
             {
-                foreach (var impactedConnectionId in impactedSurvivingConnections)
-                {
-                    try
-                    {
-                        await enrichmentQueue.QueueConnectionAsync(
-                            userId,
-                            impactedConnectionId,
-                            "disconnect_universe_contraction",
-                            CancellationToken.None);
-                    }
-                    catch (Exception queueException)
-                    {
-                        logger.LogWarning(
-                            queueException,
-                            "Failed to queue deterministic reclassification after disconnect universe contraction connectionId={ConnectionId} impactedConnectionId={ImpactedConnectionId}",
-                            connectionId,
-                            impactedConnectionId);
-                    }
-                }
+                await reclassificationTriggerService.TriggerAsync(
+                    new DeterministicReclassificationTriggerRequest(
+                        UserId: userId,
+                        Source: "disconnect_cleanup",
+                        ReasonCode: DeterministicReclassificationTriggerReasons.DisconnectUniverseContraction,
+                        SourceConnectionId: connectionId,
+                        ConnectionIds: impactedSurvivingConnections,
+                        TransactionIds: staleLinkedSurvivorRows.Select(x => x.Id).ToArray(),
+                        MarkConnectionsForHistoricalReplay: true,
+                        QueueConnections: true),
+                    cancellationToken);
             }
 
             logger.LogInformation(
