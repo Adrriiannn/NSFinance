@@ -326,6 +326,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<TrueLayerHttpClient>();
         services.AddScoped<ISecretProtector, DataProtectionSecretProtector>();
         services.AddScoped<TrueLayerConfigurationService>();
+        services.AddScoped<BankConnectionAttemptService>();
         services.AddScoped<TrueLayerAuthService>();
         services.AddScoped<TrueLayerTokenService>();
         services.AddScoped<TrueLayerDataService>();

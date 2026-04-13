@@ -12,6 +12,8 @@ public static class BankingModule
 
         protectedGroup.MapPost("/truelayer/link", StartTrueLayerLinkEndpoint.HandleAsync)
             .WithName("StartTrueLayerLink");
+        protectedGroup.MapPost("/attempts/{attemptId:guid}/app-return-confirmed", ConfirmBankConnectionAttemptReturnEndpoint.HandleAsync)
+            .WithName("ConfirmBankConnectionAttemptReturn");
 
         protectedGroup.MapGet("/connections", GetBankConnectionsEndpoint.HandleAsync)
             .WithName("GetBankConnections");
@@ -57,6 +59,9 @@ public static class BankingModule
 
         app.MapGet("/api/banking/truelayer/callback", TrueLayerCallbackEndpoint.HandleAsync)
             .WithName("TrueLayerCallback")
+            .RequireRateLimiting("provider-callback");
+        app.MapGet("/api/banking/truelayer/attempts/{attemptId:guid}/status", GetTrueLayerConnectionAttemptStatusEndpoint.HandleAsync)
+            .WithName("GetTrueLayerConnectionAttemptStatus")
             .RequireRateLimiting("provider-callback");
 
         return app;

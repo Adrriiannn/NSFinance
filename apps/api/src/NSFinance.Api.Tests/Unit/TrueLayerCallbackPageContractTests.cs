@@ -5,14 +5,15 @@ namespace NSFinance.Api.Tests.Unit;
 public class TrueLayerCallbackPageContractTests
 {
     [Fact]
-    public void CallbackPage_ContainsStaleTabAndAutoCloseSafetyHandling()
+    public void CallbackPage_UsesServerBackedAttemptStatusAndAutoCloseHandling()
     {
         var source = ReadCallbackEndpointSource();
-        Assert.Contains("sessionStorage", source, StringComparison.Ordinal);
-        Assert.Contains("already handled", source, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/api/banking/truelayer/attempts/", source, StringComparison.Ordinal);
+        Assert.Contains("pollEndpoint", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("sessionStorage", source, StringComparison.Ordinal);
         Assert.Contains("window.close()", source, StringComparison.Ordinal);
         Assert.Contains("You can close this tab now", source, StringComparison.Ordinal);
-        Assert.Contains("Reopening NSFinance now", source, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Returning to NSFinance", source, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ReadCallbackEndpointSource()

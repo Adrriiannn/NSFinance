@@ -2,6 +2,7 @@ import { apiRequest } from "../../lib/api/client";
 import type {
   BankRecurringPaymentsDto,
   BankConnectionDto,
+  BankConnectionAttemptStatusDto,
   ConnectedBanksOverviewDto,
   BankEnrichmentProgressDto,
   GlobalBankSyncRequest,
@@ -50,6 +51,15 @@ export function startTrueLayerLink(payload: StartTrueLayerLinkRequest): Promise<
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function confirmBankConnectionAttemptReturn(
+  attemptId: string
+): Promise<BankConnectionAttemptStatusDto> {
+  return apiRequest<BankConnectionAttemptStatusDto>(
+    `/api/banking/attempts/${attemptId}/app-return-confirmed`,
+    { method: "POST" }
+  );
 }
 
 export function syncBankConnection(connectionId: string): Promise<SyncConnectionResponse> {

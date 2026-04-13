@@ -10,4 +10,7 @@ public sealed record TrueLayerCallbackOutcome(
     bool SafeToClose = true,
     bool ShouldAutoReturn = false,
     string? CallbackLifecycleStage = null,
-    string? CallbackLifecycleReason = null);
+    string? CallbackLifecycleReason = null,
+    Guid? AttemptId = null,
+    string? AttemptStatus = null,
+    string? AttemptPublicToken = null);

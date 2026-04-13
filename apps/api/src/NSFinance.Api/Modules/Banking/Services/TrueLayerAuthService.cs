@@ -12,6 +12,7 @@ namespace NSFinance.Api.Modules.Banking.Services;
 public sealed class TrueLayerAuthService(
     TrueLayerConfigurationService configurationService,
     BankConnectionService bankConnectionService,
+    BankConnectionAttemptService attemptService,
     TrueLayerTokenService tokenService,
     BankSyncService bankSyncService,
     DeterministicReclassificationTriggerService reclassificationTriggerService,
@@ -74,6 +75,25 @@ public sealed class TrueLayerAuthService(
                 cancellationToken);
         }
 
+        if (string.IsNullOrWhiteSpace(connection.AuthStateNonce))
+        {
+            return ServiceResult<StartTrueLayerLinkResponse>.Fail(
+                "Unable to initialize callback state for this connection attempt.",
+                "bank_connection_attempt_state_unavailable",
+                StatusCodes.Status500InternalServerError);
+        }
+
+        var attempt = await attemptService.CreateAttemptAsync(
+            userId,
+            connection.Id,
+            connection.ProviderName,
+            connection.ProviderEnvironment,
+            connection.AuthStateNonce,
+            normalizedAppReturnUri,
+            connection.AuthStateExpiresUtc,
+            reconnectConnectionId.HasValue,
+            cancellationToken);
+
         var scopes = BuildScopes();
         var providers = BuildProviders(configuration.Environment);
         var countryId = BuildCountryId(configuration.Environment);
@@ -102,6 +122,7 @@ public sealed class TrueLayerAuthService(
         return ServiceResult<StartTrueLayerLinkResponse>.Ok(
             new StartTrueLayerLinkResponse(
                 connection.Id,
+                attempt.Id,
                 BankingProviders.TrueLayer,
                 configuration.Environment,
                 authLink,
@@ -129,29 +150,197 @@ public sealed class TrueLayerAuthService(
                 CallbackLifecycleReason: "callback_query_invalid");
         }
 
-        var appReturnUri = ExtractAppReturnUri(query.State);
-        var connection = await bankConnectionService.FindConnectionByStateAsync(query.State!, cancellationToken);
-        if (connection is null)
+        var attempt = await attemptService.FindByCallbackStateAsync(query.State, cancellationToken);
+        if (attempt is null)
         {
             logger.LogWarning("TrueLayer callback rejected because state was invalid or expired.");
             return new TrueLayerCallbackOutcome(
                 false,
                 "callback_state_invalid",
-                "This callback has already been handled or expired. Return to NSFinance to continue.",
+                "This callback cannot be matched to a valid connection attempt.",
                 StatusCodes.Status400BadRequest,
                 null,
-                appReturnUri,
+                ExtractAppReturnUri(query.State),
                 SafeToClose: true,
                 ShouldAutoReturn: false,
                 CallbackLifecycleStage: BankConnectionLifecycleStages.CompletedWithWarnings,
                 CallbackLifecycleReason: "callback_state_invalid_or_already_consumed");
         }
 
+        return await attemptService.WithAttemptLockAsync(
+            attempt.Id,
+            async () =>
+            {
+                var refreshedAttempt = await attemptService.FindByCallbackStateAsync(query.State, cancellationToken);
+                if (refreshedAttempt is null)
+                {
+                    return new TrueLayerCallbackOutcome(
+                        false,
+                        "callback_state_invalid",
+                        "This callback cannot be matched to a valid connection attempt.",
+                        StatusCodes.Status400BadRequest,
+                        null,
+                        ExtractAppReturnUri(query.State),
+                        SafeToClose: true,
+                        ShouldAutoReturn: false,
+                        CallbackLifecycleStage: BankConnectionLifecycleStages.CompletedWithWarnings,
+                        CallbackLifecycleReason: "callback_state_invalid_or_already_consumed");
+                }
+
+                attempt = refreshedAttempt;
+                var appReturnUri = attempt.AppReturnUri ?? ExtractAppReturnUri(query.State);
+        if (attempt.Status == BankConnectionAttemptStatuses.Superseded)
+        {
+            return new TrueLayerCallbackOutcome(
+                true,
+                "callback_attempt_superseded",
+                "This connection attempt was replaced by a newer one.",
+                StatusCodes.Status200OK,
+                attempt.ConnectionId,
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.CompletedWithWarnings,
+                CallbackLifecycleReason: "attempt_superseded",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
+        }
+
+        if (attempt.Status == BankConnectionAttemptStatuses.Expired)
+        {
+            return new TrueLayerCallbackOutcome(
+                false,
+                "callback_attempt_expired",
+                "This connection attempt expired. Open NSFinance to start a new one.",
+                StatusCodes.Status410Gone,
+                attempt.ConnectionId,
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.CompletedWithWarnings,
+                CallbackLifecycleReason: "attempt_expired",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
+        }
+
+        if (attempt.Status == BankConnectionAttemptStatuses.Completed)
+        {
+            return new TrueLayerCallbackOutcome(
+                true,
+                "callback_attempt_completed",
+                "This connection is already complete.",
+                StatusCodes.Status200OK,
+                attempt.ConnectionId,
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Completed,
+                CallbackLifecycleReason: "attempt_already_completed",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
+        }
+
+        if (attempt.Status == BankConnectionAttemptStatuses.Failed)
+        {
+            return new TrueLayerCallbackOutcome(
+                false,
+                "callback_attempt_failed",
+                "This connection attempt needs attention in NSFinance.",
+                StatusCodes.Status200OK,
+                attempt.ConnectionId,
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: attempt.FailureCode ?? "attempt_failed",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
+        }
+
+        if (attempt.Status is BankConnectionAttemptStatuses.CallbackReceived
+            or BankConnectionAttemptStatuses.AppReturnInitiated
+            or BankConnectionAttemptStatuses.AppReturnConfirmed
+            or BankConnectionAttemptStatuses.ConnectionCreated
+            or BankConnectionAttemptStatuses.Processing)
+        {
+            var safeToClose = attempt.Status is not (BankConnectionAttemptStatuses.CallbackReceived or BankConnectionAttemptStatuses.AppReturnInitiated);
+            return new TrueLayerCallbackOutcome(
+                true,
+                "callback_already_handled",
+                safeToClose
+                    ? "This callback is already being handled in NSFinance."
+                    : "Returning to NSFinance. Your connection is already being handled.",
+                StatusCodes.Status200OK,
+                attempt.ConnectionId,
+                appReturnUri,
+                SafeToClose: safeToClose,
+                ShouldAutoReturn: !safeToClose,
+                CallbackLifecycleStage: safeToClose
+                    ? BankConnectionLifecycleStages.ReturnedToApp
+                    : BankConnectionLifecycleStages.DeepLinkReturnInitiated,
+                CallbackLifecycleReason: "callback_already_handled",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
+        }
+
+        if (!BankConnectionAttemptService.IsAwaitingCallbackStatus(attempt.Status))
+        {
+            return new TrueLayerCallbackOutcome(
+                true,
+                "callback_already_handled",
+                "This callback is already being handled in NSFinance.",
+                StatusCodes.Status200OK,
+                attempt.ConnectionId,
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.ReturnedToApp,
+                CallbackLifecycleReason: "callback_already_handled",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
+        }
+
+        var connection = await bankConnectionService.FindConnectionForUserAsync(
+            attempt.UserId,
+            attempt.ConnectionId,
+            cancellationToken);
+        if (connection is null)
+        {
+            await attemptService.MarkFailedAsync(
+                attempt,
+                "attempt_connection_missing",
+                "The bank connection referenced by this attempt no longer exists.",
+                cancellationToken);
+            return new TrueLayerCallbackOutcome(
+                false,
+                "attempt_connection_missing",
+                "This connection attempt can no longer continue. Open NSFinance to start again.",
+                StatusCodes.Status404NotFound,
+                attempt.ConnectionId,
+                appReturnUri,
+                SafeToClose: true,
+                ShouldAutoReturn: false,
+                CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
+                CallbackLifecycleReason: "attempt_connection_missing",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
+        }
+
         logger.LogInformation(
-            "TrueLayer callback received for connectionId={ConnectionId} hasCode={HasCode} hasError={HasError}",
+            "TrueLayer callback received for connectionId={ConnectionId} attemptId={AttemptId} hasCode={HasCode} hasError={HasError}",
             connection.Id,
+            attempt.Id,
             !string.IsNullOrWhiteSpace(query.Code),
             !string.IsNullOrWhiteSpace(query.Error));
+
+        await attemptService.MarkCallbackReceivedAsync(attempt, cancellationToken);
 
         await auditService.WriteEventAsync(
             category: "banking",
@@ -162,6 +351,7 @@ public sealed class TrueLayerAuthService(
             actorType: "user",
             metadata: new
             {
+                attemptId = attempt.Id,
                 hasCode = !string.IsNullOrWhiteSpace(query.Code),
                 hasError = !string.IsNullOrWhiteSpace(query.Error)
             },
@@ -171,8 +361,9 @@ public sealed class TrueLayerAuthService(
         connection.AuthStateExpiresUtc = null;
 
         logger.LogInformation(
-            "TrueLayer callback state consumed for connectionId={ConnectionId}",
-            connection.Id);
+            "TrueLayer callback state consumed for connectionId={ConnectionId} attemptId={AttemptId}",
+            connection.Id,
+            attempt.Id);
 
         if (!string.IsNullOrWhiteSpace(query.Error))
         {
@@ -182,6 +373,11 @@ public sealed class TrueLayerAuthService(
                 query.Error,
                 query.ErrorDescription,
                 cancellationToken);
+            await attemptService.MarkFailedAsync(
+                attempt,
+                query.Error,
+                query.ErrorDescription ?? "Bank consent was not completed.",
+                cancellationToken);
 
             await auditService.WriteEventAsync(
                 category: "banking",
@@ -190,7 +386,11 @@ public sealed class TrueLayerAuthService(
                 targetEntityId: connection.Id.ToString(),
                 actorId: connection.UserId,
                 actorType: "user",
-                metadata: new { error = query.Error },
+                metadata: new
+                {
+                    attemptId = attempt.Id,
+                    error = query.Error
+                },
                 cancellationToken);
 
             return new TrueLayerCallbackOutcome(
@@ -203,7 +403,10 @@ public sealed class TrueLayerAuthService(
                 SafeToClose: true,
                 ShouldAutoReturn: false,
                 CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
-                CallbackLifecycleReason: "provider_declined_or_cancelled");
+                CallbackLifecycleReason: "provider_declined_or_cancelled",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
         }
 
         var configResult = configurationService.Resolve();
@@ -213,6 +416,11 @@ public sealed class TrueLayerAuthService(
                 connection,
                 BankConnectionStatuses.Failed,
                 configResult.Error!.Code,
+                configResult.Error.Message,
+                cancellationToken);
+            await attemptService.MarkFailedAsync(
+                attempt,
+                configResult.Error.Code,
                 configResult.Error.Message,
                 cancellationToken);
 
@@ -226,7 +434,10 @@ public sealed class TrueLayerAuthService(
                 SafeToClose: true,
                 ShouldAutoReturn: false,
                 CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
-                CallbackLifecycleReason: "provider_configuration_unavailable");
+                CallbackLifecycleReason: "provider_configuration_unavailable",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
         }
 
         if (!string.Equals(connection.ProviderEnvironment, configResult.Value!.Environment, StringComparison.OrdinalIgnoreCase))
@@ -234,6 +445,11 @@ public sealed class TrueLayerAuthService(
             await bankConnectionService.MarkConnectionStateAsync(
                 connection,
                 BankConnectionStatuses.Failed,
+                "truelayer_environment_mismatch",
+                "Connection environment does not match server configuration.",
+                cancellationToken);
+            await attemptService.MarkFailedAsync(
+                attempt,
                 "truelayer_environment_mismatch",
                 "Connection environment does not match server configuration.",
                 cancellationToken);
@@ -248,7 +464,10 @@ public sealed class TrueLayerAuthService(
                 SafeToClose: true,
                 ShouldAutoReturn: false,
                 CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
-                CallbackLifecycleReason: "environment_mismatch");
+                CallbackLifecycleReason: "environment_mismatch",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
         }
 
         await bankConnectionService.MarkConnectionStateAsync(
@@ -274,6 +493,11 @@ public sealed class TrueLayerAuthService(
                 tokenResult.Error?.Code,
                 tokenResult.Error?.Message,
                 cancellationToken);
+            await attemptService.MarkFailedAsync(
+                attempt,
+                tokenResult.Error?.Code,
+                tokenResult.Error?.Message ?? "Authorization code could not be exchanged.",
+                cancellationToken);
 
             await auditService.WriteEventAsync(
                 category: "banking",
@@ -284,14 +508,16 @@ public sealed class TrueLayerAuthService(
                 actorType: "user",
                 metadata: new
                 {
+                    attemptId = attempt.Id,
                     code = tokenResult.Error?.Code,
                     status = nextStatus
                 },
                 cancellationToken);
 
             logger.LogWarning(
-                "TrueLayer callback token exchange failed connectionId={ConnectionId} code={Code}",
+                "TrueLayer callback token exchange failed connectionId={ConnectionId} attemptId={AttemptId} code={Code}",
                 connection.Id,
+                attempt.Id,
                 tokenResult.Error?.Code);
 
             return new TrueLayerCallbackOutcome(
@@ -304,12 +530,16 @@ public sealed class TrueLayerAuthService(
                 SafeToClose: true,
                 ShouldAutoReturn: false,
                 CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
-                CallbackLifecycleReason: "token_exchange_failed");
+                CallbackLifecycleReason: "token_exchange_failed",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
         }
 
         logger.LogInformation(
-            "TrueLayer token exchange succeeded for connectionId={ConnectionId}",
-            connection.Id);
+            "TrueLayer token exchange succeeded for connectionId={ConnectionId} attemptId={AttemptId}",
+            connection.Id,
+            attempt.Id);
 
         var persistResult = await bankSyncService.PersistTokenAsync(
             connection,
@@ -318,9 +548,15 @@ public sealed class TrueLayerAuthService(
         if (!persistResult.Succeeded)
         {
             logger.LogError(
-                "TrueLayer token persistence failed for connectionId={ConnectionId} code={Code}",
+                "TrueLayer token persistence failed for connectionId={ConnectionId} attemptId={AttemptId} code={Code}",
                 connection.Id,
+                attempt.Id,
                 persistResult.Error?.Code);
+            await attemptService.MarkFailedAsync(
+                attempt,
+                persistResult.Error?.Code,
+                persistResult.Error?.Message ?? "Secure token storage failed.",
+                cancellationToken);
 
             return new TrueLayerCallbackOutcome(
                 false,
@@ -332,7 +568,10 @@ public sealed class TrueLayerAuthService(
                 SafeToClose: true,
                 ShouldAutoReturn: false,
                 CallbackLifecycleStage: BankConnectionLifecycleStages.Failed,
-                CallbackLifecycleReason: "token_persistence_failed");
+                CallbackLifecycleReason: "token_persistence_failed",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
         }
 
         await bankConnectionService.MarkConnectionStateAsync(
@@ -343,9 +582,10 @@ public sealed class TrueLayerAuthService(
             cancellationToken);
 
         logger.LogInformation(
-            "Bank connection marked as {Status} for connectionId={ConnectionId}",
+            "Bank connection marked as {Status} for connectionId={ConnectionId} attemptId={AttemptId}",
             BankConnectionStatuses.ConnectedPendingSync,
-            connection.Id);
+            connection.Id,
+            attempt.Id);
 
         try
         {
@@ -365,8 +605,9 @@ public sealed class TrueLayerAuthService(
         {
             logger.LogWarning(
                 triggerException,
-                "Reconnect/relink deterministic trigger failed connectionId={ConnectionId}",
-                connection.Id);
+                "Reconnect/relink deterministic trigger failed connectionId={ConnectionId} attemptId={AttemptId}",
+                connection.Id,
+                attempt.Id);
         }
 
         await auditService.WriteEventAsync(
@@ -376,15 +617,20 @@ public sealed class TrueLayerAuthService(
             targetEntityId: connection.Id.ToString(),
             actorId: connection.UserId,
             actorType: "user",
-            metadata: new { provider = connection.ProviderName },
+            metadata: new
+            {
+                attemptId = attempt.Id,
+                provider = connection.ProviderName
+            },
             cancellationToken);
 
         try
         {
             await trueLayerSyncQueue.QueueInitialSyncAsync(connection.UserId, connection.Id, cancellationToken);
             logger.LogInformation(
-                "TrueLayer callback queued initial sync for connectionId={ConnectionId}",
-                connection.Id);
+                "TrueLayer callback queued initial sync for connectionId={ConnectionId} attemptId={AttemptId}",
+                connection.Id,
+                attempt.Id);
 
             await auditService.WriteEventAsync(
                 category: "banking",
@@ -393,21 +639,33 @@ public sealed class TrueLayerAuthService(
                 targetEntityId: connection.Id.ToString(),
                 actorId: connection.UserId,
                 actorType: "user",
-                metadata: new { connectionId = connection.Id },
+                metadata: new
+                {
+                    attemptId = attempt.Id,
+                    connectionId = connection.Id
+                },
                 cancellationToken);
+
+            await attemptService.MarkAppReturnInitiatedAsync(attempt, cancellationToken);
         }
         catch (Exception exception)
         {
             logger.LogError(
                 exception,
-                "TrueLayer callback could not queue initial sync for connectionId={ConnectionId}",
-                connection.Id);
+                "TrueLayer callback could not queue initial sync for connectionId={ConnectionId} attemptId={AttemptId}",
+                connection.Id,
+                attempt.Id);
 
             await bankConnectionService.MarkConnectionStateAsync(
                 connection,
                 BankConnectionStatuses.Failed,
                 "initial_sync_queue_unavailable",
                 "Bank linked, but automatic sync could not be queued. Open the app and run sync manually.",
+                cancellationToken);
+            await attemptService.MarkFailedAsync(
+                attempt,
+                "initial_sync_queue_unavailable",
+                "Initial sync could not be queued automatically.",
                 cancellationToken);
 
             await auditService.WriteEventAsync(
@@ -419,6 +677,7 @@ public sealed class TrueLayerAuthService(
                 actorType: "user",
                 metadata: new
                 {
+                    attemptId = attempt.Id,
                     connectionId = connection.Id,
                     status = BankConnectionStatuses.Failed
                 },
@@ -432,22 +691,29 @@ public sealed class TrueLayerAuthService(
                 connection.Id,
                 appReturnUri,
                 SafeToClose: true,
-                ShouldAutoReturn: true,
+                ShouldAutoReturn: false,
                 CallbackLifecycleStage: BankConnectionLifecycleStages.CompletedWithWarnings,
-                CallbackLifecycleReason: "initial_sync_queue_unavailable");
+                CallbackLifecycleReason: "initial_sync_queue_unavailable",
+                AttemptId: attempt.Id,
+                AttemptStatus: attempt.Status,
+                AttemptPublicToken: attempt.PublicToken);
         }
 
-        return new TrueLayerCallbackOutcome(
-            true,
-            BankConnectionStatuses.ConnectedPendingSync,
-            "Bank linked successfully. Return to the app while we start the first sync.",
-            StatusCodes.Status200OK,
-            connection.Id,
-            appReturnUri,
-            SafeToClose: true,
-            ShouldAutoReturn: true,
-            CallbackLifecycleStage: BankConnectionLifecycleStages.ReturnedToApp,
-            CallbackLifecycleReason: "authorization_completed");
+                return new TrueLayerCallbackOutcome(
+                    true,
+                    BankConnectionStatuses.ConnectedPendingSync,
+                    "Your bank is connected. We are finishing setup in NSFinance.",
+                    StatusCodes.Status200OK,
+                    connection.Id,
+                    appReturnUri,
+                    SafeToClose: false,
+                    ShouldAutoReturn: true,
+                    CallbackLifecycleStage: BankConnectionLifecycleStages.DeepLinkReturnInitiated,
+                    CallbackLifecycleReason: "authorization_completed",
+                    AttemptId: attempt.Id,
+                    AttemptStatus: attempt.Status,
+                    AttemptPublicToken: attempt.PublicToken);
+            });
     }
 
     private static string BuildCallbackState(string nonce, string appReturnUri)

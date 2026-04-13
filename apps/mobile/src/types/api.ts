@@ -763,11 +763,30 @@ export type BankRecurringPaymentsDto = {
 
 export type StartTrueLayerLinkResponse = {
   connectionId: string;
+  attemptId: string;
   provider: string;
   environment: string;
   authorizationUrl: string;
   scopes: string[];
   expiresAtUtc: string;
+};
+
+export type BankConnectionAttemptStatusDto = {
+  attemptId: string;
+  connectionId: string;
+  status: string;
+  safeToClose: boolean;
+  shouldAutoClose: boolean;
+  shouldAutoReturn: boolean;
+  manualActionRequired: boolean;
+  headline: string;
+  message: string;
+  updatedUtc: string;
+  expiresUtc: string;
+  callbackHandledUtc: string | null;
+  appReturnInitiatedUtc: string | null;
+  appReturnConfirmedUtc: string | null;
+  completedUtc: string | null;
 };
 
 export type SyncConnectionResponse = {

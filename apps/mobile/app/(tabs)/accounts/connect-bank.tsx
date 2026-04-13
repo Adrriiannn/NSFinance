@@ -14,6 +14,7 @@ import {
   useBankEnrichmentProgressQuery,
   useBankConnectionQuery,
   useBankConnectionsQuery,
+  useConfirmBankConnectionAttemptReturnMutation,
   useLinkedBankAccountsQuery,
   useLinkedBankCardsQuery,
   useStartTrueLayerLinkMutation
@@ -419,6 +420,7 @@ export default function AddAccountModalScreen() {
   const params = useLocalSearchParams<{
     bankingResult?: string;
     connectionId?: string;
+    attemptId?: string;
     intent?: string;
     returnTo?: string;
   }>();
@@ -436,6 +438,11 @@ export default function AddAccountModalScreen() {
   const [browserPhase, setBrowserPhase] = useState<BrowserPhase>("idle");
   const [pendingConsentLink, setPendingConsentLink] = useState<PendingConsentLink | null>(null);
   const [pendingConnectionId, setPendingConnectionId] = useState<string | null>(null);
+  const [pendingAttemptId, setPendingAttemptId] = useState<string | null>(
+    typeof params.attemptId === "string" && params.attemptId.trim().length > 0
+      ? params.attemptId.trim()
+      : null
+  );
   const [consentStartedAtMs, setConsentStartedAtMs] = useState<number | null>(null);
   const [returnStartedAtMs, setReturnStartedAtMs] = useState<number | null>(null);
   const [consentTimedOut, setConsentTimedOut] = useState(false);
@@ -449,6 +456,7 @@ export default function AddAccountModalScreen() {
   const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
   const linkedBankCardsQuery = useLinkedBankCardsQuery();
   const startLinkMutation = useStartTrueLayerLinkMutation();
+  const confirmAttemptReturnMutation = useConfirmBankConnectionAttemptReturnMutation();
 
   const successPlayedRef = useRef(false);
   const lastPolledStatusRef = useRef<string | null>(null);
@@ -459,6 +467,7 @@ export default function AddAccountModalScreen() {
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const lastRefreshStartedAtRef = useRef(0);
   const processedDeepLinkRef = useRef<string | null>(null);
+  const confirmedAttemptIdsRef = useRef<Set<string>>(new Set());
   const successAutoReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const logBankingEvent = useCallback((event: string, metadata?: Record<string, unknown>) => {
@@ -499,6 +508,7 @@ export default function AddAccountModalScreen() {
       logBankingEvent("auto_return", {
         reason,
         connectionId: pendingConnectionId,
+        attemptId: pendingAttemptId,
         returnTo: cancelReturnPath
       });
 
@@ -514,7 +524,7 @@ export default function AddAccountModalScreen() {
 
       router.replace("/(tabs)/accounts" as never);
     },
-    [cancelReturnPath, logBankingEvent, pendingConnectionId, router]
+    [cancelReturnPath, logBankingEvent, pendingAttemptId, pendingConnectionId, router]
   );
 
   const latestConnection = useMemo(() => {
@@ -730,24 +740,31 @@ export default function AddAccountModalScreen() {
       setBrowserPhase("idle");
       logBankingEvent(reason, {
         connectionId: connectionId ?? pendingConnectionId,
+        attemptId: pendingAttemptId,
         uiState
       });
     },
-    [logBankingEvent, pendingConnectionId, uiState]
+    [logBankingEvent, pendingAttemptId, pendingConnectionId, uiState]
   );
 
   const launchConsentInBrowser = useCallback(
     async (url: string, connectionId?: string | null) => {
-      logBankingEvent("browser_open_start", { connectionId: connectionId ?? pendingConnectionId });
+      logBankingEvent("browser_open_start", {
+        connectionId: connectionId ?? pendingConnectionId,
+        attemptId: pendingAttemptId
+      });
       const canOpen = await NativeLinking.canOpenURL(url);
       if (!canOpen) {
         throw new Error("Could not open the bank consent page.");
       }
 
       await NativeLinking.openURL(url);
-      logBankingEvent("browser_open_complete", { connectionId: connectionId ?? pendingConnectionId });
+      logBankingEvent("browser_open_complete", {
+        connectionId: connectionId ?? pendingConnectionId,
+        attemptId: pendingAttemptId
+      });
     },
-    [logBankingEvent, pendingConnectionId]
+    [logBankingEvent, pendingAttemptId, pendingConnectionId]
   );
 
   const beginConsentSession = useCallback(
@@ -757,6 +774,7 @@ export default function AddAccountModalScreen() {
       setAwaitingConsentReturn(true);
       setBrowserPhase("opening_bank");
       setPendingConnectionId(response.connectionId);
+      setPendingAttemptId(response.attemptId);
       setPendingConsentLink({
         authorizationUrl: response.authorizationUrl,
         expiresAtUtc: response.expiresAtUtc
@@ -766,12 +784,16 @@ export default function AddAccountModalScreen() {
       processedDeepLinkRef.current = null;
       logBankingEvent("connect_start", {
         connectionId: response.connectionId,
+        attemptId: response.attemptId,
         expiresAtUtc: response.expiresAtUtc,
         appReturnUri: buildBankConnectReturnUri(cancelReturnPath)
       });
       await launchConsentInBrowser(response.authorizationUrl, response.connectionId);
       setBrowserPhase("awaiting_consent");
-      logBankingEvent("awaiting_consent", { connectionId: response.connectionId });
+      logBankingEvent("awaiting_consent", {
+        connectionId: response.connectionId,
+        attemptId: response.attemptId
+      });
     },
     [cancelReturnPath, launchConsentInBrowser, logBankingEvent]
   );
@@ -795,7 +817,10 @@ export default function AddAccountModalScreen() {
     if (pendingConsentLink && isLinkStillValid(pendingConsentLink, Date.now())) {
       setAwaitingConsentReturn(true);
       setBrowserPhase("opening_bank");
-      logBankingEvent("resume_browser_flow", { connectionId: pendingConnectionId });
+      logBankingEvent("resume_browser_flow", {
+        connectionId: pendingConnectionId,
+        attemptId: pendingAttemptId
+      });
       await launchConsentInBrowser(pendingConsentLink.authorizationUrl, pendingConnectionId);
       setBrowserPhase("awaiting_consent");
       return;
@@ -905,7 +930,10 @@ export default function AddAccountModalScreen() {
       return;
     }
 
-    const deepLinkSnapshot = `${params.bankingResult}:${typeof params.connectionId === "string" ? params.connectionId : ""}`;
+    const deepLinkSnapshot =
+      `${params.bankingResult}:`
+      + `${typeof params.connectionId === "string" ? params.connectionId : ""}:`
+      + `${typeof params.attemptId === "string" ? params.attemptId : ""}`;
     if (processedDeepLinkRef.current === deepLinkSnapshot) {
       return;
     }
@@ -916,16 +944,41 @@ export default function AddAccountModalScreen() {
       typeof params.connectionId === "string" && params.connectionId.trim().length > 0
         ? params.connectionId.trim()
         : pendingConnectionId;
+    const returnedAttemptId =
+      typeof params.attemptId === "string" && params.attemptId.trim().length > 0
+        ? params.attemptId.trim()
+        : pendingAttemptId;
     const bankingResult = params.bankingResult.toLowerCase();
 
     if (returnedConnectionId) {
       setPendingConnectionId(returnedConnectionId);
     }
 
+    if (returnedAttemptId) {
+      setPendingAttemptId(returnedAttemptId);
+    }
+
     if (bankingResult === "success") {
       setAutoReturnArmed(true);
       setAwaitingConsentReturn(true);
       markReturnAttempt("deep_link_return_success", returnedConnectionId);
+      if (returnedAttemptId && !confirmedAttemptIdsRef.current.has(returnedAttemptId)) {
+        confirmedAttemptIdsRef.current.add(returnedAttemptId);
+        confirmAttemptReturnMutation
+          .mutateAsync(returnedAttemptId)
+          .then((status) => {
+            logBankingEvent("attempt_return_confirmed", {
+              attemptId: returnedAttemptId,
+              attemptStatus: status.status
+            });
+          })
+          .catch((confirmationError) => {
+            logBankingEvent("attempt_return_confirm_failed", {
+              attemptId: returnedAttemptId,
+              reason: formatUnknownError(confirmationError)
+            });
+          });
+      }
       void refreshBankingState("deep_link_return_success", { force: true });
       return;
     }
@@ -936,7 +989,17 @@ export default function AddAccountModalScreen() {
     setConsentTimedOut(false);
     markReturnAttempt("deep_link_return_error", returnedConnectionId);
     void refreshBankingState("deep_link_return_error", { force: true });
-  }, [markReturnAttempt, params.bankingResult, params.connectionId, pendingConnectionId, refreshBankingState]);
+  }, [
+    confirmAttemptReturnMutation,
+    logBankingEvent,
+    markReturnAttempt,
+    params.attemptId,
+    params.bankingResult,
+    params.connectionId,
+    pendingAttemptId,
+    pendingConnectionId,
+    refreshBankingState
+  ]);
 
   useEffect(() => {
     const status = activeConnection?.status ?? "missing";

@@ -52,6 +52,23 @@ public static class BankConnectionLifecycleStages
     public const string Disconnecting = "disconnecting";
 }
 
+public static class BankConnectionAttemptStatuses
+{
+    public const string Created = "created";
+    public const string AuthLaunched = "auth_launched";
+    public const string AwaitingCallback = "awaiting_callback";
+    public const string CallbackReceived = "callback_received";
+    public const string AppReturnInitiated = "app_return_initiated";
+    public const string AppReturnConfirmed = "app_return_confirmed";
+    public const string ConnectionCreated = "connection_created";
+    public const string Processing = "processing";
+    public const string Completed = "completed";
+    public const string Failed = "failed";
+    public const string Expired = "expired";
+    public const string Superseded = "superseded";
+    public const string Cancelled = "cancelled";
+}
+
 public static class BankConnectionCompletionSemantics
 {
     public const string InProgress = "in_progress";

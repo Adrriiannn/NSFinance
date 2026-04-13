@@ -106,6 +106,16 @@ public class MobileBankConnectionPhaseContractTests
         Assert.Contains("navigateBackToOrigin(\"connection_success\")", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ConnectBankScreen_ConfirmsSpecificAttemptAfterDeepLinkReturn()
+    {
+        var source = ReadConnectBankSource();
+        Assert.Contains("attemptId?: string;", source, StringComparison.Ordinal);
+        Assert.Contains("setPendingAttemptId(response.attemptId)", source, StringComparison.Ordinal);
+        Assert.Contains("confirmAttemptReturnMutation", source, StringComparison.Ordinal);
+        Assert.Contains("attempt_return_confirmed", source, StringComparison.Ordinal);
+    }
+
     private static string ReadConnectBankSource()
     {
         var repoRoot = ResolveRepoRoot();

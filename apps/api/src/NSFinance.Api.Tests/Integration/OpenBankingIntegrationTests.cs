@@ -5408,6 +5408,104 @@ public class OpenBankingIntegrationTests
         Assert.Equal(BankConnectionStatuses.ReauthRequired, connection.Status);
     }
 
+    [Fact]
+    public async Task StartLink_CreatesDurableConnectionAttempt_WithResponseAttemptId()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.attempt-created@test.local");
+        var start = await harness.AuthService.StartLinkAsync(
+            user.Id,
+            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts",
+            null,
+            CancellationToken.None);
+
+        Assert.True(start.Succeeded);
+        Assert.NotEqual(Guid.Empty, start.Value!.AttemptId);
+
+        var attempt = await harness.DbContext.BankConnectionAttempts
+            .SingleAsync(x => x.Id == start.Value.AttemptId);
+        Assert.Equal(user.Id, attempt.UserId);
+        Assert.Equal(start.Value.ConnectionId, attempt.ConnectionId);
+        Assert.Equal(BankConnectionAttemptStatuses.AwaitingCallback, attempt.Status);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_RepeatedCallback_IsIdempotentAndReturnsAlreadyHandledOutcome()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.callback-repeat@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var first = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-repeat", state, null, null),
+            CancellationToken.None);
+        var second = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-repeat", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+        Assert.Equal("callback_already_handled", second.Code);
+    }
+
+    [Fact]
+    public async Task StartLink_SupersedesOlderAttempt_ForSameLaunchContext()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.attempt-supersede@test.local");
+        const string launchUri = "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts";
+
+        var first = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
+        var second = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
+
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+
+        var firstAttempt = await harness.DbContext.BankConnectionAttempts
+            .SingleAsync(x => x.Id == first.Value!.AttemptId);
+        var secondAttempt = await harness.DbContext.BankConnectionAttempts
+            .SingleAsync(x => x.Id == second.Value!.AttemptId);
+
+        Assert.Equal(BankConnectionAttemptStatuses.Superseded, firstAttempt.Status);
+        Assert.Equal(secondAttempt.Id, firstAttempt.SupersededByAttemptId);
+        Assert.Equal(BankConnectionAttemptStatuses.AwaitingCallback, secondAttempt.Status);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_ForSupersededAttempt_ReturnsSupersededOutcome()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.callback-superseded@test.local");
+        const string launchUri = "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts";
+
+        var first = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
+        var second = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+
+        var firstState = GetQueryValue(first.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-old-state", firstState, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal("callback_attempt_superseded", outcome.Code);
+    }
+
 
     [Fact]
     public async Task CallbackFlow_PreservesCustomAppReturnUri_ForEnvironmentAwareReturn()
@@ -8989,10 +9087,14 @@ public class OpenBankingIntegrationTests
                 DbContext,
                 triggerQueue,
                 NullLogger<DeterministicReclassificationTriggerService>.Instance);
+            var attemptService = new BankConnectionAttemptService(
+                DbContext,
+                NullLogger<BankConnectionAttemptService>.Instance);
 
             return new TrueLayerAuthService(
                 configurationService,
                 CreateConnectionService(triggerQueue),
+                attemptService,
                 tokenService,
                 syncService,
                 reclassificationTriggerService,

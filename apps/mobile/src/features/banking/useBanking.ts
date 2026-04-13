@@ -8,6 +8,7 @@ import type {
   GlobalBankSyncResponse
 } from "../../types/api";
 import {
+  confirmBankConnectionAttemptReturn,
   disconnectBankConnection,
   getBankEnrichmentProgress,
   getBankConnection,
@@ -219,6 +220,12 @@ export function useSyncBankConnectionMutation() {
         connectionId
       });
     }
+  });
+}
+
+export function useConfirmBankConnectionAttemptReturnMutation() {
+  return useMutation({
+    mutationFn: (attemptId: string) => confirmBankConnectionAttemptReturn(attemptId)
   });
 }
 
