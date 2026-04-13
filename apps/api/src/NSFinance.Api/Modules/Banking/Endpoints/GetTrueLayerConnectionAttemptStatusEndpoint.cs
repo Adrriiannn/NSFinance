@@ -21,6 +21,17 @@ public static class GetTrueLayerConnectionAttemptStatusEndpoint
             return Results.NotFound(new { code = "attempt_not_found", message = "Connection attempt not found." });
         }
 
-        return Results.Ok(status);
+        return Results.Ok(new
+        {
+            status.AttemptId,
+            status.Status,
+            status.SafeToClose,
+            status.ShouldAutoClose,
+            status.ShouldAutoReturn,
+            status.ManualActionRequired,
+            status.Headline,
+            status.Message,
+            status.UpdatedUtc
+        });
     }
 }

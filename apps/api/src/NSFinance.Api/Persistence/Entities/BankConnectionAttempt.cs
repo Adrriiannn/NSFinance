@@ -24,6 +24,7 @@ public class BankConnectionAttempt
     public string? FailureCode { get; set; }
     public string? FailureReason { get; set; }
     public Guid? SupersededByAttemptId { get; set; }
+    public int TransitionVersion { get; set; }
 
     public User? User { get; set; }
     public OpenBankingConnection? Connection { get; set; }

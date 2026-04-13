@@ -5506,6 +5506,33 @@ public class OpenBankingIntegrationTests
         Assert.Equal("callback_attempt_superseded", outcome.Code);
     }
 
+    [Fact]
+    public async Task CallbackFlow_ForExpiredAttempt_ReturnsExpiredOutcomeWithoutReplayingSideEffects()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.callback-expired@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var attempt = await harness.DbContext.BankConnectionAttempts
+            .SingleAsync(x => x.Id == start.Value!.AttemptId);
+        attempt.ExpiresUtc = DateTime.UtcNow.AddMinutes(-5);
+        attempt.UpdatedUtc = DateTime.UtcNow.AddMinutes(-5);
+        await harness.DbContext.SaveChangesAsync();
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-expired-state", state, null, null),
+            CancellationToken.None);
+
+        Assert.False(outcome.Succeeded);
+        Assert.Equal("callback_attempt_expired", outcome.Code);
+        Assert.Equal(start.Value.AttemptId, outcome.AttemptId);
+    }
+
 
     [Fact]
     public async Task CallbackFlow_PreservesCustomAppReturnUri_ForEnvironmentAwareReturn()

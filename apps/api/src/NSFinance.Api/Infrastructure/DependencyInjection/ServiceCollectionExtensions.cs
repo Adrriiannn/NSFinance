@@ -121,6 +121,24 @@ public static class ServiceCollectionExtensions
                 options.ProviderRateLimitBackoffMinutes = 10;
             }
         });
+        services.Configure<BankConnectionAttemptOptions>(options =>
+        {
+            configuration.GetSection(BankConnectionAttemptOptions.SectionName).Bind(options);
+            if (options.SweepIntervalSeconds <= 0)
+            {
+                options.SweepIntervalSeconds = 60;
+            }
+
+            if (options.ExpiryBatchSize <= 0)
+            {
+                options.ExpiryBatchSize = 64;
+            }
+
+            if (options.StaleProcessingExpiryMinutes <= 0)
+            {
+                options.StaleProcessingExpiryMinutes = 120;
+            }
+        });
         services.Configure<MerchantOperationalResilienceOptions>(options =>
         {
             configuration.GetSection(MerchantOperationalResilienceOptions.SectionName).Bind(options);
@@ -350,6 +368,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DeterministicReclassificationTriggerService>();
         services.AddScoped<BankSyncService>();
         services.AddScoped<BankGlobalSyncService>();
+        services.AddSingleton<BankConnectionAttemptLifecycleBackgroundWorker>();
+        services.AddHostedService(sp => sp.GetRequiredService<BankConnectionAttemptLifecycleBackgroundWorker>());
         services.AddSingleton<BankDeterministicEnrichmentBackgroundWorker>();
         services.AddSingleton<IBankDeterministicEnrichmentQueue>(sp => sp.GetRequiredService<BankDeterministicEnrichmentBackgroundWorker>());
         services.AddHostedService(sp => sp.GetRequiredService<BankDeterministicEnrichmentBackgroundWorker>());

@@ -8,6 +8,17 @@ using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.Banking.Services;
 
+public sealed record BankConnectionAttemptSweepResult(int ExpiredCount, int SupersededCount);
+
+internal enum AttemptTransitionResult
+{
+    Applied,
+    AlreadyAtTarget,
+    BlockedTerminal,
+    Invalid,
+    Conflict
+}
+
 public sealed class BankConnectionAttemptService(
     AppDbContext dbContext,
     ILogger<BankConnectionAttemptService> logger)
@@ -33,7 +44,32 @@ public sealed class BankConnectionAttemptService(
         BankConnectionAttemptStatuses.Processing
     };
 
+    private static readonly HashSet<string> CallbackAwaitingStatuses = new(StringComparer.Ordinal)
+    {
+        BankConnectionAttemptStatuses.Created,
+        BankConnectionAttemptStatuses.AuthLaunched,
+        BankConnectionAttemptStatuses.AwaitingCallback
+    };
+
+    private static readonly HashSet<string> DefaultExpiryStatuses = new(StringComparer.Ordinal)
+    {
+        BankConnectionAttemptStatuses.Created,
+        BankConnectionAttemptStatuses.AuthLaunched,
+        BankConnectionAttemptStatuses.AwaitingCallback,
+        BankConnectionAttemptStatuses.CallbackReceived,
+        BankConnectionAttemptStatuses.AppReturnInitiated
+    };
+
+    private static readonly HashSet<string> StaleProcessingExpiryStatuses = new(StringComparer.Ordinal)
+    {
+        BankConnectionAttemptStatuses.AppReturnConfirmed,
+        BankConnectionAttemptStatuses.ConnectionCreated,
+        BankConnectionAttemptStatuses.Processing
+    };
+
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> AttemptLocks = new();
+
+    private static readonly Dictionary<string, HashSet<string>> AllowedTransitions = BuildAllowedTransitions();
 
     public async Task<BankConnectionAttempt> CreateAttemptAsync(
         Guid userId,
@@ -64,38 +100,17 @@ public sealed class BankConnectionAttemptService(
             CreatedUtc = now,
             UpdatedUtc = now,
             ExpiresUtc = expiresUtc ?? now.AddMinutes(15),
-            AuthLaunchedUtc = now
+            AuthLaunchedUtc = now,
+            TransitionVersion = 0
         };
-
-        var activeAttemptsQuery = dbContext.BankConnectionAttempts
-            .Where(x =>
-                x.UserId == userId
-                && ActiveStatuses.Contains(x.Status));
-
-        if (reconnectRequested)
-        {
-            activeAttemptsQuery = activeAttemptsQuery.Where(x => x.ConnectionId == connectionId);
-        }
-        else if (!string.IsNullOrWhiteSpace(launchOriginPath))
-        {
-            activeAttemptsQuery = activeAttemptsQuery.Where(x => x.LaunchOriginPath == launchOriginPath);
-        }
-        else
-        {
-            activeAttemptsQuery = activeAttemptsQuery.Where(x => x.ConnectionId == connectionId);
-        }
-
-        var supersededAttempts = await activeAttemptsQuery.ToListAsync(cancellationToken);
-        foreach (var superseded in supersededAttempts)
-        {
-            superseded.Status = BankConnectionAttemptStatuses.Superseded;
-            superseded.SupersededByAttemptId = attemptId;
-            superseded.UpdatedUtc = now;
-            superseded.CompletedUtc ??= now;
-        }
 
         dbContext.BankConnectionAttempts.Add(attempt);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        var supersededCount = await SupersedeCompetingAttemptsAsync(
+            attempt,
+            reconnectRequested,
+            cancellationToken);
 
         logger.LogInformation(
             "Bank connection attempt created attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} provider={Provider} reconnectRequested={ReconnectRequested} launchOrigin={LaunchOrigin} supersededCount={SupersededCount}",
@@ -105,7 +120,7 @@ public sealed class BankConnectionAttemptService(
             attempt.ProviderName,
             reconnectRequested,
             attempt.LaunchOriginPath ?? "<none>",
-            supersededAttempts.Count);
+            supersededCount);
 
         return attempt;
     }
@@ -126,7 +141,7 @@ public sealed class BankConnectionAttemptService(
             return null;
         }
 
-        await ExpireIfNeededAsync(attempt, cancellationToken);
+        await ReconcileLifecycleTruthAsync(attempt, cancellationToken);
         return attempt;
     }
 
@@ -142,7 +157,7 @@ public sealed class BankConnectionAttemptService(
             return null;
         }
 
-        await ExpireIfNeededAsync(attempt, cancellationToken);
+        await ReconcileLifecycleTruthAsync(attempt, cancellationToken);
         return attempt;
     }
 
@@ -161,8 +176,7 @@ public sealed class BankConnectionAttemptService(
             return null;
         }
 
-        await ExpireIfNeededAsync(attempt, cancellationToken);
-
+        await ReconcileLifecycleTruthAsync(attempt, cancellationToken);
         return ToStatusDto(attempt);
     }
 
@@ -170,50 +184,40 @@ public sealed class BankConnectionAttemptService(
         BankConnectionAttempt attempt,
         CancellationToken cancellationToken)
     {
-        if (IsTerminalStatus(attempt.Status))
+        var result = await TransitionAttemptAsync(
+            attempt,
+            BankConnectionAttemptStatuses.CallbackReceived,
+            transitionEvent: "attempt_callback_received",
+            mutate: (state, now) =>
+            {
+                state.CallbackHandledUtc ??= now;
+            },
+            cancellationToken);
+
+        if (result is AttemptTransitionResult.AlreadyAtTarget or AttemptTransitionResult.BlockedTerminal)
         {
-            return;
+            logger.LogInformation(
+                "Duplicate callback ignored for attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} status={Status}",
+                attempt.Id,
+                attempt.ConnectionId,
+                attempt.UserId,
+                attempt.Status);
         }
-
-        var now = DateTime.UtcNow;
-        attempt.CallbackHandledUtc ??= now;
-        if (attempt.Status is BankConnectionAttemptStatuses.Created
-            or BankConnectionAttemptStatuses.AuthLaunched
-            or BankConnectionAttemptStatuses.AwaitingCallback)
-        {
-            attempt.Status = BankConnectionAttemptStatuses.CallbackReceived;
-        }
-
-        attempt.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Bank connection attempt callback received attemptId={AttemptId} connectionId={ConnectionId} userId={UserId}",
-            attempt.Id,
-            attempt.ConnectionId,
-            attempt.UserId);
     }
 
     public async Task MarkAppReturnInitiatedAsync(
         BankConnectionAttempt attempt,
         CancellationToken cancellationToken)
     {
-        if (IsTerminalStatus(attempt.Status))
-        {
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        attempt.AppReturnInitiatedUtc ??= now;
-        attempt.Status = BankConnectionAttemptStatuses.AppReturnInitiated;
-        attempt.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Bank connection attempt app return initiated attemptId={AttemptId} connectionId={ConnectionId} userId={UserId}",
-            attempt.Id,
-            attempt.ConnectionId,
-            attempt.UserId);
+        await TransitionAttemptAsync(
+            attempt,
+            BankConnectionAttemptStatuses.AppReturnInitiated,
+            transitionEvent: "attempt_app_return_initiated",
+            mutate: (state, now) =>
+            {
+                state.AppReturnInitiatedUtc ??= now;
+            },
+            cancellationToken);
     }
 
     public async Task<BankConnectionAttemptStatusDto?> ConfirmAppReturnHandledAsync(
@@ -228,43 +232,43 @@ public sealed class BankConnectionAttemptService(
             return null;
         }
 
-        await ExpireIfNeededAsync(attempt, cancellationToken);
-        if (attempt.Status == BankConnectionAttemptStatuses.Expired)
+        await ReconcileLifecycleTruthAsync(attempt, cancellationToken);
+        if (IsTerminalStatus(attempt.Status))
         {
+            logger.LogInformation(
+                "Duplicate app return confirmation ignored for attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} status={Status}",
+                attempt.Id,
+                attempt.ConnectionId,
+                attempt.UserId,
+                attempt.Status);
             return ToStatusDto(attempt);
         }
 
-        var now = DateTime.UtcNow;
         var connectionStatus = await dbContext.OpenBankingConnections
             .AsNoTracking()
             .Where(x => x.Id == attempt.ConnectionId && x.UserId == userId)
             .Select(x => x.Status)
             .SingleOrDefaultAsync(cancellationToken);
-        attempt.AppReturnConfirmedUtc ??= now;
-        if (connectionStatus is BankConnectionStatuses.ConnectedPendingSync
+
+        var targetStatus = connectionStatus is BankConnectionStatuses.ConnectedPendingSync
             or BankConnectionStatuses.Connected
-            or BankConnectionStatuses.Synced)
-        {
-            attempt.Status = BankConnectionAttemptStatuses.Completed;
-            attempt.CompletedUtc ??= now;
-        }
-        else if (attempt.Status is BankConnectionAttemptStatuses.CallbackReceived
-            or BankConnectionAttemptStatuses.AppReturnInitiated
-            or BankConnectionAttemptStatuses.AwaitingCallback
-            or BankConnectionAttemptStatuses.AuthLaunched
-            or BankConnectionAttemptStatuses.Created)
-        {
-            attempt.Status = BankConnectionAttemptStatuses.AppReturnConfirmed;
-        }
+            or BankConnectionStatuses.Synced
+            ? BankConnectionAttemptStatuses.Completed
+            : BankConnectionAttemptStatuses.AppReturnConfirmed;
 
-        attempt.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Bank connection attempt app return confirmed attemptId={AttemptId} connectionId={ConnectionId} userId={UserId}",
-            attempt.Id,
-            attempt.ConnectionId,
-            attempt.UserId);
+        await TransitionAttemptAsync(
+            attempt,
+            targetStatus,
+            transitionEvent: "attempt_app_return_confirmed",
+            mutate: (state, now) =>
+            {
+                state.AppReturnConfirmedUtc ??= now;
+                if (targetStatus == BankConnectionAttemptStatuses.Completed)
+                {
+                    state.CompletedUtc ??= now;
+                }
+            },
+            cancellationToken);
 
         return ToStatusDto(attempt);
     }
@@ -273,43 +277,27 @@ public sealed class BankConnectionAttemptService(
         BankConnectionAttempt attempt,
         CancellationToken cancellationToken)
     {
-        if (IsTerminalStatus(attempt.Status))
-        {
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        attempt.Status = BankConnectionAttemptStatuses.Processing;
-        attempt.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Bank connection attempt processing started attemptId={AttemptId} connectionId={ConnectionId} userId={UserId}",
-            attempt.Id,
-            attempt.ConnectionId,
-            attempt.UserId);
+        await TransitionAttemptAsync(
+            attempt,
+            BankConnectionAttemptStatuses.Processing,
+            transitionEvent: "attempt_processing_started",
+            mutate: null,
+            cancellationToken);
     }
 
     public async Task MarkCompletedAsync(
         BankConnectionAttempt attempt,
         CancellationToken cancellationToken)
     {
-        if (attempt.Status == BankConnectionAttemptStatuses.Completed)
-        {
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        attempt.Status = BankConnectionAttemptStatuses.Completed;
-        attempt.CompletedUtc ??= now;
-        attempt.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        logger.LogInformation(
-            "Bank connection attempt completed attemptId={AttemptId} connectionId={ConnectionId} userId={UserId}",
-            attempt.Id,
-            attempt.ConnectionId,
-            attempt.UserId);
+        await TransitionAttemptAsync(
+            attempt,
+            BankConnectionAttemptStatuses.Completed,
+            transitionEvent: "attempt_completed",
+            mutate: (state, now) =>
+            {
+                state.CompletedUtc ??= now;
+            },
+            cancellationToken);
     }
 
     public async Task MarkFailedAsync(
@@ -318,25 +306,108 @@ public sealed class BankConnectionAttemptService(
         string? failureReason,
         CancellationToken cancellationToken)
     {
-        if (attempt.Status == BankConnectionAttemptStatuses.Failed)
+        await TransitionAttemptAsync(
+            attempt,
+            BankConnectionAttemptStatuses.Failed,
+            transitionEvent: "attempt_failed",
+            mutate: (state, now) =>
+            {
+                state.FailureCode = string.IsNullOrWhiteSpace(failureCode) ? null : failureCode.Trim();
+                state.FailureReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
+                state.FailedUtc ??= now;
+            },
+            cancellationToken);
+    }
+
+    public async Task<BankConnectionAttemptSweepResult> SweepLifecycleAsync(
+        int batchSize,
+        TimeSpan staleProcessingExpiryAge,
+        CancellationToken cancellationToken)
+    {
+        var normalizedBatchSize = Math.Clamp(batchSize, 1, 512);
+        var now = DateTime.UtcNow;
+        var staleProcessingThresholdUtc = now - staleProcessingExpiryAge;
+        var expiredCount = 0;
+        var supersededCount = 0;
+
+        var expirableAttempts = await dbContext.BankConnectionAttempts
+            .Where(x =>
+                !TerminalStatuses.Contains(x.Status)
+                && (DefaultExpiryStatuses.Contains(x.Status) && x.ExpiresUtc <= now
+                    || StaleProcessingExpiryStatuses.Contains(x.Status)
+                    && x.ExpiresUtc <= now
+                    && x.UpdatedUtc <= staleProcessingThresholdUtc))
+            .OrderBy(x => x.ExpiresUtc)
+            .ThenBy(x => x.UpdatedUtc)
+            .Take(normalizedBatchSize)
+            .ToListAsync(cancellationToken);
+
+        if (expirableAttempts.Count == 0)
         {
-            return;
+            logger.LogDebug("Stale attempt cleanup skipped due active use or no stale attempts.");
         }
 
-        var now = DateTime.UtcNow;
-        attempt.Status = BankConnectionAttemptStatuses.Failed;
-        attempt.FailureCode = string.IsNullOrWhiteSpace(failureCode) ? null : failureCode.Trim();
-        attempt.FailureReason = string.IsNullOrWhiteSpace(failureReason) ? null : failureReason.Trim();
-        attempt.FailedUtc ??= now;
-        attempt.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        foreach (var attempt in expirableAttempts)
+        {
+            var result = await TransitionAttemptAsync(
+                attempt,
+                BankConnectionAttemptStatuses.Expired,
+                transitionEvent: "attempt_cleanup_sweep_expired",
+                mutate: null,
+                cancellationToken);
+            if (result == AttemptTransitionResult.Applied)
+            {
+                expiredCount++;
+            }
+        }
 
-        logger.LogWarning(
-            "Bank connection attempt failed attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} failureCode={FailureCode}",
-            attempt.Id,
-            attempt.ConnectionId,
-            attempt.UserId,
-            attempt.FailureCode ?? "<none>");
+        var activeCandidates = await dbContext.BankConnectionAttempts
+            .Where(x => ActiveStatuses.Contains(x.Status))
+            .OrderByDescending(x => x.CreatedUtc)
+            .ThenByDescending(x => x.Id)
+            .Take(Math.Clamp(normalizedBatchSize * 6, 16, 512))
+            .ToListAsync(cancellationToken);
+
+        var grouped = activeCandidates
+            .GroupBy(BuildScopeKey)
+            .Where(group => !string.IsNullOrWhiteSpace(group.Key) && group.Count() > 1)
+            .ToList();
+
+        foreach (var group in grouped)
+        {
+            var ordered = group
+                .OrderByDescending(x => x.CreatedUtc)
+                .ThenByDescending(x => x.Id)
+                .ToList();
+            var current = ordered[0];
+            foreach (var stale in ordered.Skip(1))
+            {
+                var result = await TransitionAttemptAsync(
+                    stale,
+                    BankConnectionAttemptStatuses.Superseded,
+                    transitionEvent: "attempt_cleanup_sweep_superseded",
+                    mutate: (state, transitionNow) =>
+                    {
+                        state.SupersededByAttemptId = current.Id;
+                        state.CompletedUtc ??= transitionNow;
+                    },
+                    cancellationToken);
+                if (result == AttemptTransitionResult.Applied)
+                {
+                    supersededCount++;
+                }
+            }
+        }
+
+        if (expiredCount > 0 || supersededCount > 0)
+        {
+            logger.LogInformation(
+                "Bank connection attempt sweep completed expiredCount={ExpiredCount} supersededCount={SupersededCount}",
+                expiredCount,
+                supersededCount);
+        }
+
+        return new BankConnectionAttemptSweepResult(expiredCount, supersededCount);
     }
 
     public async Task<T> WithAttemptLockAsync<T>(
@@ -359,28 +430,292 @@ public sealed class BankConnectionAttemptService(
         => TerminalStatuses.Contains(status);
 
     public static bool IsAwaitingCallbackStatus(string status)
-        => status is BankConnectionAttemptStatuses.Created
-            or BankConnectionAttemptStatuses.AuthLaunched
-            or BankConnectionAttemptStatuses.AwaitingCallback;
+        => CallbackAwaitingStatuses.Contains(status);
+
+    private async Task ReconcileLifecycleTruthAsync(BankConnectionAttempt attempt, CancellationToken cancellationToken)
+    {
+        await ExpireIfNeededAsync(attempt, cancellationToken);
+        if (IsTerminalStatus(attempt.Status))
+        {
+            return;
+        }
+
+        await SupersedeIfShadowedByNewerAttemptAsync(attempt, cancellationToken);
+    }
+
+    private async Task<int> SupersedeCompetingAttemptsAsync(
+        BankConnectionAttempt attempt,
+        bool reconnectRequested,
+        CancellationToken cancellationToken)
+    {
+        var candidatesQuery = BuildSupersessionScopeQuery(
+                userId: attempt.UserId,
+                connectionId: attempt.ConnectionId,
+                launchOriginPath: attempt.LaunchOriginPath,
+                reconnectRequested: reconnectRequested)
+            .Where(x =>
+                x.Id != attempt.Id
+                && ActiveStatuses.Contains(x.Status)
+                && x.CreatedUtc < attempt.CreatedUtc)
+            .OrderBy(x => x.CreatedUtc)
+            .Take(16);
+
+        var candidates = await candidatesQuery.ToListAsync(cancellationToken);
+        var supersededCount = 0;
+        foreach (var candidate in candidates)
+        {
+            var result = await TransitionAttemptAsync(
+                candidate,
+                BankConnectionAttemptStatuses.Superseded,
+                transitionEvent: "attempt_superseded_by_new_launch",
+                mutate: (state, now) =>
+                {
+                    state.SupersededByAttemptId = attempt.Id;
+                    state.CompletedUtc ??= now;
+                },
+                cancellationToken);
+
+            if (result == AttemptTransitionResult.Applied)
+            {
+                supersededCount++;
+            }
+        }
+
+        return supersededCount;
+    }
+
+    private IQueryable<BankConnectionAttempt> BuildSupersessionScopeQuery(
+        Guid userId,
+        Guid connectionId,
+        string? launchOriginPath,
+        bool reconnectRequested)
+    {
+        var activeAttemptsQuery = dbContext.BankConnectionAttempts
+            .Where(x => x.UserId == userId);
+
+        if (reconnectRequested)
+        {
+            activeAttemptsQuery = activeAttemptsQuery.Where(x => x.ConnectionId == connectionId);
+        }
+        else if (!string.IsNullOrWhiteSpace(launchOriginPath))
+        {
+            activeAttemptsQuery = activeAttemptsQuery.Where(x => x.LaunchOriginPath == launchOriginPath);
+        }
+        else
+        {
+            activeAttemptsQuery = activeAttemptsQuery.Where(x => x.ConnectionId == connectionId);
+        }
+
+        return activeAttemptsQuery;
+    }
+
+    private async Task SupersedeIfShadowedByNewerAttemptAsync(
+        BankConnectionAttempt attempt,
+        CancellationToken cancellationToken)
+    {
+        if (!ActiveStatuses.Contains(attempt.Status))
+        {
+            return;
+        }
+
+        var byLaunchOrigin = !string.IsNullOrWhiteSpace(attempt.LaunchOriginPath);
+        var newerAttempt = await BuildSupersessionScopeQuery(
+                attempt.UserId,
+                attempt.ConnectionId,
+                attempt.LaunchOriginPath,
+                reconnectRequested: !byLaunchOrigin)
+            .AsNoTracking()
+            .Where(x =>
+                x.Id != attempt.Id
+                && ActiveStatuses.Contains(x.Status)
+                && x.CreatedUtc > attempt.CreatedUtc)
+            .OrderByDescending(x => x.CreatedUtc)
+            .ThenByDescending(x => x.Id)
+            .Select(x => new { x.Id })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (newerAttempt is null)
+        {
+            return;
+        }
+
+        await TransitionAttemptAsync(
+            attempt,
+            BankConnectionAttemptStatuses.Superseded,
+            transitionEvent: "attempt_superseded_by_shadowed_read",
+            mutate: (state, now) =>
+            {
+                state.SupersededByAttemptId = newerAttempt.Id;
+                state.CompletedUtc ??= now;
+            },
+            cancellationToken);
+    }
 
     private async Task ExpireIfNeededAsync(
         BankConnectionAttempt attempt,
         CancellationToken cancellationToken)
     {
-        if (!NeedsExpiry(attempt, DateTime.UtcNow))
+        var now = DateTime.UtcNow;
+        if (!NeedsExpiry(attempt, now))
         {
             return;
         }
 
-        attempt.Status = BankConnectionAttemptStatuses.Expired;
-        attempt.UpdatedUtc = DateTime.UtcNow;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await TransitionAttemptAsync(
+            attempt,
+            BankConnectionAttemptStatuses.Expired,
+            transitionEvent: "attempt_expired_on_read",
+            mutate: null,
+            cancellationToken);
+    }
 
-        logger.LogInformation(
-            "Bank connection attempt expired attemptId={AttemptId} connectionId={ConnectionId} userId={UserId}",
+    private async Task<AttemptTransitionResult> TransitionAttemptAsync(
+        BankConnectionAttempt attempt,
+        string targetStatus,
+        string transitionEvent,
+        Action<BankConnectionAttempt, DateTime>? mutate,
+        CancellationToken cancellationToken)
+    {
+        for (var retry = 0; retry < 3; retry++)
+        {
+            var previousStatus = attempt.Status;
+            if (previousStatus == targetStatus)
+            {
+                return AttemptTransitionResult.AlreadyAtTarget;
+            }
+
+            if (IsTerminalStatus(previousStatus))
+            {
+                logger.LogInformation(
+                    "Attempt transition ignored because state is terminal event={TransitionEvent} attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} status={Status}",
+                    transitionEvent,
+                    attempt.Id,
+                    attempt.ConnectionId,
+                    attempt.UserId,
+                    previousStatus);
+                return AttemptTransitionResult.BlockedTerminal;
+            }
+
+            if (!IsTransitionAllowed(previousStatus, targetStatus))
+            {
+                logger.LogWarning(
+                    "Invalid attempt transition blocked event={TransitionEvent} attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} from={FromStatus} to={ToStatus}",
+                    transitionEvent,
+                    attempt.Id,
+                    attempt.ConnectionId,
+                    attempt.UserId,
+                    previousStatus,
+                    targetStatus);
+                return AttemptTransitionResult.Invalid;
+            }
+
+            var now = DateTime.UtcNow;
+            mutate?.Invoke(attempt, now);
+            attempt.Status = targetStatus;
+            attempt.UpdatedUtc = now;
+            attempt.TransitionVersion += 1;
+
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+                logger.LogInformation(
+                    "Attempt transition applied event={TransitionEvent} attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} from={FromStatus} to={ToStatus} transitionVersion={TransitionVersion}",
+                    transitionEvent,
+                    attempt.Id,
+                    attempt.ConnectionId,
+                    attempt.UserId,
+                    previousStatus,
+                    targetStatus,
+                    attempt.TransitionVersion);
+                return AttemptTransitionResult.Applied;
+            }
+            catch (DbUpdateConcurrencyException exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Attempt transition concurrency conflict event={TransitionEvent} attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} from={FromStatus} to={ToStatus} retry={Retry}",
+                    transitionEvent,
+                    attempt.Id,
+                    attempt.ConnectionId,
+                    attempt.UserId,
+                    previousStatus,
+                    targetStatus,
+                    retry + 1);
+
+                var reloaded = await ReloadAttemptAsync(attempt, cancellationToken);
+                if (!reloaded)
+                {
+                    return AttemptTransitionResult.Conflict;
+                }
+            }
+        }
+
+        logger.LogWarning(
+            "Attempt transition exhausted retries event={TransitionEvent} attemptId={AttemptId} connectionId={ConnectionId} userId={UserId} targetStatus={ToStatus}",
+            transitionEvent,
             attempt.Id,
             attempt.ConnectionId,
-            attempt.UserId);
+            attempt.UserId,
+            targetStatus);
+        return AttemptTransitionResult.Conflict;
+    }
+
+    private async Task<bool> ReloadAttemptAsync(BankConnectionAttempt attempt, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await dbContext.Entry(attempt).ReloadAsync(cancellationToken);
+            return true;
+        }
+        catch
+        {
+            var refreshed = await dbContext.BankConnectionAttempts
+                .AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == attempt.Id, cancellationToken);
+            if (refreshed is null)
+            {
+                return false;
+            }
+
+            CopyAttemptState(refreshed, attempt);
+            return true;
+        }
+    }
+
+    private static void CopyAttemptState(BankConnectionAttempt source, BankConnectionAttempt target)
+    {
+        target.UserId = source.UserId;
+        target.ConnectionId = source.ConnectionId;
+        target.ProviderName = source.ProviderName;
+        target.ProviderEnvironment = source.ProviderEnvironment;
+        target.Status = source.Status;
+        target.LaunchOriginPath = source.LaunchOriginPath;
+        target.AppReturnUri = source.AppReturnUri;
+        target.CallbackState = source.CallbackState;
+        target.PublicToken = source.PublicToken;
+        target.CreatedUtc = source.CreatedUtc;
+        target.UpdatedUtc = source.UpdatedUtc;
+        target.ExpiresUtc = source.ExpiresUtc;
+        target.AuthLaunchedUtc = source.AuthLaunchedUtc;
+        target.CallbackHandledUtc = source.CallbackHandledUtc;
+        target.AppReturnInitiatedUtc = source.AppReturnInitiatedUtc;
+        target.AppReturnConfirmedUtc = source.AppReturnConfirmedUtc;
+        target.CompletedUtc = source.CompletedUtc;
+        target.FailedUtc = source.FailedUtc;
+        target.FailureCode = source.FailureCode;
+        target.FailureReason = source.FailureReason;
+        target.SupersededByAttemptId = source.SupersededByAttemptId;
+        target.TransitionVersion = source.TransitionVersion;
+    }
+
+    private static bool IsTransitionAllowed(string current, string target)
+    {
+        if (current == target)
+        {
+            return true;
+        }
+
+        return AllowedTransitions.TryGetValue(current, out var allowedTargets) && allowedTargets.Contains(target);
     }
 
     private static bool NeedsExpiry(BankConnectionAttempt attempt, DateTime now)
@@ -419,6 +754,85 @@ public sealed class BankConnectionAttemptService(
         var path = uri.AbsolutePath?.Trim('/') ?? string.Empty;
         var combined = $"{host}/{path}".Trim('/');
         return string.IsNullOrWhiteSpace(combined) ? null : $"/{combined}";
+    }
+
+    private static string BuildScopeKey(BankConnectionAttempt attempt)
+    {
+        var originOrConnection = !string.IsNullOrWhiteSpace(attempt.LaunchOriginPath)
+            ? $"origin:{attempt.LaunchOriginPath!.Trim()}"
+            : $"connection:{attempt.ConnectionId:N}";
+        return $"{attempt.UserId:N}:{originOrConnection}";
+    }
+
+    private static Dictionary<string, HashSet<string>> BuildAllowedTransitions()
+    {
+        HashSet<string> CommonNonTerminalTargets() =>
+            [
+                BankConnectionAttemptStatuses.Completed,
+                BankConnectionAttemptStatuses.Failed,
+                BankConnectionAttemptStatuses.Superseded,
+                BankConnectionAttemptStatuses.Cancelled,
+                BankConnectionAttemptStatuses.Expired
+            ];
+
+        var map = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            [BankConnectionAttemptStatuses.Created] =
+            [
+                BankConnectionAttemptStatuses.AuthLaunched,
+                BankConnectionAttemptStatuses.AwaitingCallback,
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.AuthLaunched] =
+            [
+                BankConnectionAttemptStatuses.AwaitingCallback,
+                BankConnectionAttemptStatuses.CallbackReceived,
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.AwaitingCallback] =
+            [
+                BankConnectionAttemptStatuses.CallbackReceived,
+                BankConnectionAttemptStatuses.AppReturnInitiated,
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.CallbackReceived] =
+            [
+                BankConnectionAttemptStatuses.AppReturnInitiated,
+                BankConnectionAttemptStatuses.AppReturnConfirmed,
+                BankConnectionAttemptStatuses.ConnectionCreated,
+                BankConnectionAttemptStatuses.Processing,
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.AppReturnInitiated] =
+            [
+                BankConnectionAttemptStatuses.AppReturnConfirmed,
+                BankConnectionAttemptStatuses.ConnectionCreated,
+                BankConnectionAttemptStatuses.Processing,
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.AppReturnConfirmed] =
+            [
+                BankConnectionAttemptStatuses.ConnectionCreated,
+                BankConnectionAttemptStatuses.Processing,
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.ConnectionCreated] =
+            [
+                BankConnectionAttemptStatuses.Processing,
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.Processing] =
+            [
+                .. CommonNonTerminalTargets()
+            ],
+            [BankConnectionAttemptStatuses.Completed] = [],
+            [BankConnectionAttemptStatuses.Failed] = [],
+            [BankConnectionAttemptStatuses.Expired] = [],
+            [BankConnectionAttemptStatuses.Superseded] = [],
+            [BankConnectionAttemptStatuses.Cancelled] = []
+        };
+
+        return map;
     }
 
     private static BankConnectionAttemptStatusDto ToStatusDto(BankConnectionAttempt attempt)

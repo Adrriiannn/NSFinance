@@ -20,6 +20,7 @@ public class BankConnectionAttemptConfiguration : IEntityTypeConfiguration<BankC
         builder.Property(x => x.PublicToken).HasMaxLength(128).IsRequired();
         builder.Property(x => x.FailureCode).HasMaxLength(80);
         builder.Property(x => x.FailureReason).HasMaxLength(512);
+        builder.Property(x => x.TransitionVersion).HasDefaultValue(0).IsConcurrencyToken();
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedUtc).HasDefaultValueSql("timezone('utc', now())");
 
