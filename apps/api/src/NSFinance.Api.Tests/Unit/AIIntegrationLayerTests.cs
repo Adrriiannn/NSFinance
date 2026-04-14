@@ -14,9 +14,36 @@ namespace NSFinance.Api.Tests.Unit;
 public sealed class AIIntegrationLayerTests
 {
     [Fact]
+    public void AIIntegrationOptions_BindsAzureEnvironmentAliases()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Provider"] = "AzureOpenAI",
+            ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+            ["AI:ApiKey"] = "test-key",
+            ["AI:Models:Heavy"] = "gpt-5-chat",
+            ["AI:Routing:HeavyModelEnabled"] = "false",
+            ["AI:UseMockProvider"] = "false"
+        });
+
+        var options = services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value;
+
+        Assert.Equal(AIProviderKind.AzureOpenAI, options.ProviderKind);
+        Assert.False(options.UseMockProvider);
+        Assert.Equal("https://aoai-nsfinance-prod.openai.azure.com/openai/v1", options.AzureOpenAI.Endpoint);
+        Assert.Equal("test-key", options.AzureOpenAI.ApiKey);
+        Assert.Equal("gpt-5-chat", options.Routing.HeavyModelName);
+        Assert.True(options.Routing.HeavyModelEnabled);
+    }
+
+    [Fact]
     public void ModelRouter_RoutesMerchantInvestigationToHeavy_WhenHeavyEnabled()
     {
-        var router = CreateRouter(options => options.Routing.HeavyModelEnabled = true);
+        var router = CreateRouter(options =>
+        {
+            options.Routing.HeavyModelEnabled = true;
+            options.Models.Heavy = "gpt-5-chat";
+        });
 
         var route = router.Resolve(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, null);
 
@@ -624,7 +651,10 @@ public sealed class AIIntegrationLayerTests
         {
             ["AI:Enabled"] = "true",
             ["AI:UseMockProvider"] = "false",
-            ["AI:ProviderKind"] = "AzureOpenAI",
+            ["AI:Provider"] = "AzureOpenAI",
+            ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+            ["AI:ApiKey"] = "test-key",
+            ["AI:Models:Heavy"] = "gpt-5-chat",
             ["AI:AzureOpenAI:Enabled"] = "false"
         });
 
@@ -958,6 +988,7 @@ public sealed class AIIntegrationLayerTests
     {
         var options = new AIIntegrationOptions();
         configure?.Invoke(options);
+        AIIntegrationOptionsNormalizer.Normalize(options);
 
         return new AIModelRouter(
             Options.Create(options),
@@ -1026,5 +1057,104 @@ public sealed class AIIntegrationLayerTests
             CallCount += 1;
             return Task.FromResult(response);
         }
+    }
+
+    [Fact]
+    public void ModelRouter_UsesHeavyModelNameFromModelsOptions()
+    {
+        var router = CreateRouter(options =>
+        {
+            options.Provider = "AzureOpenAI";
+            options.UseMockProvider = false;
+            options.Models.Heavy = "gpt-5-chat";
+        });
+
+        var route = router.Resolve(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, null);
+
+        Assert.Equal("gpt-5-chat", route.Model);
+    }
+
+    [Fact]
+    public async Task AIClient_SelectsAzureProvider_WhenProviderConfigured()
+    {
+        var azureProvider = new CountingProviderTransport(
+            AIProviderKind.AzureOpenAI,
+            _ => new AIResponse(
+                Content: "{}",
+                StructuredPayloadJson: "{}",
+                FinishReason: "stop",
+                Provider: "AzureOpenAI",
+                Model: "gpt-5-chat",
+                Deployment: "merchant-investigation",
+                InputTokenEstimate: 1,
+                OutputTokenEstimate: 1,
+                LatencyMs: 1,
+                WasMocked: false,
+                RawDiagnostics: null,
+                Succeeded: true,
+                FailureReason: null));
+        var mockProvider = new CountingProviderTransport(
+            AIProviderKind.Mock,
+            _ => new AIResponse(
+                Content: "{}",
+                StructuredPayloadJson: "{}",
+                FinishReason: "stop",
+                Provider: "Mock",
+                Model: "gpt-5-chat",
+                Deployment: "merchant-investigation",
+                InputTokenEstimate: 1,
+                OutputTokenEstimate: 1,
+                LatencyMs: 1,
+                WasMocked: true,
+                RawDiagnostics: null,
+                Succeeded: true,
+                FailureReason: null));
+        var options = Options.Create(new AIIntegrationOptions
+        {
+            Enabled = true,
+            UseMockProvider = false,
+            Provider = "AzureOpenAI",
+            Models = new AIModelNameOptions { Heavy = "gpt-5-chat" },
+            AzureOpenAI = new AzureOpenAIOptions
+            {
+                Enabled = true,
+                Endpoint = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+                ApiKey = "test-key"
+            }
+        });
+        AIIntegrationOptionsNormalizer.Normalize(options.Value);
+
+        await using var dbContext = CreateDbContext();
+        var client = new AIClient(
+            new IAIProviderTransport[] { mockProvider, azureProvider },
+            options,
+            new AIProviderCircuitBreaker(),
+            new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
+            NullLogger<AIClient>.Instance);
+
+        var response = await client.SendAsync(
+            AIRequest.Create(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, [AIMessage.User("test")], "corr-azure-provider"),
+            new AIModelRoute(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, "gpt-5-chat", "merchant-investigation", false, "test", []),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Equal(1, azureProvider.CallCount);
+        Assert.Equal(0, mockProvider.CallCount);
+    }
+
+    [Fact]
+    public void AIIntegrationOptions_ThrowsWhenAzureMissingRequiredValues()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Provider"] = "AzureOpenAI",
+            ["AI:UseMockProvider"] = "false",
+            ["AI:Models:Heavy"] = ""
+        });
+
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value);
+
+        Assert.Contains("AI configuration missing", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

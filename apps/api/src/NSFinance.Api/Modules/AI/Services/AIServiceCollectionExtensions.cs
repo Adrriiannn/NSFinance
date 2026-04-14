@@ -7,7 +7,14 @@ public static class AIServiceCollectionExtensions
 {
     public static IServiceCollection AddAIIntegration(this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<AIIntegrationOptions>(configuration.GetSection(AIIntegrationOptions.SectionName));
+        services.AddOptions<AIIntegrationOptions>()
+            .Bind(configuration.GetSection(AIIntegrationOptions.SectionName))
+            .PostConfigure(AIIntegrationOptionsNormalizer.Normalize)
+            .Services
+            .AddSingleton<IValidateOptions<AIIntegrationOptions>, AIIntegrationOptionsValidator>();
+
+        services.AddOptions<AIIntegrationOptions>()
+            .ValidateOnStart();
 
         services.AddHttpClient("AI.AzureOpenAI", (sp, client) =>
         {
@@ -44,6 +51,8 @@ public static class AIServiceCollectionExtensions
 
         // Keep existing merchant resolution seam intact while allowing provider swap via AI options.
         services.AddScoped<IMerchantInvestigationService, AIBackedMerchantInvestigationService>();
+
+        services.AddHostedService<AIConfigurationStartupLogger>();
 
         return services;
     }

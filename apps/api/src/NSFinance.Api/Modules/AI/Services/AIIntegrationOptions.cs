@@ -6,8 +6,12 @@ public sealed class AIIntegrationOptions
 
     public bool Enabled { get; set; } = true;
     public bool UseMockProvider { get; set; } = true;
+    public string? Provider { get; set; }
+    public string? Endpoint { get; set; }
+    public string? ApiKey { get; set; }
     public AIProviderKind ProviderKind { get; set; } = AIProviderKind.Mock;
     public AIModelRoutingOptions Routing { get; set; } = new();
+    public AIModelNameOptions Models { get; set; } = new();
     public AIExecutionOptions Execution { get; set; } = new();
     public ConversationMemoryOptions Memory { get; set; } = new();
     public ChatTurnOptions ChatTurns { get; set; } = new();
@@ -19,10 +23,16 @@ public sealed class AIModelRoutingOptions
 {
     public string FastModelName { get; set; } = "gpt-4.1";
     public string FastDeploymentName { get; set; } = "gpt-4-1-chat";
-    public string HeavyModelName { get; set; } = "gpt-5-chat";
+    public string HeavyModelName { get; set; } = string.Empty;
     public string HeavyDeploymentName { get; set; } = "merchant-investigation";
     public bool HeavyModelEnabled { get; set; }
     public HeavyModelFallbackPolicy HeavyModelFallbackPolicy { get; set; } = HeavyModelFallbackPolicy.UseFastModel;
+}
+
+public sealed class AIModelNameOptions
+{
+    public string? Fast { get; set; }
+    public string? Heavy { get; set; }
 }
 
 public sealed class AIExecutionOptions
