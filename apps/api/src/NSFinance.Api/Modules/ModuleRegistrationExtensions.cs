@@ -1,4 +1,5 @@
 using NSFinance.Api.Modules.Accounts;
+using NSFinance.Api.Modules.AI;
 using NSFinance.Api.Modules.Auth;
 using NSFinance.Api.Modules.Banking;
 using NSFinance.Api.Modules.Categories;
@@ -16,6 +17,7 @@ public static class ModuleRegistrationExtensions
     public static IEndpointRouteBuilder MapModules(this IEndpointRouteBuilder app)
     {
         app.MapAuthModule();
+        app.MapAIModule();
         app.MapUsersModule();
         app.MapPoliciesModule();
         app.MapSupportModule();
