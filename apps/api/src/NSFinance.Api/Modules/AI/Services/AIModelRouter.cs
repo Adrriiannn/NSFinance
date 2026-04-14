@@ -10,13 +10,14 @@ public sealed class AIModelRouter(
     {
         var config = options.Value;
         var routing = config.Routing;
+        var selectedProvider = config.UseMockProvider ? AIProviderKind.Mock : config.ProviderKind;
 
         var requestedClass = preferredModelClass == AIModelClass.Any
             ? ResolveDefaultModelClass(taskType)
             : preferredModelClass;
 
         var wantsHeavy = requestedClass == AIModelClass.HeavyReasoning;
-        var heavyEnabled = routing.HeavyModelEnabled || config.UseMockProvider || config.ProviderKind == AIProviderKind.Mock;
+        var heavyEnabled = routing.HeavyModelEnabled || selectedProvider == AIProviderKind.Mock;
 
         if (wantsHeavy && !heavyEnabled)
         {

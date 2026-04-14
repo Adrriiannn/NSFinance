@@ -17,14 +17,17 @@ public sealed class AIIntegrationOptions
     public ChatTurnOptions ChatTurns { get; set; } = new();
     public AzureOpenAIOptions AzureOpenAI { get; set; } = new();
     public MockAIProviderOptions Mock { get; set; } = new();
+
+    // Runtime-only diagnostic marker set during normalization.
+    public bool AliasNormalizationApplied { get; set; }
 }
 
 public sealed class AIModelRoutingOptions
 {
-    public string FastModelName { get; set; } = "gpt-4.1";
-    public string FastDeploymentName { get; set; } = "gpt-4-1-chat";
+    public string FastModelName { get; set; } = string.Empty;
+    public string FastDeploymentName { get; set; } = string.Empty;
     public string HeavyModelName { get; set; } = string.Empty;
-    public string HeavyDeploymentName { get; set; } = "merchant-investigation";
+    public string HeavyDeploymentName { get; set; } = string.Empty;
     public bool HeavyModelEnabled { get; set; }
     public HeavyModelFallbackPolicy HeavyModelFallbackPolicy { get; set; } = HeavyModelFallbackPolicy.UseFastModel;
 }

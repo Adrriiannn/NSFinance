@@ -14,15 +14,18 @@ namespace NSFinance.Api.Tests.Unit;
 public sealed class AIIntegrationLayerTests
 {
     [Fact]
-    public void AIIntegrationOptions_BindsAzureEnvironmentAliases()
+    public void AIIntegrationOptions_BindsAzureRoutingConfiguration()
     {
         var services = BuildServiceProvider(new Dictionary<string, string?>
         {
             ["AI:Provider"] = "AzureOpenAI",
             ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
             ["AI:ApiKey"] = "test-key",
-            ["AI:Models:Heavy"] = "gpt-5-chat",
-            ["AI:Routing:HeavyModelEnabled"] = "false",
+            ["AI:Routing:FastModelName"] = "gpt-4.1",
+            ["AI:Routing:FastDeploymentName"] = "gpt-4.1",
+            ["AI:Routing:HeavyModelName"] = "gpt-5-chat",
+            ["AI:Routing:HeavyDeploymentName"] = "gpt-5-chat",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
             ["AI:UseMockProvider"] = "false"
         });
 
@@ -32,8 +35,35 @@ public sealed class AIIntegrationLayerTests
         Assert.False(options.UseMockProvider);
         Assert.Equal("https://aoai-nsfinance-prod.openai.azure.com/openai/v1", options.AzureOpenAI.Endpoint);
         Assert.Equal("test-key", options.AzureOpenAI.ApiKey);
+        Assert.Equal("gpt-4.1", options.Routing.FastModelName);
+        Assert.Equal("gpt-4.1", options.Routing.FastDeploymentName);
         Assert.Equal("gpt-5-chat", options.Routing.HeavyModelName);
+        Assert.Equal("gpt-5-chat", options.Routing.HeavyDeploymentName);
         Assert.True(options.Routing.HeavyModelEnabled);
+        Assert.False(options.AliasNormalizationApplied);
+    }
+
+    [Fact]
+    public void AIIntegrationOptions_NormalizesModelAliasesIntoRoutingValues()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Provider"] = "AzureOpenAI",
+            ["AI:UseMockProvider"] = "false",
+            ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+            ["AI:ApiKey"] = "test-key",
+            ["AI:Models:Fast"] = "gpt-4.1",
+            ["AI:Models:Heavy"] = "gpt-5-chat"
+        });
+
+        var options = services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value;
+
+        Assert.Equal("gpt-4.1", options.Routing.FastModelName);
+        Assert.Equal("gpt-4.1", options.Routing.FastDeploymentName);
+        Assert.Equal("gpt-5-chat", options.Routing.HeavyModelName);
+        Assert.Equal("gpt-5-chat", options.Routing.HeavyDeploymentName);
+        Assert.True(options.Routing.HeavyModelEnabled);
+        Assert.True(options.AliasNormalizationApplied);
     }
 
     [Fact]
@@ -177,7 +207,7 @@ public sealed class AIIntegrationLayerTests
             FinishReason: "stop",
             Provider: "Mock",
             Model: "gpt-5-chat",
-            Deployment: "merchant-investigation",
+            Deployment: "gpt-5-chat",
             InputTokenEstimate: 10,
             OutputTokenEstimate: 20,
             LatencyMs: 1,
@@ -217,7 +247,7 @@ public sealed class AIIntegrationLayerTests
             FinishReason: "stop",
             Provider: "Mock",
             Model: "gpt-5-chat",
-            Deployment: "merchant-investigation",
+            Deployment: "gpt-5-chat",
             InputTokenEstimate: 10,
             OutputTokenEstimate: 20,
             LatencyMs: 1,
@@ -266,7 +296,7 @@ public sealed class AIIntegrationLayerTests
             FinishReason: "stop",
             Provider: "Mock",
             Model: "gpt-5-chat",
-            Deployment: "merchant-investigation",
+            Deployment: "gpt-5-chat",
             InputTokenEstimate: 10,
             OutputTokenEstimate: 20,
             LatencyMs: 1,
@@ -302,7 +332,7 @@ public sealed class AIIntegrationLayerTests
             FinishReason: "stop",
             Provider: "Mock",
             Model: "gpt-5-chat",
-            Deployment: "merchant-investigation",
+            Deployment: "gpt-5-chat",
             InputTokenEstimate: 10,
             OutputTokenEstimate: 20,
             LatencyMs: 1,
@@ -338,7 +368,7 @@ public sealed class AIIntegrationLayerTests
             FinishReason: "stop",
             Provider: "Mock",
             Model: "gpt-5-chat",
-            Deployment: "merchant-investigation",
+            Deployment: "gpt-5-chat",
             InputTokenEstimate: 10,
             OutputTokenEstimate: 20,
             LatencyMs: 1,
@@ -392,7 +422,7 @@ public sealed class AIIntegrationLayerTests
             FinishReason: "stop",
             Provider: "Mock",
             Model: "gpt-5-chat",
-            Deployment: "merchant-investigation",
+            Deployment: "gpt-5-chat",
             InputTokenEstimate: 10,
             OutputTokenEstimate: 20,
             LatencyMs: 1,
@@ -671,6 +701,7 @@ public sealed class AIIntegrationLayerTests
             ["AI:Provider"] = "AzureOpenAI",
             ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
             ["AI:ApiKey"] = "test-key",
+            ["AI:Models:Fast"] = "gpt-4.1",
             ["AI:Models:Heavy"] = "gpt-5-chat",
             ["AI:AzureOpenAI:Enabled"] = "false"
         });
@@ -682,7 +713,7 @@ public sealed class AIIntegrationLayerTests
                 AIModelClass.Fast,
                 [AIMessage.User("hello")],
                 "corr-azure-1"),
-            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4-1-chat", false, "fast_route", []),
+            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []),
             CancellationToken.None);
 
         Assert.False(response.Succeeded);
@@ -708,7 +739,7 @@ public sealed class AIIntegrationLayerTests
                 AIModelClass.Fast,
                 [AIMessage.User("hello")],
                 "corr-mock-1"),
-            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4-1-chat", false, "fast_route", []),
+            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []),
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
@@ -721,7 +752,7 @@ public sealed class AIIntegrationLayerTests
     {
         var provider = new CountingProviderTransport(
             AIProviderKind.Mock,
-            _ => AIResponse.Failed("Mock", "gpt-4.1", "gpt-4-1-chat", "429 rate limit", true));
+            _ => AIResponse.Failed("Mock", "gpt-4.1", "gpt-4.1", "429 rate limit", true));
         var options = Options.Create(new AIIntegrationOptions
         {
             Enabled = true,
@@ -750,7 +781,7 @@ public sealed class AIIntegrationLayerTests
             AIModelClass.Fast,
             [AIMessage.User("hello")],
             "corr-circuit-1");
-        var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4-1-chat", false, "test", []);
+        var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "test", []);
 
         var first = await client.SendAsync(request, route, CancellationToken.None);
         var second = await client.SendAsync(request with { CorrelationId = "corr-circuit-2" }, route, CancellationToken.None);
@@ -769,7 +800,7 @@ public sealed class AIIntegrationLayerTests
     {
         var provider = new CountingProviderTransport(
             AIProviderKind.Mock,
-            _ => AIResponse.Failed("Mock", "gpt-4.1", "gpt-4-1-chat", "invalid schema", true));
+            _ => AIResponse.Failed("Mock", "gpt-4.1", "gpt-4.1", "invalid schema", true));
         var options = Options.Create(new AIIntegrationOptions
         {
             Enabled = true,
@@ -791,7 +822,7 @@ public sealed class AIIntegrationLayerTests
 
         var response = await client.SendAsync(
             AIRequest.Create(AITaskType.UserChatSimple, AIModelClass.Fast, [AIMessage.User("hello")], "corr-no-retry"),
-            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4-1-chat", false, "test", []),
+            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "test", []),
             CancellationToken.None);
 
         Assert.False(response.Succeeded);
@@ -803,7 +834,7 @@ public sealed class AIIntegrationLayerTests
     {
         var provider = new CountingProviderTransport(
             AIProviderKind.Mock,
-            _ => AIResponse.Failed("Mock", "gpt-4.1", "gpt-4-1-chat", "transient upstream failure", true));
+            _ => AIResponse.Failed("Mock", "gpt-4.1", "gpt-4.1", "transient upstream failure", true));
         var options = Options.Create(new AIIntegrationOptions
         {
             Enabled = true,
@@ -826,7 +857,7 @@ public sealed class AIIntegrationLayerTests
 
         var response = await client.SendAsync(
             AIRequest.Create(AITaskType.UserChatSimple, AIModelClass.Fast, [AIMessage.User("hello")], "corr-retry-exhaust"),
-            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4-1-chat", false, "test", []),
+            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "test", []),
             CancellationToken.None);
 
         Assert.False(response.Succeeded);
@@ -862,7 +893,7 @@ public sealed class AIIntegrationLayerTests
 
         var response = await client.SendAsync(
             AIRequest.Create(AITaskType.UserChatSimple, AIModelClass.Fast, [AIMessage.User("hello")], "corr-timeout"),
-            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4-1-chat", false, "test", []),
+            new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "test", []),
             CancellationToken.None);
 
         Assert.False(response.Succeeded);
@@ -902,7 +933,7 @@ public sealed class AIIntegrationLayerTests
                 FinishReason: "stop",
                 Provider: "Mock",
                 Model: "gpt-5-chat",
-                Deployment: "merchant-investigation",
+                Deployment: "gpt-5-chat",
                 InputTokenEstimate: 10,
                 OutputTokenEstimate: 20,
                 LatencyMs: 1,
@@ -915,7 +946,7 @@ public sealed class AIIntegrationLayerTests
         var recorder = new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance);
         var orchestrator = new MerchantInvestigationOrchestrator(
             new MerchantDescriptorNormalizer(),
-            new StaticRouter(new AIModelRoute(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, "gpt-5-chat", "merchant-investigation", false, "test", [])),
+            new StaticRouter(new AIModelRoute(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, "gpt-5-chat", "gpt-5-chat", false, "test", [])),
             new AIPromptBuilder(),
             aiClient,
             new MerchantInvestigationResponseParser(NullLogger<MerchantInvestigationResponseParser>.Instance),
@@ -1003,7 +1034,17 @@ public sealed class AIIntegrationLayerTests
 
     private static AIModelRouter CreateRouter(Action<AIIntegrationOptions>? configure)
     {
-        var options = new AIIntegrationOptions();
+        var options = new AIIntegrationOptions
+        {
+            Routing = new AIModelRoutingOptions
+            {
+                FastModelName = "gpt-4.1",
+                FastDeploymentName = "gpt-4.1",
+                HeavyModelName = "gpt-5-chat",
+                HeavyDeploymentName = "gpt-5-chat",
+                HeavyModelEnabled = true
+            }
+        };
         configure?.Invoke(options);
         AIIntegrationOptionsNormalizer.Normalize(options);
 
@@ -1083,12 +1124,48 @@ public sealed class AIIntegrationLayerTests
         {
             options.Provider = "AzureOpenAI";
             options.UseMockProvider = false;
+            options.Models.Fast = "gpt-4.1";
             options.Models.Heavy = "gpt-5-chat";
         });
 
         var route = router.Resolve(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, null);
 
         Assert.Equal("gpt-5-chat", route.Model);
+        Assert.Equal("gpt-5-chat", route.Deployment);
+    }
+
+    [Fact]
+    public void ModelRouter_UsesResolvedFastAndHeavyRoutingValues()
+    {
+        var router = CreateRouter(options =>
+        {
+            options.Provider = "AzureOpenAI";
+            options.UseMockProvider = false;
+            options.Routing.FastModelName = "gpt-4.1";
+            options.Routing.FastDeploymentName = "gpt-4.1";
+            options.Routing.HeavyModelName = "gpt-5-chat";
+            options.Routing.HeavyDeploymentName = "gpt-5-chat";
+            options.Routing.HeavyModelEnabled = true;
+        });
+
+        var fast = router.Resolve(AITaskType.UserChatSimple, AIModelClass.Fast, null);
+        var heavy = router.Resolve(AITaskType.UserChatComplex, AIModelClass.HeavyReasoning, null);
+
+        Assert.Equal("gpt-4.1", fast.Model);
+        Assert.Equal("gpt-4.1", fast.Deployment);
+        Assert.Equal("gpt-5-chat", heavy.Model);
+        Assert.Equal("gpt-5-chat", heavy.Deployment);
+    }
+
+    [Fact]
+    public void AIModelRoutingOptions_Defaults_DoNotLeakLegacyDeploymentNames()
+    {
+        var routing = new AIModelRoutingOptions();
+
+        Assert.True(string.IsNullOrWhiteSpace(routing.FastDeploymentName));
+        Assert.True(string.IsNullOrWhiteSpace(routing.HeavyDeploymentName));
+        Assert.NotEqual("gpt-4-1-chat", routing.FastDeploymentName);
+        Assert.NotEqual("merchant-investigation", routing.HeavyDeploymentName);
     }
 
     [Fact]
@@ -1102,7 +1179,7 @@ public sealed class AIIntegrationLayerTests
                 FinishReason: "stop",
                 Provider: "AzureOpenAI",
                 Model: "gpt-5-chat",
-                Deployment: "merchant-investigation",
+                Deployment: "gpt-5-chat",
                 InputTokenEstimate: 1,
                 OutputTokenEstimate: 1,
                 LatencyMs: 1,
@@ -1118,7 +1195,7 @@ public sealed class AIIntegrationLayerTests
                 FinishReason: "stop",
                 Provider: "Mock",
                 Model: "gpt-5-chat",
-                Deployment: "merchant-investigation",
+                Deployment: "gpt-5-chat",
                 InputTokenEstimate: 1,
                 OutputTokenEstimate: 1,
                 LatencyMs: 1,
@@ -1151,7 +1228,7 @@ public sealed class AIIntegrationLayerTests
 
         var response = await client.SendAsync(
             AIRequest.Create(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, [AIMessage.User("test")], "corr-azure-provider"),
-            new AIModelRoute(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, "gpt-5-chat", "merchant-investigation", false, "test", []),
+            new AIModelRoute(AITaskType.MerchantInvestigation, AIModelClass.HeavyReasoning, "gpt-5-chat", "gpt-5-chat", false, "test", []),
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
@@ -1166,12 +1243,41 @@ public sealed class AIIntegrationLayerTests
         {
             ["AI:Provider"] = "AzureOpenAI",
             ["AI:UseMockProvider"] = "false",
-            ["AI:Models:Heavy"] = ""
+            ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+            ["AI:ApiKey"] = "test-key",
+            ["AI:Routing:FastModelName"] = "gpt-4.1",
+            ["AI:Routing:FastDeploymentName"] = "gpt-4.1",
+            ["AI:Routing:HeavyModelName"] = "gpt-5-chat",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Routing:HeavyDeploymentName"] = ""
         });
 
         var ex = Assert.Throws<OptionsValidationException>(() =>
             services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value);
 
-        Assert.Contains("AI configuration missing", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Routing:HeavyDeploymentName", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AIIntegrationOptions_ThrowsWhenAzureUsesLegacyDeploymentValues()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Provider"] = "AzureOpenAI",
+            ["AI:UseMockProvider"] = "false",
+            ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+            ["AI:ApiKey"] = "test-key",
+            ["AI:Routing:FastModelName"] = "gpt-4.1",
+            ["AI:Routing:FastDeploymentName"] = "gpt-4-1-chat",
+            ["AI:Routing:HeavyModelName"] = "gpt-5-chat",
+            ["AI:Routing:HeavyDeploymentName"] = "merchant-investigation",
+            ["AI:Routing:HeavyModelEnabled"] = "true"
+        });
+
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value);
+
+        Assert.Contains("legacy value", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }
+

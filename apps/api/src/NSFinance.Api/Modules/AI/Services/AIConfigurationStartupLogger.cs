@@ -12,15 +12,19 @@ public sealed class AIConfigurationStartupLogger(
         var config = options.Value;
         var provider = config.UseMockProvider ? AIProviderKind.Mock : config.ProviderKind;
         var endpointHost = ResolveEndpointHost(config.AzureOpenAI.Endpoint);
-        var heavyModel = string.IsNullOrWhiteSpace(config.Routing.HeavyModelName)
-            ? "missing"
-            : config.Routing.HeavyModelName;
+        var routing = config.Routing;
 
         logger.LogInformation(
-            "AI configuration loaded provider={Provider} endpointHost={EndpointHost} heavyModel={HeavyModel}",
+            "AI configuration loaded provider={Provider} endpointHost={EndpointHost} useMockProvider={UseMockProvider} aliasNormalizationApplied={AliasNormalizationApplied} fastModel={FastModel} fastDeployment={FastDeployment} heavyModel={HeavyModel} heavyDeployment={HeavyDeployment} heavyEnabled={HeavyEnabled}",
             provider,
             endpointHost,
-            heavyModel);
+            config.UseMockProvider,
+            config.AliasNormalizationApplied,
+            DisplayOrMissing(routing.FastModelName),
+            DisplayOrMissing(routing.FastDeploymentName),
+            DisplayOrMissing(routing.HeavyModelName),
+            DisplayOrMissing(routing.HeavyDeploymentName),
+            routing.HeavyModelEnabled);
 
         return Task.CompletedTask;
     }
@@ -40,5 +44,12 @@ public sealed class AIConfigurationStartupLogger(
         }
 
         return "invalid";
+    }
+
+    private static string DisplayOrMissing(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "missing"
+            : value.Trim();
     }
 }
