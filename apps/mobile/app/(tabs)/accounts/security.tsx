@@ -655,7 +655,6 @@ export default function SecuritySettingsScreen() {
                   ) : null}
 
                   <View style={styles.statusRow}>
-                    <Text style={styles.metaLine}>Status</Text>
                     <View style={[styles.statusPill, statusToneStyle]}>
                       <Text style={[styles.statusPillText, statusTextToneStyle]}>{status.label}</Text>
                     </View>
@@ -762,7 +761,6 @@ export default function SecuritySettingsScreen() {
                     ) : null}
 
                     <View style={styles.statusRow}>
-                      <Text style={styles.metaLine}>Status</Text>
                       <View style={[styles.statusPill, statusToneStyle]}>
                         <Text style={[styles.statusPillText, statusTextToneStyle]}>{status.label}</Text>
                       </View>
@@ -1052,8 +1050,8 @@ const styles = createRuntimeStyleSheet(() => ({
     marginTop: spacing[2],
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing[8]
+    justifyContent: "flex-start",
+    alignSelf: "flex-start"
   },
   statusPill: {
     minHeight: 24,
