@@ -13,6 +13,11 @@ public sealed class AIConfigurationStartupLogger(
         var provider = config.UseMockProvider ? AIProviderKind.Mock : config.ProviderKind;
         var endpointHost = ResolveEndpointHost(config.AzureOpenAI.Endpoint);
         var routing = config.Routing;
+        var heavyRouteConfigured =
+            !string.IsNullOrWhiteSpace(routing.HeavyModelName)
+            && !string.IsNullOrWhiteSpace(routing.HeavyDeploymentName);
+        var heavyEnabled = provider == AIProviderKind.Mock
+            || (routing.HeavyModelEnabled ?? heavyRouteConfigured);
 
         logger.LogInformation(
             "AI configuration loaded provider={Provider} endpointHost={EndpointHost} useMockProvider={UseMockProvider} aliasNormalizationApplied={AliasNormalizationApplied} fastModel={FastModel} fastDeployment={FastDeployment} heavyModel={HeavyModel} heavyDeployment={HeavyDeployment} heavyEnabled={HeavyEnabled}",
@@ -24,7 +29,7 @@ public sealed class AIConfigurationStartupLogger(
             DisplayOrMissing(routing.FastDeploymentName),
             DisplayOrMissing(routing.HeavyModelName),
             DisplayOrMissing(routing.HeavyDeploymentName),
-            routing.HeavyModelEnabled);
+            heavyEnabled);
 
         return Task.CompletedTask;
     }

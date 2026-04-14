@@ -28,13 +28,16 @@ public sealed class AIModelRoutingOptions
     public string FastDeploymentName { get; set; } = string.Empty;
     public string HeavyModelName { get; set; } = string.Empty;
     public string HeavyDeploymentName { get; set; } = string.Empty;
-    public bool HeavyModelEnabled { get; set; }
+    // Nullable on purpose so "not configured" can be distinguished from an explicit false.
+    public bool? HeavyModelEnabled { get; set; }
     public HeavyModelFallbackPolicy HeavyModelFallbackPolicy { get; set; } = HeavyModelFallbackPolicy.UseFastModel;
 }
 
 public sealed class AIModelNameOptions
 {
+    // Legacy alias input only. Runtime routing must use AI:Routing:* values.
     public string? Fast { get; set; }
+    // Legacy alias input only. Runtime routing must use AI:Routing:* values.
     public string? Heavy { get; set; }
 }
 

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
@@ -25,7 +26,6 @@ public sealed class AIIntegrationLayerTests
             ["AI:Routing:FastDeploymentName"] = "gpt-4.1",
             ["AI:Routing:HeavyModelName"] = "gpt-5-chat",
             ["AI:Routing:HeavyDeploymentName"] = "gpt-5-chat",
-            ["AI:Routing:HeavyModelEnabled"] = "true",
             ["AI:UseMockProvider"] = "false"
         });
 
@@ -39,7 +39,7 @@ public sealed class AIIntegrationLayerTests
         Assert.Equal("gpt-4.1", options.Routing.FastDeploymentName);
         Assert.Equal("gpt-5-chat", options.Routing.HeavyModelName);
         Assert.Equal("gpt-5-chat", options.Routing.HeavyDeploymentName);
-        Assert.True(options.Routing.HeavyModelEnabled);
+        Assert.True(options.Routing.HeavyModelEnabled ?? false);
         Assert.False(options.AliasNormalizationApplied);
     }
 
@@ -62,8 +62,56 @@ public sealed class AIIntegrationLayerTests
         Assert.Equal("gpt-4.1", options.Routing.FastDeploymentName);
         Assert.Equal("gpt-5-chat", options.Routing.HeavyModelName);
         Assert.Equal("gpt-5-chat", options.Routing.HeavyDeploymentName);
-        Assert.True(options.Routing.HeavyModelEnabled);
+        Assert.True(options.Routing.HeavyModelEnabled ?? false);
         Assert.True(options.AliasNormalizationApplied);
+    }
+
+    [Fact]
+    public void AIIntegrationOptions_RoutingWins_WhenLegacyAliasesMatch()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Provider"] = "AzureOpenAI",
+            ["AI:UseMockProvider"] = "false",
+            ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+            ["AI:ApiKey"] = "test-key",
+            ["AI:Routing:FastModelName"] = "gpt-4.1",
+            ["AI:Routing:FastDeploymentName"] = "gpt-4.1",
+            ["AI:Routing:HeavyModelName"] = "gpt-5-chat",
+            ["AI:Routing:HeavyDeploymentName"] = "gpt-5-chat",
+            ["AI:Models:Fast"] = "gpt-4.1",
+            ["AI:Models:Heavy"] = "gpt-5-chat"
+        });
+
+        var options = services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value;
+        Assert.Equal("gpt-4.1", options.Routing.FastModelName);
+        Assert.Equal("gpt-4.1", options.Routing.FastDeploymentName);
+        Assert.Equal("gpt-5-chat", options.Routing.HeavyModelName);
+        Assert.Equal("gpt-5-chat", options.Routing.HeavyDeploymentName);
+    }
+
+    [Fact]
+    public void AIIntegrationOptions_ThrowsWhenLegacyAliasesConflictWithRouting()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:Provider"] = "AzureOpenAI",
+            ["AI:UseMockProvider"] = "false",
+            ["AI:Endpoint"] = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1",
+            ["AI:ApiKey"] = "test-key",
+            ["AI:Routing:FastModelName"] = "gpt-4.1",
+            ["AI:Routing:FastDeploymentName"] = "gpt-4.1",
+            ["AI:Routing:HeavyModelName"] = "gpt-5-chat",
+            ["AI:Routing:HeavyDeploymentName"] = "gpt-5-chat",
+            ["AI:Models:Fast"] = "gpt-4o-mini",
+            ["AI:Models:Heavy"] = "gpt-5"
+        });
+
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value);
+
+        Assert.Contains("Models.Fast", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Models.Heavy", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1278,6 +1326,61 @@ public sealed class AIIntegrationLayerTests
             services.GetRequiredService<IOptions<AIIntegrationOptions>>().Value);
 
         Assert.Contains("legacy value", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AIConfigurationStartupLogger_LogsResolvedCanonicalRoutingValues()
+    {
+        var testLogger = new TestLogger<AIConfigurationStartupLogger>();
+        var startupLogger = new AIConfigurationStartupLogger(
+            Options.Create(new AIIntegrationOptions
+            {
+                UseMockProvider = false,
+                Provider = "AzureOpenAI",
+                ProviderKind = AIProviderKind.AzureOpenAI,
+                AliasNormalizationApplied = true,
+                AzureOpenAI = new AzureOpenAIOptions
+                {
+                    Endpoint = "https://aoai-nsfinance-prod.openai.azure.com/openai/v1"
+                },
+                Routing = new AIModelRoutingOptions
+                {
+                    FastModelName = "gpt-4.1",
+                    FastDeploymentName = "gpt-4.1",
+                    HeavyModelName = "gpt-5-chat",
+                    HeavyDeploymentName = "gpt-5-chat"
+                }
+            }),
+            testLogger);
+
+        await startupLogger.StartAsync(CancellationToken.None);
+
+        var logLine = Assert.Single(testLogger.Messages);
+        Assert.Contains("provider=AzureOpenAI", logLine, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("endpointHost=aoai-nsfinance-prod.openai.azure.com", logLine, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fastModel=gpt-4.1", logLine, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fastDeployment=gpt-4.1", logLine, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("heavyModel=gpt-5-chat", logLine, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("heavyDeployment=gpt-5-chat", logLine, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class TestLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add(formatter(state, exception));
+        }
     }
 }
 

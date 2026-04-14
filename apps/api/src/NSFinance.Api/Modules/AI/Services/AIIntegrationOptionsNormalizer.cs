@@ -59,16 +59,6 @@ public static class AIIntegrationOptionsNormalizer
                 aliasNormalizationApplied = true;
             }
         }
-        else if (!string.IsNullOrWhiteSpace(options.Routing.FastModelName))
-        {
-            options.Models.Fast = options.Routing.FastModelName;
-        }
-
-        if (string.IsNullOrWhiteSpace(options.Models.Heavy)
-            && !string.IsNullOrWhiteSpace(options.Routing.HeavyModelName))
-        {
-            options.Models.Heavy = options.Routing.HeavyModelName;
-        }
 
         if (heavyAliasProvided && !string.IsNullOrWhiteSpace(options.Models.Heavy))
         {
@@ -83,7 +73,12 @@ public static class AIIntegrationOptionsNormalizer
                 options.Routing.HeavyDeploymentName = options.Models.Heavy!;
                 aliasNormalizationApplied = true;
             }
+        }
 
+        if (options.Routing.HeavyModelEnabled is null
+            && !string.IsNullOrWhiteSpace(options.Routing.HeavyModelName)
+            && !string.IsNullOrWhiteSpace(options.Routing.HeavyDeploymentName))
+        {
             options.Routing.HeavyModelEnabled = true;
         }
 

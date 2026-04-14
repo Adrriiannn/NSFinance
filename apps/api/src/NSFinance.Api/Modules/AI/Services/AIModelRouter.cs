@@ -17,7 +17,11 @@ public sealed class AIModelRouter(
             : preferredModelClass;
 
         var wantsHeavy = requestedClass == AIModelClass.HeavyReasoning;
-        var heavyEnabled = routing.HeavyModelEnabled || selectedProvider == AIProviderKind.Mock;
+        var heavyRouteConfigured =
+            !string.IsNullOrWhiteSpace(routing.HeavyModelName)
+            && !string.IsNullOrWhiteSpace(routing.HeavyDeploymentName);
+        var heavyEnabled = selectedProvider == AIProviderKind.Mock
+            || (routing.HeavyModelEnabled ?? heavyRouteConfigured);
 
         if (wantsHeavy && !heavyEnabled)
         {

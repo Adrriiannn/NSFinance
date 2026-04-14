@@ -19,21 +19,32 @@ public sealed class AIIntegrationOptionsValidator : IValidateOptions<AIIntegrati
             return ValidateOptionsResult.Success;
         }
 
+        if (!string.IsNullOrWhiteSpace(options.Provider)
+            && !Enum.TryParse<AIProviderKind>(options.Provider.Trim(), true, out _))
+        {
+            errors.Add("AI configuration misconfiguration: Provider must be one of 'Mock' or 'AzureOpenAI'.");
+        }
+
         if (!string.IsNullOrWhiteSpace(options.Models.Fast)
             && !string.IsNullOrWhiteSpace(options.Routing.FastModelName)
             && !string.Equals(options.Models.Fast.Trim(), options.Routing.FastModelName.Trim(), StringComparison.Ordinal))
         {
-            errors.Add("AI configuration conflict: Models.Fast does not match Routing.FastModelName.");
+            errors.Add("AI configuration conflict: Models.Fast (legacy alias) does not match Routing.FastModelName.");
         }
 
         if (!string.IsNullOrWhiteSpace(options.Models.Heavy)
             && !string.IsNullOrWhiteSpace(options.Routing.HeavyModelName)
             && !string.Equals(options.Models.Heavy.Trim(), options.Routing.HeavyModelName.Trim(), StringComparison.Ordinal))
         {
-            errors.Add("AI configuration conflict: Models.Heavy does not match Routing.HeavyModelName.");
+            errors.Add("AI configuration conflict: Models.Heavy (legacy alias) does not match Routing.HeavyModelName.");
         }
 
         var provider = options.UseMockProvider ? AIProviderKind.Mock : options.ProviderKind;
+        if (!options.UseMockProvider && provider != AIProviderKind.AzureOpenAI)
+        {
+            errors.Add("AI configuration misconfiguration: UseMockProvider=false requires Provider=AzureOpenAI.");
+        }
+
         if (provider != AIProviderKind.AzureOpenAI)
         {
             return errors.Count == 0
@@ -51,9 +62,9 @@ public sealed class AIIntegrationOptionsValidator : IValidateOptions<AIIntegrati
             errors.Add("AI Routing misconfiguration: Routing:FastDeploymentName is required for AzureOpenAI provider.");
         }
 
-        if (!options.Routing.HeavyModelEnabled)
+        if (options.Routing.HeavyModelEnabled == false)
         {
-            errors.Add("AI Routing misconfiguration: Routing:HeavyModelEnabled must be true for AzureOpenAI provider.");
+            errors.Add("AI Routing misconfiguration: Routing:HeavyModelEnabled is explicitly false for AzureOpenAI provider.");
         }
 
         if (string.IsNullOrWhiteSpace(options.Routing.HeavyModelName))
