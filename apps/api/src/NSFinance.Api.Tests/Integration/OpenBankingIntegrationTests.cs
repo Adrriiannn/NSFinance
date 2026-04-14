@@ -15,6 +15,7 @@ using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Services;
 using NSFinance.Api.Modules.Banking.Services.Deterministic;
+using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Persistence;
@@ -85,6 +86,103 @@ public class OpenBankingIntegrationTests
         Assert.Equal(BankConnectionStatuses.Failed, connection.Status);
         Assert.Single(await harness.DbContext.BankBalanceSnapshots.ToListAsync());
         Assert.Equal(0, await harness.DbContext.RawBankTransactions.CountAsync());
+    }
+
+    [Fact]
+    public async Task CallbackFlow_TriggersMerchantResolutionForEligibleAccountTransactions_AndPersistsInterpretation()
+    {
+        var merchantResolution = new RecordingMerchantResolutionService();
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler(),
+            merchantResolutionService: merchantResolution);
+
+        var user = await harness.CreateUserAsync("bank.merchant-resolution-trigger@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var outcome = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-merchant-resolution-trigger", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(1, merchantResolution.InvocationCount);
+        Assert.Contains(merchantResolution.SeenDescriptors, descriptor => descriptor.Contains("Coffee Shop", StringComparison.OrdinalIgnoreCase));
+
+        var normalizedRows = await harness.DbContext.NormalizedBankTransactions
+            .OrderBy(x => x.BookedAtUtc)
+            .ToListAsync();
+        Assert.Equal(2, normalizedRows.Count);
+
+        var coffee = normalizedRows.Single(x => x.Description.Contains("Coffee Shop", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("resolved_exact_alias", coffee.InterpretationConfidenceTier);
+        Assert.True(coffee.InterpretationConfidenceScore >= 90);
+        Assert.False(string.IsNullOrWhiteSpace(coffee.InterpretationReasonJson));
+
+        var salary = normalizedRows.Single(x => x.Description.Contains("Salary", StringComparison.OrdinalIgnoreCase));
+        Assert.Null(salary.InterpretationReasonJson);
+    }
+
+    [Fact]
+    public async Task SyncConnection_ReplayDoesNotReinvokeMerchantResolution_ForAlreadyInterpretedTransactions()
+    {
+        var merchantResolution = new RecordingMerchantResolutionService();
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SuccessfulFlowHandler(),
+            merchantResolutionService: merchantResolution);
+
+        var user = await harness.CreateUserAsync("bank.merchant-resolution-replay@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-merchant-resolution-replay", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+        Assert.Equal(1, merchantResolution.InvocationCount);
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var rerun = await syncService.SyncConnectionAsync(user.Id, start.Value.ConnectionId, CancellationToken.None);
+        Assert.True(rerun.Succeeded);
+
+        Assert.Equal(1, merchantResolution.InvocationCount);
+    }
+
+    [Fact]
+    public async Task CallbackFlow_DedupesMerchantResolutionWithinSingleBatch_WhenDescriptorsRepeat()
+    {
+        var merchantResolution = new RecordingMerchantResolutionService();
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidSandboxOptions(),
+            httpHandler: SameFingerprintDistinctTransactionsFlowHandler(),
+            merchantResolutionService: merchantResolution);
+
+        var user = await harness.CreateUserAsync("bank.merchant-resolution-dedupe@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-merchant-resolution-dedupe", state, null, null),
+            CancellationToken.None);
+
+        Assert.True(callback.Succeeded);
+        Assert.Equal(1, merchantResolution.InvocationCount);
+
+        var interpretedRows = await harness.DbContext.NormalizedBankTransactions
+            .Where(x => x.Description == "Coffee Shop")
+            .ToListAsync();
+
+        Assert.Equal(2, interpretedRows.Count);
+        Assert.All(interpretedRows, row =>
+        {
+            Assert.Equal("resolved_exact_alias", row.InterpretationConfidenceTier);
+            Assert.False(string.IsNullOrWhiteSpace(row.InterpretationReasonJson));
+        });
     }
 
     [Fact]
@@ -9085,13 +9183,18 @@ public class OpenBankingIntegrationTests
         private readonly IRequestContextAccessor _requestContext = new TestRequestContextAccessor();
         private readonly IAuditService _auditService;
         private readonly HttpMessageHandler _httpHandler;
+        private readonly IMerchantResolutionService _merchantResolutionService;
 
         public AppDbContext DbContext { get; }
         public TrueLayerAuthService AuthService { get; set; }
 
-        public OpenBankingTestHarness(TrueLayerOptions options, HttpMessageHandler httpHandler)
+        public OpenBankingTestHarness(
+            TrueLayerOptions options,
+            HttpMessageHandler httpHandler,
+            IMerchantResolutionService? merchantResolutionService = null)
         {
             _httpHandler = httpHandler;
+            _merchantResolutionService = merchantResolutionService ?? new NoOpMerchantResolutionService();
             DbContext = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
                 .UseInMemoryDatabase($"open-banking-tests-{Guid.NewGuid():N}")
                 .Options);
@@ -9206,6 +9309,7 @@ public class OpenBankingIntegrationTests
                 reclassificationTriggerService,
                 categorizationService,
                 metrics,
+                _merchantResolutionService,
                 NullLogger<BankSyncService>.Instance);
 
             if (enrichmentQueue is ImmediateBankDeterministicEnrichmentQueue immediateQueue)
@@ -9404,6 +9508,54 @@ public class OpenBankingIntegrationTests
         Guid UserId,
         Guid ConnectionId,
         string Reason);
+
+    private sealed class NoOpMerchantResolutionService : IMerchantResolutionService
+    {
+        public Task<MerchantResolutionResult> ResolveAsync(string rawDescriptor, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new MerchantResolutionResult(
+                MerchantId: null,
+                ResolutionConfidence: 0d,
+                ResolutionType: MerchantResolutionType.None,
+                MatchedAlias: null,
+                IsResolved: false,
+                UnresolvedMerchantId: null,
+                NormalizedDescriptor: rawDescriptor.Trim().ToLowerInvariant(),
+                AcceptanceDecisionType: MerchantAcceptanceDecisionType.Unresolved,
+                ReasonCodes: ["test_no_op_resolution"]));
+        }
+    }
+
+    private sealed class RecordingMerchantResolutionService : IMerchantResolutionService
+    {
+        private readonly ConcurrentQueue<string> _descriptors = new();
+        private readonly Func<string, MerchantResolutionResult>? _resolver;
+
+        public RecordingMerchantResolutionService(Func<string, MerchantResolutionResult>? resolver = null)
+        {
+            _resolver = resolver;
+        }
+
+        public int InvocationCount => _descriptors.Count;
+
+        public IReadOnlyCollection<string> SeenDescriptors => _descriptors.ToArray();
+
+        public Task<MerchantResolutionResult> ResolveAsync(string rawDescriptor, CancellationToken cancellationToken)
+        {
+            _descriptors.Enqueue(rawDescriptor);
+            var result = _resolver?.Invoke(rawDescriptor) ?? new MerchantResolutionResult(
+                MerchantId: Guid.NewGuid(),
+                ResolutionConfidence: 0.91d,
+                ResolutionType: MerchantResolutionType.ExactAlias,
+                MatchedAlias: rawDescriptor,
+                IsResolved: true,
+                UnresolvedMerchantId: null,
+                NormalizedDescriptor: rawDescriptor.Trim().ToLowerInvariant(),
+                AcceptanceDecisionType: MerchantAcceptanceDecisionType.AcceptedTrusted,
+                ReasonCodes: ["test_resolved"]);
+            return Task.FromResult(result);
+        }
+    }
 
     private sealed class TestSecretProtector : ISecretProtector
     {

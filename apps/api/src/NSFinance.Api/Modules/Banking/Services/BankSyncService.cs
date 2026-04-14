@@ -5,6 +5,7 @@ using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Audit.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Banking.Services.Deterministic;
+using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Modules.Banking.Services.Models;
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
 using NSFinance.Api.Persistence;
@@ -23,6 +24,7 @@ public sealed class BankSyncService(
     DeterministicReclassificationTriggerService reclassificationTriggerService,
     DeterministicTransactionCategorizationService deterministicCategorizationService,
     DeterministicCategorizationMetrics deterministicMetrics,
+    IMerchantResolutionService merchantResolutionService,
     ILogger<BankSyncService> logger)
 {
     private const int InternalTransferMatchLookbackDays = 21;
@@ -1026,6 +1028,31 @@ public sealed class BankSyncService(
                 "account_transactions_and_commitments",
                 transactionStageStopwatch.ElapsedMilliseconds);
 
+            var merchantResolutionStopwatch = Stopwatch.StartNew();
+            var merchantResolutionSummary = await ResolveMerchantResolutionForAccountTransactionsAsync(
+                connection.Id,
+                linkedAccount,
+                providerAccount,
+                transactionUpsert.NormalizedTransactionIdsForMerchantResolution,
+                now,
+                cancellationToken);
+
+            if (merchantResolutionSummary.TriggerCandidates > 0)
+            {
+                await PersistSyncStageChangesAsync(
+                    connection.Id,
+                    providerAccount.AccountId,
+                    "account_merchant_resolution",
+                    cancellationToken);
+
+                logger.LogInformation(
+                    "Bank sync phase duration connectionId={ConnectionId} accountId={AccountId} phase={Phase} elapsedMs={ElapsedMs}",
+                    connection.Id,
+                    providerAccount.AccountId,
+                    "account_merchant_resolution",
+                    merchantResolutionStopwatch.ElapsedMilliseconds);
+            }
+
             if (ingestionKickoffPendingProjectedRows > 0
                 && ingestionKickoffPendingProjectedTransactionIds.Count > 0)
             {
@@ -1854,6 +1881,7 @@ public sealed class BankSyncService(
         var projectedBackfillRowsDeferred = 0;
         var projectedCandidatePoolSize = 0;
         var projectedTransactionIdsForDeterministicReclassification = new HashSet<Guid>();
+        var normalizedTransactionIdsForMerchantResolution = new HashSet<Guid>();
         ProjectionReconciliationState? projectionState = null;
 
         static void MarkProjectedForDeterministicReclassification(
@@ -2217,13 +2245,17 @@ public sealed class BankSyncService(
                         providerTransaction.StatusNormalizationReason);
                 }
 
-                UpsertNormalizedBankTransaction(
+                var normalizedOutcome = UpsertNormalizedBankTransaction(
                     normalizedRowsByRawId,
                     existingRaw,
                     linkedAccount,
                     providerPolicy,
                     providerTransaction,
                     now);
+                if (ShouldQueueMerchantResolution(normalizedOutcome, existingRaw))
+                {
+                    normalizedTransactionIdsForMerchantResolution.Add(normalizedOutcome.NormalizedTransactionId);
+                }
 
                 continue;
             }
@@ -2363,13 +2395,17 @@ public sealed class BankSyncService(
             }
 
             existingRawByDedupeKey[providerTransaction.DedupeKey] = rawTransaction;
-            UpsertNormalizedBankTransaction(
+            var insertedNormalizedOutcome = UpsertNormalizedBankTransaction(
                 normalizedRowsByRawId,
                 rawTransaction,
                 linkedAccount,
                 providerPolicy,
                 providerTransaction,
                 now);
+            if (ShouldQueueMerchantResolution(insertedNormalizedOutcome, rawTransaction))
+            {
+                normalizedTransactionIdsForMerchantResolution.Add(insertedNormalizedOutcome.NormalizedTransactionId);
+            }
             rawInserted++;
         }
 
@@ -2389,7 +2425,8 @@ public sealed class BankSyncService(
             projectedBackfillRowsEvaluated,
             projectedBackfillRowsDeferred,
             projectedCandidatePoolSize,
-            projectedTransactionIdsForDeterministicReclassification.ToArray());
+            projectedTransactionIdsForDeterministicReclassification.ToArray(),
+            normalizedTransactionIdsForMerchantResolution.ToArray());
     }
 
     private async Task<ProjectionReconciliationState> BuildProjectionReconciliationStateAsync(
@@ -2654,7 +2691,7 @@ public sealed class BankSyncService(
         return changed;
     }
 
-    private void UpsertNormalizedBankTransaction(
+    private NormalizedUpsertOutcome UpsertNormalizedBankTransaction(
         IDictionary<Guid, NormalizedBankTransaction> normalizedRowsByRawId,
         RawBankTransaction rawTransaction,
         LinkedBankAccount linkedAccount,
@@ -2662,6 +2699,7 @@ public sealed class BankSyncService(
         TrueLayerTransactionRecord providerTransaction,
         DateTime now)
     {
+        var wasCreated = false;
         if (!normalizedRowsByRawId.TryGetValue(rawTransaction.Id, out var normalized))
         {
             normalized = new NormalizedBankTransaction
@@ -2674,7 +2712,11 @@ public sealed class BankSyncService(
             };
             dbContext.NormalizedBankTransactions.Add(normalized);
             normalizedRowsByRawId[rawTransaction.Id] = normalized;
+            wasCreated = true;
         }
+
+        var previousDescription = normalized.Description;
+        var hadPriorInterpretation = !string.IsNullOrWhiteSpace(normalized.InterpretationReasonJson);
 
         normalized.ProjectedTransactionId = rawTransaction.ProjectedTransactionId;
         normalized.ProviderTransactionId = rawTransaction.ProviderTransactionId;
@@ -2698,6 +2740,285 @@ public sealed class BankSyncService(
         normalized.NormalizationPolicyKey = providerPolicy.ProviderKey;
         normalized.NormalizationPolicyFamily = providerPolicy.ProviderFamily;
         normalized.LastNormalizedUtc = now;
+
+        return new NormalizedUpsertOutcome(
+            normalized.Id,
+            wasCreated,
+            !string.Equals(previousDescription, normalized.Description, StringComparison.Ordinal),
+            hadPriorInterpretation);
+    }
+
+    private async Task<MerchantResolutionTriggerSummary> ResolveMerchantResolutionForAccountTransactionsAsync(
+        Guid connectionId,
+        LinkedBankAccount linkedAccount,
+        TrueLayerAccountRecord providerAccount,
+        IReadOnlyCollection<Guid> normalizedTransactionIds,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (normalizedTransactionIds.Count == 0)
+        {
+            return MerchantResolutionTriggerSummary.Empty;
+        }
+
+        var normalizedRows = await dbContext.NormalizedBankTransactions
+            .Where(x => x.LinkedBankAccountId == linkedAccount.Id && normalizedTransactionIds.Contains(x.Id))
+            .OrderByDescending(x => x.BookedAtUtc)
+            .ThenByDescending(x => x.ImportedUtc)
+            .ToListAsync(cancellationToken);
+
+        var missingRows = Math.Max(0, normalizedTransactionIds.Count - normalizedRows.Count);
+        var skippedIneligible = 0;
+        var executed = 0;
+        var dedupedReuse = 0;
+        var resolved = 0;
+        var unresolved = 0;
+        var cooldownBlocked = 0;
+        var failed = 0;
+        var descriptorCache = new Dictionary<string, MerchantResolutionResult>(StringComparer.Ordinal);
+        var failedDescriptorKeys = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var normalized in normalizedRows)
+        {
+            if (!IsMerchantResolutionEligible(normalized))
+            {
+                skippedIneligible++;
+                continue;
+            }
+
+            var descriptor = normalized.Description.Trim();
+            if (descriptor.Length == 0)
+            {
+                skippedIneligible++;
+                continue;
+            }
+
+            var cacheKey = BuildMerchantResolutionCacheKey(descriptor);
+            if (failedDescriptorKeys.Contains(cacheKey))
+            {
+                failed++;
+                continue;
+            }
+
+            if (!descriptorCache.TryGetValue(cacheKey, out var resolution))
+            {
+                try
+                {
+                    resolution = await merchantResolutionService.ResolveAsync(descriptor, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failedDescriptorKeys.Add(cacheKey);
+                    failed++;
+                    logger.LogWarning(
+                        ex,
+                        "Bank merchant resolution execution failed connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} normalizedTransactionId={NormalizedTransactionId}",
+                        connectionId,
+                        providerAccount.AccountId,
+                        linkedAccount.Id,
+                        normalized.Id);
+                    continue;
+                }
+
+                descriptorCache[cacheKey] = resolution;
+                executed++;
+            }
+            else
+            {
+                dedupedReuse++;
+            }
+
+            ApplyMerchantResolutionInterpretation(normalized, resolution, now);
+
+            if (resolution.IsResolved)
+            {
+                resolved++;
+            }
+            else
+            {
+                unresolved++;
+            }
+
+            if (resolution.ReasonCodes.Any(code => code.Equals("investigation_cooldown_active", StringComparison.OrdinalIgnoreCase)))
+            {
+                cooldownBlocked++;
+            }
+        }
+
+        logger.LogInformation(
+            "Bank merchant resolution trigger connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} triggerCandidates={TriggerCandidates} executed={Executed} dedupedReuse={DedupedReuse} skippedIneligible={SkippedIneligible} missingRows={MissingRows} failed={Failed} resolved={Resolved} unresolved={Unresolved} cooldownBlocked={CooldownBlocked}",
+            connectionId,
+            providerAccount.AccountId,
+            linkedAccount.Id,
+            normalizedTransactionIds.Count,
+            executed,
+            dedupedReuse,
+            skippedIneligible,
+            missingRows,
+            failed,
+            resolved,
+            unresolved,
+            cooldownBlocked);
+
+        return new MerchantResolutionTriggerSummary(
+            normalizedTransactionIds.Count,
+            executed,
+            dedupedReuse,
+            skippedIneligible,
+            missingRows,
+            failed,
+            resolved,
+            unresolved,
+            cooldownBlocked);
+    }
+
+    private static bool ShouldQueueMerchantResolution(NormalizedUpsertOutcome outcome, RawBankTransaction rawTransaction)
+    {
+        if (!IsBookedProjectionStatus(rawTransaction.TransactionStatus))
+        {
+            return false;
+        }
+
+        if (rawTransaction.Amount >= 0m)
+        {
+            return false;
+        }
+
+        if (!IsMerchantDescriptorCandidate(rawTransaction.Description))
+        {
+            return false;
+        }
+
+        if (LooksLikeInternalTransferDescription(rawTransaction.Description)
+            || LooksLikeSavingsPocketMovementDescription(rawTransaction.Description))
+        {
+            return false;
+        }
+
+        return outcome.WasCreated || outcome.DescriptionChanged || !outcome.HadPriorInterpretation;
+    }
+
+    private static bool IsMerchantResolutionEligible(NormalizedBankTransaction normalized)
+    {
+        if (!IsBookedProjectionStatus(normalized.TransactionStatus))
+        {
+            return false;
+        }
+
+        if (normalized.Amount >= 0m)
+        {
+            return false;
+        }
+
+        if (!IsMerchantDescriptorCandidate(normalized.Description))
+        {
+            return false;
+        }
+
+        if (LooksLikeInternalTransferDescription(normalized.Description)
+            || LooksLikeSavingsPocketMovementDescription(normalized.Description))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsMerchantDescriptorCandidate(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return false;
+        }
+
+        var alphanumericCount = 0;
+        var hasLetter = false;
+        foreach (var character in description)
+        {
+            if (!char.IsLetterOrDigit(character))
+            {
+                continue;
+            }
+
+            alphanumericCount++;
+            if (char.IsLetter(character))
+            {
+                hasLetter = true;
+            }
+
+            if (alphanumericCount >= 3 && hasLetter)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string BuildMerchantResolutionCacheKey(string descriptor)
+    {
+        return string.Join(
+            ' ',
+            descriptor
+                .Trim()
+                .ToLowerInvariant()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static void ApplyMerchantResolutionInterpretation(
+        NormalizedBankTransaction normalized,
+        MerchantResolutionResult resolution,
+        DateTime now)
+    {
+        normalized.InterpretationConfidenceScore = (int)Math.Round(
+            Math.Clamp(resolution.ResolutionConfidence, 0d, 1d) * 100d,
+            MidpointRounding.AwayFromZero);
+        normalized.InterpretationConfidenceTier = ResolveMerchantInterpretationTier(resolution);
+        normalized.InterpretationReasonJson = JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            trigger = "account_transaction_upsert",
+            evaluatedUtc = now,
+            isResolved = resolution.IsResolved,
+            merchantId = resolution.MerchantId,
+            unresolvedMerchantId = resolution.UnresolvedMerchantId,
+            resolutionType = resolution.ResolutionType.ToString(),
+            acceptanceDecisionType = resolution.AcceptanceDecisionType?.ToString(),
+            confidence = Math.Round(Math.Clamp(resolution.ResolutionConfidence, 0d, 1d), 4, MidpointRounding.AwayFromZero),
+            reasonCodes = resolution.ReasonCodes
+        });
+    }
+
+    private static string ResolveMerchantInterpretationTier(MerchantResolutionResult resolution)
+    {
+        if (resolution.IsResolved)
+        {
+            return resolution.ResolutionType switch
+            {
+                MerchantResolutionType.ExactAlias => "resolved_exact_alias",
+                MerchantResolutionType.FuzzyAlias => "resolved_fuzzy_alias",
+                MerchantResolutionType.FamilyMatch => "resolved_family_match",
+                _ => "resolved"
+            };
+        }
+
+        if (resolution.ReasonCodes.Any(code => code.Equals("investigation_cooldown_active", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "unresolved_cooldown";
+        }
+
+        return resolution.AcceptanceDecisionType switch
+        {
+            MerchantAcceptanceDecisionType.Rejected => "unresolved_rejected",
+            MerchantAcceptanceDecisionType.LowConfidence => "unresolved_low_conf",
+            MerchantAcceptanceDecisionType.AcceptedCautious => "unresolved_cautious",
+            MerchantAcceptanceDecisionType.Unresolved => "unresolved",
+            _ => "unresolved"
+        };
     }
 
     private async Task UpsertIdentityInfoAsync(
@@ -3038,6 +3359,12 @@ public sealed class BankSyncService(
         DateTime BookedAtUtc,
         string Description);
 
+    private readonly record struct NormalizedUpsertOutcome(
+        Guid NormalizedTransactionId,
+        bool WasCreated,
+        bool DescriptionChanged,
+        bool HadPriorInterpretation);
+
     private sealed record TransactionUpsertSummary(
         int Fetched,
         int RawInserted,
@@ -3054,7 +3381,23 @@ public sealed class BankSyncService(
         int ProjectedBackfillRowsEvaluated,
         int ProjectedBackfillRowsDeferred,
         int ProjectedCandidatePoolSize,
-        IReadOnlyCollection<Guid> ProjectedTransactionIdsForDeterministicReclassification);
+        IReadOnlyCollection<Guid> ProjectedTransactionIdsForDeterministicReclassification,
+        IReadOnlyCollection<Guid> NormalizedTransactionIdsForMerchantResolution);
+
+    private readonly record struct MerchantResolutionTriggerSummary(
+        int TriggerCandidates,
+        int Executed,
+        int DedupedReuse,
+        int SkippedIneligible,
+        int MissingRows,
+        int Failed,
+        int Resolved,
+        int Unresolved,
+        int CooldownBlocked)
+    {
+        public static MerchantResolutionTriggerSummary Empty { get; } =
+            new(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
 
     private sealed record CardTransactionUpsertSummary(
         int ImportedCount,
