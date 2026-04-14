@@ -397,6 +397,14 @@ public sealed class UserChatOrchestrator(
 
         responseParser.TryParse(response, route, out var parsedResponse, out var reasonCodes);
         warnings.AddRange(parsedResponse.Warnings);
+        logger.LogInformation(
+            "User chat parse diagnostics correlationId={CorrelationId} providerSucceeded={ProviderSucceeded} parserSucceeded={ParserSucceeded} contentLength={ContentLength} structuredPayloadLength={StructuredPayloadLength} reasonCodes={ReasonCodes}",
+            request.CorrelationId,
+            response.Succeeded,
+            parsedResponse.Succeeded,
+            response.Content?.Length ?? 0,
+            response.StructuredPayloadJson?.Length ?? 0,
+            string.Join(',', reasonCodes));
 
         if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
         {

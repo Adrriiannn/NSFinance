@@ -359,6 +359,75 @@ public sealed class AIIntegrationLayerTests
     }
 
     [Fact]
+    public void UserChatResponseParser_RecoversReplyText_FromAliasField()
+    {
+        var parser = new UserChatResponseParser();
+        var payload = """
+            {
+              "reply": "Hello from Azure.",
+              "warnings": [],
+              "followUpIntentHints": ["budget_follow_up"]
+            }
+            """;
+        var response = new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "AzureOpenAI",
+            Model: "gpt-4.1",
+            Deployment: "gpt-4.1",
+            InputTokenEstimate: 12,
+            OutputTokenEstimate: 28,
+            LatencyMs: 100,
+            WasMocked: false,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+        var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []);
+
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes);
+
+        Assert.True(ok);
+        Assert.True(parsed.Succeeded);
+        Assert.Equal("Hello from Azure.", parsed.ReplyText);
+        Assert.Contains("structured_reply_text_recovered_from_alias", reasonCodes);
+    }
+
+    [Fact]
+    public void UserChatResponseParser_Fails_WhenStructuredReplyTextMissing()
+    {
+        var parser = new UserChatResponseParser();
+        var payload = """
+            {
+              "warnings": ["missing payload quality"],
+              "followUpIntentHints": []
+            }
+            """;
+        var response = new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "AzureOpenAI",
+            Model: "gpt-4.1",
+            Deployment: "gpt-4.1",
+            InputTokenEstimate: 12,
+            OutputTokenEstimate: 28,
+            LatencyMs: 100,
+            WasMocked: false,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+        var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []);
+
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes);
+
+        Assert.False(ok);
+        Assert.False(parsed.Succeeded);
+        Assert.Equal("structured_reply_text_missing", parsed.FailureReason);
+        Assert.Contains("structured_reply_text_missing", reasonCodes);
+    }
+
+    [Fact]
     public void MerchantInvestigationParser_RejectsOutOfRangeConfidence()
     {
         var parser = new MerchantInvestigationResponseParser(NullLogger<MerchantInvestigationResponseParser>.Instance);

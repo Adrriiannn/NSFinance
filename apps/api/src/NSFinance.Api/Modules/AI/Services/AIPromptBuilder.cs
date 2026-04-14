@@ -129,6 +129,21 @@ public sealed class AIPromptBuilder : IPromptBuilder
 
         messages.AddRange(input.ContextMessages);
 
+        messages.Add(AIMessage.Developer("""
+            Return strict JSON only with this exact top-level shape:
+            {
+              "replyText": string (required, non-empty),
+              "referencedContextSummary": string|null,
+              "suggestedStructuredStateUpdates": { "key": "value" },
+              "warnings": string[],
+              "followUpIntentHints": string[]
+            }
+            Rules:
+            - replyText must always be a meaningful non-empty assistant answer.
+            - Never return prose outside JSON.
+            - Do not include additional fields.
+            """));
+
         return new PromptBuildResult(
             SystemInstructions: systemInstructions,
             Messages: messages,

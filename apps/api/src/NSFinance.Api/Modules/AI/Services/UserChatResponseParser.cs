@@ -58,9 +58,11 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
             return false;
         }
 
+        JsonDocument? parsedDocument = null;
         UserChatStructuredResponse? structured;
         try
         {
+            parsedDocument = JsonDocument.Parse(payload);
             structured = JsonSerializer.Deserialize<UserChatStructuredResponse>(payload, SerializerOptions);
         }
         catch (JsonException)
@@ -86,10 +88,26 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
             return rawContent.Length > 0;
         }
 
+        var resolvedReplyText = ResolveReplyText(structured, parsedDocument?.RootElement);
+        if (string.IsNullOrWhiteSpace(resolvedReplyText))
+        {
+            localReasonCodes.Add("structured_reply_text_missing");
+            parsedResponse = new UserChatResponse(
+                ReplyText: "I couldn't generate a response.",
+                ModelUsed: response.Model,
+                ReasoningClass: route.ModelClass,
+                SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ReferencedContextSummary: structured.ReferencedContextSummary,
+                Warnings: ["structured_reply_text_missing"],
+                FollowUpIntentHints: structured.FollowUpIntentHints ?? [],
+                Succeeded: false,
+                FailureReason: "structured_reply_text_missing");
+            reasonCodes = localReasonCodes;
+            return false;
+        }
+
         parsedResponse = new UserChatResponse(
-            ReplyText: string.IsNullOrWhiteSpace(structured.ReplyText)
-                ? "I couldn't generate a response."
-                : structured.ReplyText.Trim(),
+            ReplyText: resolvedReplyText,
             ModelUsed: response.Model,
             ReasoningClass: route.ModelClass,
             SuggestedStructuredStateUpdates: structured.SuggestedStructuredStateUpdates is null
@@ -102,7 +120,71 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
             FailureReason: null);
 
         localReasonCodes.Add("structured_parse_success");
+        if (string.IsNullOrWhiteSpace(structured.ReplyText)
+            || !string.Equals(structured.ReplyText.Trim(), resolvedReplyText, StringComparison.Ordinal))
+        {
+            localReasonCodes.Add("structured_reply_text_recovered_from_alias");
+        }
+
         reasonCodes = localReasonCodes;
         return true;
+    }
+
+    private static string? ResolveReplyText(UserChatStructuredResponse structured, JsonElement? root)
+    {
+        if (!string.IsNullOrWhiteSpace(structured.ReplyText))
+        {
+            return structured.ReplyText.Trim();
+        }
+
+        if (root is null || root.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var aliases = new[] { "replyText", "reply_text", "reply", "message", "content", "text" };
+        foreach (var alias in aliases)
+        {
+            if (!TryReadString(root.Value, alias, out var value))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryReadString(JsonElement element, string propertyName, out string? value)
+    {
+        value = null;
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (property.Value.ValueKind == JsonValueKind.String)
+            {
+                value = property.Value.GetString();
+                return true;
+            }
+
+            if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+            {
+                value = property.Value.GetRawText();
+                return true;
+            }
+
+            value = property.Value.ToString();
+            return true;
+        }
+
+        return false;
     }
 }
