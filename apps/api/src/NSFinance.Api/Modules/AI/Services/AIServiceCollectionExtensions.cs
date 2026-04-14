@@ -5,6 +5,8 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public static class AIServiceCollectionExtensions
 {
+    private const string AzureAIClientUserAgent = "NSFinance.Api.AIIntegration/1.0";
+
     public static IServiceCollection AddAIIntegration(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<AIIntegrationOptions>()
@@ -20,7 +22,7 @@ public static class AIServiceCollectionExtensions
         {
             var aiOptions = sp.GetRequiredService<IOptions<AIIntegrationOptions>>().Value;
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiOptions.Execution.TimeoutSeconds, 5, 120));
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("NSFinance.Api/AIIntegration/1.0");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(AzureAIClientUserAgent);
         });
 
         services.AddSingleton<AzureOpenAIApiKeyAuthStrategy>();

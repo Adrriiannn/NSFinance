@@ -37,6 +37,23 @@ public sealed class AIIntegrationLayerTests
     }
 
     [Fact]
+    public void AIIntegration_HttpClient_UsesValidAzureUserAgentHeader()
+    {
+        var services = BuildServiceProvider(new Dictionary<string, string?>
+        {
+            ["AI:UseMockProvider"] = "true"
+        });
+
+        var httpClientFactory = services.GetRequiredService<IHttpClientFactory>();
+        using var client = httpClientFactory.CreateClient("AI.AzureOpenAI");
+
+        Assert.Contains(
+            client.DefaultRequestHeaders.UserAgent,
+            product => string.Equals(product.Product?.Name, "NSFinance.Api.AIIntegration", StringComparison.Ordinal)
+                       && string.Equals(product.Product?.Version, "1.0", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ModelRouter_RoutesMerchantInvestigationToHeavy_WhenHeavyEnabled()
     {
         var router = CreateRouter(options =>
