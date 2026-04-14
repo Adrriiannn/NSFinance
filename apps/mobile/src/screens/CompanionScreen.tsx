@@ -23,6 +23,8 @@ import { navigateWithProbe } from "../lib/perf/navigationTiming";
 import { getDockAwareContentBottomInset } from "../layout/contentFrame";
 import { getEffectiveBottomSystemInset } from "../theme/insets";
 import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../theme/tokens";
+import { sendAIChatMessage } from "../features/ai/aiChatApi";
+import { formatUnknownError } from "../lib/api/errors";
 
 type PromptSeed = {
   text: string;
@@ -203,6 +205,7 @@ const CHAT_COLOR_ORDER: CompanionChatColor[] = [
 ];
 
 const CHAT_TITLE_MAX_LENGTH = 56;
+const MAX_CLIENT_REQUEST_ID_LENGTH = 80;
 
 const getChatColorTheme = (
   color: CompanionChatColor | undefined,
@@ -235,10 +238,17 @@ const createChat = (): CompanionChat => {
     createdUtc: now,
     updatedUtc: now,
     messages: [],
+    conversationThreadId: null,
     color: "orange",
     isPinned: false,
     pinnedUtc: null
   };
+};
+
+const createClientRequestId = (): string => {
+  const timestamp = Date.now().toString(36);
+  const randomPart = Math.random().toString(36).slice(2, 12);
+  return `chat-${timestamp}-${randomPart}`.slice(0, MAX_CLIENT_REQUEST_ID_LENGTH);
 };
 
 const formatChatTitle = (chat: CompanionChat) => {
@@ -369,6 +379,10 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
   const [chats, setChats] = useState<CompanionChat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string>("");
   const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sendingChatId, setSendingChatId] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendInfo, setSendInfo] = useState<string | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [keyboardOverlap, setKeyboardOverlap] = useState(0);
@@ -399,6 +413,11 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
   const hadMeaningfulInputRef = useRef(false);
   const chatContentHeightRef = useRef(0);
   const chatViewportHeightRef = useRef(0);
+  const failedSendRef = useRef<{
+    chatId: string;
+    message: string;
+    clientRequestId: string;
+  } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -432,6 +451,11 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     const nextPair = pickPromptPair(lastIntroRef.current);
     lastIntroRef.current = nextPair.intro;
     setIntroPair(nextPair);
+  }, [activeChatId]);
+
+  useEffect(() => {
+    setSendError(null);
+    setSendInfo(null);
   }, [activeChatId]);
 
   useFocusEffect(
@@ -530,58 +554,157 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     }, 120);
   }, [clearChatScrollTimers, forceScrollToAbsoluteBottom]);
 
-  const upsertMessages = useCallback((messages: CompanionMessage[]) => {
-    if (!activeChat) {
-      return;
-    }
-
-    const nextUpdatedUtc = new Date().toISOString();
+  const appendMessageToChat = useCallback((chatId: string, message: CompanionMessage) => {
     setChats((current) => {
-      const updated = current.map((chat) =>
-        chat.id === activeChat.id
-          ? {
-              ...chat,
-              messages,
-              title: formatChatTitle({ ...chat, messages }),
-              updatedUtc: nextUpdatedUtc
-            }
-          : chat
-      );
+      const nextUpdatedUtc = new Date().toISOString();
+      const updated = current.map((chat) => {
+        if (chat.id !== chatId) {
+          return chat;
+        }
+
+        const messages = [...chat.messages, message];
+        return {
+          ...chat,
+          messages,
+          title: formatChatTitle({ ...chat, messages }),
+          updatedUtc: nextUpdatedUtc
+        };
+      });
 
       return sortChatsByPinAndRecency(updated);
     });
-  }, [activeChat]);
+  }, []);
 
-  const sendPrompt = useCallback((prompt: string) => {
-    if (!prompt.trim()) {
+  const setChatThreadId = useCallback((chatId: string, conversationThreadId: string | null) => {
+    if (!conversationThreadId) {
       return;
     }
 
-    const now = new Date().toISOString();
-    const userMessage: CompanionMessage = {
-      id: `${Date.now()}-u`,
-      role: "user",
-      text: prompt,
-      createdUtc: now
-    };
+    setChats((current) =>
+      sortChatsByPinAndRecency(
+        current.map((chat) =>
+          chat.id === chatId
+            ? {
+                ...chat,
+                conversationThreadId
+              }
+            : chat
+        )
+      )
+    );
+  }, []);
 
-    const assistantMessage: CompanionMessage = {
-      id: `${Date.now()}-a`,
-      role: "assistant",
-      text: "I can help with guidance using your current cashflow context. Deeper intelligence will improve as your transaction context and necessities coverage grow.",
-      createdUtc: now
-    };
+  const sendPrompt = useCallback(async (prompt: string) => {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt || !activeChat) {
+      return;
+    }
 
-    const currentMessages = activeChat?.messages ?? [];
-    upsertMessages([...currentMessages, userMessage, assistantMessage]);
+    if (isSending) {
+      return;
+    }
+
+    const retryCandidate = failedSendRef.current;
+    const reusingFailedRequest =
+      Boolean(retryCandidate) &&
+      retryCandidate?.chatId === activeChat.id &&
+      retryCandidate?.message === trimmedPrompt;
+    const clientRequestId =
+      retryCandidate &&
+      retryCandidate.chatId === activeChat.id &&
+      retryCandidate.message === trimmedPrompt
+        ? retryCandidate.clientRequestId
+        : createClientRequestId();
+
+    if (!reusingFailedRequest) {
+      const now = new Date().toISOString();
+      const userMessage: CompanionMessage = {
+        id: `${Date.now()}-u`,
+        role: "user",
+        text: trimmedPrompt,
+        createdUtc: now
+      };
+      appendMessageToChat(activeChat.id, userMessage);
+    }
+
     setInput("");
-  }, [activeChat, upsertMessages]);
+    setSendError(null);
+    setSendInfo(null);
+    setIsSending(true);
+    setSendingChatId(activeChat.id);
+
+    try {
+      const response = await sendAIChatMessage({
+        message: trimmedPrompt,
+        clientRequestId,
+        conversationThreadId: activeChat.conversationThreadId,
+        requirePersistentMemory: true,
+        allowFallbackOnPersistentFailure: false
+      });
+
+      setChatThreadId(activeChat.id, response.conversationThreadId);
+
+      if (response.inProgress) {
+        setSendInfo("Assistant response is still in progress. Please retry in a moment.");
+      } else if (response.deduped) {
+        setSendInfo("Duplicate send avoided. Showing the existing turn result.");
+      } else {
+        setSendInfo(null);
+      }
+
+      const replyText = response.message?.trim();
+      if (replyText) {
+        const assistantMessage: CompanionMessage = {
+          id: `${Date.now()}-a`,
+          role: "assistant",
+          text: replyText,
+          createdUtc: new Date().toISOString()
+        };
+        appendMessageToChat(activeChat.id, assistantMessage);
+      } else if (!response.inProgress) {
+        setSendError("Assistant returned an empty reply. Please retry.");
+        failedSendRef.current = {
+          chatId: activeChat.id,
+          message: trimmedPrompt,
+          clientRequestId
+        };
+        return;
+      }
+
+      if (!response.succeeded || response.failureCode || response.failureReason) {
+        const failureMessage = response.failureReason || response.failureCode || "Chat request failed.";
+        setSendError(failureMessage);
+        failedSendRef.current = {
+          chatId: activeChat.id,
+          message: trimmedPrompt,
+          clientRequestId
+        };
+        return;
+      }
+
+      failedSendRef.current = null;
+    } catch (error) {
+      const readable = formatUnknownError(error);
+      setSendError(readable);
+      setSendInfo(null);
+      failedSendRef.current = {
+        chatId: activeChat.id,
+        message: trimmedPrompt,
+        clientRequestId
+      };
+    } finally {
+      setIsSending(false);
+      setSendingChatId(null);
+    }
+  }, [activeChat, appendMessageToChat, isSending, setChatThreadId]);
 
   const startNewChat = () => {
     const nextChat = createChat();
     setChats((current) => sortChatsByPinAndRecency([nextChat, ...current]));
     setActiveChatId(nextChat.id);
     setInput("");
+    setSendError(null);
+    setSendInfo(null);
     setHistoryVisible(false);
     setDefaultPromptSet((current) => rotateStarterPrompts(current));
   };
@@ -914,11 +1037,15 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
                 {promptSuggestions.map((prompt) => (
                   <Pressable
                     key={prompt}
+                    disabled={isSending}
                     style={({ pressed }) => [
                       styles.promptChip,
+                      isSending ? styles.promptChipDisabled : null,
                       pressed ? styles.promptChipPressed : null
                     ]}
-                    onPress={() => sendPrompt(prompt)}
+                    onPress={() => {
+                      void sendPrompt(prompt);
+                    }}
                   >
                     <Text style={styles.promptChipText}>{prompt}</Text>
                   </Pressable>
@@ -926,6 +1053,13 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
               </ScrollView>
             </View>
           ) : null}
+
+          {sendingChatId === activeChat?.id && isSending ? (
+            <Text style={styles.requestInfoText}>Sending request...</Text>
+          ) : null}
+
+          {sendInfo ? <Text style={styles.requestInfoText}>{sendInfo}</Text> : null}
+          {sendError ? <Text style={styles.requestErrorText}>{sendError}</Text> : null}
 
           <View
             style={styles.inputBar}
@@ -947,10 +1081,21 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
               maxLength={280}
             />
             <Pressable
-              style={({ pressed }) => [styles.sendButton, pressed ? styles.sendPressed : null]}
-              onPress={() => sendPrompt(input.trim())}
+              disabled={isSending || !input.trim()}
+              style={({ pressed }) => [
+                styles.sendButton,
+                isSending || !input.trim() ? styles.sendButtonDisabled : null,
+                pressed ? styles.sendPressed : null
+              ]}
+              onPress={() => {
+                void sendPrompt(input.trim());
+              }}
             >
-              <Ionicons name="arrow-up" size={16} color={palette.appBackground} />
+              <Ionicons
+                name={isSending ? "time-outline" : "arrow-up"}
+                size={16}
+                color={palette.appBackground}
+              />
             </Pressable>
           </View>
         </Animated.View>
@@ -1354,6 +1499,9 @@ const styles = createRuntimeStyleSheet(() => ({
     opacity: 0.9,
     transform: [{ scale: 0.99 }]
   },
+  promptChipDisabled: {
+    opacity: 0.55
+  },
   promptChipText: {
     color: palette.textSecondary,
     ...typography.caption,
@@ -1388,9 +1536,22 @@ const styles = createRuntimeStyleSheet(() => ({
     justifyContent: "center",
     marginBottom: 2
   },
+  sendButtonDisabled: {
+    opacity: 0.45
+  },
   sendPressed: {
     opacity: 0.82,
     transform: [{ scale: 0.96 }]
+  },
+  requestInfoText: {
+    color: palette.textSecondary,
+    ...typography.caption,
+    paddingHorizontal: spacing[2]
+  },
+  requestErrorText: {
+    color: palette.negative,
+    ...typography.caption,
+    paddingHorizontal: spacing[2]
   },
   historyOverlay: {
     flex: 1,

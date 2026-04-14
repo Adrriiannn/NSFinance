@@ -891,4 +891,32 @@ export type BankEnrichmentProgressDto = {
   connections: BankEnrichmentConnectionProgressDto[];
 };
 
+export type SendAIChatMessageRequest = {
+  message: string;
+  clientRequestId: string;
+  conversationThreadId?: string | null;
+  requirePersistentMemory?: boolean;
+  allowFallbackOnPersistentFailure?: boolean;
+  correlationId?: string | null;
+};
+
+export type SendAIChatMessageResponse = {
+  conversationThreadId: string | null;
+  turnId: string | null;
+  status: string;
+  message: string;
+  modelUsed: string;
+  reasoningClass: string;
+  succeeded: boolean;
+  deduped: boolean;
+  inProgress: boolean;
+  fallbackUsed: boolean;
+  failureCode: string | null;
+  failureReason: string | null;
+  suggestedStateUpdates: Record<string, string>;
+  warnings: string[];
+  followUpIntentHints: string[];
+  contextSummary: string | null;
+};
+
 

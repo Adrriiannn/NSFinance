@@ -38,6 +38,7 @@ export type CompanionChat = {
   createdUtc: string;
   updatedUtc: string;
   messages: CompanionMessage[];
+  conversationThreadId: string | null;
   color: CompanionChatColor;
   isPinned: boolean;
   pinnedUtc: string | null;
@@ -69,6 +70,10 @@ function normalizeChat(raw: Partial<CompanionChat>): CompanionChat {
     createdUtc,
     updatedUtc,
     messages: Array.isArray(raw.messages) ? raw.messages : [],
+    conversationThreadId:
+      typeof raw.conversationThreadId === "string" && raw.conversationThreadId.trim()
+        ? raw.conversationThreadId
+        : null,
     color,
     isPinned: Boolean(raw.isPinned),
     pinnedUtc: typeof raw.pinnedUtc === "string" && raw.pinnedUtc ? raw.pinnedUtc : null
