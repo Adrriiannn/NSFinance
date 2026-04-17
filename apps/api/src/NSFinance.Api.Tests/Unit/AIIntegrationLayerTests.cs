@@ -612,13 +612,11 @@ public sealed class AIIntegrationLayerTests
         await using var dbContext = CreateDbContext();
         var normalizer = new MerchantDescriptorNormalizer();
         var registry = new MerchantRegistryService(dbContext, normalizer, NullLogger<MerchantRegistryService>.Instance);
-        var resolver = new MerchantResolutionService(
+        var resolver = CreateResolver(
             dbContext,
             normalizer,
             registry,
-            services.GetRequiredService<IMerchantInvestigationService>(),
-            new MerchantAcceptancePolicy(),
-            NullLogger<MerchantResolutionService>.Instance);
+            services.GetRequiredService<IMerchantInvestigationService>());
 
         var result = await resolver.ResolveAsync("NETFLIX.COM", CancellationToken.None);
 
@@ -642,13 +640,11 @@ public sealed class AIIntegrationLayerTests
         await using var dbContext = CreateDbContext();
         var normalizer = new MerchantDescriptorNormalizer();
         var registry = new MerchantRegistryService(dbContext, normalizer, NullLogger<MerchantRegistryService>.Instance);
-        var resolver = new MerchantResolutionService(
+        var resolver = CreateResolver(
             dbContext,
             normalizer,
             registry,
-            services.GetRequiredService<IMerchantInvestigationService>(),
-            new MerchantAcceptancePolicy(),
-            NullLogger<MerchantResolutionService>.Instance);
+            services.GetRequiredService<IMerchantInvestigationService>());
 
         var result = await resolver.ResolveAsync("GOOGLE *SERVICES", CancellationToken.None);
 
@@ -693,13 +689,11 @@ public sealed class AIIntegrationLayerTests
         await using var dbContext = CreateDbContext();
         var normalizer = new MerchantDescriptorNormalizer();
         var registry = new MerchantRegistryService(dbContext, normalizer, NullLogger<MerchantRegistryService>.Instance);
-        var resolver = new MerchantResolutionService(
+        var resolver = CreateResolver(
             dbContext,
             normalizer,
             registry,
-            services.GetRequiredService<IMerchantInvestigationService>(),
-            new MerchantAcceptancePolicy(),
-            NullLogger<MerchantResolutionService>.Instance);
+            services.GetRequiredService<IMerchantInvestigationService>());
 
         var result = await resolver.ResolveAsync("ACME*PAY", CancellationToken.None);
 
@@ -766,13 +760,11 @@ public sealed class AIIntegrationLayerTests
                 true),
             CancellationToken.None);
 
-        var resolver = new MerchantResolutionService(
+        var resolver = CreateResolver(
             dbContext,
             normalizer,
             registry,
-            services.GetRequiredService<IMerchantInvestigationService>(),
-            new MerchantAcceptancePolicy(),
-            NullLogger<MerchantResolutionService>.Instance);
+            services.GetRequiredService<IMerchantInvestigationService>());
 
         var result = await resolver.ResolveAsync("spotify", CancellationToken.None);
 
@@ -1147,6 +1139,47 @@ public sealed class AIIntegrationLayerTests
             .UseInMemoryDatabase($"ai-integration-tests-{Guid.NewGuid():N}")
             .Options;
         return new AppDbContext(options);
+    }
+
+    private static MerchantResolutionService CreateResolver(
+        AppDbContext dbContext,
+        MerchantDescriptorNormalizer normalizer,
+        IMerchantRegistryService registry,
+        IMerchantInvestigationService investigationService)
+    {
+        return new MerchantResolutionService(
+            dbContext,
+            normalizer,
+            registry,
+            investigationService,
+            new DomainTriggerPolicyService(),
+            new AITriggerGateService(
+                dbContext,
+                Options.Create(new MerchantAIGovernanceOptions
+                {
+                    Enabled = true,
+                    MaxAICallsPerSyncRun = 20,
+                    MaxAICallsPerConnectionPerRun = 20,
+                    MaxAICallsPerUserPer24h = 100
+                }),
+                Options.Create(new AIIntegrationOptions
+                {
+                    Enabled = true
+                })),
+            new MerchantAcceptancePolicy(),
+            NullLogger<MerchantResolutionService>.Instance,
+            null,
+            Options.Create(new MerchantAIGovernanceOptions
+            {
+                Enabled = true,
+                MaxAICallsPerSyncRun = 20,
+                MaxAICallsPerConnectionPerRun = 20,
+                MaxAICallsPerUserPer24h = 100
+            }),
+            Options.Create(new AIIntegrationOptions
+            {
+                Enabled = true
+            }));
     }
 
     private static AIModelRouter CreateRouter(Action<AIIntegrationOptions>? configure)

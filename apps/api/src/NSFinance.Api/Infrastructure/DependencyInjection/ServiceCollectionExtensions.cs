@@ -184,6 +184,49 @@ public static class ServiceCollectionExtensions
                 options.CautiousMerchantValidationDays = 21;
             }
         });
+        services.Configure<MerchantAIGovernanceOptions>(options =>
+        {
+            configuration.GetSection(MerchantAIGovernanceOptions.SectionName).Bind(options);
+            if (options.MaxAICallsPerSyncRun <= 0)
+            {
+                options.MaxAICallsPerSyncRun = 3;
+            }
+
+            if (options.MaxAICallsPerConnectionPerRun <= 0)
+            {
+                options.MaxAICallsPerConnectionPerRun = 2;
+            }
+
+            if (options.MaxAICallsPerUserPer24h <= 0)
+            {
+                options.MaxAICallsPerUserPer24h = 10;
+            }
+
+            if (options.MerchantInvestigationCooldownDays <= 0)
+            {
+                options.MerchantInvestigationCooldownDays = 7;
+            }
+
+            if (options.FailureCooldownHours <= 0)
+            {
+                options.FailureCooldownHours = 24;
+            }
+
+            if (options.LowConfidenceCooldownHours <= 0)
+            {
+                options.LowConfidenceCooldownHours = 72;
+            }
+
+            if (options.MinimumOccurrencesForExpectedValue <= 1)
+            {
+                options.MinimumOccurrencesForExpectedValue = 2;
+            }
+
+            if (options.MeaningfulSpendThreshold <= 0m)
+            {
+                options.MeaningfulSpendThreshold = 75m;
+            }
+        });
         ValidateTrueLayerConfigurationForNonDevelopment(configuration, hostEnvironment);
 
         services.Configure<GoogleAuthOptions>(options =>
@@ -356,6 +399,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MerchantDescriptorNormalizer>();
         services.AddScoped<IMerchantRegistryService, MerchantRegistryService>();
         services.AddScoped<IMerchantAcceptancePolicy, MerchantAcceptancePolicy>();
+        services.AddScoped<IDomainTriggerPolicyService, DomainTriggerPolicyService>();
+        services.AddScoped<IAITriggerGateService, AITriggerGateService>();
         services.AddScoped<IMerchantResolutionService, MerchantResolutionService>();
         services.AddScoped<TransactionFeatureExtractor>();
         services.AddScoped<IRecurringPatternService, RecurringPatternService>();

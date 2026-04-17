@@ -583,6 +583,10 @@ public sealed class BankSyncService(
         var deterministicEnrichmentRowsRemaining = 0;
         var deterministicEnrichmentBatchesProcessed = 0;
         var deterministicEnrichmentMode = "incremental";
+        var syncRunId = Guid.NewGuid();
+        var merchantResolutionRunState = new MerchantResolutionRunState(syncRunId);
+        var merchantResolutionCache = new Dictionary<string, MerchantResolutionResult>(StringComparer.Ordinal);
+        var merchantResolutionFailedDescriptorKeys = new HashSet<string>(StringComparer.Ordinal);
         var providerBrandingRefreshAttempted = false;
         DateTime? requestedBackfillWindowStartUtc = null;
         DateTime? syncObservedEarliestBookedAtUtc = null;
@@ -1030,10 +1034,15 @@ public sealed class BankSyncService(
 
             var merchantResolutionStopwatch = Stopwatch.StartNew();
             var merchantResolutionSummary = await ResolveMerchantResolutionForAccountTransactionsAsync(
+                connection.UserId,
                 connection.Id,
                 linkedAccount,
                 providerAccount,
                 transactionUpsert.NormalizedTransactionIdsForMerchantResolution,
+                syncRunId,
+                merchantResolutionRunState,
+                merchantResolutionCache,
+                merchantResolutionFailedDescriptorKeys,
                 now,
                 cancellationToken);
 
@@ -2749,10 +2758,15 @@ public sealed class BankSyncService(
     }
 
     private async Task<MerchantResolutionTriggerSummary> ResolveMerchantResolutionForAccountTransactionsAsync(
+        Guid userId,
         Guid connectionId,
         LinkedBankAccount linkedAccount,
         TrueLayerAccountRecord providerAccount,
         IReadOnlyCollection<Guid> normalizedTransactionIds,
+        Guid syncRunId,
+        MerchantResolutionRunState runState,
+        Dictionary<string, MerchantResolutionResult> sharedDescriptorCache,
+        HashSet<string> sharedFailedDescriptorKeys,
         DateTime now,
         CancellationToken cancellationToken)
     {
@@ -2775,8 +2789,24 @@ public sealed class BankSyncService(
         var unresolved = 0;
         var cooldownBlocked = 0;
         var failed = 0;
-        var descriptorCache = new Dictionary<string, MerchantResolutionResult>(StringComparer.Ordinal);
-        var failedDescriptorKeys = new HashSet<string>(StringComparer.Ordinal);
+        var projectedTransactionIds = normalizedRows
+            .Where(x => x.ProjectedTransactionId.HasValue)
+            .Select(x => x.ProjectedTransactionId!.Value)
+            .Distinct()
+            .ToArray();
+        var projectedContexts = projectedTransactionIds.Length == 0
+            ? new Dictionary<Guid, MerchantResolutionProjectedContext>()
+            : await dbContext.Transactions
+                .Where(x => projectedTransactionIds.Contains(x.Id))
+                .Select(x => new MerchantResolutionProjectedContext(
+                    ProjectedTransactionId: x.Id,
+                    TaxonomyDomainId: x.TaxonomyDomainId,
+                    TaxonomyCategoryId: x.TaxonomyCategoryId,
+                    TaxonomySubcategoryId: x.TaxonomySubcategoryId,
+                    DeterministicTerminal: x.DeterministicClassificationTerminal,
+                    DeterministicResultCode: x.DeterministicReasonCode,
+                    DeterministicStatus: x.DeterministicClassificationStatus))
+                .ToDictionaryAsync(x => x.ProjectedTransactionId!.Value, cancellationToken);
 
         foreach (var normalized in normalizedRows)
         {
@@ -2794,17 +2824,37 @@ public sealed class BankSyncService(
             }
 
             var cacheKey = BuildMerchantResolutionCacheKey(descriptor);
-            if (failedDescriptorKeys.Contains(cacheKey))
+            if (sharedFailedDescriptorKeys.Contains(cacheKey))
             {
                 failed++;
                 continue;
             }
 
-            if (!descriptorCache.TryGetValue(cacheKey, out var resolution))
+            if (!sharedDescriptorCache.TryGetValue(cacheKey, out var resolution))
             {
                 try
                 {
-                    resolution = await merchantResolutionService.ResolveAsync(descriptor, cancellationToken);
+                    projectedContexts.TryGetValue(normalized.ProjectedTransactionId ?? Guid.Empty, out var projectedContext);
+                    resolution = await merchantResolutionService.ResolveAsync(
+                        new MerchantResolutionRequest(
+                            RawDescriptor: descriptor,
+                            UserId: userId,
+                            ConnectionId: connectionId,
+                            SyncRunId: syncRunId,
+                            TransactionId: projectedContext?.ProjectedTransactionId ?? normalized.ProjectedTransactionId,
+                            NormalizedTransactionId: normalized.Id,
+                            TaxonomyDomainId: projectedContext?.TaxonomyDomainId,
+                            TaxonomyCategoryId: projectedContext?.TaxonomyCategoryId,
+                            TaxonomySubcategoryId: projectedContext?.TaxonomySubcategoryId,
+                            DeterministicTerminal: projectedContext?.DeterministicTerminal ?? false,
+                            DeterministicResultCode: projectedContext?.DeterministicResultCode
+                                                     ?? projectedContext?.DeterministicStatus.ToString(),
+                            ManualOverridePresent: false,
+                            Amount: normalized.Amount,
+                            DescriptorMerchantLike: IsMerchantDescriptorCandidate(descriptor),
+                            TriggerSource: "account_transaction_upsert",
+                            RunState: runState),
+                        cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -2812,7 +2862,7 @@ public sealed class BankSyncService(
                 }
                 catch (Exception ex)
                 {
-                    failedDescriptorKeys.Add(cacheKey);
+                    sharedFailedDescriptorKeys.Add(cacheKey);
                     failed++;
                     logger.LogWarning(
                         ex,
@@ -2824,7 +2874,7 @@ public sealed class BankSyncService(
                     continue;
                 }
 
-                descriptorCache[cacheKey] = resolution;
+                sharedDescriptorCache[cacheKey] = resolution;
                 executed++;
             }
             else
@@ -2988,6 +3038,11 @@ public sealed class BankSyncService(
             unresolvedMerchantId = resolution.UnresolvedMerchantId,
             resolutionType = resolution.ResolutionType.ToString(),
             acceptanceDecisionType = resolution.AcceptanceDecisionType?.ToString(),
+            finalState = resolution.FinalState.ToString(),
+            triggerMode = resolution.TriggerMode?.ToString(),
+            aiGateDecision = resolution.AIGateDecision,
+            aiGateSkipReason = resolution.AIGateSkipReason?.ToString(),
+            modelUsed = resolution.ModelUsed,
             confidence = Math.Round(Math.Clamp(resolution.ResolutionConfidence, 0d, 1d), 4, MidpointRounding.AwayFromZero),
             reasonCodes = resolution.ReasonCodes
         });
@@ -2995,6 +3050,26 @@ public sealed class BankSyncService(
 
     private static string ResolveMerchantInterpretationTier(MerchantResolutionResult resolution)
     {
+        if (resolution.FinalState == MerchantResolutionFinalState.DeterministicTerminal)
+        {
+            return "deterministic_terminal";
+        }
+
+        if (resolution.FinalState == MerchantResolutionFinalState.AIResolvedTerminal)
+        {
+            return "resolved_ai_terminal";
+        }
+
+        if (resolution.FinalState == MerchantResolutionFinalState.AIEnrichedSuggestionOnly)
+        {
+            return "ai_suggestion_only";
+        }
+
+        if (resolution.FinalState == MerchantResolutionFinalState.NeedsUserConfirmation)
+        {
+            return "needs_user_confirmation";
+        }
+
         if (resolution.IsResolved)
         {
             return resolution.ResolutionType switch

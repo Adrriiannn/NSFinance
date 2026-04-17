@@ -81,7 +81,12 @@ public sealed record MerchantResolutionResult(
     Guid? UnresolvedMerchantId,
     string NormalizedDescriptor,
     MerchantAcceptanceDecisionType? AcceptanceDecisionType,
-    IReadOnlyList<string> ReasonCodes);
+    IReadOnlyList<string> ReasonCodes,
+    MerchantResolutionFinalState FinalState = MerchantResolutionFinalState.Unresolved,
+    DomainTriggerMode? TriggerMode = null,
+    AITriggerSkipReason? AIGateSkipReason = null,
+    bool AIGateDecision = false,
+    string? ModelUsed = null);
 
 public sealed record MerchantAcceptanceDecision(
     MerchantAcceptanceDecisionType DecisionType,

@@ -300,6 +300,8 @@ public class MerchantIntelligenceRegistryTests
             normalizer,
             registry,
             new TestMerchantInvestigationService(),
+            CreateDomainTriggerPolicy(),
+            CreateAIGate(dbContext),
             new MerchantAcceptancePolicy(),
             NullLogger<MerchantResolutionService>.Instance);
 
@@ -327,6 +329,8 @@ public class MerchantIntelligenceRegistryTests
             normalizer,
             registry,
             investigation,
+            CreateDomainTriggerPolicy(),
+            CreateAIGate(dbContext),
             new MerchantAcceptancePolicy(),
             NullLogger<MerchantResolutionService>.Instance,
             Options.Create(new MerchantOperationalResilienceOptions
@@ -335,6 +339,10 @@ public class MerchantIntelligenceRegistryTests
                 UnresolvedMaxCooldownMinutes = 180,
                 HighOccurrenceAccelerationThreshold = 50,
                 HighOccurrenceAccelerationMinutes = 30
+            }),
+            Options.Create(new MerchantAIGovernanceOptions
+            {
+                Enabled = true
             }));
 
         var first = await resolver.ResolveAsync("MYSTERY*SHOP", CancellationToken.None);
@@ -343,7 +351,7 @@ public class MerchantIntelligenceRegistryTests
         Assert.False(first.IsResolved);
         Assert.False(second.IsResolved);
         Assert.Equal(1, investigation.CallCount);
-        Assert.Contains("investigation_cooldown_active", second.ReasonCodes);
+        Assert.Contains("merchant_on_cooldown", second.ReasonCodes);
 
         var unresolved = await dbContext.UnresolvedMerchants.SingleAsync();
         Assert.Equal(1, unresolved.InvestigationAttemptCount);
@@ -382,6 +390,8 @@ public class MerchantIntelligenceRegistryTests
             normalizer,
             registry,
             investigation,
+            CreateDomainTriggerPolicy(),
+            CreateAIGate(dbContext),
             new MerchantAcceptancePolicy(),
             NullLogger<MerchantResolutionService>.Instance,
             Options.Create(new MerchantOperationalResilienceOptions
@@ -390,16 +400,20 @@ public class MerchantIntelligenceRegistryTests
                 UnresolvedMaxCooldownMinutes = 240,
                 HighOccurrenceAccelerationThreshold = 10,
                 HighOccurrenceAccelerationMinutes = 20
+            }),
+            Options.Create(new MerchantAIGovernanceOptions
+            {
+                Enabled = true
             }));
 
         var result = await resolver.ResolveAsync("MYSTERY EURO SHOP", CancellationToken.None);
 
         Assert.False(result.IsResolved);
-        Assert.Equal(1, investigation.CallCount);
-        Assert.DoesNotContain("investigation_cooldown_active", result.ReasonCodes);
+        Assert.Equal(0, investigation.CallCount);
+        Assert.Contains("merchant_on_cooldown", result.ReasonCodes);
 
         var unresolved = await dbContext.UnresolvedMerchants.SingleAsync();
-        Assert.True(unresolved.InvestigationAttemptCount >= 2);
+        Assert.Equal(1, unresolved.InvestigationAttemptCount);
         Assert.True(unresolved.LastInvestigationUtc.HasValue);
         Assert.True(unresolved.NextEligibleInvestigationUtc.HasValue);
     }
@@ -424,6 +438,8 @@ public class MerchantIntelligenceRegistryTests
             CancellationToken.None);
         merchant.NextValidationDueUtc = DateTime.UtcNow.AddDays(-2);
         merchant.LastValidatedUtc = DateTime.UtcNow.AddDays(-90);
+        merchant.InvestigatedAtUtc = DateTime.UtcNow.AddDays(-30);
+        merchant.InvestigationCooldownUntilUtc = DateTime.UtcNow.AddDays(-10);
         merchant.ValidationAttemptCount = 0;
         await dbContext.SaveChangesAsync();
 
@@ -443,11 +459,21 @@ public class MerchantIntelligenceRegistryTests
             normalizer,
             registry,
             new StubMerchantInvestigationService(NullLogger<StubMerchantInvestigationService>.Instance),
+            CreateDomainTriggerPolicy(),
+            CreateAIGate(dbContext),
             new MerchantAcceptancePolicy(),
             NullLogger<MerchantResolutionService>.Instance,
             Options.Create(new MerchantOperationalResilienceOptions
             {
                 CautiousMerchantValidationDays = 14
+            }),
+            Options.Create(new MerchantAIGovernanceOptions
+            {
+                Enabled = true
+            }),
+            Options.Create(new AIIntegrationOptions
+            {
+                Enabled = true
             }),
             new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance));
 
@@ -993,6 +1019,118 @@ public class MerchantIntelligenceRegistryTests
     }
 
     [Fact]
+    public async Task ResolveAsync_D3Domain_ReturnsSuggestionOnly_NotAutoResolved()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var resolver = CreateResolver(
+            dbContext,
+            normalizer,
+            registry,
+            new TestMerchantInvestigationService());
+
+        var result = await resolver.ResolveAsync(
+            new MerchantResolutionRequest(
+                RawDescriptor: "CHARITY DONATION HOUSE",
+                UserId: Guid.NewGuid(),
+                ConnectionId: Guid.NewGuid(),
+                SyncRunId: Guid.NewGuid(),
+                TransactionId: Guid.NewGuid(),
+                NormalizedTransactionId: Guid.NewGuid(),
+                TaxonomyDomainId: 240,
+                TaxonomyCategoryId: null,
+                TaxonomySubcategoryId: null,
+                DeterministicTerminal: false,
+                DeterministicResultCode: "not_terminal",
+                ManualOverridePresent: false,
+                Amount: -120m,
+                DescriptorMerchantLike: true,
+                TriggerSource: "unit_test",
+                RunState: new MerchantResolutionRunState(Guid.NewGuid())),
+            CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal(MerchantResolutionFinalState.AIEnrichedSuggestionOnly, result.FinalState);
+        Assert.Equal(DomainTriggerMode.D3, result.TriggerMode);
+        Assert.Equal(AITriggerSkipReason.UserConfirmationPreferred, result.AIGateSkipReason);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_UnknownMerchantAlone_DoesNotTriggerInvestigation()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var investigation = new CountingMerchantInvestigationService(BuildInsufficientEvidenceResult);
+        var resolver = CreateResolver(
+            dbContext,
+            normalizer,
+            registry,
+            investigation);
+
+        var result = await resolver.ResolveAsync(
+            new MerchantResolutionRequest(
+                RawDescriptor: "UNKNOWN MERCHANT 123456",
+                UserId: Guid.NewGuid(),
+                ConnectionId: Guid.NewGuid(),
+                SyncRunId: Guid.NewGuid(),
+                TransactionId: Guid.NewGuid(),
+                NormalizedTransactionId: Guid.NewGuid(),
+                TaxonomyDomainId: 130,
+                TaxonomyCategoryId: null,
+                TaxonomySubcategoryId: null,
+                DeterministicTerminal: false,
+                DeterministicResultCode: "not_terminal",
+                ManualOverridePresent: false,
+                Amount: -4.50m,
+                DescriptorMerchantLike: true,
+                TriggerSource: "unit_test",
+                RunState: new MerchantResolutionRunState(Guid.NewGuid())),
+            CancellationToken.None);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal(0, investigation.CallCount);
+        Assert.Contains("expected_value_too_low", result.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_TwentyTransactionsSameMerchant_InvokesAIOncePerRun()
+    {
+        await using var dbContext = CreateDbContext();
+        var normalizer = new MerchantDescriptorNormalizer();
+        var registry = CreateRegistry(dbContext, normalizer);
+        var investigation = new CountingMerchantInvestigationService(BuildInsufficientEvidenceResult);
+        var resolver = CreateResolver(dbContext, normalizer, registry, investigation);
+        var runState = new MerchantResolutionRunState(Guid.NewGuid());
+
+        for (var i = 0; i < 20; i++)
+        {
+            _ = await resolver.ResolveAsync(
+                new MerchantResolutionRequest(
+                    RawDescriptor: "RECURRING COFFEE SHOP",
+                    UserId: Guid.NewGuid(),
+                    ConnectionId: Guid.NewGuid(),
+                    SyncRunId: runState.SyncRunId,
+                    TransactionId: Guid.NewGuid(),
+                    NormalizedTransactionId: Guid.NewGuid(),
+                    TaxonomyDomainId: 130,
+                    TaxonomyCategoryId: null,
+                    TaxonomySubcategoryId: null,
+                    DeterministicTerminal: false,
+                    DeterministicResultCode: "not_terminal",
+                    ManualOverridePresent: false,
+                    Amount: -120m,
+                    DescriptorMerchantLike: true,
+                    TriggerSource: "unit_test",
+                    RunState: runState),
+                CancellationToken.None);
+        }
+
+        Assert.Equal(1, investigation.CallCount);
+    }
+
+    [Fact]
     public async Task ResolveAsync_RevalidationContradiction_PersistsSignalsWithoutSilentOverwrite()
     {
         await using var dbContext = CreateDbContext();
@@ -1013,6 +1151,8 @@ public class MerchantIntelligenceRegistryTests
 
         merchant.NextValidationDueUtc = DateTime.UtcNow.AddDays(-1);
         merchant.LastValidatedUtc = DateTime.UtcNow.AddDays(-60);
+        merchant.InvestigatedAtUtc = DateTime.UtcNow.AddDays(-30);
+        merchant.InvestigationCooldownUntilUtc = DateTime.UtcNow.AddDays(-10);
         merchant.ValidationAttemptCount = 0;
         await dbContext.SaveChangesAsync();
 
@@ -1033,11 +1173,21 @@ public class MerchantIntelligenceRegistryTests
             normalizer,
             registry,
             new ContradictoryRevalidationInvestigationService(),
+            CreateDomainTriggerPolicy(),
+            CreateAIGate(dbContext),
             new MerchantAcceptancePolicy(),
             NullLogger<MerchantResolutionService>.Instance,
             Options.Create(new MerchantOperationalResilienceOptions
             {
                 CautiousMerchantValidationDays = 14
+            }),
+            Options.Create(new MerchantAIGovernanceOptions
+            {
+                Enabled = true
+            }),
+            Options.Create(new AIIntegrationOptions
+            {
+                Enabled = true
             }),
             new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance));
 
@@ -1091,13 +1241,56 @@ public class MerchantIntelligenceRegistryTests
         MerchantDescriptorNormalizer normalizer,
         IMerchantRegistryService registryService)
     {
+        return CreateResolver(
+            dbContext,
+            normalizer,
+            registryService,
+            new StubMerchantInvestigationService(NullLogger<StubMerchantInvestigationService>.Instance));
+    }
+
+    private static MerchantResolutionService CreateResolver(
+        AppDbContext dbContext,
+        MerchantDescriptorNormalizer normalizer,
+        IMerchantRegistryService registryService,
+        IMerchantInvestigationService investigationService)
+    {
         return new MerchantResolutionService(
             dbContext,
             normalizer,
             registryService,
-            new StubMerchantInvestigationService(NullLogger<StubMerchantInvestigationService>.Instance),
+            investigationService,
+            CreateDomainTriggerPolicy(),
+            CreateAIGate(dbContext),
             new MerchantAcceptancePolicy(),
-            NullLogger<MerchantResolutionService>.Instance);
+            NullLogger<MerchantResolutionService>.Instance,
+            null,
+            Options.Create(new MerchantAIGovernanceOptions
+            {
+                Enabled = true
+            }));
+    }
+
+    private static IDomainTriggerPolicyService CreateDomainTriggerPolicy()
+    {
+        return new DomainTriggerPolicyService();
+    }
+
+    private static IAITriggerGateService CreateAIGate(AppDbContext dbContext)
+    {
+        return new AITriggerGateService(
+            dbContext,
+            Options.Create(new MerchantAIGovernanceOptions
+            {
+                Enabled = true,
+                AllowD1AIByDefault = true,
+                MaxAICallsPerSyncRun = 20,
+                MaxAICallsPerConnectionPerRun = 20,
+                MaxAICallsPerUserPer24h = 100
+            }),
+            Options.Create(new AIIntegrationOptions
+            {
+                Enabled = true
+            }));
     }
 
     private sealed class TestMerchantInvestigationService : IMerchantInvestigationService

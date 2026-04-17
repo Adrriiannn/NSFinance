@@ -5,6 +5,26 @@ public class Merchant
     public Guid Id { get; set; }
     public string CanonicalName { get; set; } = string.Empty;
     public string NormalizedCanonicalName { get; set; } = string.Empty;
+    public string CanonicalMerchantName { get; set; } = string.Empty;
+    public string NormalizedMerchantKey { get; set; } = string.Empty;
+    public string? WebsiteDomain { get; set; }
+    public string CountryCode { get; set; } = "ZZ";
+    public string? MerchantVertical { get; set; }
+    public string? GoodsServicesType { get; set; }
+    public string? MerchantSummary { get; set; }
+    public string? CategoryCandidates { get; set; }
+    public int? TopDomainCode { get; set; }
+    public int? TopCategoryCode { get; set; }
+    public int? TopSubcategoryCode { get; set; }
+    public double Confidence { get; set; }
+    public double EvidenceQuality { get; set; }
+    public string? AmbiguityFlags { get; set; }
+    public string? InvestigationModel { get; set; }
+    public DateTime? InvestigatedAtUtc { get; set; }
+    public DateTime? LastUsedAtUtc { get; set; }
+    public DateTime? InvestigationCooldownUntilUtc { get; set; }
+    public int FailureCount { get; set; }
+    public DateTime? LastFailureUtc { get; set; }
     public string DisplayName { get; set; } = string.Empty;
     public MerchantStatus MerchantStatus { get; set; } = MerchantStatus.Active;
     public MerchantType MerchantType { get; set; } = MerchantType.Unknown;

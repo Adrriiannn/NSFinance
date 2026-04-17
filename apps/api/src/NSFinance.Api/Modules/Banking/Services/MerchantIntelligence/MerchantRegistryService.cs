@@ -41,6 +41,18 @@ public sealed class MerchantRegistryService(
             Id = Guid.NewGuid(),
             CanonicalName = canonicalName,
             NormalizedCanonicalName = normalizedCanonicalName,
+            CanonicalMerchantName = canonicalName,
+            NormalizedMerchantKey = normalizedCanonicalName,
+            WebsiteDomain = ExtractWebsiteDomain(request.OfficialWebsite),
+            CountryCode = NormalizeCountryCode(request.PrimaryCountryCode),
+            MerchantVertical = request.MerchantType.ToString(),
+            GoodsServicesType = request.MerchantUsageType.ToString(),
+            MerchantSummary = NormalizeOptional(request.DescriptionSummary, 1024),
+            TopDomainCode = null,
+            TopCategoryCode = null,
+            TopSubcategoryCode = null,
+            Confidence = 0d,
+            EvidenceQuality = 0d,
             DisplayName = NormalizeRequired(request.DisplayName, 160, nameof(request.DisplayName)),
             MerchantStatus = request.MerchantStatus,
             MerchantType = request.MerchantType,
@@ -52,6 +64,8 @@ public sealed class MerchantRegistryService(
             LastValidatedUtc = nowUtc,
             NextValidationDueUtc = ComputeNextValidationDue(request.MerchantStatus, nowUtc),
             LastValidationResultCode = "created",
+            InvestigatedAtUtc = nowUtc,
+            LastUsedAtUtc = nowUtc,
             CreatedUtc = nowUtc,
             UpdatedUtc = nowUtc
         };
@@ -106,12 +120,20 @@ public sealed class MerchantRegistryService(
         if (!string.IsNullOrWhiteSpace(request.PrimaryCountryCode))
         {
             merchant.PrimaryCountryCode = NormalizeCountryCode(request.PrimaryCountryCode);
+            merchant.CountryCode = merchant.PrimaryCountryCode;
         }
 
+        merchant.CanonicalMerchantName = merchant.CanonicalName;
+        merchant.NormalizedMerchantKey = merchant.NormalizedCanonicalName;
+        merchant.WebsiteDomain = ExtractWebsiteDomain(request.OfficialWebsite);
+        merchant.MerchantVertical = merchant.MerchantType.ToString();
+        merchant.GoodsServicesType = merchant.MerchantUsageType.ToString();
+        merchant.MerchantSummary = NormalizeOptional(request.DescriptionSummary, 1024);
         merchant.OfficialWebsite = NormalizeOptional(request.OfficialWebsite, 512);
         merchant.DescriptionSummary = NormalizeOptional(request.DescriptionSummary, 1024);
         merchant.ParentMerchantId = request.ParentMerchantId;
         merchant.LastValidationResultCode = "updated";
+        merchant.LastUsedAtUtc = DateTime.UtcNow;
         merchant.NextValidationDueUtc = ComputeNextValidationDue(merchant.MerchantStatus, DateTime.UtcNow);
         merchant.UpdatedUtc = DateTime.UtcNow;
 
@@ -427,6 +449,21 @@ public sealed class MerchantRegistryService(
         }
 
         return normalized[..2];
+    }
+
+    private static string? ExtractWebsiteDomain(string? website)
+    {
+        if (string.IsNullOrWhiteSpace(website))
+        {
+            return null;
+        }
+
+        if (!Uri.TryCreate(website, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(uri.Host) ? null : uri.Host.ToLowerInvariant();
     }
 
     private static MerchantAliasTrustLevel NormalizeAliasTrust(MerchantAliasTrustLevel requested, bool isActive)
