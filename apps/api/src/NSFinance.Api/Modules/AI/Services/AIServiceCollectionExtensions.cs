@@ -23,6 +23,18 @@ public static class AIServiceCollectionExtensions
             .Validate(options => options.MaxTurnsPerSession > 0, "CompanionAI max turns must be > 0")
             .Validate(options => options.DailySoftCapPerUser > 0, "CompanionAI daily soft cap must be > 0")
             .ValidateOnStart();
+        services.AddOptions<CompanionOrchestrationOptions>()
+            .Bind(configuration.GetSection(CompanionOrchestrationOptions.SectionName))
+            .Validate(options => options.MaxToolCallsPerRequest > 0, "Companion orchestration max tool calls must be > 0")
+            .Validate(options => options.MaxContextKeys > 0, "Companion orchestration max context keys must be > 0")
+            .Validate(options => options.MaxSerializedContextChars > 1_000, "Companion orchestration max serialized context chars must be > 1000")
+            .Validate(options => options.MaxSpendDomains > 0, "Companion orchestration max spend domains must be > 0")
+            .Validate(options => options.MaxRecurringItems > 0, "Companion orchestration max recurring items must be > 0")
+            .Validate(options => options.MaxTransactionRows > 0, "Companion orchestration max transaction rows must be > 0")
+            .Validate(options => options.MaxPlaceItems > 0, "Companion orchestration max place items must be > 0")
+            .Validate(options => options.MaxSummaryTextLength >= 60, "Companion orchestration max summary text length must be >= 60")
+            .Validate(options => options.MaxSecondaryOptionalTools >= 0, "Companion orchestration max secondary optional tools must be >= 0")
+            .ValidateOnStart();
 
         services.AddHttpClient("AI.AzureOpenAI", (sp, client) =>
         {
@@ -65,6 +77,13 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ICompanionIntentScorer, CompanionIntentScorer>();
         services.AddScoped<ICompanionIntentResolutionPolicy, CompanionIntentResolutionPolicy>();
         services.AddScoped<ICompanionIntentRouter, CompanionIntentRouter>();
+        services.AddScoped<ICompanionIntentToolPolicyProvider, CompanionIntentToolPolicyProvider>();
+        services.AddScoped<ICompanionMixedIntentMergePolicy, CompanionMixedIntentMergePolicy>();
+        services.AddScoped<ICompanionExecutionPlanBuilder, CompanionExecutionPlanBuilder>();
+        services.AddScoped<ICompanionContextShaper, CompanionContextShaper>();
+        services.AddScoped<ICompanionToolExecutor, CompanionToolExecutor>();
+        services.AddScoped<ICompanionInsufficiencyEvaluator, CompanionInsufficiencyEvaluator>();
+        services.AddScoped<ICompanionEvidenceBuilder, CompanionEvidenceBuilder>();
         services.AddScoped<IFinancialCompanionContextAssembler, FinancialCompanionContextAssembler>();
         services.AddScoped<IFinancialCompanionService, FinancialCompanionService>();
         services.AddScoped<IPromptBuilder, AIPromptBuilder>();

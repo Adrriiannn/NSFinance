@@ -217,7 +217,11 @@ public sealed class FinancialCompanionService(
             OptionalToolsUsed: evidence.OptionalToolsUsed,
             MissingRequiredTools: evidence.MissingRequiredTools,
             BasisSummary: evidence.BasisSummary,
-            SkippedTools: evidence.SkippedTools);
+            SkippedTools: evidence.SkippedTools,
+            PlannedTools: evidence.PlannedTools,
+            TrimmedPayloadIndicators: evidence.TrimmedPayloadIndicators,
+            InsufficiencySummary: evidence.InsufficiencySummary,
+            ExecutionWarnings: evidence.ExecutionWarnings);
     }
 
     private static string BuildInsufficientDataReply(

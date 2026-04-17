@@ -160,16 +160,31 @@ public sealed class FinancialCompanionContextAssemblerTests
 
     private static FinancialCompanionContextAssembler CreateAssembler(TrackingTools tools)
     {
+        var orchestrationOptions = Microsoft.Extensions.Options.Options.Create(new CompanionOrchestrationOptions());
+        var policyProvider = new CompanionIntentToolPolicyProvider();
+        var mergePolicy = new CompanionMixedIntentMergePolicy(policyProvider, orchestrationOptions);
+        var planBuilder = new CompanionExecutionPlanBuilder(policyProvider, mergePolicy, orchestrationOptions);
+        var contextShaper = new CompanionContextShaper(orchestrationOptions);
+        var toolExecutor = new CompanionToolExecutor(
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            contextShaper,
+            orchestrationOptions,
+            NullLogger<CompanionToolExecutor>.Instance);
+        var insufficiencyEvaluator = new CompanionInsufficiencyEvaluator();
+        var evidenceBuilder = new CompanionEvidenceBuilder();
         return new FinancialCompanionContextAssembler(
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            NullLogger<FinancialCompanionContextAssembler>.Instance);
+            planBuilder,
+            toolExecutor,
+            contextShaper,
+            insufficiencyEvaluator,
+            evidenceBuilder);
     }
 
     private sealed class TrackingTools :

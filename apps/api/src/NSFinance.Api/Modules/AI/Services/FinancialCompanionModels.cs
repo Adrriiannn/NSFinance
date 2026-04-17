@@ -57,7 +57,11 @@ public sealed record CompanionContextEvidence(
     IReadOnlyList<string> OptionalToolsUsed,
     IReadOnlyList<string> MissingRequiredTools,
     IReadOnlyList<string> BasisSummary,
-    IReadOnlyList<string> SkippedTools);
+    IReadOnlyList<string> SkippedTools,
+    IReadOnlyList<string>? PlannedTools = null,
+    IReadOnlyList<string>? TrimmedPayloadIndicators = null,
+    IReadOnlyList<string>? InsufficiencySummary = null,
+    IReadOnlyList<string>? ExecutionWarnings = null);
 
 public sealed record CompanionResponseEvidence(
     IReadOnlyList<string> ToolsUsed,
@@ -65,7 +69,11 @@ public sealed record CompanionResponseEvidence(
     IReadOnlyList<string> OptionalToolsUsed,
     IReadOnlyList<string> MissingRequiredTools,
     IReadOnlyList<string> BasisSummary,
-    IReadOnlyList<string> SkippedTools);
+    IReadOnlyList<string> SkippedTools,
+    IReadOnlyList<string>? PlannedTools = null,
+    IReadOnlyList<string>? TrimmedPayloadIndicators = null,
+    IReadOnlyList<string>? InsufficiencySummary = null,
+    IReadOnlyList<string>? ExecutionWarnings = null);
 
 public sealed record UserFinancialContextSnapshot(
     string Country,

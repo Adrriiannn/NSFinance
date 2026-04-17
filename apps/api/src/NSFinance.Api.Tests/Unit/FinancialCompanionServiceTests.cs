@@ -127,7 +127,7 @@ public sealed class FinancialCompanionServiceTests
         Assert.False(response.Succeeded);
         Assert.True(response.HasInsufficientData);
         Assert.Contains("missing_required_budget_status", response.InsufficientDataReasons ?? []);
-        Assert.Contains(response.Warnings, warning => warning.Contains("required_tool_missing_budget_status", StringComparison.Ordinal));
+        Assert.Contains(response.Warnings, warning => warning.Contains("missing_required_budget_status", StringComparison.Ordinal));
     }
 
     private static FinancialCompanionService CreateService(
@@ -136,16 +136,31 @@ public sealed class FinancialCompanionServiceTests
         bool enforceSoftCap,
         int dailySoftCap = 40)
     {
+        var orchestrationOptions = Options.Create(new CompanionOrchestrationOptions());
+        var policyProvider = new CompanionIntentToolPolicyProvider();
+        var mergePolicy = new CompanionMixedIntentMergePolicy(policyProvider, orchestrationOptions);
+        var planBuilder = new CompanionExecutionPlanBuilder(policyProvider, mergePolicy, orchestrationOptions);
+        var contextShaper = new CompanionContextShaper(orchestrationOptions);
+        var toolExecutor = new CompanionToolExecutor(
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            contextShaper,
+            orchestrationOptions,
+            NullLogger<CompanionToolExecutor>.Instance);
+        var insufficiencyEvaluator = new CompanionInsufficiencyEvaluator();
+        var evidenceBuilder = new CompanionEvidenceBuilder();
         var assembler = new FinancialCompanionContextAssembler(
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            NullLogger<FinancialCompanionContextAssembler>.Instance);
+            planBuilder,
+            toolExecutor,
+            contextShaper,
+            insufficiencyEvaluator,
+            evidenceBuilder);
         return new FinancialCompanionService(
             dbContext,
             tools,
