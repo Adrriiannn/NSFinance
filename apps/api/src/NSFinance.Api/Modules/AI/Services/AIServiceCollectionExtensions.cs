@@ -17,6 +17,12 @@ public static class AIServiceCollectionExtensions
 
         services.AddOptions<AIIntegrationOptions>()
             .ValidateOnStart();
+        services.AddOptions<CompanionAISettingsOptions>()
+            .Bind(configuration.GetSection(CompanionAISettingsOptions.SectionName))
+            .Validate(options => options.MaxTokensPerResponse > 0, "CompanionAI max tokens must be > 0")
+            .Validate(options => options.MaxTurnsPerSession > 0, "CompanionAI max turns must be > 0")
+            .Validate(options => options.DailySoftCapPerUser > 0, "CompanionAI daily soft cap must be > 0")
+            .ValidateOnStart();
 
         services.AddHttpClient("AI.AzureOpenAI", (sp, client) =>
         {
@@ -45,6 +51,16 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IConversationSummaryGenerator, DeterministicConversationSummaryGenerator>();
         services.AddScoped<IConversationSummaryService, ConversationSummaryService>();
         services.AddScoped<IPersistentConversationContextService, PersistentConversationContextService>();
+        services.AddScoped<IUserFinancialSummaryService, UserFinancialSummaryService>();
+        services.AddScoped<ISpendingAnalysisService, SpendingAnalysisService>();
+        services.AddScoped<IRecurringObligationsService, RecurringObligationsService>();
+        services.AddScoped<IBudgetStatusService, BudgetStatusService>();
+        services.AddScoped<ITransactionQueryService, TransactionQueryService>();
+        services.AddScoped<IUserFinancialContextProfileService, UserFinancialContextProfileService>();
+        services.AddScoped<IPlacesSearchService, NullPlacesSearchService>();
+        services.AddScoped<IPlaceDetailsService, NullPlaceDetailsService>();
+        services.AddScoped<IReviewInsightsService, NullReviewInsightsService>();
+        services.AddScoped<IFinancialCompanionService, FinancialCompanionService>();
         services.AddScoped<IPromptBuilder, AIPromptBuilder>();
         services.AddScoped<IMerchantInvestigationResponseParser, MerchantInvestigationResponseParser>();
         services.AddScoped<IUserChatResponseParser, UserChatResponseParser>();

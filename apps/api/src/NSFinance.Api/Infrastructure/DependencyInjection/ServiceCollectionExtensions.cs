@@ -189,12 +189,12 @@ public static class ServiceCollectionExtensions
             configuration.GetSection(MerchantAIGovernanceOptions.SectionName).Bind(options);
             if (options.MaxAICallsPerSyncRun <= 0)
             {
-                options.MaxAICallsPerSyncRun = 3;
+                options.MaxAICallsPerSyncRun = 8;
             }
 
             if (options.MaxAICallsPerConnectionPerRun <= 0)
             {
-                options.MaxAICallsPerConnectionPerRun = 2;
+                options.MaxAICallsPerConnectionPerRun = 5;
             }
 
             if (options.MaxAICallsPerUserPer24h <= 0)
@@ -225,6 +225,86 @@ public static class ServiceCollectionExtensions
             if (options.MeaningfulSpendThreshold <= 0m)
             {
                 options.MeaningfulSpendThreshold = 75m;
+            }
+
+            if (options.QueueTopMerchantsPerRun <= 0)
+            {
+                options.QueueTopMerchantsPerRun = Math.Max(1, options.MaxAICallsPerSyncRun);
+            }
+
+            if (options.QueueTopMerchantsPerConnectionPerRun <= 0)
+            {
+                options.QueueTopMerchantsPerConnectionPerRun = Math.Max(1, options.MaxAICallsPerConnectionPerRun);
+            }
+
+            if (options.InvestigationLockTimeoutMinutes <= 0)
+            {
+                options.InvestigationLockTimeoutMinutes = 20;
+            }
+
+            if (options.ExpectedValueThreshold <= 0d)
+            {
+                options.ExpectedValueThreshold = 0.85d;
+            }
+
+            if (options.ExpectedValueCountWeight <= 0d)
+            {
+                options.ExpectedValueCountWeight = 0.38d;
+            }
+
+            if (options.ExpectedValueSpendWeight <= 0d)
+            {
+                options.ExpectedValueSpendWeight = 0.26d;
+            }
+
+            if (options.ExpectedValueRecencyWeight <= 0d)
+            {
+                options.ExpectedValueRecencyWeight = 0.16d;
+            }
+
+            if (options.ExpectedValueReusabilityWeight <= 0d)
+            {
+                options.ExpectedValueReusabilityWeight = 0.20d;
+            }
+
+            if (options.ExpectedValueLowConfidencePenaltyWeight < 0d)
+            {
+                options.ExpectedValueLowConfidencePenaltyWeight = 0.20d;
+            }
+
+            if (options.QueuePriorityCountWeight <= 0d)
+            {
+                options.QueuePriorityCountWeight = 0.33d;
+            }
+
+            if (options.QueuePrioritySpendWeight <= 0d)
+            {
+                options.QueuePrioritySpendWeight = 0.22d;
+            }
+
+            if (options.QueuePriorityRecencyWeight <= 0d)
+            {
+                options.QueuePriorityRecencyWeight = 0.18d;
+            }
+
+            if (options.QueuePriorityImpactWeight <= 0d)
+            {
+                options.QueuePriorityImpactWeight = 0.17d;
+            }
+
+            if (options.QueuePriorityDomainWeight <= 0d)
+            {
+                options.QueuePriorityDomainWeight = 0.10d;
+            }
+
+            if (options.SpendNormalizerAmount <= 0m)
+            {
+                options.SpendNormalizerAmount = 250m;
+            }
+
+            if (options.ExpectedValueRecencyHorizonDays <= 0)
+            {
+                options.ExpectedValueRecencyHorizonDays = 21;
             }
         });
         ValidateTrueLayerConfigurationForNonDevelopment(configuration, hostEnvironment);
@@ -400,6 +480,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMerchantRegistryService, MerchantRegistryService>();
         services.AddScoped<IMerchantAcceptancePolicy, MerchantAcceptancePolicy>();
         services.AddScoped<IDomainTriggerPolicyService, DomainTriggerPolicyService>();
+        services.AddScoped<IMerchantInvestigationQueueService, MerchantInvestigationQueueService>();
         services.AddScoped<IAITriggerGateService, AITriggerGateService>();
         services.AddScoped<IMerchantResolutionService, MerchantResolutionService>();
         services.AddScoped<TransactionFeatureExtractor>();

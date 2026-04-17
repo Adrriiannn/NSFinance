@@ -18,6 +18,11 @@ public class UnresolvedMerchantConfiguration : IEntityTypeConfiguration<Unresolv
         builder.Property(x => x.LastInvestigationFailureCode).HasMaxLength(120);
         builder.Property(x => x.Status).HasConversion<int>();
         builder.Property(x => x.Notes).HasMaxLength(1200);
+        builder.Property(x => x.TotalObservedSpendAbs).HasPrecision(18, 2).HasDefaultValue(0m);
+        builder.Property(x => x.QueuePriorityScore).HasDefaultValue(0d);
+        builder.Property(x => x.QueueRetryCount).HasDefaultValue(0);
+        builder.Property(x => x.InvestigationLockId);
+        builder.Property(x => x.InvestigationInProgress).HasDefaultValue(false);
         builder.Property(x => x.FirstSeenUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.LastSeenUtc).HasDefaultValueSql("timezone('utc', now())");
 
@@ -26,5 +31,9 @@ public class UnresolvedMerchantConfiguration : IEntityTypeConfiguration<Unresolv
         builder.HasIndex(x => x.LastSeenUtc);
         builder.HasIndex(x => x.LastInvestigationUtc);
         builder.HasIndex(x => x.NextEligibleInvestigationUtc);
+        builder.HasIndex(x => x.QueuePriorityScore);
+        builder.HasIndex(x => x.QueueEnqueuedAtUtc);
+        builder.HasIndex(x => x.InvestigationInProgress);
+        builder.HasIndex(x => x.QueueNextRetryUtc);
     }
 }

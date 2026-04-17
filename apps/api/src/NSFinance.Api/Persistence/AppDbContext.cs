@@ -14,6 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<EmailActionToken> EmailActionTokens => Set<EmailActionToken>();
     public DbSet<AuthAttempt> AuthAttempts => Set<AuthAttempt>();
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
+    public DbSet<UserFinancialContextProfile> UserFinancialContextProfiles => Set<UserFinancialContextProfile>();
     public DbSet<PolicyDocument> PolicyDocuments => Set<PolicyDocument>();
     public DbSet<PolicyVersion> PolicyVersions => Set<PolicyVersion>();
     public DbSet<PolicyAcceptance> PolicyAcceptances => Set<PolicyAcceptance>();
@@ -47,6 +48,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MerchantEvidence> MerchantEvidence => Set<MerchantEvidence>();
     public DbSet<UnresolvedMerchant> UnresolvedMerchants => Set<UnresolvedMerchant>();
     public DbSet<MerchantAIDecisionLog> MerchantAIDecisionLogs => Set<MerchantAIDecisionLog>();
+    public DbSet<CompanionAIInteractionLog> CompanionAIInteractionLogs => Set<CompanionAIInteractionLog>();
     public DbSet<MerchantAliasConflict> MerchantAliasConflicts => Set<MerchantAliasConflict>();
     public DbSet<MerchantRevalidationRecord> MerchantRevalidationRecords => Set<MerchantRevalidationRecord>();
     public DbSet<OperationalFailureRecord> OperationalFailureRecords => Set<OperationalFailureRecord>();

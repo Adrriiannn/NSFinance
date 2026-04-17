@@ -15,6 +15,7 @@ public sealed record MerchantResolutionRequest(
     bool DeterministicTerminal = false,
     string? DeterministicResultCode = null,
     bool ManualOverridePresent = false,
+    bool ForceAIInvestigation = false,
     decimal Amount = 0m,
     bool DescriptorMerchantLike = true,
     string TriggerSource = "account_transaction_upsert",
@@ -35,6 +36,7 @@ public sealed record MerchantResolutionRequest(
             DeterministicTerminal: false,
             DeterministicResultCode: "legacy_unscoped",
             ManualOverridePresent: false,
+            ForceAIInvestigation: false,
             Amount: -100m,
             DescriptorMerchantLike: true,
             TriggerSource: "legacy_resolution",
@@ -107,4 +109,3 @@ public sealed record MerchantResolutionProjectedContext(
     bool DeterministicTerminal,
     string? DeterministicResultCode,
     DeterministicClassificationStatus DeterministicStatus);
-

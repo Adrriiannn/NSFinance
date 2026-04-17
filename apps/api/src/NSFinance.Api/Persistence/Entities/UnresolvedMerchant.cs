@@ -15,4 +15,15 @@ public class UnresolvedMerchant
     public string? LastInvestigationFailureCode { get; set; }
     public UnresolvedMerchantStatus Status { get; set; } = UnresolvedMerchantStatus.New;
     public string? Notes { get; set; }
+    public decimal TotalObservedSpendAbs { get; set; }
+    public double QueuePriorityScore { get; set; }
+    public DateTime? QueueEnqueuedAtUtc { get; set; }
+    public DateTime? QueueLastScoredUtc { get; set; }
+    public int QueueRetryCount { get; set; }
+    public DateTime? QueueNextRetryUtc { get; set; }
+    public DateTime? LastBudgetSkipUtc { get; set; }
+    public DateTime? LastCooldownSkipUtc { get; set; }
+    public bool InvestigationInProgress { get; set; }
+    public Guid? InvestigationLockId { get; set; }
+    public DateTime? InvestigationLockAcquiredUtc { get; set; }
 }

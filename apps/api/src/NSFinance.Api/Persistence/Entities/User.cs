@@ -55,6 +55,7 @@ public class User
     public ICollection<ExpensePlanPublicationDownload> ExpensePlanPublicationDownloads { get; set; } = [];
     public ICollection<ExpensePlanPublicationReport> ExpensePlanPublicationReports { get; set; } = [];
     public UserPreference? Preferences { get; set; }
+    public UserFinancialContextProfile? FinancialContextProfile { get; set; }
     public PasswordCredential? PasswordCredential { get; set; }
 }
 

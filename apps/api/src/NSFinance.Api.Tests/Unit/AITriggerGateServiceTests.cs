@@ -169,12 +169,14 @@ public sealed class AITriggerGateServiceTests
     {
         await using var dbContext = CreateDbContext();
         var gate = CreateGate(dbContext);
+        var cooldownUntilUtc = DateTime.UtcNow.AddHours(2);
         var decision = await gate.EvaluateAsync(
-            CreateInput(unresolvedCooldownUntilUtc: DateTime.UtcNow.AddHours(2), merchantOccurrenceCount: 2),
+            CreateInput(unresolvedCooldownUntilUtc: cooldownUntilUtc, merchantOccurrenceCount: 2),
             CancellationToken.None);
 
         Assert.False(decision.ShouldTriggerAI);
         Assert.Equal(AITriggerSkipReason.MerchantOnCooldown, decision.SkipReason);
+        Assert.Contains("unresolved=", decision.CooldownState, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -210,9 +212,12 @@ public sealed class AITriggerGateServiceTests
                 Enabled = true,
                 MaxAICallsPerSyncRun = 3,
                 MaxAICallsPerConnectionPerRun = 2,
+                QueueTopMerchantsPerRun = 10,
+                QueueTopMerchantsPerConnectionPerRun = 10,
                 MaxAICallsPerUserPer24h = 10,
                 MinimumOccurrencesForExpectedValue = 2,
-                MeaningfulSpendThreshold = 75m
+                MeaningfulSpendThreshold = 75m,
+                ExpectedValueThreshold = 0.60d
             }),
             Options.Create(new AIIntegrationOptions
             {
@@ -264,7 +269,11 @@ public sealed class AITriggerGateServiceTests
             MerchantInvestigatedAtUtc: null,
             MerchantCooldownUntilUtc: null,
             UnresolvedCooldownUntilUtc: unresolvedCooldownUntilUtc,
-            MerchantOccurrenceCount: merchantOccurrenceCount);
+            MerchantOccurrenceCount: merchantOccurrenceCount,
+            ExpectedValueScore: merchantOccurrenceCount >= 2 ? 0.9d : 0.2d,
+            QueuePosition: 1,
+            QueueDepth: 1,
+            QueueState: "priority=1.0;position=1;depth=1",
+            BacklogState: "unresolved=1;queued=1;investigatedToday=0;skippedBudgetToday=0;skippedCooldownToday=0");
     }
 }
-
