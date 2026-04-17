@@ -24,6 +24,7 @@ public sealed class FinancialCompanionService(
     IPlacesSearchService placesSearchService,
     IPlaceDetailsService placeDetailsService,
     IReviewInsightsService reviewInsightsService,
+    ICompanionIntentRouter intentRouter,
     IAIModelRouter modelRouter,
     IAIClient aiClient,
     IUserChatResponseParser responseParser,
@@ -43,7 +44,7 @@ public sealed class FinancialCompanionService(
         {
             return new FinancialCompanionResponse(
                 ReplyText: "Financial companion is currently disabled.",
-                Intent: FinancialCompanionIntent.GeneralQuestion,
+                Intent: FinancialCompanionIntent.GeneralFinancialQuestion,
                 ToolsUsed: [],
                 Warnings: ["companion_disabled"],
                 Succeeded: false,
@@ -54,9 +55,22 @@ public sealed class FinancialCompanionService(
         }
 
         var nowUtc = DateTime.UtcNow;
-        var intent = ClassifyIntent(request.UserQuery);
+        var routing = intentRouter.Route(request.UserQuery);
+        var primaryIntent = routing.PrimaryIntent;
+        var responseIntent = routing.IntentFamily;
         var toolsUsed = new List<string>(8);
         var warnings = new List<string>(2);
+        warnings.AddRange(routing.ReasonCodes.Select(code => $"route_{code}"));
+        if (routing.IsAmbiguous)
+        {
+            warnings.Add("intent_ambiguous");
+        }
+
+        if (routing.IsUnsupported)
+        {
+            warnings.Add("intent_unsupported");
+        }
+
         var profile = await profileService.GetOrCreateAsync(request.UserId, cancellationToken);
         var toolOutputs = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
@@ -75,7 +89,7 @@ public sealed class FinancialCompanionService(
             {
                 return await PersistAndReturnAsync(
                     request,
-                    intent,
+                    responseIntent,
                     toolsUsed,
                     warnings,
                     replyText: "You've reached your daily AI guidance cap. Please try again tomorrow.",
@@ -91,14 +105,14 @@ public sealed class FinancialCompanionService(
 
         await PopulateToolContextAsync(
             request,
-            intent,
+            primaryIntent,
             toolsUsed,
             toolOutputs,
             profile,
             cancellationToken);
 
         var context = new FinancialCompanionContext(
-            Intent: intent,
+            Intent: primaryIntent,
             Profile: profile,
             ToolOutputs: toolOutputs,
             ToolsUsed: toolsUsed);
@@ -106,7 +120,7 @@ public sealed class FinancialCompanionService(
         var route = modelRouter.Resolve(
             AITaskType.FinancialReasoning,
             modelClass,
-            complexityHint: intent.ToString());
+            complexityHint: $"{routing.IntentFamily}:{primaryIntent}");
 
         var prompt = BuildPrompt(request.UserQuery, context);
         var aiRequest = AIRequest.Create(
@@ -136,7 +150,7 @@ public sealed class FinancialCompanionService(
             var fallback = "I couldn't build a reliable answer from current data. Try rephrasing your question.";
             return await PersistAndReturnAsync(
                 request,
-                intent,
+                responseIntent,
                 toolsUsed,
                 warnings,
                 fallback,
@@ -153,7 +167,7 @@ public sealed class FinancialCompanionService(
         var safeReply = ApplySafetyPostProcessing(parsed.ReplyText, toolOutputs);
         return await PersistAndReturnAsync(
             request,
-            intent,
+            responseIntent,
             toolsUsed,
             warnings,
             safeReply,
@@ -180,20 +194,17 @@ public sealed class FinancialCompanionService(
 
         switch (intent)
         {
-            case FinancialCompanionIntent.Budgeting:
+            case FinancialCompanionIntent.SpendingAnalysis:
             {
                 var spending = await spendingAnalysisService.AnalyzeAsync(request.UserId, 60, cancellationToken);
                 var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
-                var recurring = await recurringObligationsService.GetRecurringAsync(request.UserId, cancellationToken);
                 toolOutputs["spending_analysis"] = spending;
                 toolOutputs["budget_status"] = budget;
-                toolOutputs["recurring_obligations"] = recurring;
                 toolsUsed.Add("ISpendingAnalysisService");
                 toolsUsed.Add("IBudgetStatusService");
-                toolsUsed.Add("IRecurringObligationsService");
                 break;
             }
-            case FinancialCompanionIntent.SavingsAdvice:
+            case FinancialCompanionIntent.SavingsCutbackAdvice:
             {
                 var spending = await spendingAnalysisService.AnalyzeAsync(request.UserId, 90, cancellationToken);
                 var recurring = await recurringObligationsService.GetRecurringAsync(request.UserId, cancellationToken);
@@ -217,7 +228,24 @@ public sealed class FinancialCompanionService(
                 toolsUsed.Add("ITransactionQueryService");
                 break;
             }
-            case FinancialCompanionIntent.LifestylePlaces:
+            case FinancialCompanionIntent.BudgetStatus:
+            {
+                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
+                toolOutputs["budget_status"] = budget;
+                toolsUsed.Add("IBudgetStatusService");
+                break;
+            }
+            case FinancialCompanionIntent.PlanProgress:
+            {
+                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
+                var recurring = await recurringObligationsService.GetRecurringAsync(request.UserId, cancellationToken);
+                toolOutputs["budget_status"] = budget;
+                toolOutputs["recurring_obligations"] = recurring;
+                toolsUsed.Add("IBudgetStatusService");
+                toolsUsed.Add("IRecurringObligationsService");
+                break;
+            }
+            case FinancialCompanionIntent.LocalPlacesOutings:
             {
                 var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
                 var placeSearch = await placesSearchService.SearchAsync(
@@ -241,6 +269,9 @@ public sealed class FinancialCompanionService(
 
                 break;
             }
+            case FinancialCompanionIntent.Ambiguous:
+            case FinancialCompanionIntent.Unsupported:
+                break;
             default:
             {
                 var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
@@ -249,40 +280,6 @@ public sealed class FinancialCompanionService(
                 break;
             }
         }
-    }
-
-    private static FinancialCompanionIntent ClassifyIntent(string query)
-    {
-        var value = (query ?? string.Empty).ToLowerInvariant();
-        if (value.Contains("budget", StringComparison.Ordinal)
-            || value.Contains("overspend", StringComparison.Ordinal)
-            || value.Contains("plan", StringComparison.Ordinal))
-        {
-            return FinancialCompanionIntent.Budgeting;
-        }
-
-        if (value.Contains("save", StringComparison.Ordinal)
-            || value.Contains("savings", StringComparison.Ordinal)
-            || value.Contains("reduce spend", StringComparison.Ordinal))
-        {
-            return FinancialCompanionIntent.SavingsAdvice;
-        }
-
-        if (value.Contains("afford", StringComparison.Ordinal)
-            || value.Contains("can i", StringComparison.Ordinal)
-            || value.Contains("purchase", StringComparison.Ordinal))
-        {
-            return FinancialCompanionIntent.Affordability;
-        }
-
-        if (value.Contains("restaurant", StringComparison.Ordinal)
-            || value.Contains("place", StringComparison.Ordinal)
-            || value.Contains("near me", StringComparison.Ordinal))
-        {
-            return FinancialCompanionIntent.LifestylePlaces;
-        }
-
-        return FinancialCompanionIntent.GeneralQuestion;
     }
 
     private static string BuildPrompt(string userQuery, FinancialCompanionContext context)

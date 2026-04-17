@@ -2,12 +2,26 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public enum FinancialCompanionIntent
 {
-    GeneralQuestion = 0,
-    Budgeting = 1,
-    SavingsAdvice = 2,
-    Affordability = 3,
-    LifestylePlaces = 4
+    SpendingAnalysis = 0,
+    SavingsCutbackAdvice = 1,
+    Affordability = 2,
+    BudgetStatus = 3,
+    PlanProgress = 4,
+    LocalPlacesOutings = 5,
+    GeneralFinancialQuestion = 6,
+    MixedQuery = 7,
+    Ambiguous = 8,
+    Unsupported = 9
 }
+
+public sealed record CompanionIntentRoutingResult(
+    FinancialCompanionIntent IntentFamily,
+    FinancialCompanionIntent PrimaryIntent,
+    IReadOnlyList<FinancialCompanionIntent> SecondaryIntents,
+    double Confidence,
+    IReadOnlyList<string> ReasonCodes,
+    bool IsAmbiguous,
+    bool IsUnsupported);
 
 public sealed record FinancialCompanionRequest(
     Guid UserId,

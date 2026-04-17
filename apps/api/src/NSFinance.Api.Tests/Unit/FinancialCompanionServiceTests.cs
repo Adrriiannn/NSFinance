@@ -26,11 +26,9 @@ public sealed class FinancialCompanionServiceTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Equal(FinancialCompanionIntent.Budgeting, response.Intent);
+        Assert.Equal(FinancialCompanionIntent.BudgetStatus, response.Intent);
         Assert.Contains("IUserFinancialSummaryService", response.ToolsUsed);
-        Assert.Contains("ISpendingAnalysisService", response.ToolsUsed);
         Assert.Contains("IBudgetStatusService", response.ToolsUsed);
-        Assert.Contains("IRecurringObligationsService", response.ToolsUsed);
         Assert.Equal(1, await dbContext.CompanionAIInteractionLogs.CountAsync());
         Assert.Equal(0, await dbContext.MerchantAIDecisionLogs.CountAsync());
         Assert.True(tools.SummaryCalls >= 1);
@@ -50,7 +48,7 @@ public sealed class FinancialCompanionServiceTests
                 Id = Guid.NewGuid(),
                 UserId = userId,
                 SessionId = "seed",
-                Intent = FinancialCompanionIntent.GeneralQuestion.ToString(),
+                Intent = FinancialCompanionIntent.GeneralFinancialQuestion.ToString(),
                 ToolsUsed = "none",
                 TokensInput = 1,
                 TokensOutput = 1,
@@ -80,6 +78,29 @@ public sealed class FinancialCompanionServiceTests
         Assert.Equal("fast-model", response.ModelUsed);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_AmbiguousPrompt_ReturnsAmbiguousIntent_AndAvoidsExtraIntentTools()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = Guid.NewGuid();
+        SeedUser(dbContext, userId);
+        var tools = new TrackingTools();
+        var service = CreateService(dbContext, tools, enforceSoftCap: false);
+
+        var response = await service.ExecuteAsync(
+            new FinancialCompanionRequest(
+                UserId: userId,
+                SessionId: "session-ambiguous-1",
+                UserQuery: "What should I do?"),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Equal(FinancialCompanionIntent.Ambiguous, response.Intent);
+        Assert.Contains("IUserFinancialSummaryService", response.ToolsUsed);
+        Assert.DoesNotContain("IBudgetStatusService", response.ToolsUsed);
+        Assert.Contains(response.Warnings, warning => warning.Equals("intent_ambiguous", StringComparison.Ordinal));
+    }
+
     private static FinancialCompanionService CreateService(
         AppDbContext dbContext,
         TrackingTools tools,
@@ -97,6 +118,7 @@ public sealed class FinancialCompanionServiceTests
             tools,
             tools,
             tools,
+            new CompanionIntentRouter(NullLogger<CompanionIntentRouter>.Instance),
             new StubModelRouter(),
             new StubAIClient(),
             new UserChatResponseParser(),

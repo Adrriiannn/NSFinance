@@ -60,6 +60,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IPlacesSearchService, NullPlacesSearchService>();
         services.AddScoped<IPlaceDetailsService, NullPlaceDetailsService>();
         services.AddScoped<IReviewInsightsService, NullReviewInsightsService>();
+        services.AddScoped<ICompanionIntentRouter, CompanionIntentRouter>();
         services.AddScoped<IFinancialCompanionService, FinancialCompanionService>();
         services.AddScoped<IPromptBuilder, AIPromptBuilder>();
         services.AddScoped<IMerchantInvestigationResponseParser, MerchantInvestigationResponseParser>();
