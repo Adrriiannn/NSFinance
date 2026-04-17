@@ -65,6 +65,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ICompanionIntentScorer, CompanionIntentScorer>();
         services.AddScoped<ICompanionIntentResolutionPolicy, CompanionIntentResolutionPolicy>();
         services.AddScoped<ICompanionIntentRouter, CompanionIntentRouter>();
+        services.AddScoped<IFinancialCompanionContextAssembler, FinancialCompanionContextAssembler>();
         services.AddScoped<IFinancialCompanionService, FinancialCompanionService>();
         services.AddScoped<IPromptBuilder, AIPromptBuilder>();
         services.AddScoped<IMerchantInvestigationResponseParser, MerchantInvestigationResponseParser>();

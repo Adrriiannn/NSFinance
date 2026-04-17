@@ -39,13 +39,33 @@ public sealed record FinancialCompanionResponse(
     string? FailureReason,
     string ModelUsed,
     int InputTokens,
-    int OutputTokens);
+    int OutputTokens,
+    CompanionResponseEvidence? Evidence = null,
+    bool HasInsufficientData = false,
+    IReadOnlyList<string>? InsufficientDataReasons = null);
 
 public sealed record FinancialCompanionContext(
     FinancialCompanionIntent Intent,
     UserFinancialContextSnapshot Profile,
     IReadOnlyDictionary<string, object?> ToolOutputs,
-    IReadOnlyList<string> ToolsUsed);
+    IReadOnlyList<string> ToolsUsed,
+    CompanionContextEvidence? Evidence = null);
+
+public sealed record CompanionContextEvidence(
+    IReadOnlyList<string> ToolsUsed,
+    IReadOnlyList<string> RequiredToolsUsed,
+    IReadOnlyList<string> OptionalToolsUsed,
+    IReadOnlyList<string> MissingRequiredTools,
+    IReadOnlyList<string> BasisSummary,
+    IReadOnlyList<string> SkippedTools);
+
+public sealed record CompanionResponseEvidence(
+    IReadOnlyList<string> ToolsUsed,
+    IReadOnlyList<string> RequiredToolsUsed,
+    IReadOnlyList<string> OptionalToolsUsed,
+    IReadOnlyList<string> MissingRequiredTools,
+    IReadOnlyList<string> BasisSummary,
+    IReadOnlyList<string> SkippedTools);
 
 public sealed record UserFinancialContextSnapshot(
     string Country,

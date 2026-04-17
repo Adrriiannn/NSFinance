@@ -29,6 +29,8 @@ public sealed class FinancialCompanionServiceTests
         Assert.Equal(FinancialCompanionIntent.BudgetStatus, response.Intent);
         Assert.Contains("IUserFinancialSummaryService", response.ToolsUsed);
         Assert.Contains("IBudgetStatusService", response.ToolsUsed);
+        Assert.NotNull(response.Evidence);
+        Assert.Contains("based_on_budget_status", response.Evidence!.BasisSummary);
         Assert.Equal(1, await dbContext.CompanionAIInteractionLogs.CountAsync());
         Assert.Equal(0, await dbContext.MerchantAIDecisionLogs.CountAsync());
         Assert.True(tools.SummaryCalls >= 1);
@@ -96,9 +98,36 @@ public sealed class FinancialCompanionServiceTests
 
         Assert.True(response.Succeeded);
         Assert.Equal(FinancialCompanionIntent.Ambiguous, response.Intent);
-        Assert.Contains("IUserFinancialSummaryService", response.ToolsUsed);
+        Assert.Empty(response.ToolsUsed);
         Assert.DoesNotContain("IBudgetStatusService", response.ToolsUsed);
         Assert.Contains(response.Warnings, warning => warning.Equals("intent_ambiguous", StringComparison.Ordinal));
+        Assert.True(response.HasInsufficientData);
+        Assert.Contains("ambiguous_query_requires_clarification", response.InsufficientDataReasons ?? []);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RequiredToolMissing_ReturnsInsufficientGrounding()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = Guid.NewGuid();
+        SeedUser(dbContext, userId);
+        var tools = new TrackingTools
+        {
+            FailBudgetStatus = true
+        };
+        var service = CreateService(dbContext, tools, enforceSoftCap: false);
+
+        var response = await service.ExecuteAsync(
+            new FinancialCompanionRequest(
+                UserId: userId,
+                SessionId: "session-insufficient-1",
+                UserQuery: "Can I afford this purchase?"),
+            CancellationToken.None);
+
+        Assert.False(response.Succeeded);
+        Assert.True(response.HasInsufficientData);
+        Assert.Contains("missing_required_budget_status", response.InsufficientDataReasons ?? []);
+        Assert.Contains(response.Warnings, warning => warning.Contains("required_tool_missing_budget_status", StringComparison.Ordinal));
     }
 
     private static FinancialCompanionService CreateService(
@@ -107,18 +136,21 @@ public sealed class FinancialCompanionServiceTests
         bool enforceSoftCap,
         int dailySoftCap = 40)
     {
+        var assembler = new FinancialCompanionContextAssembler(
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            tools,
+            NullLogger<FinancialCompanionContextAssembler>.Instance);
         return new FinancialCompanionService(
             dbContext,
             tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
-            tools,
             new CompanionIntentRouter(NullLogger<CompanionIntentRouter>.Instance),
+            assembler,
             new StubModelRouter(),
             new StubAIClient(),
             new UserChatResponseParser(),
@@ -218,6 +250,8 @@ public sealed class FinancialCompanionServiceTests
         IPlaceDetailsService,
         IReviewInsightsService
     {
+        public bool FailBudgetStatus { get; set; }
+
         public int SummaryCalls { get; private set; }
         public int BudgetCalls { get; private set; }
         public int SpendingCalls { get; private set; }
@@ -270,6 +304,11 @@ public sealed class FinancialCompanionServiceTests
         public Task<BudgetStatusResult> GetBudgetStatusAsync(Guid userId, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (FailBudgetStatus)
+            {
+                throw new InvalidOperationException("Budget service unavailable");
+            }
+
             BudgetCalls += 1;
             return Task.FromResult(new BudgetStatusResult(true, 1800m, 1200m, 600m));
         }

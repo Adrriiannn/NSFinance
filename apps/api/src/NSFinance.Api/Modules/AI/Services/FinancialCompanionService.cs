@@ -16,15 +16,8 @@ public interface IFinancialCompanionService
 public sealed class FinancialCompanionService(
     AppDbContext dbContext,
     IUserFinancialContextProfileService profileService,
-    IUserFinancialSummaryService summaryService,
-    ISpendingAnalysisService spendingAnalysisService,
-    IRecurringObligationsService recurringObligationsService,
-    IBudgetStatusService budgetStatusService,
-    ITransactionQueryService transactionQueryService,
-    IPlacesSearchService placesSearchService,
-    IPlaceDetailsService placeDetailsService,
-    IReviewInsightsService reviewInsightsService,
     ICompanionIntentRouter intentRouter,
+    IFinancialCompanionContextAssembler contextAssembler,
     IAIModelRouter modelRouter,
     IAIClient aiClient,
     IUserChatResponseParser responseParser,
@@ -51,15 +44,16 @@ public sealed class FinancialCompanionService(
                 FailureReason: "companion_disabled",
                 ModelUsed: "none",
                 InputTokens: 0,
-                OutputTokens: 0);
+                OutputTokens: 0,
+                Evidence: null,
+                HasInsufficientData: true,
+                InsufficientDataReasons: ["companion_disabled"]);
         }
 
         var nowUtc = DateTime.UtcNow;
         var routing = intentRouter.Route(request.UserQuery);
-        var primaryIntent = routing.PrimaryIntent;
         var responseIntent = routing.IntentFamily;
-        var toolsUsed = new List<string>(8);
-        var warnings = new List<string>(2);
+        var warnings = new List<string>(4);
         warnings.AddRange(routing.ReasonCodes.Select(code => $"route_{code}"));
         if (routing.IsAmbiguous)
         {
@@ -72,7 +66,6 @@ public sealed class FinancialCompanionService(
         }
 
         var profile = await profileService.GetOrCreateAsync(request.UserId, cancellationToken);
-        var toolOutputs = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
         var dailyCount = await dbContext.CompanionAIInteractionLogs
             .AsNoTracking()
@@ -90,7 +83,7 @@ public sealed class FinancialCompanionService(
                 return await PersistAndReturnAsync(
                     request,
                     responseIntent,
-                    toolsUsed,
+                    toolsUsed: [],
                     warnings,
                     replyText: "You've reached your daily AI guidance cap. Please try again tomorrow.",
                     modelUsed: "soft_cap_block",
@@ -99,28 +92,48 @@ public sealed class FinancialCompanionService(
                     tokensOutput: 0,
                     succeeded: false,
                     failureReason: "daily_soft_cap_reached",
+                    evidence: null,
+                    hasInsufficientData: true,
+                    insufficientDataReasons: ["daily_soft_cap_reached"],
                     cancellationToken);
             }
         }
 
-        await PopulateToolContextAsync(
-            request,
-            primaryIntent,
-            toolsUsed,
-            toolOutputs,
-            profile,
-            cancellationToken);
+        var assembly = await contextAssembler.AssembleAsync(request, routing, profile, cancellationToken);
+        warnings.AddRange(assembly.Warnings.Select(x => $"orchestration_{x}"));
 
-        var context = new FinancialCompanionContext(
-            Intent: primaryIntent,
-            Profile: profile,
-            ToolOutputs: toolOutputs,
-            ToolsUsed: toolsUsed);
+        if (!assembly.CanProceedToAI)
+        {
+            var insufficientReasons = assembly.InsufficientDataReasons.Count == 0
+                ? ["insufficient_grounding_data"]
+                : assembly.InsufficientDataReasons;
+            warnings.AddRange(insufficientReasons.Select(x => $"insufficient_{x}"));
+            var fallback = BuildInsufficientDataReply(routing, insufficientReasons);
+            var succeeded = routing.IsAmbiguous || routing.IsUnsupported;
+            var failureReason = succeeded ? null : "insufficient_grounding_data";
+            return await PersistAndReturnAsync(
+                request,
+                responseIntent,
+                assembly.ToolsUsed,
+                warnings,
+                fallback,
+                modelUsed: "orchestration_fallback",
+                responseTimeMs: 0,
+                tokensInput: 0,
+                tokensOutput: 0,
+                succeeded: succeeded,
+                failureReason: failureReason,
+                evidence: ToResponseEvidence(assembly.Evidence),
+                hasInsufficientData: true,
+                insufficientDataReasons: insufficientReasons,
+                cancellationToken);
+        }
 
+        var context = assembly.Context;
         var route = modelRouter.Resolve(
             AITaskType.FinancialReasoning,
             modelClass,
-            complexityHint: $"{routing.IntentFamily}:{primaryIntent}");
+            complexityHint: $"{routing.IntentFamily}:{routing.PrimaryIntent}");
 
         var prompt = BuildPrompt(request.UserQuery, context);
         var aiRequest = AIRequest.Create(
@@ -151,7 +164,7 @@ public sealed class FinancialCompanionService(
             return await PersistAndReturnAsync(
                 request,
                 responseIntent,
-                toolsUsed,
+                assembly.ToolsUsed,
                 warnings,
                 fallback,
                 route.Model,
@@ -160,15 +173,23 @@ public sealed class FinancialCompanionService(
                 aiResponse.OutputTokenEstimate ?? 0,
                 succeeded: false,
                 failureReason: parsed.FailureReason ?? aiResponse.FailureReason ?? "companion_parse_failed",
+                evidence: ToResponseEvidence(assembly.Evidence),
+                hasInsufficientData: assembly.HasInsufficientData,
+                insufficientDataReasons: assembly.InsufficientDataReasons,
                 cancellationToken);
         }
 
         warnings.AddRange(parsed.Warnings);
-        var safeReply = ApplySafetyPostProcessing(parsed.ReplyText, toolOutputs);
+        if (assembly.HasInsufficientData)
+        {
+            warnings.AddRange(assembly.InsufficientDataReasons.Select(x => $"insufficient_{x}"));
+        }
+
+        var safeReply = ApplySafetyPostProcessing(parsed.ReplyText, context.ToolOutputs);
         return await PersistAndReturnAsync(
             request,
             responseIntent,
-            toolsUsed,
+            assembly.ToolsUsed,
             warnings,
             safeReply,
             route.Model,
@@ -177,109 +198,53 @@ public sealed class FinancialCompanionService(
             aiResponse.OutputTokenEstimate ?? 0,
             succeeded: true,
             failureReason: null,
+            evidence: ToResponseEvidence(assembly.Evidence),
+            hasInsufficientData: assembly.HasInsufficientData,
+            insufficientDataReasons: assembly.InsufficientDataReasons,
             cancellationToken);
     }
 
-    private async Task PopulateToolContextAsync(
-        FinancialCompanionRequest request,
-        FinancialCompanionIntent intent,
-        List<string> toolsUsed,
-        Dictionary<string, object?> toolOutputs,
-        UserFinancialContextSnapshot profile,
-        CancellationToken cancellationToken)
+    private static CompanionResponseEvidence? ToResponseEvidence(CompanionContextEvidence? evidence)
     {
-        var summary = await summaryService.GetSummaryAsync(request.UserId, cancellationToken);
-        toolOutputs["financial_summary"] = summary;
-        toolsUsed.Add("IUserFinancialSummaryService");
-
-        switch (intent)
+        if (evidence is null)
         {
-            case FinancialCompanionIntent.SpendingAnalysis:
-            {
-                var spending = await spendingAnalysisService.AnalyzeAsync(request.UserId, 60, cancellationToken);
-                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
-                toolOutputs["spending_analysis"] = spending;
-                toolOutputs["budget_status"] = budget;
-                toolsUsed.Add("ISpendingAnalysisService");
-                toolsUsed.Add("IBudgetStatusService");
-                break;
-            }
-            case FinancialCompanionIntent.SavingsCutbackAdvice:
-            {
-                var spending = await spendingAnalysisService.AnalyzeAsync(request.UserId, 90, cancellationToken);
-                var recurring = await recurringObligationsService.GetRecurringAsync(request.UserId, cancellationToken);
-                toolOutputs["spending_analysis"] = spending;
-                toolOutputs["recurring_obligations"] = recurring;
-                toolsUsed.Add("ISpendingAnalysisService");
-                toolsUsed.Add("IRecurringObligationsService");
-                break;
-            }
-            case FinancialCompanionIntent.Affordability:
-            {
-                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
-                var matches = await transactionQueryService.QueryAsync(
-                    request.UserId,
-                    request.UserQuery,
-                    maxRows: 20,
-                    cancellationToken);
-                toolOutputs["budget_status"] = budget;
-                toolOutputs["transaction_matches"] = matches;
-                toolsUsed.Add("IBudgetStatusService");
-                toolsUsed.Add("ITransactionQueryService");
-                break;
-            }
-            case FinancialCompanionIntent.BudgetStatus:
-            {
-                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
-                toolOutputs["budget_status"] = budget;
-                toolsUsed.Add("IBudgetStatusService");
-                break;
-            }
-            case FinancialCompanionIntent.PlanProgress:
-            {
-                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
-                var recurring = await recurringObligationsService.GetRecurringAsync(request.UserId, cancellationToken);
-                toolOutputs["budget_status"] = budget;
-                toolOutputs["recurring_obligations"] = recurring;
-                toolsUsed.Add("IBudgetStatusService");
-                toolsUsed.Add("IRecurringObligationsService");
-                break;
-            }
-            case FinancialCompanionIntent.LocalPlacesOutings:
-            {
-                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
-                var placeSearch = await placesSearchService.SearchAsync(
-                    request.UserQuery,
-                    profile.Country,
-                    cancellationToken);
-                toolOutputs["budget_status"] = budget;
-                toolOutputs["place_search"] = placeSearch;
-                toolsUsed.Add("IBudgetStatusService");
-                toolsUsed.Add("IPlacesSearchService");
-                if (placeSearch.Items.Count > 0)
-                {
-                    var top = placeSearch.Items[0];
-                    var details = await placeDetailsService.GetDetailsAsync(top.PlaceId, cancellationToken);
-                    var reviews = await reviewInsightsService.GetInsightsAsync(top.PlaceId, cancellationToken);
-                    toolOutputs["place_details"] = details;
-                    toolOutputs["review_insights"] = reviews;
-                    toolsUsed.Add("IPlaceDetailsService");
-                    toolsUsed.Add("IReviewInsightsService");
-                }
-
-                break;
-            }
-            case FinancialCompanionIntent.Ambiguous:
-            case FinancialCompanionIntent.Unsupported:
-                break;
-            default:
-            {
-                var budget = await budgetStatusService.GetBudgetStatusAsync(request.UserId, cancellationToken);
-                toolOutputs["budget_status"] = budget;
-                toolsUsed.Add("IBudgetStatusService");
-                break;
-            }
+            return null;
         }
+
+        return new CompanionResponseEvidence(
+            ToolsUsed: evidence.ToolsUsed,
+            RequiredToolsUsed: evidence.RequiredToolsUsed,
+            OptionalToolsUsed: evidence.OptionalToolsUsed,
+            MissingRequiredTools: evidence.MissingRequiredTools,
+            BasisSummary: evidence.BasisSummary,
+            SkippedTools: evidence.SkippedTools);
+    }
+
+    private static string BuildInsufficientDataReply(
+        CompanionIntentRoutingResult routing,
+        IReadOnlyList<string> reasons)
+    {
+        if (routing.IsUnsupported)
+        {
+            return "I can help with budgeting, affordability, spending, and savings guidance, but this request is outside my supported scope.";
+        }
+
+        if (routing.IsAmbiguous)
+        {
+            return "I need a bit more detail to help. You can ask about budget status, spending analysis, affordability, or where to cut back.";
+        }
+
+        if (reasons.Any(reason => reason.Contains("financial_summary", StringComparison.Ordinal)))
+        {
+            return "I don't have enough grounded financial summary data yet to answer that reliably.";
+        }
+
+        if (reasons.Any(reason => reason.Contains("budget_status", StringComparison.Ordinal)))
+        {
+            return "I don't have enough grounded budget data yet to answer that reliably.";
+        }
+
+        return "I don't have enough grounded data yet to answer that reliably. I can provide a partial answer once more data is available.";
     }
 
     private static string BuildPrompt(string userQuery, FinancialCompanionContext context)
@@ -337,6 +302,9 @@ public sealed class FinancialCompanionService(
         int tokensOutput,
         bool succeeded,
         string? failureReason,
+        CompanionResponseEvidence? evidence,
+        bool hasInsufficientData,
+        IReadOnlyList<string>? insufficientDataReasons,
         CancellationToken cancellationToken)
     {
         var toolsUsedText = toolsUsed.Count == 0 ? "none" : string.Join(",", toolsUsed);
@@ -377,6 +345,9 @@ public sealed class FinancialCompanionService(
             FailureReason: failureReason,
             ModelUsed: modelUsed,
             InputTokens: tokensInput,
-            OutputTokens: tokensOutput);
+            OutputTokens: tokensOutput,
+            Evidence: evidence,
+            HasInsufficientData: hasInsufficientData,
+            InsufficientDataReasons: insufficientDataReasons);
     }
 }
