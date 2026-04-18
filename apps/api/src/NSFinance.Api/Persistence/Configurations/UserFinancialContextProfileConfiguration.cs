@@ -20,6 +20,12 @@ public sealed class UserFinancialContextProfileConfiguration : IEntityTypeConfig
         builder.Property(x => x.SpendingTendenciesJson).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.CategoryFlexibilityMarkersJson).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.AdviceStylePreference).HasMaxLength(24).IsRequired();
+        builder.Property(x => x.ExplicitSignalsJson).HasColumnType("jsonb").HasDefaultValue("{}").IsRequired();
+        builder.Property(x => x.InferredSignalsJson).HasColumnType("jsonb").HasDefaultValue("{}").IsRequired();
+        builder.Property(x => x.SignalMetadataJson).HasColumnType("jsonb").HasDefaultValue("{}").IsRequired();
+        builder.Property(x => x.FreshnessState).HasMaxLength(24).HasDefaultValue("fresh").IsRequired();
+        builder.Property(x => x.ProfileSchemaVersion).HasDefaultValue(1).IsRequired();
+        builder.Property(x => x.LastRefreshedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedUtc).HasDefaultValueSql("timezone('utc', now())");
 

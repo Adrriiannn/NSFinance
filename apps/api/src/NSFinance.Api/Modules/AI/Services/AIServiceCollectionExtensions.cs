@@ -35,6 +35,15 @@ public static class AIServiceCollectionExtensions
             .Validate(options => options.MaxSummaryTextLength >= 60, "Companion orchestration max summary text length must be >= 60")
             .Validate(options => options.MaxSecondaryOptionalTools >= 0, "Companion orchestration max secondary optional tools must be >= 0")
             .ValidateOnStart();
+        services.AddOptions<CompanionProfileLifecycleOptions>()
+            .Bind(configuration.GetSection(CompanionProfileLifecycleOptions.SectionName))
+            .Validate(options => options.StaleAfterHours > 0, "Companion profile stale threshold must be > 0")
+            .Validate(options => options.RefreshNeededAfterHours > options.StaleAfterHours, "Companion profile refresh-needed threshold must be > stale threshold")
+            .Validate(options => options.MaxActivePlans > 0, "Companion profile max active plans must be > 0")
+            .Validate(options => options.MaxRecurringObligations > 0, "Companion profile max recurring obligations must be > 0")
+            .Validate(options => options.SpendingAnalysisLookbackDays >= 14, "Companion profile spending lookback days must be >= 14")
+            .Validate(options => options.ProfileSchemaVersion > 0, "Companion profile schema version must be > 0")
+            .ValidateOnStart();
 
         services.AddHttpClient("AI.AzureOpenAI", (sp, client) =>
         {
@@ -68,6 +77,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IRecurringObligationsService, RecurringObligationsService>();
         services.AddScoped<IBudgetStatusService, BudgetStatusService>();
         services.AddScoped<ITransactionQueryService, TransactionQueryService>();
+        services.AddScoped<IUserFinancialProfileFreshnessEvaluator, UserFinancialProfileFreshnessEvaluator>();
         services.AddScoped<IUserFinancialContextProfileService, UserFinancialContextProfileService>();
         services.AddScoped<IPlacesSearchService, NullPlacesSearchService>();
         services.AddScoped<IPlaceDetailsService, NullPlaceDetailsService>();
