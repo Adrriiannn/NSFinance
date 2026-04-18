@@ -84,6 +84,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ICompanionToolExecutor, CompanionToolExecutor>();
         services.AddScoped<ICompanionInsufficiencyEvaluator, CompanionInsufficiencyEvaluator>();
         services.AddScoped<ICompanionEvidenceBuilder, CompanionEvidenceBuilder>();
+        services.AddScoped<ICompanionAssemblyResultBuilder, CompanionAssemblyResultBuilder>();
         services.AddScoped<IFinancialCompanionContextAssembler, FinancialCompanionContextAssembler>();
         services.AddScoped<IFinancialCompanionService, FinancialCompanionService>();
         services.AddScoped<IPromptBuilder, AIPromptBuilder>();

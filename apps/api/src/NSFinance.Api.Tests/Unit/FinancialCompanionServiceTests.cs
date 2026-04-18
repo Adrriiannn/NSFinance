@@ -155,12 +155,13 @@ public sealed class FinancialCompanionServiceTests
             NullLogger<CompanionToolExecutor>.Instance);
         var insufficiencyEvaluator = new CompanionInsufficiencyEvaluator();
         var evidenceBuilder = new CompanionEvidenceBuilder();
+        var assemblyResultBuilder = new CompanionAssemblyResultBuilder(evidenceBuilder);
         var assembler = new FinancialCompanionContextAssembler(
             planBuilder,
             toolExecutor,
             contextShaper,
             insufficiencyEvaluator,
-            evidenceBuilder);
+            assemblyResultBuilder);
         return new FinancialCompanionService(
             dbContext,
             tools,

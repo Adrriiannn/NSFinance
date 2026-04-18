@@ -179,12 +179,13 @@ public sealed class FinancialCompanionContextAssemblerTests
             NullLogger<CompanionToolExecutor>.Instance);
         var insufficiencyEvaluator = new CompanionInsufficiencyEvaluator();
         var evidenceBuilder = new CompanionEvidenceBuilder();
+        var assemblyResultBuilder = new CompanionAssemblyResultBuilder(evidenceBuilder);
         return new FinancialCompanionContextAssembler(
             planBuilder,
             toolExecutor,
             contextShaper,
             insufficiencyEvaluator,
-            evidenceBuilder);
+            assemblyResultBuilder);
     }
 
     private sealed class TrackingTools :

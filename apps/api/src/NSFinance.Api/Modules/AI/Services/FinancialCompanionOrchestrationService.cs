@@ -23,7 +23,7 @@ public sealed class FinancialCompanionContextAssembler(
     ICompanionToolExecutor toolExecutor,
     ICompanionContextShaper contextShaper,
     ICompanionInsufficiencyEvaluator insufficiencyEvaluator,
-    ICompanionEvidenceBuilder evidenceBuilder) : IFinancialCompanionContextAssembler
+    ICompanionAssemblyResultBuilder assemblyResultBuilder) : IFinancialCompanionContextAssembler
 {
     public async Task<CompanionContextAssemblyResult> AssembleAsync(
         FinancialCompanionRequest request,
@@ -37,36 +37,12 @@ public sealed class FinancialCompanionContextAssembler(
         var execution = await toolExecutor.ExecuteAsync(request, plan, profile, cancellationToken);
         var trim = contextShaper.TrimToPayloadBudget(execution.ContextOutputs, execution.Records);
         var insufficiency = insufficiencyEvaluator.Evaluate(routing, plan, trim.AdjustedRecords, trim.TrimmedIndicators);
-
-        var warnings = plan.Warnings
-            .Concat(execution.Warnings)
-            .Concat(trim.Warnings)
-            .Concat(insufficiency.Warnings)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-
-        var evidence = evidenceBuilder.Build(
+        return assemblyResultBuilder.Build(
+            primaryIntent: routing.PrimaryIntent,
+            profile: profile,
             plan: plan,
-            records: trim.AdjustedRecords,
-            contextOutputs: trim.Outputs,
-            insufficiency: insufficiency,
-            trimIndicators: trim.TrimmedIndicators,
-            warnings: warnings);
-
-        var context = new FinancialCompanionContext(
-            Intent: routing.PrimaryIntent,
-            Profile: profile,
-            ToolOutputs: trim.Outputs,
-            ToolsUsed: evidence.ToolsUsed,
-            Evidence: evidence);
-
-        return new CompanionContextAssemblyResult(
-            Context: context,
-            ToolsUsed: evidence.ToolsUsed,
-            Evidence: evidence,
-            Warnings: warnings,
-            HasInsufficientData: insufficiency.HasInsufficientData,
-            InsufficientDataReasons: insufficiency.Reasons,
-            CanProceedToAI: insufficiency.CanProceedToAI);
+            execution: execution,
+            trim: trim,
+            insufficiency: insufficiency);
     }
 }
