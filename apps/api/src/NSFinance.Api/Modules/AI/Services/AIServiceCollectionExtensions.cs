@@ -77,6 +77,12 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IRecurringObligationsService, RecurringObligationsService>();
         services.AddScoped<IBudgetStatusService, BudgetStatusService>();
         services.AddScoped<ITransactionQueryService, TransactionQueryService>();
+        services.AddScoped<IUserFinancialProfileSerializationMapper, UserFinancialProfileSerializationMapper>();
+        services.AddScoped<IUserFinancialProfileMergePolicy, UserFinancialProfileMergePolicy>();
+        services.AddScoped<IUserFinancialProfileInferenceBuilder, UserFinancialProfileInferenceBuilder>();
+        services.AddScoped<IUserFinancialProfileInferencePersistencePolicy, UserFinancialProfileInferencePersistencePolicy>();
+        services.AddScoped<IUserFinancialProfileSignalMetadataPolicy, UserFinancialProfileSignalMetadataPolicy>();
+        services.AddScoped<IUserFinancialProfileLifecycleInvariantValidator, UserFinancialProfileLifecycleInvariantValidator>();
         services.AddScoped<IUserFinancialProfileFreshnessEvaluator, UserFinancialProfileFreshnessEvaluator>();
         services.AddScoped<IUserFinancialContextProfileService, UserFinancialContextProfileService>();
         services.AddScoped<IPlacesSearchService, NullPlacesSearchService>();

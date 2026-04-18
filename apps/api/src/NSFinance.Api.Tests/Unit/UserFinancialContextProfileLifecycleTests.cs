@@ -325,13 +325,29 @@ public sealed class UserFinancialContextProfileLifecycleTests
         CompanionProfileLifecycleOptions options)
     {
         var optionsWrapper = Options.Create(options);
-        return new UserFinancialContextProfileService(
+        var mapper = new UserFinancialProfileSerializationMapper();
+        var mergePolicy = new UserFinancialProfileMergePolicy();
+        var inferenceBuilder = new UserFinancialProfileInferenceBuilder(
             dbContext,
             tools,
             tools,
             tools,
             tools,
-            new UserFinancialProfileFreshnessEvaluator(optionsWrapper),
+            optionsWrapper,
+            NullLogger<UserFinancialProfileInferenceBuilder>.Instance);
+        var persistencePolicy = new UserFinancialProfileInferencePersistencePolicy();
+        var metadataPolicy = new UserFinancialProfileSignalMetadataPolicy();
+        var invariantValidator = new UserFinancialProfileLifecycleInvariantValidator();
+        var freshnessEvaluator = new UserFinancialProfileFreshnessEvaluator(optionsWrapper);
+        return new UserFinancialContextProfileService(
+            dbContext,
+            mapper,
+            mergePolicy,
+            inferenceBuilder,
+            persistencePolicy,
+            metadataPolicy,
+            invariantValidator,
+            freshnessEvaluator,
             optionsWrapper,
             NullLogger<UserFinancialContextProfileService>.Instance);
     }
