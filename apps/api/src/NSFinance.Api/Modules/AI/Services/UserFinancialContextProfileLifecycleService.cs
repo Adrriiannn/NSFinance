@@ -5,67 +5,6 @@ using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
-public enum UserFinancialProfileFreshnessState
-{
-    Fresh = 0,
-    Stale = 1,
-    RefreshNeeded = 2
-}
-
-public enum UserFinancialProfileSignalSource
-{
-    ExplicitUser = 0,
-    InferredFromSummary = 1,
-    InferredFromBudget = 2,
-    InferredFromSpendingPattern = 3,
-    InferredFromPlanData = 4,
-    InferredFromRecurringObligations = 5,
-    SystemDefault = 6
-}
-
-public enum UserFinancialProfileSignalStrength
-{
-    Weak = 0,
-    Acceptable = 1,
-    Strong = 2,
-    Explicit = 3
-}
-
-public sealed record UserFinancialProfileSignalMetadata(
-    UserFinancialProfileSignalSource Source,
-    UserFinancialProfileSignalStrength Strength,
-    bool IsExplicit,
-    DateTime UpdatedAtUtc);
-
-public interface IUserFinancialProfileFreshnessEvaluator
-{
-    UserFinancialProfileFreshnessState Evaluate(DateTime nowUtc, DateTime lastRefreshedUtc);
-}
-
-public sealed class UserFinancialProfileFreshnessEvaluator(
-    IOptions<CompanionProfileLifecycleOptions> options) : IUserFinancialProfileFreshnessEvaluator
-{
-    private readonly CompanionProfileLifecycleOptions _options = options.Value;
-
-    public UserFinancialProfileFreshnessState Evaluate(DateTime nowUtc, DateTime lastRefreshedUtc)
-    {
-        if (lastRefreshedUtc == default)
-        {
-            return UserFinancialProfileFreshnessState.RefreshNeeded;
-        }
-
-        var age = nowUtc - lastRefreshedUtc;
-        if (age.TotalHours >= Math.Max(_options.StaleAfterHours + 1, _options.RefreshNeededAfterHours))
-        {
-            return UserFinancialProfileFreshnessState.RefreshNeeded;
-        }
-
-        return age.TotalHours >= Math.Max(1, _options.StaleAfterHours)
-            ? UserFinancialProfileFreshnessState.Stale
-            : UserFinancialProfileFreshnessState.Fresh;
-    }
-}
-
 public sealed class UserFinancialContextProfileService(
     AppDbContext dbContext,
     IUserFinancialProfileSerializationMapper mapper,
