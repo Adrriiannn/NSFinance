@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Persistence;
@@ -18,9 +17,7 @@ public sealed class FinancialCompanionService(
     IUserFinancialContextProfileService profileService,
     ICompanionIntentRouter intentRouter,
     IFinancialCompanionContextAssembler contextAssembler,
-    IAIModelRouter modelRouter,
-    IAIClient aiClient,
-    IUserChatResponseParser responseParser,
+    IFinancialAdviceDecisionService adviceDecisionService,
     IOptions<CompanionAISettingsOptions> options,
     ILogger<FinancialCompanionService> logger) : IFinancialCompanionService
 {
@@ -47,7 +44,8 @@ public sealed class FinancialCompanionService(
                 OutputTokens: 0,
                 Evidence: null,
                 HasInsufficientData: true,
-                InsufficientDataReasons: ["companion_disabled"]);
+                InsufficientDataReasons: ["companion_disabled"],
+                AdvicePacket: null);
         }
 
         var nowUtc = DateTime.UtcNow;
@@ -95,6 +93,7 @@ public sealed class FinancialCompanionService(
                     evidence: null,
                     hasInsufficientData: true,
                     insufficientDataReasons: ["daily_soft_cap_reached"],
+                    advicePacket: null,
                     cancellationToken);
             }
         }
@@ -126,81 +125,42 @@ public sealed class FinancialCompanionService(
                 evidence: ToResponseEvidence(assembly.Evidence),
                 hasInsufficientData: true,
                 insufficientDataReasons: insufficientReasons,
+                advicePacket: null,
                 cancellationToken);
         }
-
-        var context = assembly.Context;
-        var route = modelRouter.Resolve(
-            AITaskType.FinancialReasoning,
-            modelClass,
-            complexityHint: $"{routing.IntentFamily}:{routing.PrimaryIntent}");
-
-        var prompt = BuildPrompt(request.UserQuery, context);
-        var aiRequest = AIRequest.Create(
-            taskType: AITaskType.FinancialReasoning,
-            preferredModelClass: route.ModelClass,
-            messages: [AIMessage.User(prompt)],
-            correlationId: string.IsNullOrWhiteSpace(request.CorrelationId) ? Guid.NewGuid().ToString("N") : request.CorrelationId,
-            systemInstructions: """
-                                You are NSFinance Companion AI.
-                                Use only provided tool context.
-                                Never invent user financial numbers.
-                                Avoid aggressive guidance and avoid proposing cuts to essential spending categories.
-                                Return strict JSON matching user_chat_response_v1.
-                                """,
-            structuredOutputSchemaName: "user_chat_response_v1",
-            temperature: 0.2d,
-            maxOutputTokens: Math.Clamp(_settings.MaxTokensPerResponse, 120, 2_000),
-            metadata: request.Metadata);
 
         var start = DateTime.UtcNow;
-        var aiResponse = await aiClient.SendAsync(aiRequest, route, cancellationToken);
+        var decision = await adviceDecisionService.DecideAsync(
+            request,
+            routing,
+            assembly.Context,
+            modelClass,
+            cancellationToken);
         var elapsedMs = (long)Math.Max(0d, (DateTime.UtcNow - start).TotalMilliseconds);
 
-        if (!responseParser.TryParse(aiResponse, route, out var parsed, out var parseReasonCodes))
-        {
-            warnings.AddRange(parseReasonCodes);
-            var fallback = "I couldn't build a reliable answer from current data. Try rephrasing your question.";
-            return await PersistAndReturnAsync(
-                request,
-                responseIntent,
-                assembly.ToolsUsed,
-                warnings,
-                fallback,
-                route.Model,
-                elapsedMs,
-                aiResponse.InputTokenEstimate ?? 0,
-                aiResponse.OutputTokenEstimate ?? 0,
-                succeeded: false,
-                failureReason: parsed.FailureReason ?? aiResponse.FailureReason ?? "companion_parse_failed",
-                evidence: ToResponseEvidence(assembly.Evidence),
-                hasInsufficientData: assembly.HasInsufficientData,
-                insufficientDataReasons: assembly.InsufficientDataReasons,
-                cancellationToken);
-        }
-
-        warnings.AddRange(parsed.Warnings);
+        warnings.AddRange(decision.Warnings);
         if (assembly.HasInsufficientData)
         {
             warnings.AddRange(assembly.InsufficientDataReasons.Select(x => $"insufficient_{x}"));
         }
 
-        var safeReply = ApplySafetyPostProcessing(parsed.ReplyText, context.ToolOutputs);
+        var safeReply = decision.Packet.UserSafeSummary;
         return await PersistAndReturnAsync(
             request,
             responseIntent,
             assembly.ToolsUsed,
             warnings,
             safeReply,
-            route.Model,
+            decision.ModelUsed,
             elapsedMs,
-            aiResponse.InputTokenEstimate ?? 0,
-            aiResponse.OutputTokenEstimate ?? 0,
+            decision.InputTokens,
+            decision.OutputTokens,
             succeeded: true,
             failureReason: null,
             evidence: ToResponseEvidence(assembly.Evidence),
             hasInsufficientData: assembly.HasInsufficientData,
             insufficientDataReasons: assembly.InsufficientDataReasons,
+            advicePacket: decision.Packet,
             cancellationToken);
     }
 
@@ -251,49 +211,6 @@ public sealed class FinancialCompanionService(
         return "I don't have enough grounded data yet to answer that reliably. I can provide a partial answer once more data is available.";
     }
 
-    private static string BuildPrompt(string userQuery, FinancialCompanionContext context)
-    {
-        var contextJson = JsonSerializer.Serialize(context, new JsonSerializerOptions
-        {
-            WriteIndented = false
-        });
-        return $$"""
-                 UserQuery: {{userQuery}}
-                 ToolContextJson:
-                 {{contextJson}}
-                 Respond with strict JSON:
-                 {
-                   "replyText": "string",
-                   "referencedContextSummary": "string|null",
-                   "suggestedStructuredStateUpdates": {},
-                   "warnings": [],
-                   "followUpIntentHints": []
-                 }
-                 """;
-    }
-
-    private static string ApplySafetyPostProcessing(string replyText, IReadOnlyDictionary<string, object?> toolOutputs)
-    {
-        if (string.IsNullOrWhiteSpace(replyText))
-        {
-            return "I don't have enough grounded data yet to answer safely.";
-        }
-
-        var result = replyText.Trim();
-        if (result.Contains("stop paying rent", StringComparison.OrdinalIgnoreCase)
-            || result.Contains("cut essentials", StringComparison.OrdinalIgnoreCase))
-        {
-            result += " Keep essentials like housing, food, utilities, and healthcare protected.";
-        }
-
-        if (!toolOutputs.ContainsKey("budget_status"))
-        {
-            result += " Budget status is limited, so treat this as directional guidance.";
-        }
-
-        return result;
-    }
-
     private async Task<FinancialCompanionResponse> PersistAndReturnAsync(
         FinancialCompanionRequest request,
         FinancialCompanionIntent intent,
@@ -309,6 +226,7 @@ public sealed class FinancialCompanionService(
         CompanionResponseEvidence? evidence,
         bool hasInsufficientData,
         IReadOnlyList<string>? insufficientDataReasons,
+        FinancialAdviceDecisionPacket? advicePacket,
         CancellationToken cancellationToken)
     {
         var toolsUsedText = toolsUsed.Count == 0 ? "none" : string.Join(",", toolsUsed);
@@ -352,6 +270,7 @@ public sealed class FinancialCompanionService(
             OutputTokens: tokensOutput,
             Evidence: evidence,
             HasInsufficientData: hasInsufficientData,
-            InsufficientDataReasons: insufficientDataReasons);
+            InsufficientDataReasons: insufficientDataReasons,
+            AdvicePacket: advicePacket);
     }
 }

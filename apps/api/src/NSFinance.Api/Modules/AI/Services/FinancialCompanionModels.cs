@@ -42,7 +42,8 @@ public sealed record FinancialCompanionResponse(
     int OutputTokens,
     CompanionResponseEvidence? Evidence = null,
     bool HasInsufficientData = false,
-    IReadOnlyList<string>? InsufficientDataReasons = null);
+    IReadOnlyList<string>? InsufficientDataReasons = null,
+    FinancialAdviceDecisionPacket? AdvicePacket = null);
 
 public sealed record FinancialCompanionContext(
     FinancialCompanionIntent Intent,

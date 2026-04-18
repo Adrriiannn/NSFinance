@@ -30,6 +30,8 @@ public sealed class FinancialCompanionServiceTests
         Assert.Contains("IUserFinancialSummaryService", response.ToolsUsed);
         Assert.Contains("IBudgetStatusService", response.ToolsUsed);
         Assert.NotNull(response.Evidence);
+        Assert.NotNull(response.AdvicePacket);
+        Assert.NotEmpty(response.AdvicePacket!.DeterministicFindings);
         Assert.Contains("based_on_budget_status", response.Evidence!.BasisSummary);
         Assert.Equal(1, await dbContext.CompanionAIInteractionLogs.CountAsync());
         Assert.Equal(0, await dbContext.MerchantAIDecisionLogs.CountAsync());
@@ -162,14 +164,24 @@ public sealed class FinancialCompanionServiceTests
             contextShaper,
             insufficiencyEvaluator,
             assemblyResultBuilder);
+        var adviceOptions = Options.Create(new CompanionAdviceOptions());
+        var adviceEngine = new FinancialAdviceEngine(new NSFinance.Api.Modules.ExpenseTracker.Services.ExpenseTaxonomyService(), adviceOptions);
+        var advicePolicy = new FinancialAdvicePolicyService();
+        var adviceAdjudication = new FinancialAdviceAdjudicationService(
+            new StubModelRouter(),
+            new StubAIClient(),
+            adviceOptions);
+        var adviceDecision = new FinancialAdviceDecisionService(
+            adviceEngine,
+            advicePolicy,
+            adviceAdjudication,
+            adviceOptions);
         return new FinancialCompanionService(
             dbContext,
             tools,
             new CompanionIntentRouter(NullLogger<CompanionIntentRouter>.Instance),
             assembler,
-            new StubModelRouter(),
-            new StubAIClient(),
-            new UserChatResponseParser(),
+            adviceDecision,
             Options.Create(new CompanionAISettingsOptions
             {
                 Enabled = true,
@@ -230,11 +242,11 @@ public sealed class FinancialCompanionServiceTests
             cancellationToken.ThrowIfCancellationRequested();
             var payload = """
                           {
-                            "replyText": "Based on your current data, start by reducing non-essential discretionary spend by 10%.",
-                            "referencedContextSummary": "tool-context",
-                            "suggestedStructuredStateUpdates": {},
+                            "outcome": "approve",
+                            "summaryRefinement": "Grounded guidance prepared from deterministic evidence.",
+                            "adjustments": [],
                             "warnings": [],
-                            "followUpIntentHints": ["budgeting"]
+                            "rationale": "deterministic findings are coherent"
                           }
                           """;
             return Task.FromResult(

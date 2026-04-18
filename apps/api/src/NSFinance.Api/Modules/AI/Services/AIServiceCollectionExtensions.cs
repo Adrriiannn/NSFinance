@@ -44,6 +44,23 @@ public static class AIServiceCollectionExtensions
             .Validate(options => options.SpendingAnalysisLookbackDays >= 14, "Companion profile spending lookback days must be >= 14")
             .Validate(options => options.ProfileSchemaVersion > 0, "Companion profile schema version must be > 0")
             .ValidateOnStart();
+        services.AddOptions<CompanionAdviceOptions>()
+            .Bind(configuration.GetSection(CompanionAdviceOptions.SectionName))
+            .Validate(options => options.MaxAdjudicatedFindings > 0, "Companion advice max adjudicated findings must be > 0")
+            .Validate(options => options.MaxAdjudicationInputChars >= 1_000, "Companion advice adjudication input chars must be >= 1000")
+            .Validate(options => options.MaxAdjudicationOutputTokens >= 120, "Companion advice adjudication output tokens must be >= 120")
+            .Validate(options => options.BorderlineConfidenceThreshold >= 0.4d && options.BorderlineConfidenceThreshold <= 0.9d, "Companion advice borderline confidence threshold must be in [0.4,0.9]")
+            .Validate(options => options.HighConfidenceSkipThreshold >= options.BorderlineConfidenceThreshold, "Companion advice high confidence threshold must be >= borderline threshold")
+            .Validate(options => options.CategoryPressureIncreaseRatioThreshold >= 1.05m, "Companion advice category pressure ratio threshold must be >= 1.05")
+            .Validate(options => options.RecurringPressureIncreaseRatioThreshold >= 1.01m, "Companion advice recurring pressure ratio threshold must be >= 1.01")
+            .Validate(options => options.RecurringToIncomePressureRatioThreshold > 0m, "Companion advice recurring-to-income ratio threshold must be > 0")
+            .Validate(options => options.BudgetLowRemainingRatioThreshold > 0m, "Companion advice budget low remaining ratio threshold must be > 0")
+            .Validate(options => options.AffordabilityBufferRatioThreshold > 0m, "Companion advice affordability buffer ratio threshold must be > 0")
+            .Validate(options => options.BaseFreshnessHoursHighSeverity > 0, "Companion advice freshness window for high severity must be > 0")
+            .Validate(options => options.BaseFreshnessHoursModerateSeverity > 0, "Companion advice freshness window for moderate severity must be > 0")
+            .Validate(options => options.BaseFreshnessHoursLowSeverity > 0, "Companion advice freshness window for low severity must be > 0")
+            .Validate(options => options.BaseFreshnessHoursInfoSeverity > 0, "Companion advice freshness window for info severity must be > 0")
+            .ValidateOnStart();
 
         services.AddHttpClient("AI.AzureOpenAI", (sp, client) =>
         {
@@ -102,6 +119,10 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ICompanionEvidenceBuilder, CompanionEvidenceBuilder>();
         services.AddScoped<ICompanionAssemblyResultBuilder, CompanionAssemblyResultBuilder>();
         services.AddScoped<IFinancialCompanionContextAssembler, FinancialCompanionContextAssembler>();
+        services.AddScoped<IFinancialAdviceEngine, FinancialAdviceEngine>();
+        services.AddScoped<IFinancialAdvicePolicyService, FinancialAdvicePolicyService>();
+        services.AddScoped<IFinancialAdviceAdjudicationService, FinancialAdviceAdjudicationService>();
+        services.AddScoped<IFinancialAdviceDecisionService, FinancialAdviceDecisionService>();
         services.AddScoped<IFinancialCompanionService, FinancialCompanionService>();
         services.AddScoped<IPromptBuilder, AIPromptBuilder>();
         services.AddScoped<IMerchantInvestigationResponseParser, MerchantInvestigationResponseParser>();
