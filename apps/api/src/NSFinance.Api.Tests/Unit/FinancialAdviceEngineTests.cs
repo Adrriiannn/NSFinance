@@ -5,9 +5,7 @@ namespace NSFinance.Api.Tests.Unit;
 
 public sealed class FinancialAdviceEngineTests
 {
-    private readonly FinancialAdviceEngine _sut = new(
-        new NSFinance.Api.Modules.ExpenseTracker.Services.ExpenseTaxonomyService(),
-        Options.Create(new CompanionAdviceOptions()));
+    private readonly FinancialAdviceEngine _sut = CreateSut();
 
     [Fact]
     public void ComputeDeterministicFindings_CategoryPressureAgainstUserBaseline_EmitsPressureFinding()
@@ -208,5 +206,24 @@ public sealed class FinancialAdviceEngineTests
             SpendingTendenciesJson: spendingTendenciesJson,
             CategoryFlexibilityMarkersJson: categoryFlexibilityMarkersJson,
             AdviceStylePreference: "balanced");
+    }
+
+    private static FinancialAdviceEngine CreateSut()
+    {
+        var taxonomy = new NSFinance.Api.Modules.ExpenseTracker.Services.ExpenseTaxonomyService();
+        var adviceOptions = Options.Create(new CompanionAdviceOptions());
+        var classifier = new FinancialAdviceCategoryClassifier(taxonomy);
+        var freshness = new InsightFreshnessEvaluator(adviceOptions, new InsightInvalidationHintBuilder());
+        var findingFactory = new FinancialAdviceFindingFactory(freshness);
+
+        return new FinancialAdviceEngine(
+            new CompanionProfileBaselineBuilder(),
+            findingFactory,
+            new CategoryPressureEvaluator(taxonomy, classifier, findingFactory, adviceOptions),
+            new RecurringSpendEvaluator(classifier, findingFactory, adviceOptions),
+            new BudgetHealthEvaluator(findingFactory, adviceOptions),
+            new AffordabilityEvaluator(findingFactory, adviceOptions),
+            new PlanDriftEvaluator(findingFactory),
+            new PositiveSignalEvaluator(findingFactory));
     }
 }

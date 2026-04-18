@@ -165,16 +165,42 @@ public sealed class FinancialCompanionServiceTests
             insufficiencyEvaluator,
             assemblyResultBuilder);
         var adviceOptions = Options.Create(new CompanionAdviceOptions());
-        var adviceEngine = new FinancialAdviceEngine(new NSFinance.Api.Modules.ExpenseTracker.Services.ExpenseTaxonomyService(), adviceOptions);
-        var advicePolicy = new FinancialAdvicePolicyService();
+        var taxonomy = new NSFinance.Api.Modules.ExpenseTracker.Services.ExpenseTaxonomyService();
+        var categoryClassifier = new FinancialAdviceCategoryClassifier(taxonomy);
+        var freshnessEvaluator = new InsightFreshnessEvaluator(adviceOptions, new InsightInvalidationHintBuilder());
+        var findingFactory = new FinancialAdviceFindingFactory(freshnessEvaluator);
+        var adviceEngine = new FinancialAdviceEngine(
+            new CompanionProfileBaselineBuilder(),
+            findingFactory,
+            new CategoryPressureEvaluator(taxonomy, categoryClassifier, findingFactory, adviceOptions),
+            new RecurringSpendEvaluator(categoryClassifier, findingFactory, adviceOptions),
+            new BudgetHealthEvaluator(findingFactory, adviceOptions),
+            new AffordabilityEvaluator(findingFactory, adviceOptions),
+            new PlanDriftEvaluator(findingFactory),
+            new PositiveSignalEvaluator(findingFactory));
+        var advicePolicy = new FinancialAdvicePolicyService(
+            new ProtectedPreferenceHintParser(),
+            new ProtectedCategoryPolicy(),
+            new ReductionSafetyPolicy(),
+            new ConfidenceAdjustmentPolicy(),
+            new FindingRejectionPolicy());
         var adviceAdjudication = new FinancialAdviceAdjudicationService(
             new StubModelRouter(),
             new StubAIClient(),
+            new AdjudicationPromptBuilder(),
+            new AdjudicationInputSanitizer(),
+            new AdjudicationResultParser(),
+            new AdjudicationResultValidator(),
             adviceOptions);
         var adviceDecision = new FinancialAdviceDecisionService(
             adviceEngine,
             advicePolicy,
             adviceAdjudication,
+            new FinancialAdviceAdjudicationPlanSelector(adviceOptions),
+            new AdviceEvidenceSummaryBuilder(),
+            new AdvicePacketBuilder(
+                new AdviceLifecycleMetadataBuilder(),
+                new AdviceSummaryBuilder()),
             adviceOptions);
         return new FinancialCompanionService(
             dbContext,

@@ -160,15 +160,21 @@ public sealed class FinancialAdviceAdjudicationServiceTests
 
     private static FinancialAdviceAdjudicationService CreateSut(CapturingAIClient aiClient)
     {
+        var adviceOptions = Options.Create(new CompanionAdviceOptions
+        {
+            MaxAdjudicatedFindings = 3,
+            MaxAdjudicationInputChars = 6_000,
+            MaxAdjudicationOutputTokens = 400
+        });
+
         return new FinancialAdviceAdjudicationService(
             new StubModelRouter(),
             aiClient,
-            Options.Create(new CompanionAdviceOptions
-            {
-                MaxAdjudicatedFindings = 3,
-                MaxAdjudicationInputChars = 6_000,
-                MaxAdjudicationOutputTokens = 400
-            }));
+            new AdjudicationPromptBuilder(),
+            new AdjudicationInputSanitizer(),
+            new AdjudicationResultParser(),
+            new AdjudicationResultValidator(),
+            adviceOptions);
     }
 
     private static FinancialAdviceAdjudicationExecutionRequest CreateExecutionRequest(

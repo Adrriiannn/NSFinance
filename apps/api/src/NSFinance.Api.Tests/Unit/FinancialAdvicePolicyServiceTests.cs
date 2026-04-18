@@ -4,7 +4,7 @@ namespace NSFinance.Api.Tests.Unit;
 
 public sealed class FinancialAdvicePolicyServiceTests
 {
-    private readonly FinancialAdvicePolicyService _sut = new();
+    private readonly FinancialAdvicePolicyService _sut = CreateSut();
 
     [Fact]
     public void ApplyPolicy_ProtectedCategoryCutRecommendation_IsExcluded()
@@ -162,5 +162,15 @@ public sealed class FinancialAdvicePolicyServiceTests
                 RequiresRecheck: true,
                 InvalidationHints: ["stale_age_exceeded"]),
             RenderingHints: new Dictionary<string, string> { ["surface"] = "key_insight_or_chat" });
+    }
+
+    private static FinancialAdvicePolicyService CreateSut()
+    {
+        return new FinancialAdvicePolicyService(
+            new ProtectedPreferenceHintParser(),
+            new ProtectedCategoryPolicy(),
+            new ReductionSafetyPolicy(),
+            new ConfidenceAdjustmentPolicy(),
+            new FindingRejectionPolicy());
     }
 }

@@ -127,11 +127,19 @@ public sealed class FinancialAdviceDecisionServiceTests
         IReadOnlyList<FinancialAdviceFinding> findings,
         FinancialAdviceAdjudicationResult adjudicationResult)
     {
+        var adviceOptions = Options.Create(new CompanionAdviceOptions());
+        var packetBuilder = new AdvicePacketBuilder(
+            new AdviceLifecycleMetadataBuilder(),
+            new AdviceSummaryBuilder());
+
         return new FinancialAdviceDecisionService(
             new StubAdviceEngine(findings),
             new StubPolicyService(findings),
             new StubAdjudicationService(adjudicationResult),
-            Options.Create(new CompanionAdviceOptions()));
+            new FinancialAdviceAdjudicationPlanSelector(adviceOptions),
+            new AdviceEvidenceSummaryBuilder(),
+            packetBuilder,
+            adviceOptions);
     }
 
     private static CompanionIntentRoutingResult CreateRouting(FinancialCompanionIntent intent)
