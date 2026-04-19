@@ -573,8 +573,11 @@ public sealed class PersistentConversationMemoryTests
         var companion = new AlwaysSuccessFinancialCompanionService(
             "1. Cafe One - nearby\n2. Cafe Two - open now");
         var handoff = new UserChatCompanionHandoffService(
-            new CompanionIntentRouter(NullLogger<CompanionIntentRouter>.Instance),
             new LocalDiscoveryConstraintExtractor(),
+            scope.ServiceProvider.GetRequiredService<IRealWorldIntentInterpreter>(),
+            scope.ServiceProvider.GetRequiredService<IRealWorldExecutionModePlanner>(),
+            scope.ServiceProvider.GetRequiredService<IRealWorldPlacesExecutionService>(),
+            scope.ServiceProvider.GetRequiredService<IRealWorldFailureMessageBuilder>(),
             companion,
             NullLogger<UserChatCompanionHandoffService>.Instance);
         var orchestrator = BuildOrchestratorWithPersistentContextFailure(

@@ -191,13 +191,101 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         Assert.Equal(0, companion.CallCount);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_FinancePlanningWithProductMention_DoesNotTriggerPlacesHandoff()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var sut = CreateSut(companion, aiClient);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "How can I save for an Xbox in 2 months?",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-6",
+                Metadata: null,
+                ClientRequestId: "req-6",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Equal("generic assistant reply", response.ReplyText);
+        Assert.Equal(1, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ExploratoryWithTypedArea_UsesDirectGroupedPlacesExecution()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var places = new TrackingPlacesSearchService();
+        var sut = CreateSut(companion, aiClient, places);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "What can I do later tonight?",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-7",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "typed_area",
+                    [CompanionLocationMetadataKeys.TypedArea] = "Dublin city centre"
+                },
+                ClientRequestId: "req-7",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("nearby options across different categories", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.True(places.CallCount >= 2);
+        Assert.Equal(0, companion.CallCount);
+        Assert.Equal(0, aiClient.CallCount);
+    }
+
     private static UserChatOrchestrator CreateSut(
         TrackingCompanionService companion,
-        TrackingAIClient aiClient)
+        TrackingAIClient aiClient,
+        TrackingPlacesSearchService? placesSearchService = null)
     {
+        placesSearchService ??= new TrackingPlacesSearchService();
+        var interpreter = new RealWorldIntentInterpreter(
+            new FixedModelRouter(),
+            new NoopInterpreterAIClient(),
+            new RealWorldIntentInterpreterPromptBuilder(),
+            NullLogger<RealWorldIntentInterpreter>.Instance);
         var handoff = new UserChatCompanionHandoffService(
-            new CompanionIntentRouter(NullLogger<CompanionIntentRouter>.Instance),
             new LocalDiscoveryConstraintExtractor(),
+            interpreter,
+            new RealWorldExecutionModePlanner(new ExploratoryDomainSelectionPolicy()),
+            new RealWorldPlacesExecutionService(
+                placesSearchService,
+                NullLogger<RealWorldPlacesExecutionService>.Instance),
+            new RealWorldFailureMessageBuilder(),
             companion,
             NullLogger<UserChatCompanionHandoffService>.Instance);
         return new UserChatOrchestrator(
@@ -357,6 +445,75 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             cancellationToken.ThrowIfCancellationRequested();
             CallCount += 1;
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class NoopInterpreterAIClient : IAIClient
+    {
+        public Task<AIResponse> SendAsync(
+            AIRequest request,
+            AIModelRoute route,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                AIResponse.Failed(
+                    provider: "mock",
+                    model: route.Model,
+                    deployment: route.Deployment,
+                    failureReason: "noop_interpreter_ai_disabled",
+                    wasMocked: true));
+        }
+    }
+
+    private sealed class TrackingPlacesSearchService : IPlacesSearchService
+    {
+        public int CallCount { get; private set; }
+
+        public Task<PlaceSearchResult> SearchAsync(
+            string query,
+            string country,
+            PlaceSearchLocationContext? locationContext,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount += 1;
+
+            var normalized = query.ToLowerInvariant();
+            var item = normalized switch
+            {
+                var q when q.Contains("pub", StringComparison.Ordinal)
+                    => BuildItem("pub-1", "Riverside Pub", "Pub"),
+                var q when q.Contains("movie", StringComparison.Ordinal)
+                    || q.Contains("cinema", StringComparison.Ordinal)
+                    => BuildItem("cinema-1", "City Cinema", "Cinema"),
+                var q when q.Contains("restaurant", StringComparison.Ordinal)
+                    || q.Contains("food", StringComparison.Ordinal)
+                    => BuildItem("restaurant-1", "Dockside Kitchen", "Restaurant"),
+                _ => BuildItem("park-1", "Canal Walk Park", "Park")
+            };
+
+            return Task.FromResult(
+                new PlaceSearchResult(
+                [
+                    item
+                ]));
+        }
+
+        private static PlaceSearchItem BuildItem(string id, string name, string category)
+        {
+            return new PlaceSearchItem(
+                PlaceId: id,
+                Name: name,
+                Category: category,
+                PriceLevel: "PRICE_LEVEL_MODERATE",
+                ShortFormattedAddress: "Dublin",
+                Rating: 4.4,
+                UserRatingCount: 100,
+                OpeningHours: new PlaceOpeningHoursSummary(
+                    OpenNow: true,
+                    WeekdayDescriptions: [],
+                    NextOpenTimeUtc: null));
         }
     }
 }

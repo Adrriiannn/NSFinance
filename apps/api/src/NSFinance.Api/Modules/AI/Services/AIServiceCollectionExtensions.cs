@@ -190,6 +190,12 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IMerchantPlaceLookupService, MerchantPlaceLookupService>();
         services.AddScoped<ILocalDiscoveryConstraintExtractor, LocalDiscoveryConstraintExtractor>();
         services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
+        services.AddScoped<IRealWorldIntentInterpreterPromptBuilder, RealWorldIntentInterpreterPromptBuilder>();
+        services.AddScoped<IRealWorldIntentInterpreter, RealWorldIntentInterpreter>();
+        services.AddScoped<IExploratoryDomainSelectionPolicy, ExploratoryDomainSelectionPolicy>();
+        services.AddScoped<IRealWorldExecutionModePlanner, RealWorldExecutionModePlanner>();
+        services.AddScoped<IRealWorldPlacesExecutionService, RealWorldPlacesExecutionService>();
+        services.AddScoped<IRealWorldFailureMessageBuilder, RealWorldFailureMessageBuilder>();
         services.AddScoped<ICompanionLocalityResolutionService, CompanionLocalityResolutionService>();
         services.AddScoped<ICompanionPlacesVocabularyNormalizer, CompanionPlacesVocabularyNormalizer>();
         services.AddScoped<ICompanionPlacesTextQueryBuilder, CompanionPlacesTextQueryBuilder>();
