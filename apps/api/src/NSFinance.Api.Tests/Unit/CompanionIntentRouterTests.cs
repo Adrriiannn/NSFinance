@@ -33,6 +33,14 @@ public sealed class CompanionIntentRouterTests
         { "Where can I go nearby for dinner tonight?", FinancialCompanionIntent.LocalPlacesOutings },
         { "Suggest a restaurant near me within my budget.", FinancialCompanionIntent.LocalPlacesOutings },
         { "Any places around me for a cheap night out?", FinancialCompanionIntent.LocalPlacesOutings },
+        { "places near me to dine out tonight", FinancialCompanionIntent.LocalPlacesOutings },
+        { "kids playgrounds near me", FinancialCompanionIntent.LocalPlacesOutings },
+        { "places to visit near me", FinancialCompanionIntent.LocalPlacesOutings },
+        { "museums around Dublin", FinancialCompanionIntent.LocalPlacesOutings },
+        { "something fun nearby", FinancialCompanionIntent.LocalPlacesOutings },
+        { "where can I go with family this weekend", FinancialCompanionIntent.LocalPlacesOutings },
+        { "family places in Lucan", FinancialCompanionIntent.LocalPlacesOutings },
+        { "dog friendly cafes nearby", FinancialCompanionIntent.LocalPlacesOutings },
         // GeneralFinancialQuestion: broad but finance-grounded
         { "How am I doing financially lately?", FinancialCompanionIntent.GeneralFinancialQuestion },
         { "What's the smartest next step for my finances?", FinancialCompanionIntent.GeneralFinancialQuestion },
@@ -142,6 +150,30 @@ public sealed class CompanionIntentRouterTests
         Assert.Equal(FinancialCompanionIntent.Affordability, affordability.IntentFamily);
         Assert.Empty(affordability.SecondaryIntents);
         Assert.Equal(FinancialCompanionIntent.LocalPlacesOutings, localPlaces.IntentFamily);
+    }
+
+    [Theory]
+    [InlineData("museums around Dublin")]
+    [InlineData("family places in Lucan")]
+    [InlineData("dog friendly cafes nearby")]
+    [InlineData("things to do around here")]
+    public void Route_BroaderLocalDiscoveryPrompts_SelectsLocalPlaces(string query)
+    {
+        var result = _router.Route(query);
+
+        Assert.Equal(FinancialCompanionIntent.LocalPlacesOutings, result.IntentFamily);
+        Assert.False(result.IsUnsupported);
+        Assert.False(result.IsAmbiguous);
+    }
+
+    [Theory]
+    [InlineData("How much did I spend on groceries last month?")]
+    [InlineData("Can you explain my debt payoff progress?")]
+    public void Route_NonPlacePrompts_DoNotMisclassifyAsLocalPlaces(string query)
+    {
+        var result = _router.Route(query);
+
+        Assert.NotEqual(FinancialCompanionIntent.LocalPlacesOutings, result.IntentFamily);
     }
 
     [Fact]

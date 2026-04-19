@@ -156,6 +156,8 @@ public sealed class CompanionIntentNormalizer : ICompanionIntentNormalizer
 
 public sealed class CompanionIntentSignalExtractor : ICompanionIntentSignalExtractor
 {
+    private readonly ILocalDiscoveryConstraintExtractor _localDiscoveryConstraintExtractor;
+
     private static readonly string[] MixedConnectors =
     [
         " and ",
@@ -209,10 +211,21 @@ public sealed class CompanionIntentSignalExtractor : ICompanionIntentSignalExtra
         "advice please"
     ];
 
+    public CompanionIntentSignalExtractor()
+        : this(new LocalDiscoveryConstraintExtractor())
+    {
+    }
+
+    public CompanionIntentSignalExtractor(ILocalDiscoveryConstraintExtractor localDiscoveryConstraintExtractor)
+    {
+        _localDiscoveryConstraintExtractor = localDiscoveryConstraintExtractor;
+    }
+
     public CompanionIntentSignalExtractionResult Extract(CompanionIntentNormalizedInput normalizedInput)
     {
         var text = normalizedInput.NormalizedText;
         var tokenSet = normalizedInput.Tokens.ToHashSet(StringComparer.Ordinal);
+        var localDiscovery = _localDiscoveryConstraintExtractor.Extract(text);
         var seenReasonCodes = new HashSet<string>(StringComparer.Ordinal);
         var signalGroups = new HashSet<string>(StringComparer.Ordinal);
         var signals = new List<CompanionIntentSignal>(24);
@@ -260,9 +273,9 @@ public sealed class CompanionIntentSignalExtractor : ICompanionIntentSignalExtra
         ExtractAffordabilitySignals(text, tokenSet, AddSignal);
         ExtractBudgetSignals(text, tokenSet, AddSignal);
         ExtractPlanSignals(text, tokenSet, AddSignal);
-        ExtractLocalPlacesSignals(text, tokenSet, AddSignal);
+        ExtractLocalPlacesSignals(text, tokenSet, localDiscovery, AddSignal);
         ExtractGeneralFinancialSignals(text, tokenSet, AddSignal);
-        ExtractCrossSignals(text, tokenSet, AddSignal);
+        ExtractCrossSignals(text, tokenSet, localDiscovery, AddSignal);
 
         return new CompanionIntentSignalExtractionResult(
             NormalizedInput: normalizedInput,
@@ -367,6 +380,7 @@ public sealed class CompanionIntentSignalExtractor : ICompanionIntentSignalExtra
     private static void ExtractLocalPlacesSignals(
         string text,
         HashSet<string> tokenSet,
+        LocalDiscoveryConstraintExtractionResult localDiscovery,
         Action<string, FinancialCompanionIntent?, double, string> addSignal)
     {
         if (ContainsAnyPhrase(text, ["nearby", "near me", "where can i go", "where should i go", "eat nearby", "places around me", "restaurant near me"]))
@@ -378,6 +392,44 @@ public sealed class CompanionIntentSignalExtractor : ICompanionIntentSignalExtra
             && HasAnyToken(tokenSet, "where", "go", "suggest", "eat", "tonight", "weekend"))
         {
             addSignal("local_places", FinancialCompanionIntent.LocalPlacesOutings, 1.2d, "signal_local_places_keywords");
+        }
+
+        if (localDiscovery.IsLocalDiscoveryCandidate)
+        {
+            var weightedScore = 0.80d + Math.Clamp(localDiscovery.Confidence, 0.0d, 1.0d);
+            addSignal(
+                "local_places",
+                FinancialCompanionIntent.LocalPlacesOutings,
+                weightedScore,
+                "signal_local_discovery_structured");
+        }
+
+        if (localDiscovery.HasExplicitLocality)
+        {
+            addSignal(
+                "local_places",
+                FinancialCompanionIntent.LocalPlacesOutings,
+                0.50d,
+                "signal_local_discovery_explicit_locality");
+        }
+
+        if (localDiscovery.PlaceTypeHints.Count > 0)
+        {
+            addSignal(
+                "local_places",
+                FinancialCompanionIntent.LocalPlacesOutings,
+                0.40d,
+                "signal_local_discovery_place_type");
+        }
+
+        if (localDiscovery.AudienceHints.Count > 0
+            && (localDiscovery.HasNearMeLanguage || localDiscovery.HasExplicitLocality))
+        {
+            addSignal(
+                "local_places",
+                FinancialCompanionIntent.LocalPlacesOutings,
+                0.25d,
+                "signal_local_discovery_audience");
         }
     }
 
@@ -401,11 +453,13 @@ public sealed class CompanionIntentSignalExtractor : ICompanionIntentSignalExtra
     private static void ExtractCrossSignals(
         string text,
         HashSet<string> tokenSet,
+        LocalDiscoveryConstraintExtractionResult localDiscovery,
         Action<string, FinancialCompanionIntent?, double, string> addSignal)
     {
         var containsNumber = tokenSet.Any(token => token.All(char.IsDigit));
         var hasBudgetConstraint = containsNumber || tokenSet.Contains("budget") || tokenSet.Contains("afford");
-        var hasPlacesSignal = ContainsAnyPhrase(text, ["where can i go", "where should i go", "nearby", "near me"]);
+        var hasPlacesSignal = localDiscovery.IsLocalDiscoveryCandidate
+                              || ContainsAnyPhrase(text, ["where can i go", "where should i go", "nearby", "near me"]);
         if (hasPlacesSignal && hasBudgetConstraint)
         {
             addSignal("affordability", FinancialCompanionIntent.Affordability, 1.15d, "signal_places_budget_constraint");

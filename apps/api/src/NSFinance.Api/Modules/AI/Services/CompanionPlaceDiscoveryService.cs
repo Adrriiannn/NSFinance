@@ -385,7 +385,9 @@ public sealed class MerchantPlaceLookupService(
 }
 
 public sealed class GooglePlacesCompanionSearchService(
-    ICompanionPlaceDiscoveryService discoveryService) : IPlacesSearchService
+    ICompanionPlaceDiscoveryService discoveryService,
+    ILocalDiscoveryQueryShaper localDiscoveryQueryShaper,
+    ILogger<GooglePlacesCompanionSearchService> logger) : IPlacesSearchService
 {
     public async Task<PlaceSearchResult> SearchAsync(
         string query,
@@ -393,10 +395,17 @@ public sealed class GooglePlacesCompanionSearchService(
         PlaceSearchLocationContext? locationContext,
         CancellationToken cancellationToken)
     {
-        var effectiveQuery = BuildEffectiveQuery(query, locationContext);
+        var shapedQuery = localDiscoveryQueryShaper.Shape(query, locationContext);
+        logger.LogInformation(
+            "Companion places query shaped localDiscoveryCandidate={IsCandidate} confidence={Confidence} hasNearMeLanguage={HasNearMeLanguage} hasExplicitLocality={HasExplicitLocality} reasonCodes={ReasonCodes}",
+            shapedQuery.Constraints.IsLocalDiscoveryCandidate,
+            shapedQuery.Constraints.Confidence,
+            shapedQuery.Constraints.HasNearMeLanguage,
+            shapedQuery.Constraints.HasExplicitLocality,
+            string.Join(',', shapedQuery.ReasonCodes));
         var result = await discoveryService.DiscoverAsync(
             new CompanionPlaceDiscoveryRequest(
-                Query: effectiveQuery,
+                Query: shapedQuery.Query,
                 CountryCode: country,
                 Latitude: locationContext?.Latitude,
                 Longitude: locationContext?.Longitude,
@@ -451,36 +460,15 @@ public sealed class GooglePlacesCompanionSearchService(
                 EditorialSummary: candidate.EditorialSummary,
                 Location: candidate.Location))
             .ToArray();
+        var warnings = (result.Warnings ?? [])
+            .Concat(shapedQuery.ReasonCodes.Select(code => $"places_query_shape:{code}"))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
         return new PlaceSearchResult(
             Items: items,
             Metadata: result.Metadata,
-            Warnings: result.Warnings);
-    }
-
-    private static string BuildEffectiveQuery(
-        string query,
-        PlaceSearchLocationContext? locationContext)
-    {
-        if (string.IsNullOrWhiteSpace(query))
-        {
-            return string.Empty;
-        }
-
-        if (locationContext?.Latitude.HasValue == true
-            && locationContext.Longitude.HasValue)
-        {
-            return query.Trim();
-        }
-
-        if (!string.IsNullOrWhiteSpace(locationContext?.TypedArea))
-        {
-            return CompanionLocationGroundingParser.ApplyTypedAreaToQuery(
-                query,
-                locationContext.TypedArea);
-        }
-
-        return query.Trim();
+            Warnings: warnings);
     }
 }
 

@@ -205,7 +205,7 @@ public sealed class CompanionContextShaper(
             OutputKey: CompanionTool.PlacesSearch.ToOutputKey(),
             Output: output,
             HasData: hasData,
-            Warnings: [],
+            Warnings: places.Warnings ?? [],
             TrimIndicators: trimmed);
     }
 

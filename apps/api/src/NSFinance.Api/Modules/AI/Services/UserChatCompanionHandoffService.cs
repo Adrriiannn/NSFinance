@@ -11,6 +11,7 @@ public interface IUserChatCompanionHandoffService
 
 public sealed class UserChatCompanionHandoffService(
     ICompanionIntentRouter companionIntentRouter,
+    ILocalDiscoveryConstraintExtractor localDiscoveryConstraintExtractor,
     IFinancialCompanionService financialCompanionService,
     ILogger<UserChatCompanionHandoffService> logger) : IUserChatCompanionHandoffService
 {
@@ -26,29 +27,44 @@ public sealed class UserChatCompanionHandoffService(
         }
 
         var routing = companionIntentRouter.Route(request.UserMessage);
-        if (!ShouldHandoffToCompanion(routing))
+        var localDiscovery = localDiscoveryConstraintExtractor.Extract(request.UserMessage);
+        if (!ShouldHandoffToCompanion(routing, localDiscovery))
         {
+            logger.LogInformation(
+                "User chat companion handoff skipped intent={Intent} localDiscoveryCandidate={IsCandidate} confidence={Confidence}",
+                routing.IntentFamily,
+                localDiscovery.IsLocalDiscoveryCandidate,
+                localDiscovery.Confidence);
             return null;
         }
 
         var grounding = CompanionLocationGroundingParser.Parse(request.Metadata, request.State);
         var requiresCurrentLocation = CompanionLocationGroundingParser.RequiresCurrentLocation(request.UserMessage);
+        var requiresGrounding = RequiresGrounding(localDiscovery, requiresCurrentLocation);
         logger.LogInformation(
-            "User chat companion handoff evaluated intent={Intent} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} requiresCurrentLocation={RequiresCurrentLocation}",
+            "User chat companion handoff evaluated intent={Intent} confidence={Confidence} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} hasExplicitLocality={HasExplicitLocality} requiresCurrentLocation={RequiresCurrentLocation} requiresGrounding={RequiresGrounding}",
             routing.IntentFamily,
+            localDiscovery.Confidence,
             grounding.HasCoordinates,
             grounding.HasTypedArea,
-            requiresCurrentLocation);
+            localDiscovery.HasExplicitLocality,
+            requiresCurrentLocation,
+            requiresGrounding);
 
-        if (requiresCurrentLocation && !grounding.HasCoordinates && !grounding.HasTypedArea)
+        if (requiresGrounding
+            && !grounding.HasCoordinates
+            && !grounding.HasTypedArea
+            && !localDiscovery.HasExplicitLocality)
         {
             return BuildMissingLocationGroundingResponse(route);
         }
 
-        var companionQuery = grounding.HasCoordinates
-            ? request.UserMessage.Trim()
-            : CompanionLocationGroundingParser.ApplyTypedAreaToQuery(request.UserMessage, grounding.TypedArea);
-        var companionMetadata = BuildCompanionMetadata(request.Metadata, grounding, routing);
+        var companionQuery = BuildCompanionQuery(request.UserMessage, grounding, localDiscovery);
+        var companionMetadata = BuildCompanionMetadata(
+            request.Metadata,
+            grounding,
+            routing,
+            localDiscovery);
         var companionRequest = new FinancialCompanionRequest(
             UserId: request.UserId.Value,
             SessionId: string.IsNullOrWhiteSpace(sessionId) ? request.CorrelationId : sessionId,
@@ -96,8 +112,13 @@ public sealed class UserChatCompanionHandoffService(
         var warningSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "chat_path_companion_local_places",
-            grounding.HasCoordinates ? "nearby_grounding_source:gps" : "nearby_grounding_source:typed_or_query"
+            ResolveGroundingSourceWarning(grounding, localDiscovery),
+            routing.PrimaryIntent == FinancialCompanionIntent.LocalPlacesOutings
+                || routing.IntentFamily == FinancialCompanionIntent.LocalPlacesOutings
+                ? "local_discovery_handoff_source:router"
+                : "local_discovery_handoff_source:extraction"
         };
+        warningSet.Add($"local_discovery_confidence:{localDiscovery.Confidence:0.##}");
 
         foreach (var warning in companionResponse.Warnings)
         {
@@ -130,16 +151,60 @@ public sealed class UserChatCompanionHandoffService(
                 : companionResponse.FailureReason ?? "companion_handoff_failed");
     }
 
-    private static bool ShouldHandoffToCompanion(CompanionIntentRoutingResult routing)
+    private static bool ShouldHandoffToCompanion(
+        CompanionIntentRoutingResult routing,
+        LocalDiscoveryConstraintExtractionResult localDiscovery)
     {
         return routing.PrimaryIntent == FinancialCompanionIntent.LocalPlacesOutings
-               || routing.IntentFamily == FinancialCompanionIntent.LocalPlacesOutings;
+               || routing.IntentFamily == FinancialCompanionIntent.LocalPlacesOutings
+               || localDiscovery.IsLocalDiscoveryCandidate;
+    }
+
+    private static bool RequiresGrounding(
+        LocalDiscoveryConstraintExtractionResult localDiscovery,
+        bool requiresCurrentLocation)
+    {
+        if (requiresCurrentLocation || localDiscovery.HasNearMeLanguage)
+        {
+            return true;
+        }
+
+        if (localDiscovery.HasExplicitLocality)
+        {
+            return false;
+        }
+
+        return localDiscovery.IsLocalDiscoveryCandidate;
+    }
+
+    private static string BuildCompanionQuery(
+        string userMessage,
+        CompanionLocationGrounding grounding,
+        LocalDiscoveryConstraintExtractionResult localDiscovery)
+    {
+        if (grounding.HasCoordinates)
+        {
+            return userMessage.Trim();
+        }
+
+        if (grounding.HasTypedArea)
+        {
+            return CompanionLocationGroundingParser.ApplyTypedAreaToQuery(userMessage, grounding.TypedArea);
+        }
+
+        if (localDiscovery.HasExplicitLocality && !string.IsNullOrWhiteSpace(localDiscovery.LocalityHint))
+        {
+            return CompanionLocationGroundingParser.ApplyTypedAreaToQuery(userMessage, localDiscovery.LocalityHint);
+        }
+
+        return userMessage.Trim();
     }
 
     private static IReadOnlyDictionary<string, string> BuildCompanionMetadata(
         IReadOnlyDictionary<string, string>? metadata,
         CompanionLocationGrounding grounding,
-        CompanionIntentRoutingResult routing)
+        CompanionIntentRoutingResult routing,
+        LocalDiscoveryConstraintExtractionResult localDiscovery)
     {
         var result = metadata is null
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -155,6 +220,14 @@ public sealed class UserChatCompanionHandoffService(
         else if (grounding.HasTypedArea)
         {
             result[CompanionLocationMetadataKeys.Source] = "typed_area";
+        }
+        else if (localDiscovery.HasExplicitLocality)
+        {
+            result[CompanionLocationMetadataKeys.Source] = "query_locality";
+            if (!string.IsNullOrWhiteSpace(localDiscovery.LocalityHint))
+            {
+                result[CompanionLocationMetadataKeys.TypedArea] = localDiscovery.LocalityHint;
+            }
         }
 
         if (grounding.Latitude.HasValue)
@@ -193,6 +266,13 @@ public sealed class UserChatCompanionHandoffService(
         {
             result[CompanionLocationMetadataKeys.CapturedAtUtc] =
                 grounding.CapturedAtUtc.Value.UtcDateTime.ToString("O");
+        }
+
+        result["local_discovery_confidence"] =
+            localDiscovery.Confidence.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+        if (localDiscovery.ReasonCodes.Count > 0)
+        {
+            result["local_discovery_reason_codes"] = string.Join(',', localDiscovery.ReasonCodes);
         }
 
         return result;
@@ -237,5 +317,27 @@ public sealed class UserChatCompanionHandoffService(
             ],
             Succeeded: true,
             FailureReason: null);
+    }
+
+    private static string ResolveGroundingSourceWarning(
+        CompanionLocationGrounding grounding,
+        LocalDiscoveryConstraintExtractionResult localDiscovery)
+    {
+        if (grounding.HasCoordinates)
+        {
+            return "nearby_grounding_source:gps";
+        }
+
+        if (grounding.HasTypedArea)
+        {
+            return "nearby_grounding_source:typed_area";
+        }
+
+        if (localDiscovery.HasExplicitLocality)
+        {
+            return "nearby_grounding_source:query_locality";
+        }
+
+        return "nearby_grounding_source:missing";
     }
 }

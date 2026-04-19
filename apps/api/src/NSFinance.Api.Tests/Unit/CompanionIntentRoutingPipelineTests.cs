@@ -46,6 +46,18 @@ public sealed class CompanionIntentRoutingPipelineTests
     }
 
     [Fact]
+    public void SignalExtractor_LocalityDrivenDiscoveryPrompt_EmitsLocalPlacesSignals()
+    {
+        var normalized = _normalizer.Normalize("Museums around Dublin with family this weekend");
+        var extraction = _extractor.Extract(normalized);
+
+        Assert.Contains("local_places", extraction.SignalGroups);
+        Assert.Contains(extraction.Signals, signal => signal.ReasonCode == "signal_local_discovery_structured");
+        Assert.Contains(extraction.Signals, signal => signal.ReasonCode == "signal_local_discovery_explicit_locality");
+        Assert.Contains(extraction.Signals, signal => signal.ReasonCode == "signal_local_discovery_place_type");
+    }
+
+    [Fact]
     public void Scorer_SameSignals_ProducesDeterministicScoresAndReasons()
     {
         var normalized = _normalizer.Normalize("Am I over budget and where can I cut back?");

@@ -119,12 +119,85 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         Assert.Equal(0, companion.CallCount);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_LocalityPromptWithoutGps_UsesCompanionHandoff()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "1. National Museum - open now",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: ["IPlacesSearchService"],
+                Warnings: ["places_response_built_from_grounded_candidates"],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "places_grounded_response",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var sut = CreateSut(companion, aiClient);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Museums around Dublin",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-4",
+                Metadata: null,
+                ClientRequestId: "req-4",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("National Museum", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("nearby_grounding_source:query_locality", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(1, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BroadDiscoveryWithoutGrounding_ReturnsSafePrompt()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var sut = CreateSut(companion, aiClient);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Where can I go with family this weekend?",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-5",
+                Metadata: null,
+                ClientRequestId: "req-5",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("typed area", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nearby_location_missing", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
     private static UserChatOrchestrator CreateSut(
         TrackingCompanionService companion,
         TrackingAIClient aiClient)
     {
         var handoff = new UserChatCompanionHandoffService(
             new CompanionIntentRouter(NullLogger<CompanionIntentRouter>.Instance),
+            new LocalDiscoveryConstraintExtractor(),
             companion,
             NullLogger<UserChatCompanionHandoffService>.Instance);
         return new UserChatOrchestrator(

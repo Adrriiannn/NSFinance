@@ -188,6 +188,8 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IUserFinancialContextProfileService, UserFinancialContextProfileService>();
         services.AddScoped<ICompanionPlaceDiscoveryService, CompanionPlaceDiscoveryService>();
         services.AddScoped<IMerchantPlaceLookupService, MerchantPlaceLookupService>();
+        services.AddScoped<ILocalDiscoveryConstraintExtractor, LocalDiscoveryConstraintExtractor>();
+        services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
         services.AddScoped<IPlacesSearchService, GooglePlacesCompanionSearchService>();
         services.AddScoped<IPlaceDetailsService, GooglePlacesPlaceDetailsService>();
         services.AddScoped<IReviewInsightsService, NullReviewInsightsService>();
