@@ -27,6 +27,7 @@ public sealed class RealWorldExecutionModePlannerTests
             Warnings: []);
 
         var plan = planner.Plan(
+            "coffee near me",
             interpretation,
             grounding: new CompanionLocationGrounding(
                 Source: null,
@@ -73,6 +74,7 @@ public sealed class RealWorldExecutionModePlannerTests
             Warnings: []);
 
         var plan = planner.Plan(
+            "museums around dublin",
             interpretation,
             grounding: new CompanionLocationGrounding(
                 Source: "query_locality",
@@ -126,6 +128,7 @@ public sealed class RealWorldExecutionModePlannerTests
             Warnings: []);
 
         var plan = planner.Plan(
+            "what can i do later tonight",
             interpretation,
             grounding: new CompanionLocationGrounding(
                 Source: "typed_area",
@@ -151,6 +154,8 @@ public sealed class RealWorldExecutionModePlannerTests
         Assert.Equal(RealWorldExecutionMode.ExploratoryMultiDomainSearch, plan.Mode);
         Assert.True(plan.UseDirectPlacesExecution);
         Assert.InRange(plan.SelectedDomains.Count, 1, 4);
+        Assert.Contains("real_world_planner_query_signal_used", plan.ReasonCodes);
+        Assert.Contains("real_world_planner_ai_domains_preserved", plan.ReasonCodes);
     }
 
     [Fact]
@@ -176,6 +181,7 @@ public sealed class RealWorldExecutionModePlannerTests
         };
 
         var plan = planner.Plan(
+            "help me find somewhere",
             interpretation,
             grounding: new CompanionLocationGrounding(
                 Source: null,
@@ -201,5 +207,112 @@ public sealed class RealWorldExecutionModePlannerTests
         Assert.Equal(RealWorldExecutionMode.ClarifyLight, plan.Mode);
         Assert.False(plan.ShouldUsePlaces);
         Assert.Contains("execution_mode:low_confidence_clarify", plan.ReasonCodes);
+        Assert.Contains(RealWorldInterpreterFallbackReasonCodes.PlannerDowngrade, plan.ReasonCodes);
+    }
+
+    [Fact]
+    public void Plan_ExploratoryWithKidsSignal_PrioritizesFamilyFriendlyDomains()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.ExploratoryAssistance,
+            RecommendedExecutionMode: RealWorldExecutionMode.ExploratoryMultiDomainSearch,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: true,
+            Exploratory: true,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: true,
+            HasExplicitLocality: false,
+            Confidence: 0.84d,
+            CandidateDomains:
+            [
+                RealWorldDiscoveryDomain.PubBar,
+                RealWorldDiscoveryDomain.MovieTheater,
+                RealWorldDiscoveryDomain.Restaurant,
+                RealWorldDiscoveryDomain.ParkWalk,
+                RealWorldDiscoveryDomain.Playground
+            ],
+            ClarificationPrompt: null,
+            ReasonCodes: ["test"],
+            Warnings: [])
+        {
+            InterpretationSource = RealWorldInterpretationSource.AiPrimary
+        };
+
+        var plan = planner.Plan(
+            "what can i do later tonight with kids",
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: "typed_area",
+                Latitude: null,
+                Longitude: null,
+                RadiusMeters: null,
+                TypedArea: "Dublin",
+                LocalityLabel: null,
+                AccuracyBucket: null,
+                CapturedAtUtc: null),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.90d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: [],
+                AudienceHints: ["kids", "family"],
+                TimeHints: ["tonight"],
+                PreferenceHints: [],
+                ReasonCodes: []));
+
+        Assert.Contains(RealWorldDiscoveryDomain.Playground, plan.SelectedDomains);
+        Assert.DoesNotContain(RealWorldDiscoveryDomain.NightlifeGeneral, plan.SelectedDomains);
+    }
+
+    [Fact]
+    public void Plan_EmptyQuerySignal_RecordsMissingSignalMarker()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            RecommendedExecutionMode: RealWorldExecutionMode.FocusedPlaceSearch,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: false,
+            Exploratory: false,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: false,
+            HasExplicitLocality: true,
+            Confidence: 0.77d,
+            CandidateDomains: [RealWorldDiscoveryDomain.Cafe],
+            ClarificationPrompt: null,
+            ReasonCodes: ["test"],
+            Warnings: [])
+        {
+            InterpretationSource = RealWorldInterpretationSource.AiPrimary
+        };
+
+        var plan = planner.Plan(
+            string.Empty,
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: "query_locality",
+                Latitude: null,
+                Longitude: null,
+                RadiusMeters: null,
+                TypedArea: "Dublin",
+                LocalityLabel: null,
+                AccuracyBucket: null,
+                CapturedAtUtc: null),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.72d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: true,
+                LocalityHint: "dublin",
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: []));
+
+        Assert.Contains("real_world_planner_query_signal_missing", plan.ReasonCodes);
     }
 }

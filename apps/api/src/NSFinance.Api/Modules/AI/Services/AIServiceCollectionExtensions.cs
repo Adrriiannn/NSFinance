@@ -192,6 +192,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
         services.AddScoped<IRealWorldDeterministicFallbackBuilder, RealWorldDeterministicFallbackBuilder>();
         services.AddScoped<IRealWorldFinancialGuardrailPolicy, RealWorldFinancialGuardrailPolicy>();
+        services.AddScoped<IRealWorldConceptNormalizationPolicy, RealWorldConceptNormalizationPolicy>();
         services.AddScoped<IRealWorldInterpretationValidationPolicy, RealWorldInterpretationValidationPolicy>();
         services.AddScoped<IRealWorldIntentInterpreterPromptBuilder, RealWorldIntentInterpreterPromptBuilder>();
         services.AddScoped<IRealWorldIntentInterpreter, RealWorldIntentInterpreter>();

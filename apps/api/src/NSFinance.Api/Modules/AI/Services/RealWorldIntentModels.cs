@@ -164,9 +164,22 @@ public interface IRealWorldInterpretationValidationPolicy
         RealWorldIntentInterpretation deterministicFallback);
 }
 
+public sealed record RealWorldConceptNormalizationResult(
+    IReadOnlyList<string> NormalizedConcepts,
+    IReadOnlyList<RealWorldDiscoveryDomain> MappedDomains,
+    IReadOnlyList<string> ReasonCodes);
+
+public interface IRealWorldConceptNormalizationPolicy
+{
+    RealWorldConceptNormalizationResult Normalize(
+        IReadOnlyList<string> candidateConcepts,
+        IReadOnlyList<RealWorldDiscoveryDomain> candidateDomains);
+}
+
 public interface IRealWorldExecutionModePlanner
 {
     RealWorldExecutionPlan Plan(
+        string userQuery,
         RealWorldIntentInterpretation interpretation,
         CompanionLocationGrounding grounding,
         LocalDiscoveryConstraintExtractionResult localDiscovery);
@@ -256,5 +269,17 @@ public static class RealWorldDomainMetadata
             _ => "places"
         };
     }
+}
+
+public static class RealWorldInterpreterFallbackReasonCodes
+{
+    public const string Prefix = "real_world_interpreter_fallback:";
+    public const string AiUnavailable = Prefix + "ai_unavailable";
+    public const string AiCallFailed = Prefix + "ai_call_failed";
+    public const string InvalidPayload = Prefix + "invalid_payload";
+    public const string UnknownVocabulary = Prefix + "unknown_vocabulary";
+    public const string LowConfidence = Prefix + "low_confidence";
+    public const string ValidationInconsistent = Prefix + "validation_inconsistent";
+    public const string PlannerDowngrade = Prefix + "planner_downgrade";
 }
 

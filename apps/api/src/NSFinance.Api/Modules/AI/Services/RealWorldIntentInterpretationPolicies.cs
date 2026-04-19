@@ -625,10 +625,258 @@ public sealed class RealWorldFinancialGuardrailPolicy : IRealWorldFinancialGuard
     }
 }
 
+public sealed class RealWorldConceptNormalizationPolicy : IRealWorldConceptNormalizationPolicy
+{
+    private static readonly IReadOnlyDictionary<string, string> AliasToCanonical =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["movie_theatre"] = "movie_theater",
+            ["cinema"] = "movie_theater",
+            ["cinemas"] = "movie_theater",
+            ["film"] = "movie_theater",
+            ["films"] = "movie_theater",
+            ["watch_movie_place"] = "movie_theater",
+            ["watch_film_place"] = "movie_theater",
+            ["coffee_shop"] = "cafe",
+            ["coffee_shops"] = "cafe",
+            ["cafes"] = "cafe",
+            ["pub"] = "pub_bar",
+            ["bar"] = "pub_bar",
+            ["bars"] = "pub_bar",
+            ["night_out"] = "nightlife_general",
+            ["petrol"] = "petrol_station",
+            ["gas_station"] = "petrol_station",
+            ["fuel_station"] = "petrol_station",
+            ["electronics_shop"] = "electronics_retail",
+            ["electronics_store"] = "electronics_retail",
+            ["stores"] = "commerce_general",
+            ["shops"] = "commerce_general",
+            ["service"] = "service_general",
+            ["services"] = "service_general"
+        };
+
+    private static readonly HashSet<string> CanonicalConcepts =
+    [
+        "cafe",
+        "restaurant",
+        "takeaway",
+        "pub_bar",
+        "movie_theater",
+        "park_walk",
+        "playground",
+        "pharmacy",
+        "petrol_station",
+        "gym",
+        "electronics_retail",
+        "convenience_store",
+        "grocery",
+        "shopping_general",
+        "outdoor_activity",
+        "entertainment_general",
+        "nightlife_general",
+        "food_drink_general",
+        "service_general",
+        "commerce_general",
+        "exploratory_evening_activity",
+        "exploratory_family_activity"
+    ];
+
+    public RealWorldConceptNormalizationResult Normalize(
+        IReadOnlyList<string> candidateConcepts,
+        IReadOnlyList<RealWorldDiscoveryDomain> candidateDomains)
+    {
+        var reasonCodes = new HashSet<string>(StringComparer.Ordinal);
+        var normalizedConcepts = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var domain in candidateDomains)
+        {
+            normalizedConcepts.Add(ToCanonicalConcept(domain));
+        }
+
+        foreach (var rawConcept in candidateConcepts)
+        {
+            if (string.IsNullOrWhiteSpace(rawConcept))
+            {
+                continue;
+            }
+
+            var normalizedToken = RealWorldDeterministicFallbackBuilder.NormalizeConceptToken(rawConcept);
+            if (TryResolveCanonical(normalizedToken, out var canonical, out var normalizationReasonCode))
+            {
+                normalizedConcepts.Add(canonical!);
+                if (!string.IsNullOrWhiteSpace(normalizationReasonCode))
+                {
+                    reasonCodes.Add(normalizationReasonCode!);
+                }
+            }
+            else
+            {
+                reasonCodes.Add("real_world_interpreter_concept_flattened_to_generic");
+                reasonCodes.Add(RealWorldInterpreterFallbackReasonCodes.UnknownVocabulary);
+                if (normalizedToken.Contains("service", StringComparison.Ordinal))
+                {
+                    normalizedConcepts.Add("service_general");
+                }
+                else if (normalizedToken.Contains("shop", StringComparison.Ordinal)
+                         || normalizedToken.Contains("buy", StringComparison.Ordinal))
+                {
+                    normalizedConcepts.Add("commerce_general");
+                }
+                else if (normalizedToken.Contains("fun", StringComparison.Ordinal)
+                         || normalizedToken.Contains("activity", StringComparison.Ordinal))
+                {
+                    normalizedConcepts.Add("entertainment_general");
+                }
+            }
+        }
+
+        var mappedDomains = normalizedConcepts
+            .Select(ToDomain)
+            .Where(static domain => domain.HasValue)
+            .Select(static domain => domain!.Value)
+            .Concat(candidateDomains)
+            .Distinct()
+            .Take(8)
+            .ToArray();
+        return new RealWorldConceptNormalizationResult(
+            NormalizedConcepts: normalizedConcepts.Take(10).ToArray(),
+            MappedDomains: mappedDomains,
+            ReasonCodes: reasonCodes.ToArray());
+    }
+
+    private static bool TryResolveCanonical(
+        string normalizedToken,
+        out string? canonical,
+        out string? normalizationReasonCode)
+    {
+        if (CanonicalConcepts.Contains(normalizedToken))
+        {
+            canonical = normalizedToken;
+            normalizationReasonCode = null;
+            return true;
+        }
+
+        if (AliasToCanonical.TryGetValue(normalizedToken, out var aliasMapped))
+        {
+            canonical = aliasMapped;
+            normalizationReasonCode = "real_world_interpreter_concept_normalized";
+            return true;
+        }
+
+        var compact = normalizedToken.Replace("_", string.Empty, StringComparison.Ordinal);
+        foreach (var concept in CanonicalConcepts)
+        {
+            var conceptCompact = concept.Replace("_", string.Empty, StringComparison.Ordinal);
+            if (compact.Equals(conceptCompact, StringComparison.Ordinal))
+            {
+                canonical = concept;
+                normalizationReasonCode = "real_world_interpreter_concept_normalized";
+                return true;
+            }
+        }
+
+        if (compact.Contains("cinema", StringComparison.Ordinal)
+            || compact.Contains("movie", StringComparison.Ordinal)
+            || compact.Contains("film", StringComparison.Ordinal))
+        {
+            canonical = "movie_theater";
+            normalizationReasonCode = "real_world_interpreter_concept_normalized";
+            return true;
+        }
+
+        if (compact.Contains("cafe", StringComparison.Ordinal)
+            || compact.Contains("coffee", StringComparison.Ordinal))
+        {
+            canonical = "cafe";
+            normalizationReasonCode = "real_world_interpreter_concept_normalized";
+            return true;
+        }
+
+        if (compact.Contains("pub", StringComparison.Ordinal)
+            || compact.Contains("bar", StringComparison.Ordinal))
+        {
+            canonical = "pub_bar";
+            normalizationReasonCode = "real_world_interpreter_concept_normalized";
+            return true;
+        }
+
+        canonical = null;
+        normalizationReasonCode = null;
+        return false;
+    }
+
+    private static string ToCanonicalConcept(RealWorldDiscoveryDomain domain)
+    {
+        return domain switch
+        {
+            RealWorldDiscoveryDomain.Cafe => "cafe",
+            RealWorldDiscoveryDomain.Restaurant => "restaurant",
+            RealWorldDiscoveryDomain.Takeaway => "takeaway",
+            RealWorldDiscoveryDomain.PubBar => "pub_bar",
+            RealWorldDiscoveryDomain.MovieTheater => "movie_theater",
+            RealWorldDiscoveryDomain.ParkWalk => "park_walk",
+            RealWorldDiscoveryDomain.Playground => "playground",
+            RealWorldDiscoveryDomain.Pharmacy => "pharmacy",
+            RealWorldDiscoveryDomain.PetrolStation => "petrol_station",
+            RealWorldDiscoveryDomain.Gym => "gym",
+            RealWorldDiscoveryDomain.ElectronicsRetail => "electronics_retail",
+            RealWorldDiscoveryDomain.ConvenienceStore => "convenience_store",
+            RealWorldDiscoveryDomain.Grocery => "grocery",
+            RealWorldDiscoveryDomain.ShoppingGeneral => "shopping_general",
+            RealWorldDiscoveryDomain.OutdoorActivity => "outdoor_activity",
+            RealWorldDiscoveryDomain.EntertainmentGeneral => "entertainment_general",
+            RealWorldDiscoveryDomain.NightlifeGeneral => "nightlife_general",
+            RealWorldDiscoveryDomain.FoodDrinkGeneral => "food_drink_general",
+            RealWorldDiscoveryDomain.ServiceGeneral => "service_general",
+            RealWorldDiscoveryDomain.CommerceGeneral => "commerce_general",
+            RealWorldDiscoveryDomain.ExploratoryEveningActivity => "exploratory_evening_activity",
+            RealWorldDiscoveryDomain.ExploratoryFamilyActivity => "exploratory_family_activity",
+            _ => "entertainment_general"
+        };
+    }
+
+    private static RealWorldDiscoveryDomain? ToDomain(string canonicalConcept)
+    {
+        return canonicalConcept switch
+        {
+            "cafe" => RealWorldDiscoveryDomain.Cafe,
+            "restaurant" => RealWorldDiscoveryDomain.Restaurant,
+            "takeaway" => RealWorldDiscoveryDomain.Takeaway,
+            "pub_bar" => RealWorldDiscoveryDomain.PubBar,
+            "movie_theater" => RealWorldDiscoveryDomain.MovieTheater,
+            "park_walk" => RealWorldDiscoveryDomain.ParkWalk,
+            "playground" => RealWorldDiscoveryDomain.Playground,
+            "pharmacy" => RealWorldDiscoveryDomain.Pharmacy,
+            "petrol_station" => RealWorldDiscoveryDomain.PetrolStation,
+            "gym" => RealWorldDiscoveryDomain.Gym,
+            "electronics_retail" => RealWorldDiscoveryDomain.ElectronicsRetail,
+            "convenience_store" => RealWorldDiscoveryDomain.ConvenienceStore,
+            "grocery" => RealWorldDiscoveryDomain.Grocery,
+            "shopping_general" => RealWorldDiscoveryDomain.ShoppingGeneral,
+            "outdoor_activity" => RealWorldDiscoveryDomain.OutdoorActivity,
+            "entertainment_general" => RealWorldDiscoveryDomain.EntertainmentGeneral,
+            "nightlife_general" => RealWorldDiscoveryDomain.NightlifeGeneral,
+            "food_drink_general" => RealWorldDiscoveryDomain.FoodDrinkGeneral,
+            "service_general" => RealWorldDiscoveryDomain.ServiceGeneral,
+            "commerce_general" => RealWorldDiscoveryDomain.CommerceGeneral,
+            "exploratory_evening_activity" => RealWorldDiscoveryDomain.ExploratoryEveningActivity,
+            "exploratory_family_activity" => RealWorldDiscoveryDomain.ExploratoryFamilyActivity,
+            _ => null
+        };
+    }
+}
+
 public sealed class RealWorldInterpretationValidationPolicy(
-    IRealWorldFinancialGuardrailPolicy financialGuardrailPolicy) : IRealWorldInterpretationValidationPolicy
+    IRealWorldFinancialGuardrailPolicy financialGuardrailPolicy,
+    IRealWorldConceptNormalizationPolicy conceptNormalizationPolicy) : IRealWorldInterpretationValidationPolicy
 {
     private const double LowConfidenceThreshold = 0.46d;
+
+    public RealWorldInterpretationValidationPolicy(
+        IRealWorldFinancialGuardrailPolicy financialGuardrailPolicy)
+        : this(financialGuardrailPolicy, new RealWorldConceptNormalizationPolicy())
+    {
+    }
 
     public RealWorldIntentInterpretation ValidateAndNormalize(
         string userMessage,
@@ -651,18 +899,12 @@ public sealed class RealWorldInterpretationValidationPolicy(
                                   || localDiscovery.HasExplicitLocality
                                   || grounding.HasTypedArea
                                   || !string.IsNullOrWhiteSpace(grounding.LocalityLabel);
-        var candidateConcepts = (aiInterpretation.CandidateConcepts ?? [])
-            .Where(static concept => !string.IsNullOrWhiteSpace(concept))
-            .Select(RealWorldDeterministicFallbackBuilder.NormalizeConceptToken)
-            .Distinct(StringComparer.Ordinal)
-            .Take(10)
-            .ToList();
-        var conceptMappedDomains = MapConceptsToDomains(candidateConcepts);
-        var domains = aiInterpretation.CandidateDomains
-            .Concat(conceptMappedDomains)
-            .Distinct()
-            .Take(8)
-            .ToList();
+        var normalization = conceptNormalizationPolicy.Normalize(
+            aiInterpretation.CandidateConcepts ?? [],
+            aiInterpretation.CandidateDomains);
+        reasonCodes.UnionWith(normalization.ReasonCodes);
+        var candidateConcepts = normalization.NormalizedConcepts.ToList();
+        var domains = normalization.MappedDomains.ToList();
         if (domains.Count == 0 && aiInterpretation.PlacesApplicable)
         {
             domains = deterministicFallback.CandidateDomains
@@ -675,6 +917,7 @@ public sealed class RealWorldInterpretationValidationPolicy(
             }
 
             reasonCodes.Add("real_world_interpreter_domains_backfilled_from_fallback");
+            reasonCodes.Add(RealWorldInterpreterFallbackReasonCodes.ValidationInconsistent);
             overrideApplied = true;
         }
 
@@ -779,6 +1022,7 @@ public sealed class RealWorldInterpretationValidationPolicy(
                 clarificationPrompt ??=
                     "I can help with nearby places or financial guidance. Tell me which one you want.";
                 reasonCodes.Add("real_world_interpreter_low_confidence_clarify");
+                reasonCodes.Add(RealWorldInterpreterFallbackReasonCodes.LowConfidence);
                 warnings.Add("real_world_interpreter_low_confidence");
                 overrideApplied = true;
             }
@@ -810,86 +1054,6 @@ public sealed class RealWorldInterpretationValidationPolicy(
             Warnings = warnings.ToArray(),
             InterpretationSource = RealWorldInterpretationSource.AiPrimary
         };
-    }
-
-    private static IReadOnlyList<RealWorldDiscoveryDomain> MapConceptsToDomains(
-        IReadOnlyList<string> candidateConcepts)
-    {
-        var mapped = new HashSet<RealWorldDiscoveryDomain>();
-        foreach (var concept in candidateConcepts)
-        {
-            switch (concept)
-            {
-                case "cafe":
-                    mapped.Add(RealWorldDiscoveryDomain.Cafe);
-                    break;
-                case "restaurant":
-                    mapped.Add(RealWorldDiscoveryDomain.Restaurant);
-                    break;
-                case "takeaway":
-                    mapped.Add(RealWorldDiscoveryDomain.Takeaway);
-                    break;
-                case "pub_bar":
-                    mapped.Add(RealWorldDiscoveryDomain.PubBar);
-                    break;
-                case "movie_theater":
-                    mapped.Add(RealWorldDiscoveryDomain.MovieTheater);
-                    break;
-                case "park_walk":
-                    mapped.Add(RealWorldDiscoveryDomain.ParkWalk);
-                    break;
-                case "playground":
-                    mapped.Add(RealWorldDiscoveryDomain.Playground);
-                    break;
-                case "pharmacy":
-                    mapped.Add(RealWorldDiscoveryDomain.Pharmacy);
-                    break;
-                case "petrol_station":
-                    mapped.Add(RealWorldDiscoveryDomain.PetrolStation);
-                    break;
-                case "gym":
-                    mapped.Add(RealWorldDiscoveryDomain.Gym);
-                    break;
-                case "electronics_retail":
-                    mapped.Add(RealWorldDiscoveryDomain.ElectronicsRetail);
-                    break;
-                case "convenience_store":
-                    mapped.Add(RealWorldDiscoveryDomain.ConvenienceStore);
-                    break;
-                case "grocery":
-                    mapped.Add(RealWorldDiscoveryDomain.Grocery);
-                    break;
-                case "shopping_general":
-                    mapped.Add(RealWorldDiscoveryDomain.ShoppingGeneral);
-                    break;
-                case "outdoor_activity":
-                    mapped.Add(RealWorldDiscoveryDomain.OutdoorActivity);
-                    break;
-                case "entertainment_general":
-                    mapped.Add(RealWorldDiscoveryDomain.EntertainmentGeneral);
-                    break;
-                case "nightlife_general":
-                    mapped.Add(RealWorldDiscoveryDomain.NightlifeGeneral);
-                    break;
-                case "food_drink_general":
-                    mapped.Add(RealWorldDiscoveryDomain.FoodDrinkGeneral);
-                    break;
-                case "service_general":
-                    mapped.Add(RealWorldDiscoveryDomain.ServiceGeneral);
-                    break;
-                case "commerce_general":
-                    mapped.Add(RealWorldDiscoveryDomain.CommerceGeneral);
-                    break;
-                case "exploratory_evening_activity":
-                    mapped.Add(RealWorldDiscoveryDomain.ExploratoryEveningActivity);
-                    break;
-                case "exploratory_family_activity":
-                    mapped.Add(RealWorldDiscoveryDomain.ExploratoryFamilyActivity);
-                    break;
-            }
-        }
-
-        return mapped.ToArray();
     }
 
     private static string ToCanonicalConcept(RealWorldDiscoveryDomain domain)

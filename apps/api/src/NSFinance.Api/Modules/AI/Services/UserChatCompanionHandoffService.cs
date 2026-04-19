@@ -36,7 +36,11 @@ public sealed class UserChatCompanionHandoffService(
             grounding,
             localDiscovery,
             cancellationToken);
-        var plan = executionModePlanner.Plan(interpretation, grounding, localDiscovery);
+        var plan = executionModePlanner.Plan(
+            request.UserMessage,
+            interpretation,
+            grounding,
+            localDiscovery);
 
         logger.LogInformation(
             "User chat real-world planner intentFamily={IntentFamily} mode={ExecutionMode} confidence={Confidence} placesApplicable={PlacesApplicable} directPlaces={DirectPlaces} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} explicitLocality={HasExplicitLocality}",

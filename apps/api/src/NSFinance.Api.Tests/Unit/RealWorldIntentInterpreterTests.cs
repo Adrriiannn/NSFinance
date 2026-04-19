@@ -23,7 +23,7 @@ public sealed class RealWorldIntentInterpreterTests
                   "clarificationNeeded":false,
                   "confidence":0.84,
                   "candidateDomains":["EntertainmentGeneral"],
-                  "candidateConcepts":["movie_theater"],
+                  "candidateConcepts":["movie_theatre"],
                   "clarificationPrompt":null,
                   "reasonCodes":["ai_semantic_movie_theater"]
                 }
@@ -46,6 +46,7 @@ public sealed class RealWorldIntentInterpreterTests
         Assert.Contains(RealWorldDiscoveryDomain.MovieTheater, result.CandidateDomains);
         Assert.Contains("movie_theater", result.CandidateConcepts);
         Assert.Contains("real_world_interpreter_ai_primary_used", result.ReasonCodes);
+        Assert.Contains("real_world_interpreter_concept_normalized", result.ReasonCodes);
     }
 
     [Fact]
@@ -203,6 +204,7 @@ public sealed class RealWorldIntentInterpreterTests
         Assert.True(result.ClarificationNeeded);
         Assert.False(result.PlacesApplicable);
         Assert.Contains("real_world_interpreter_low_confidence_clarify", result.ReasonCodes);
+        Assert.Contains(RealWorldInterpreterFallbackReasonCodes.LowConfidence, result.ReasonCodes);
     }
 
     [Fact]
@@ -229,7 +231,7 @@ public sealed class RealWorldIntentInterpreterTests
 
         Assert.Equal(RealWorldInterpretationSource.DeterministicFallback, result.InterpretationSource);
         Assert.Contains("real_world_interpreter_deterministic_fallback_used", result.ReasonCodes);
-        Assert.Contains("real_world_interpreter_invalid_ai_payload", result.ReasonCodes);
+        Assert.Contains(RealWorldInterpreterFallbackReasonCodes.InvalidPayload, result.ReasonCodes);
     }
 
     [Fact]
@@ -250,7 +252,66 @@ public sealed class RealWorldIntentInterpreterTests
 
         Assert.Equal(RealWorldInterpretationSource.DeterministicFallback, result.InterpretationSource);
         Assert.Contains("real_world_interpreter_deterministic_fallback_used", result.ReasonCodes);
-        Assert.Contains("real_world_interpreter_ai_call_failed", result.ReasonCodes);
+        Assert.Contains(RealWorldInterpreterFallbackReasonCodes.AiCallFailed, result.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task InterpretAsync_AiProviderUnavailable_UsesUnavailableFallbackReason()
+    {
+        var interpreter = CreateInterpreter(new UnavailableInterpreterAIClient());
+        const string message = "cinemas near me";
+
+        var result = await interpreter.InterpretAsync(
+            new UserChatRequest(
+                UserMessage: message,
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-ai-unavailable-1"),
+            CompanionLocationGroundingParser.Parse(null, null),
+            localDiscoveryExtractor.Extract(message),
+            CancellationToken.None);
+
+        Assert.Equal(RealWorldInterpretationSource.DeterministicFallback, result.InterpretationSource);
+        Assert.Contains(RealWorldInterpreterFallbackReasonCodes.AiUnavailable, result.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task InterpretAsync_UnknownConcepts_FlattensGracefullyWithoutDroppingPlacesIntent()
+    {
+        var interpreter = CreateInterpreter(
+            new ScriptedInterpreterAIClient(
+                """
+                {
+                  "intentFamily":"PlaceDiscovery",
+                  "executionMode":"FocusedPlaceSearch",
+                  "placesApplicable":true,
+                  "financialRelated":false,
+                  "requiresLocation":true,
+                  "exploratory":false,
+                  "clarificationNeeded":false,
+                  "confidence":0.71,
+                  "candidateDomains":["PlaceDiscovery"],
+                  "candidateConcepts":["watch_movie_place","chill_evening_spot"],
+                  "clarificationPrompt":null,
+                  "reasonCodes":["ai_unknownish_concepts"]
+                }
+                """));
+        const string message = "somewhere to watch a film nearby";
+
+        var result = await interpreter.InterpretAsync(
+            new UserChatRequest(
+                UserMessage: message,
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-ai-unknown-concept-1"),
+            CompanionLocationGroundingParser.Parse(null, null),
+            localDiscoveryExtractor.Extract(message),
+            CancellationToken.None);
+
+        Assert.Equal(RealWorldInterpretationSource.AiPrimary, result.InterpretationSource);
+        Assert.Contains("movie_theater", result.CandidateConcepts);
+        Assert.Contains(RealWorldDiscoveryDomain.MovieTheater, result.CandidateDomains);
+        Assert.Contains("real_world_interpreter_concept_normalized", result.ReasonCodes);
     }
 
     private static RealWorldIntentInterpreter CreateInterpreter(IAIClient aiClient)
@@ -322,6 +383,24 @@ public sealed class RealWorldIntentInterpreterTests
                     model: route.Model,
                     deployment: route.Deployment,
                     failureReason: "disabled",
+                    wasMocked: true));
+        }
+    }
+
+    private sealed class UnavailableInterpreterAIClient : IAIClient
+    {
+        public Task<AIResponse> SendAsync(
+            AIRequest request,
+            AIModelRoute route,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                AIResponse.Failed(
+                    provider: "mock",
+                    model: route.Model,
+                    deployment: route.Deployment,
+                    failureReason: "provider_unavailable",
                     wasMocked: true));
         }
     }

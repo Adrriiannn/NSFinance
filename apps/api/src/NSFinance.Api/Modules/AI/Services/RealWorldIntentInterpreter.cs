@@ -268,6 +268,11 @@ public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
             {
                 warnings.Add(aiFailureReasonCode!);
                 reasonCodes.Add(aiFailureReasonCode!);
+                if (TryMapLegacyFallbackMarker(aiFailureReasonCode!, out var legacyFallbackReason))
+                {
+                    warnings.Add(legacyFallbackReason!);
+                    reasonCodes.Add(legacyFallbackReason!);
+                }
             }
 
             return deterministicFallback with
@@ -343,27 +348,35 @@ public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
                     "Real-world interpreter AI call failed correlationId={CorrelationId} reason={Reason}",
                     request.CorrelationId,
                     response.FailureReason ?? "unknown");
-                return (null, "real_world_interpreter_ai_call_failed");
+                var failureReason = response.FailureReason ?? string.Empty;
+                if (failureReason.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                    || failureReason.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+                    || failureReason.Contains("circuit", StringComparison.OrdinalIgnoreCase))
+                {
+                    return (null, RealWorldInterpreterFallbackReasonCodes.AiUnavailable);
+                }
+
+                return (null, RealWorldInterpreterFallbackReasonCodes.AiCallFailed);
             }
 
             var payload = response.StructuredPayloadJson ?? response.Content;
             if (string.IsNullOrWhiteSpace(payload))
             {
-                return (null, "real_world_interpreter_invalid_ai_payload");
+                return (null, RealWorldInterpreterFallbackReasonCodes.InvalidPayload);
             }
 
             var parsed = JsonSerializer.Deserialize<RealWorldInterpreterAiResponse>(payload, JsonOptions);
             var normalized = NormalizeAiResponse(parsed);
             if (normalized is null)
             {
-                return (null, "real_world_interpreter_invalid_ai_payload");
+                return (null, RealWorldInterpreterFallbackReasonCodes.InvalidPayload);
             }
 
             return (normalized, null);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return (null, "real_world_interpreter_ai_transient_cancellation");
+            return (null, RealWorldInterpreterFallbackReasonCodes.AiUnavailable);
         }
         catch (Exception ex)
         {
@@ -371,7 +384,7 @@ public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
                 ex,
                 "Real-world interpreter AI parsing failed correlationId={CorrelationId}",
                 request.CorrelationId);
-            return (null, "real_world_interpreter_invalid_ai_payload");
+            return (null, RealWorldInterpreterFallbackReasonCodes.InvalidPayload);
         }
     }
 
@@ -388,10 +401,14 @@ public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
             return null;
         }
 
-        var domains = (ai.CandidateDomains ?? [])
-            .Select(TryParseDomain)
-            .Where(static domain => domain.HasValue)
-            .Select(static domain => domain!.Value)
+        var domainValues = ai.CandidateDomains ?? [];
+        var parsedDomains = domainValues
+            .Select(value => new { Raw = value, Parsed = TryParseDomain(value) })
+            .ToArray();
+        var hasUnknownDomain = parsedDomains.Any(entry => !entry.Parsed.HasValue && !string.IsNullOrWhiteSpace(entry.Raw));
+        var domains = parsedDomains
+            .Where(static entry => entry.Parsed.HasValue)
+            .Select(static entry => entry.Parsed!.Value)
             .Distinct()
             .Take(8)
             .ToArray();
@@ -402,6 +419,13 @@ public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
             .Take(10)
             .ToArray();
         var confidence = Math.Round(Math.Clamp(ai.Confidence ?? 0.5d, 0d, 0.98d), 4);
+        var reasonCodes = new HashSet<string>((ai.ReasonCodes ?? [])
+            .Where(static x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal), StringComparer.Ordinal);
+        if (hasUnknownDomain)
+        {
+            reasonCodes.Add(RealWorldInterpreterFallbackReasonCodes.UnknownVocabulary);
+        }
 
         return new RealWorldIntentInterpretation(
             IntentFamily: family,
@@ -416,10 +440,7 @@ public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
             Confidence: confidence,
             CandidateDomains: domains,
             ClarificationPrompt: ai.ClarificationPrompt,
-            ReasonCodes: (ai.ReasonCodes ?? [])
-                .Where(static x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray(),
+            ReasonCodes: reasonCodes.ToArray(),
             Warnings: [])
         {
             CandidateConcepts = concepts,
@@ -455,6 +476,19 @@ public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
             "park_walk" => RealWorldDiscoveryDomain.ParkWalk,
             _ => null
         };
+    }
+
+    private static bool TryMapLegacyFallbackMarker(string code, out string? legacyCode)
+    {
+        legacyCode = code switch
+        {
+            RealWorldInterpreterFallbackReasonCodes.AiCallFailed => "real_world_interpreter_ai_call_failed",
+            RealWorldInterpreterFallbackReasonCodes.InvalidPayload => "real_world_interpreter_invalid_ai_payload",
+            RealWorldInterpreterFallbackReasonCodes.AiUnavailable => "real_world_interpreter_ai_transient_cancellation",
+            _ => null
+        };
+
+        return !string.IsNullOrWhiteSpace(legacyCode);
     }
 
     private sealed record RealWorldInterpreterAiResponse(
