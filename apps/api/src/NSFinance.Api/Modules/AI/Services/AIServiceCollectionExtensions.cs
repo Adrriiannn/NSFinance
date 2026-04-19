@@ -191,6 +191,9 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ILocalDiscoveryConstraintExtractor, LocalDiscoveryConstraintExtractor>();
         services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
         services.AddScoped<ICompanionLocalityResolutionService, CompanionLocalityResolutionService>();
+        services.AddScoped<ICompanionPlacesVocabularyNormalizer, CompanionPlacesVocabularyNormalizer>();
+        services.AddScoped<ICompanionPlacesTextQueryBuilder, CompanionPlacesTextQueryBuilder>();
+        services.AddScoped<ICompanionPlacesNearbyRequestBuilder, CompanionPlacesNearbyRequestBuilder>();
         services.AddScoped<ICompanionNearbyTypeMapper, CompanionNearbyTypeMapper>();
         services.AddScoped<ICompanionNearbyHybridRetrievalPolicy, CompanionNearbyHybridRetrievalPolicy>();
         services.AddScoped<ICompanionPlaceRankingPolicy, CompanionPlaceRankingPolicy>();

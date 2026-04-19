@@ -45,6 +45,116 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_TypoPrompt_BuildsCleanSemanticTextQuery()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cafe-1")])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "can you pleade show me some coffee shops near me?",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000),
+            CancellationToken.None);
+
+        var request = Assert.Single(discovery.Requests);
+        Assert.Equal("coffee shops", request.Query);
+        Assert.Contains("places_request:text_query_typo_normalized", result.Warnings ?? []);
+        Assert.DoesNotContain("46", request.Query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SearchAsync_InvalidCountryCode_SimplifiesRegionBeforeProviderCalls()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cafe-1")])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cafe-2")])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "coffee shops near me",
+            "Ireland",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000),
+            CancellationToken.None);
+
+        var textRequest = Assert.Single(discovery.Requests);
+        var nearbyRequest = Assert.Single(discovery.NearbyRequests);
+        Assert.Null(textRequest.CountryCode);
+        Assert.Null(nearbyRequest.CountryCode);
+        Assert.Contains(
+            "places_request:region_code_simplified_invalid_country_code",
+            result.Warnings ?? []);
+    }
+
+    [Fact]
+    public async Task SearchAsync_NoisyNumericLocality_DoesNotLeakIntoTextQuery()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cafe-1")])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        await sut.SearchAsync(
+            "can you pleade show me some coffee shops in 46?",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "typed_area",
+                TypedArea: null),
+            CancellationToken.None);
+
+        var request = Assert.Single(discovery.Requests);
+        Assert.Equal("coffee shops", request.Query);
+        Assert.DoesNotContain("in 46", request.Query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task SearchAsync_WithTypedArea_ResolvesLocalityToCoordinates()
     {
         var discovery = new TrackingCompanionDiscoveryService(
@@ -377,9 +487,12 @@ public sealed class GooglePlacesCompanionSearchServiceTests
         TrackingCompanionDiscoveryService discovery,
         ICompanionLocalityResolutionService resolver)
     {
+        var constraintExtractor = new LocalDiscoveryConstraintExtractor();
         return new GooglePlacesCompanionSearchService(
             discovery,
-            new LocalDiscoveryQueryShaper(new LocalDiscoveryConstraintExtractor()),
+            constraintExtractor,
+            new CompanionPlacesTextQueryBuilder(new CompanionPlacesVocabularyNormalizer()),
+            new CompanionPlacesNearbyRequestBuilder(),
             resolver,
             new CompanionNearbyTypeMapper(),
             new CompanionNearbyHybridRetrievalPolicy(),

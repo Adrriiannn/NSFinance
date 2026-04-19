@@ -320,8 +320,18 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
         }
 
         locality = TrimLocalityTail(locality);
+        locality = Regex.Replace(
+            locality,
+            @"[^\p{L}\p{N}\s'\-]",
+            " ");
+        locality = Regex.Replace(locality, @"\s+", " ").Trim();
         locality = locality.TrimEnd('.', ',', ';', ':', '!', '?');
         if (GenericLocalityStopWords.Contains(locality))
+        {
+            return null;
+        }
+
+        if (!IsTrustedLocality(locality))
         {
             return null;
         }
@@ -362,6 +372,47 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
         }
 
         return trimmed.Trim();
+    }
+
+    private static bool IsTrustedLocality(string locality)
+    {
+        if (string.IsNullOrWhiteSpace(locality)
+            || locality.Length < 3
+            || locality.Length > 80)
+        {
+            return false;
+        }
+
+        if (!locality.Any(char.IsLetter))
+        {
+            return false;
+        }
+
+        if (Regex.IsMatch(locality, @"^\d+[a-zA-Z]?$", RegexOptions.CultureInvariant))
+        {
+            return false;
+        }
+
+        var tokens = locality.Split(
+            ' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (tokens.Length == 0 || tokens.Length > 6)
+        {
+            return false;
+        }
+
+        var numericTokenCount = tokens.Count(token => token.All(char.IsDigit));
+        if (numericTokenCount > 1)
+        {
+            return false;
+        }
+
+        if (tokens[0].All(char.IsDigit))
+        {
+            return false;
+        }
+
+        return true;
     }
 }
 

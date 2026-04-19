@@ -43,6 +43,24 @@ public sealed class LocalDiscoveryConstraintExtractionTests
     }
 
     [Fact]
+    public void Extract_NoisyNumericLocality_IsRejected()
+    {
+        var result = _extractor.Extract("can you pleade show me coffee shops in 46?");
+
+        Assert.False(result.HasExplicitLocality);
+        Assert.Null(result.LocalityHint);
+    }
+
+    [Fact]
+    public void Extract_AlphanumericLocality_RemainsSupported()
+    {
+        var result = _extractor.Extract("pubs in Dublin 2");
+
+        Assert.True(result.HasExplicitLocality);
+        Assert.Equal("dublin 2", result.LocalityHint);
+    }
+
+    [Fact]
     public void Extract_FinanceOnlyPrompt_IsNotLocalDiscovery()
     {
         var result = _extractor.Extract("How is my monthly budget doing?");

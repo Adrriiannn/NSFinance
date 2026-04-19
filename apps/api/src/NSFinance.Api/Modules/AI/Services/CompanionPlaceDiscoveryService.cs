@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 
 namespace NSFinance.Api.Modules.AI.Services;
@@ -537,7 +538,9 @@ public sealed class MerchantPlaceLookupService(
 
 public sealed class GooglePlacesCompanionSearchService(
     ICompanionPlaceDiscoveryService discoveryService,
-    ILocalDiscoveryQueryShaper localDiscoveryQueryShaper,
+    ILocalDiscoveryConstraintExtractor localDiscoveryConstraintExtractor,
+    ICompanionPlacesTextQueryBuilder textQueryBuilder,
+    ICompanionPlacesNearbyRequestBuilder nearbyRequestBuilder,
     ICompanionLocalityResolutionService localityResolutionService,
     ICompanionNearbyTypeMapper nearbyTypeMapper,
     ICompanionNearbyHybridRetrievalPolicy hybridRetrievalPolicy,
@@ -554,35 +557,54 @@ public sealed class GooglePlacesCompanionSearchService(
         CancellationToken cancellationToken)
     {
         var warnings = new HashSet<string>(StringComparer.Ordinal);
-        var shapedQuery = localDiscoveryQueryShaper.Shape(query, locationContext);
-        AppendQueryShapeWarnings(shapedQuery, warnings);
+        var constraints = localDiscoveryConstraintExtractor.Extract(query);
+        AppendConstraintWarnings(constraints, warnings);
         logger.LogInformation(
             "Companion places query shaped localDiscoveryCandidate={IsCandidate} confidence={Confidence} hasNearMeLanguage={HasNearMeLanguage} hasExplicitLocality={HasExplicitLocality} reasonCodes={ReasonCodes}",
-            shapedQuery.Constraints.IsLocalDiscoveryCandidate,
-            shapedQuery.Constraints.Confidence,
-            shapedQuery.Constraints.HasNearMeLanguage,
-            shapedQuery.Constraints.HasExplicitLocality,
-            string.Join(',', shapedQuery.ReasonCodes));
+            constraints.IsLocalDiscoveryCandidate,
+            constraints.Confidence,
+            constraints.HasNearMeLanguage,
+            constraints.HasExplicitLocality,
+            string.Join(',', constraints.ReasonCodes));
 
         var effectiveLocationContext = await ResolveLocationBiasAsync(
             locationContext,
-            shapedQuery.Constraints,
+            constraints,
             country,
             warnings,
             cancellationToken);
-        var rankingContext = BuildRankingContext(effectiveLocationContext, shapedQuery.Constraints);
-        var hybridDecision = hybridRetrievalPolicy.Decide(locationContext, shapedQuery.Constraints);
+        var rankingContext = BuildRankingContext(effectiveLocationContext, constraints);
+        var hybridDecision = hybridRetrievalPolicy.Decide(locationContext, constraints);
         warnings.Add(hybridDecision.ReasonCode);
 
+        var primaryQueryBuild = textQueryBuilder.Build(
+            new CompanionPlacesTextQueryBuildRequest(
+                UserQuery: query,
+                Constraints: constraints,
+                LocationContext: effectiveLocationContext,
+                IsGpsNearMe: hybridDecision.UseHybridRetrieval));
+        warnings.UnionWith(primaryQueryBuild.ReasonCodes);
+        if (!primaryQueryBuild.Succeeded || string.IsNullOrWhiteSpace(primaryQueryBuild.Query))
+        {
+            warnings.Add("places_request:provider_branch_text_skipped_invalid_query");
+            return BuildSearchResult(
+                BuildRequestConstructionFailure(
+                    failureCode: primaryQueryBuild.FailureReason ?? "text_query_preflight_failed"),
+                warnings,
+                rankingContext);
+        }
+
         var primaryRequest = BuildDiscoveryRequest(
-            query: shapedQuery.Query,
+            query: primaryQueryBuild.Query,
             countryCode: country,
-            locationContext: effectiveLocationContext);
+            locationContext: effectiveLocationContext,
+            warnings: warnings);
         logger.LogInformation(
-            "Companion places primary search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters}",
+            "Companion places primary search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters} country={CountryCode}",
             primaryRequest.Query,
             primaryRequest.Latitude.HasValue && primaryRequest.Longitude.HasValue,
-            primaryRequest.RadiusMeters ?? 0);
+            primaryRequest.RadiusMeters ?? 0,
+            primaryRequest.CountryCode ?? string.Empty);
         warnings.Add("places_retrieval:text_search_used");
         var primaryResult = await discoveryService.DiscoverAsync(
             primaryRequest,
@@ -592,7 +614,7 @@ public sealed class GooglePlacesCompanionSearchService(
 
         if (hybridDecision.UseHybridRetrieval)
         {
-            var nearbyTypeMapping = nearbyTypeMapper.Map(query, shapedQuery.Constraints);
+            var nearbyTypeMapping = nearbyTypeMapper.Map(query, constraints);
             foreach (var reasonCode in nearbyTypeMapping.ReasonCodes)
             {
                 warnings.Add($"places_retrieval:{reasonCode}");
@@ -606,17 +628,35 @@ public sealed class GooglePlacesCompanionSearchService(
             }
             else
             {
-                warnings.Add("places_retrieval:nearby_search_used");
-                var nearbyRequest = BuildNearbyRequest(
-                    countryCode: country,
-                    locationContext: effectiveLocationContext,
-                    includedTypes: nearbyTypeMapping.IncludedTypes);
-                var nearbyResult = await discoveryService.DiscoverNearbyAsync(
-                    nearbyRequest,
-                    cancellationToken);
-                warnings.UnionWith(nearbyResult.Warnings ?? []);
-                warnings.Add($"places_retrieval:nearby_search_candidate_count:{nearbyResult.Candidates.Count}");
-                mergedResult = MergeHybridResults(primaryResult, nearbyResult, warnings);
+                var nearbyRequestBuild = nearbyRequestBuilder.Build(
+                    new CompanionPlacesNearbyRequestBuildRequest(
+                        CountryCode: country,
+                        LocationContext: effectiveLocationContext,
+                        IncludedTypes: nearbyTypeMapping.IncludedTypes,
+                        MaxCandidates: Math.Clamp(Math.Max(placesOptions.MaxCompanionCandidates, 8), 4, 12),
+                        DefaultRadiusMeters: placesOptions.DefaultSearchRadiusMeters));
+                warnings.UnionWith(nearbyRequestBuild.ReasonCodes);
+                if (!nearbyRequestBuild.Succeeded || nearbyRequestBuild.Request is null)
+                {
+                    warnings.Add("places_retrieval:nearby_search_skipped_preflight_failed");
+                    mergedResult = primaryResult;
+                }
+                else
+                {
+                    warnings.Add("places_retrieval:nearby_search_used");
+                    var nearbyRequest = nearbyRequestBuild.Request;
+                    logger.LogInformation(
+                        "Companion places nearby search includedTypes={IncludedTypes} radiusMeters={RadiusMeters} country={CountryCode}",
+                        string.Join(',', nearbyRequest.IncludedTypes),
+                        nearbyRequest.RadiusMeters,
+                        nearbyRequest.CountryCode ?? string.Empty);
+                    var nearbyResult = await discoveryService.DiscoverNearbyAsync(
+                        nearbyRequest,
+                        cancellationToken);
+                    warnings.UnionWith(nearbyResult.Warnings ?? []);
+                    warnings.Add($"places_retrieval:nearby_search_candidate_count:{nearbyResult.Candidates.Count}");
+                    mergedResult = MergeHybridResults(primaryResult, nearbyResult, warnings);
+                }
             }
 
             if (mergedResult.Succeeded && mergedResult.Candidates.Count > 0)
@@ -626,6 +666,7 @@ public sealed class GooglePlacesCompanionSearchService(
             else if (!mergedResult.Succeeded)
             {
                 warnings.Add("places_query_shape:primary_search_failed");
+                AppendProviderFailureWarnings(mergedResult, warnings);
             }
             else
             {
@@ -644,19 +685,27 @@ public sealed class GooglePlacesCompanionSearchService(
         if (!primaryResult.Succeeded)
         {
             warnings.Add("places_query_shape:primary_search_failed");
+            AppendProviderFailureWarnings(primaryResult, warnings);
             return BuildSearchResult(primaryResult, warnings, rankingContext);
         }
 
         warnings.Add("places_query_shape:no_results_primary");
-        var fallbackQuery = BuildFallbackQuery(
-            originalQuery: query,
-            constraints: shapedQuery.Constraints,
-            locationContext: effectiveLocationContext);
-        if (string.IsNullOrWhiteSpace(fallbackQuery)
-            || string.Equals(
-                fallbackQuery.Trim(),
-                shapedQuery.Query.Trim(),
-                StringComparison.OrdinalIgnoreCase))
+        var fallbackQueryBuild = textQueryBuilder.Build(
+            new CompanionPlacesTextQueryBuildRequest(
+                UserQuery: query,
+                Constraints: constraints,
+                LocationContext: effectiveLocationContext,
+                IsGpsNearMe: false,
+                ForceSimplifiedFallback: true));
+        warnings.UnionWith(fallbackQueryBuild.ReasonCodes);
+        if (!fallbackQueryBuild.Succeeded || string.IsNullOrWhiteSpace(fallbackQueryBuild.Query))
+        {
+            warnings.Add("places_query_shape:no_results_fallback");
+            return BuildSearchResult(primaryResult, warnings, rankingContext);
+        }
+
+        var fallbackQuery = fallbackQueryBuild.Query;
+        if (string.IsNullOrWhiteSpace(fallbackQuery))
         {
             warnings.Add("places_query_shape:no_results_fallback");
             return BuildSearchResult(primaryResult, warnings, rankingContext);
@@ -669,12 +718,14 @@ public sealed class GooglePlacesCompanionSearchService(
         var fallbackRequest = BuildDiscoveryRequest(
             query: fallbackQuery,
             countryCode: country,
-            locationContext: fallbackLocationContext);
+            locationContext: fallbackLocationContext,
+            warnings: warnings);
         logger.LogInformation(
-            "Companion places fallback search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters}",
+            "Companion places fallback search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters} country={CountryCode}",
             fallbackRequest.Query,
             fallbackRequest.Latitude.HasValue && fallbackRequest.Longitude.HasValue,
-            fallbackRequest.RadiusMeters ?? 0);
+            fallbackRequest.RadiusMeters ?? 0,
+            fallbackRequest.CountryCode ?? string.Empty);
 
         var fallbackResult = await discoveryService.DiscoverAsync(
             fallbackRequest,
@@ -689,6 +740,7 @@ public sealed class GooglePlacesCompanionSearchService(
         if (!fallbackResult.Succeeded)
         {
             warnings.Add("places_query_shape:fallback_search_failed");
+            AppendProviderFailureWarnings(fallbackResult, warnings);
             return BuildSearchResult(primaryResult, warnings, rankingContext);
         }
 
@@ -696,21 +748,50 @@ public sealed class GooglePlacesCompanionSearchService(
         return BuildSearchResult(fallbackResult, warnings, rankingContext);
     }
 
-    private CompanionNearbyDiscoveryRequest BuildNearbyRequest(
-        string? countryCode,
-        PlaceSearchLocationContext? locationContext,
-        IReadOnlyList<string> includedTypes)
+    private static CompanionPlaceDiscoveryResult BuildRequestConstructionFailure(string failureCode)
     {
-        return new CompanionNearbyDiscoveryRequest(
-            Latitude: locationContext?.Latitude ?? 0d,
-            Longitude: locationContext?.Longitude ?? 0d,
-            RadiusMeters: Math.Clamp(
-                locationContext?.RadiusMeters ?? placesOptions.DefaultSearchRadiusMeters,
-                500,
-                15_000),
-            IncludedTypes: includedTypes,
-            CountryCode: countryCode,
-            MaxCandidates: Math.Clamp(Math.Max(placesOptions.MaxCompanionCandidates, 8), 4, 12));
+        return new CompanionPlaceDiscoveryResult(
+            Succeeded: false,
+            Candidates: [],
+            Metadata: new PlaceSearchMetadata(
+                UseCase: "companion_discovery",
+                FromCache: false,
+                RequestedCandidateCount: 0,
+                ReturnedCandidateCount: 0,
+                FieldMaskVariant: "companion_discovery_v1",
+                Elapsed: TimeSpan.Zero,
+                TimedOut: false,
+                ProviderErrorCode: failureCode),
+            Warnings:
+            [
+                "places_provider_request_construction_failed",
+                $"places_provider_request_failure:{failureCode}"
+            ]);
+    }
+
+    private static void AppendProviderFailureWarnings(
+        CompanionPlaceDiscoveryResult result,
+        ISet<string> warnings)
+    {
+        if (result.Succeeded)
+        {
+            return;
+        }
+
+        var providerErrorCode = result.Metadata.ProviderErrorCode;
+        if (string.IsNullOrWhiteSpace(providerErrorCode))
+        {
+            return;
+        }
+
+        warnings.Add($"places_provider_error:{providerErrorCode.ToLowerInvariant()}");
+        if (string.Equals(
+                providerErrorCode,
+                "INVALID_ARGUMENT",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            warnings.Add("places_provider_request_rejected_invalid_argument");
+        }
     }
 
     private async Task<PlaceSearchLocationContext?> ResolveLocationBiasAsync(
@@ -763,81 +844,39 @@ public sealed class GooglePlacesCompanionSearchService(
     private static CompanionPlaceDiscoveryRequest BuildDiscoveryRequest(
         string query,
         string? countryCode,
-        PlaceSearchLocationContext? locationContext)
+        PlaceSearchLocationContext? locationContext,
+        ISet<string> warnings)
     {
+        var normalizedCountryCode = NormalizeCountryCode(countryCode);
+        if (!string.IsNullOrWhiteSpace(countryCode) && normalizedCountryCode is null)
+        {
+            warnings.Add("places_request:region_code_simplified_invalid_country_code");
+        }
+
         return new CompanionPlaceDiscoveryRequest(
             Query: query,
-            CountryCode: countryCode,
+            CountryCode: normalizedCountryCode,
             Latitude: locationContext?.Latitude,
             Longitude: locationContext?.Longitude,
             RadiusMeters: locationContext?.RadiusMeters);
     }
 
-    private static string BuildFallbackQuery(
-        string originalQuery,
-        LocalDiscoveryConstraintExtractionResult constraints,
-        PlaceSearchLocationContext? locationContext)
+    private static string? NormalizeCountryCode(string? countryCode)
     {
-        var locality = Normalize(locationContext?.TypedArea)
-                       ?? Normalize(constraints.LocalityHint)
-                       ?? Normalize(locationContext?.LocalityLabel);
-        var canonicalType = ResolveFallbackType(constraints);
-        var preferencePrefix = constraints.PreferenceHints.Any(value =>
-            string.Equals(value, "dog_friendly", StringComparison.OrdinalIgnoreCase))
-            ? "dog friendly "
-            : string.Empty;
-        var timeSuffix = constraints.TimeHints.Any(value =>
-            string.Equals(value, "open_now", StringComparison.OrdinalIgnoreCase))
-            ? " open now"
-            : string.Empty;
-        var fallback = $"{preferencePrefix}{canonicalType}{timeSuffix}".Trim();
-
-        if (!string.IsNullOrWhiteSpace(locality))
+        if (string.IsNullOrWhiteSpace(countryCode))
         {
-            fallback = $"{fallback} in {locality}";
-        }
-        else if (constraints.HasNearMeLanguage)
-        {
-            fallback = $"{fallback} nearby";
+            return null;
         }
 
-        if (string.IsNullOrWhiteSpace(fallback))
+        var normalized = countryCode.Trim().ToUpperInvariant();
+        if (normalized == "ZZ")
         {
-            fallback = originalQuery.Trim();
+            return null;
         }
 
-        return fallback.Length <= 180
-            ? fallback
-            : fallback[..180].TrimEnd();
-    }
-
-    private static string ResolveFallbackType(LocalDiscoveryConstraintExtractionResult constraints)
-    {
-        if (constraints.PlaceTypeHints.Count > 0)
-        {
-            return constraints.PlaceTypeHints[0] switch
-            {
-                "tourist_attraction" => "tourist attractions",
-                "movie_theater" => "cinema",
-                "performing_arts_theater" => "theatre",
-                "pet_friendly" => "pet friendly places",
-                _ => constraints.PlaceTypeHints[0].Replace('_', ' ')
-            };
-        }
-
-        if (constraints.AudienceHints.Any(value =>
-                string.Equals(value, "kids", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "playgrounds";
-        }
-
-        if (constraints.AudienceHints.Any(value =>
-                string.Equals(value, "family", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "family friendly attractions";
-        }
-
-        return "tourist attractions";
+        return Regex.IsMatch(normalized, "^[A-Z]{2}$", RegexOptions.CultureInvariant)
+            ? normalized
+            : null;
     }
 
     private static PlaceSearchLocationContext? BuildFallbackLocationContext(
@@ -866,44 +905,33 @@ public sealed class GooglePlacesCompanionSearchService(
         };
     }
 
-    private static void AppendQueryShapeWarnings(
-        LocalDiscoveryShapedQueryResult shapedQuery,
+    private static void AppendConstraintWarnings(
+        LocalDiscoveryConstraintExtractionResult constraints,
         ISet<string> warnings)
     {
-        foreach (var reasonCode in shapedQuery.ReasonCodes)
+        foreach (var reasonCode in constraints.ReasonCodes)
         {
             warnings.Add($"places_query_shape:{reasonCode}");
-            switch (reasonCode)
-            {
-                case "local_discovery_query_locality_applied":
-                    warnings.Add("places_query_shape:locality_bias_applied");
-                    break;
-                case "local_discovery_query_place_types_appended":
-                case "local_discovery_query_default_type_appended":
-                    warnings.Add("places_query_shape:type_hint_applied");
-                    break;
-                case "local_discovery_query_audience_appended":
-                    warnings.Add("places_query_shape:audience_hint_applied");
-                    break;
-                case "local_discovery_query_preference_appended":
-                    warnings.Add("places_query_shape:preference_hint_applied");
-                    break;
-            }
         }
 
-        if (shapedQuery.Constraints.PlaceTypeHints.Count > 0)
+        if (constraints.PlaceTypeHints.Count > 0)
         {
             warnings.Add("places_query_shape:type_hint_applied");
         }
 
-        if (shapedQuery.Constraints.AudienceHints.Count > 0)
+        if (constraints.AudienceHints.Count > 0)
         {
             warnings.Add("places_query_shape:audience_hint_applied");
         }
 
-        if (shapedQuery.Constraints.PreferenceHints.Count > 0)
+        if (constraints.PreferenceHints.Count > 0)
         {
             warnings.Add("places_query_shape:preference_hint_applied");
+        }
+
+        if (constraints.HasExplicitLocality)
+        {
+            warnings.Add("places_query_shape:locality_hint_present");
         }
     }
 
