@@ -190,6 +190,9 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IMerchantPlaceLookupService, MerchantPlaceLookupService>();
         services.AddScoped<ILocalDiscoveryConstraintExtractor, LocalDiscoveryConstraintExtractor>();
         services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
+        services.AddScoped<IRealWorldDeterministicFallbackBuilder, RealWorldDeterministicFallbackBuilder>();
+        services.AddScoped<IRealWorldFinancialGuardrailPolicy, RealWorldFinancialGuardrailPolicy>();
+        services.AddScoped<IRealWorldInterpretationValidationPolicy, RealWorldInterpretationValidationPolicy>();
         services.AddScoped<IRealWorldIntentInterpreterPromptBuilder, RealWorldIntentInterpreterPromptBuilder>();
         services.AddScoped<IRealWorldIntentInterpreter, RealWorldIntentInterpreter>();
         services.AddScoped<IExploratoryDomainSelectionPolicy, ExploratoryDomainSelectionPolicy>();

@@ -60,6 +60,12 @@ public enum RealWorldFailureScenario
     ExploratoryPartialResults = 7
 }
 
+public enum RealWorldInterpretationSource
+{
+    AiPrimary = 0,
+    DeterministicFallback = 1
+}
+
 public sealed record RealWorldIntentInterpretation(
     RealWorldIntentFamily IntentFamily,
     RealWorldExecutionMode RecommendedExecutionMode,
@@ -74,7 +80,13 @@ public sealed record RealWorldIntentInterpretation(
     IReadOnlyList<RealWorldDiscoveryDomain> CandidateDomains,
     string? ClarificationPrompt,
     IReadOnlyList<string> ReasonCodes,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public IReadOnlyList<string> CandidateConcepts { get; init; } = [];
+
+    public RealWorldInterpretationSource InterpretationSource { get; init; } =
+        RealWorldInterpretationSource.DeterministicFallback;
+}
 
 public sealed record RealWorldExecutionPlan(
     RealWorldExecutionMode Mode,
@@ -124,6 +136,32 @@ public interface IRealWorldIntentInterpreter
         CompanionLocationGrounding grounding,
         LocalDiscoveryConstraintExtractionResult localDiscovery,
         CancellationToken cancellationToken);
+}
+
+public interface IRealWorldDeterministicFallbackBuilder
+{
+    RealWorldIntentInterpretation BuildSeed(
+        string userMessage,
+        LocalDiscoveryConstraintExtractionResult localDiscovery);
+
+    RealWorldIntentInterpretation BuildFallback(
+        string userMessage,
+        LocalDiscoveryConstraintExtractionResult localDiscovery);
+}
+
+public interface IRealWorldFinancialGuardrailPolicy
+{
+    bool ShouldForceFinancialGuidance(string userMessage, out string reasonCode);
+}
+
+public interface IRealWorldInterpretationValidationPolicy
+{
+    RealWorldIntentInterpretation ValidateAndNormalize(
+        string userMessage,
+        CompanionLocationGrounding grounding,
+        LocalDiscoveryConstraintExtractionResult localDiscovery,
+        RealWorldIntentInterpretation aiInterpretation,
+        RealWorldIntentInterpretation deterministicFallback);
 }
 
 public interface IRealWorldExecutionModePlanner

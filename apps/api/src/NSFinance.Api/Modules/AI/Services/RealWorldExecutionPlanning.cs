@@ -109,6 +109,23 @@ public sealed class RealWorldExecutionModePlanner(
                 ReasonCodes: reasonCodes.ToArray());
         }
 
+        if (interpretation.InterpretationSource == RealWorldInterpretationSource.AiPrimary
+            && interpretation.Confidence < 0.45d)
+        {
+            reasonCodes.Add("execution_mode:low_confidence_clarify");
+            return new RealWorldExecutionPlan(
+                Mode: RealWorldExecutionMode.ClarifyLight,
+                IntentFamily: interpretation.IntentFamily,
+                ShouldHandoffToCompanion: true,
+                ShouldUsePlaces: false,
+                UseDirectPlacesExecution: false,
+                RequiresLocationGrounding: false,
+                SelectedDomains: [],
+                ClarificationPrompt: interpretation.ClarificationPrompt
+                                     ?? "I can help with nearby places or financial guidance. Tell me which one you want.",
+                ReasonCodes: reasonCodes.ToArray());
+        }
+
         if (interpretation.ClarificationNeeded
             || interpretation.RecommendedExecutionMode == RealWorldExecutionMode.ClarifyLight)
         {

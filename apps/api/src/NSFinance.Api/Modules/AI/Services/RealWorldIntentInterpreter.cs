@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace NSFinance.Api.Modules.AI.Services;
@@ -7,7 +7,7 @@ public sealed record RealWorldInterpreterPromptInput(
     string UserMessage,
     CompanionLocationGrounding Grounding,
     LocalDiscoveryConstraintExtractionResult LocalDiscovery,
-    RealWorldIntentInterpretation DeterministicInterpretation);
+    RealWorldIntentInterpretation DeterministicSeed);
 
 public interface IRealWorldIntentInterpreterPromptBuilder
 {
@@ -22,12 +22,22 @@ public sealed class RealWorldIntentInterpreterPromptBuilder : IRealWorldIntentIn
     {
         return
             """
-            You are an intent interpreter for a bounded real-world assistance planner.
-            Return STRICT JSON only.
-            Do not include prose outside JSON.
-            You must choose only from allowed enums.
-            You must not invent external facts.
-            If user goal is financial planning/advice, do not force place discovery.
+            You are the primary semantic intent interpreter for a bounded real-world assistant.
+            Your task is interpretation only, not tool execution and not provider query generation.
+
+            Rules:
+            1) Return STRICT JSON only. No prose outside JSON.
+            2) Infer user goal from full sentence meaning, not isolated keywords.
+            3) Distinguish:
+               - financial planning/guidance
+               - place/service discovery
+               - commerce/vendor discovery
+               - exploratory "what can I do" assistance
+            4) Product mentions alone do NOT imply vendor lookup.
+               Example: "How can I save for an Xbox?" is financial guidance, not places.
+            5) For exploratory prompts, recommend diversified domains.
+            6) Use only allowed enums and controlled canonical concept vocabulary.
+            7) Do not invent facts.
             """;
     }
 
@@ -61,18 +71,19 @@ public sealed class RealWorldIntentInterpreterPromptBuilder : IRealWorldIntentIn
             },
             deterministicSeed = new
             {
-                intentFamily = input.DeterministicInterpretation.IntentFamily.ToString(),
-                executionMode = input.DeterministicInterpretation.RecommendedExecutionMode.ToString(),
-                input.DeterministicInterpretation.PlacesApplicable,
-                input.DeterministicInterpretation.FinancialRelated,
-                input.DeterministicInterpretation.RequiresLocation,
-                input.DeterministicInterpretation.Exploratory,
-                input.DeterministicInterpretation.ClarificationNeeded,
-                input.DeterministicInterpretation.Confidence,
-                candidateDomains = input.DeterministicInterpretation.CandidateDomains
-                    .Select(x => x.ToString())
+                intentFamily = input.DeterministicSeed.IntentFamily.ToString(),
+                executionMode = input.DeterministicSeed.RecommendedExecutionMode.ToString(),
+                input.DeterministicSeed.PlacesApplicable,
+                input.DeterministicSeed.FinancialRelated,
+                input.DeterministicSeed.RequiresLocation,
+                input.DeterministicSeed.Exploratory,
+                input.DeterministicSeed.ClarificationNeeded,
+                input.DeterministicSeed.Confidence,
+                candidateDomains = input.DeterministicSeed.CandidateDomains
+                    .Select(static x => x.ToString())
                     .ToArray(),
-                reasonCodes = input.DeterministicInterpretation.ReasonCodes
+                candidateConcepts = input.DeterministicSeed.CandidateConcepts,
+                reasonCodes = input.DeterministicSeed.ReasonCodes
             }
         };
 
@@ -125,6 +136,30 @@ public sealed class RealWorldIntentInterpreterPromptBuilder : IRealWorldIntentIn
               - ExploratoryEveningActivity
               - ExploratoryFamilyActivity
 
+              Allowed candidateConcepts values (canonical snake_case):
+              - cafe
+              - restaurant
+              - takeaway
+              - pub_bar
+              - movie_theater
+              - park_walk
+              - playground
+              - pharmacy
+              - petrol_station
+              - gym
+              - electronics_retail
+              - convenience_store
+              - grocery
+              - shopping_general
+              - outdoor_activity
+              - entertainment_general
+              - nightlife_general
+              - food_drink_general
+              - service_general
+              - commerce_general
+              - exploratory_evening_activity
+              - exploratory_family_activity
+
               Return strict JSON with exactly:
               {
                 "intentFamily": "...",
@@ -136,6 +171,7 @@ public sealed class RealWorldIntentInterpreterPromptBuilder : IRealWorldIntentIn
                 "clarificationNeeded": false,
                 "confidence": 0.0,
                 "candidateDomains": ["..."],
+                "candidateConcepts": ["..."],
                 "clarificationPrompt": "string|null",
                 "reasonCodes": ["..."]
               }
@@ -156,16 +192,51 @@ public sealed class RealWorldIntentInterpreterPromptBuilder : IRealWorldIntentIn
     }
 }
 
-public sealed class RealWorldIntentInterpreter(
-    IAIModelRouter modelRouter,
-    IAIClient aiClient,
-    IRealWorldIntentInterpreterPromptBuilder promptBuilder,
-    ILogger<RealWorldIntentInterpreter> logger) : IRealWorldIntentInterpreter
+public sealed class RealWorldIntentInterpreter : IRealWorldIntentInterpreter
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
+
+    private readonly IAIModelRouter modelRouter;
+    private readonly IAIClient aiClient;
+    private readonly IRealWorldIntentInterpreterPromptBuilder promptBuilder;
+    private readonly IRealWorldDeterministicFallbackBuilder deterministicFallbackBuilder;
+    private readonly IRealWorldInterpretationValidationPolicy validationPolicy;
+    private readonly ILogger<RealWorldIntentInterpreter> logger;
+
+    public RealWorldIntentInterpreter(
+        IAIModelRouter modelRouter,
+        IAIClient aiClient,
+        IRealWorldIntentInterpreterPromptBuilder promptBuilder,
+        ILogger<RealWorldIntentInterpreter> logger)
+        : this(
+            modelRouter,
+            aiClient,
+            promptBuilder,
+            new RealWorldDeterministicFallbackBuilder(),
+            new RealWorldInterpretationValidationPolicy(new RealWorldFinancialGuardrailPolicy()),
+            logger)
+    {
+    }
+
+    public RealWorldIntentInterpreter(
+        IAIModelRouter modelRouter,
+        IAIClient aiClient,
+        IRealWorldIntentInterpreterPromptBuilder promptBuilder,
+        IRealWorldDeterministicFallbackBuilder deterministicFallbackBuilder,
+        IRealWorldInterpretationValidationPolicy validationPolicy,
+        ILogger<RealWorldIntentInterpreter> logger)
+    {
+        this.modelRouter = modelRouter ?? throw new ArgumentNullException(nameof(modelRouter));
+        this.aiClient = aiClient ?? throw new ArgumentNullException(nameof(aiClient));
+        this.promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
+        this.deterministicFallbackBuilder = deterministicFallbackBuilder
+                                            ?? throw new ArgumentNullException(nameof(deterministicFallbackBuilder));
+        this.validationPolicy = validationPolicy ?? throw new ArgumentNullException(nameof(validationPolicy));
+        this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
 
     public async Task<RealWorldIntentInterpretation> InterpretAsync(
         UserChatRequest request,
@@ -175,42 +246,70 @@ public sealed class RealWorldIntentInterpreter(
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var deterministic = BuildDeterministicInterpretation(request.UserMessage, localDiscovery);
-        var warnings = new HashSet<string>(deterministic.Warnings, StringComparer.Ordinal);
-        var aiInterpretation = await TryInterpretWithAiAsync(
+        var deterministicSeed = deterministicFallbackBuilder.BuildSeed(request.UserMessage, localDiscovery);
+        var deterministicFallback = deterministicFallbackBuilder.BuildFallback(request.UserMessage, localDiscovery);
+        var (aiInterpretation, aiFailureReasonCode) = await TryInterpretWithAiAsync(
             request,
             grounding,
             localDiscovery,
-            deterministic,
+            deterministicSeed,
             cancellationToken);
-
         if (aiInterpretation is null)
         {
-            warnings.Add("real_world_interpreter_ai_unavailable_or_invalid");
-            return deterministic with
+            var warnings = new HashSet<string>(deterministicFallback.Warnings, StringComparer.Ordinal)
             {
-                Warnings = warnings.ToArray()
+                "real_world_interpreter_deterministic_fallback_used"
+            };
+            var reasonCodes = new HashSet<string>(deterministicFallback.ReasonCodes, StringComparer.Ordinal)
+            {
+                "real_world_interpreter_deterministic_fallback_used"
+            };
+            if (!string.IsNullOrWhiteSpace(aiFailureReasonCode))
+            {
+                warnings.Add(aiFailureReasonCode!);
+                reasonCodes.Add(aiFailureReasonCode!);
+            }
+
+            return deterministicFallback with
+            {
+                ReasonCodes = reasonCodes.ToArray(),
+                Warnings = warnings.ToArray(),
+                InterpretationSource = RealWorldInterpretationSource.DeterministicFallback
             };
         }
 
-        var merged = MergeDeterministicAndAi(
+        var normalized = validationPolicy.ValidateAndNormalize(
             request.UserMessage,
-            deterministic,
+            grounding,
+            localDiscovery,
             aiInterpretation,
-            localDiscovery);
-        warnings.UnionWith(merged.Warnings);
-        return merged with
+            deterministicFallback);
+        var normalizedWarnings = new HashSet<string>(normalized.Warnings, StringComparer.Ordinal);
+        var normalizedReasonCodes = new HashSet<string>(normalized.ReasonCodes, StringComparer.Ordinal)
         {
-            Warnings = warnings.ToArray()
+            "real_world_interpreter_ai_primary_used"
+        };
+        if (!string.IsNullOrWhiteSpace(aiFailureReasonCode))
+        {
+            normalizedWarnings.Add(aiFailureReasonCode!);
+            normalizedReasonCodes.Add(aiFailureReasonCode!);
+        }
+
+        return normalized with
+        {
+            Warnings = normalizedWarnings.ToArray(),
+            ReasonCodes = normalizedReasonCodes.ToArray(),
+            InterpretationSource = RealWorldInterpretationSource.AiPrimary
         };
     }
 
-    private async Task<RealWorldIntentInterpretation?> TryInterpretWithAiAsync(
-        UserChatRequest request,
-        CompanionLocationGrounding grounding,
-        LocalDiscoveryConstraintExtractionResult localDiscovery,
-        RealWorldIntentInterpretation deterministic,
-        CancellationToken cancellationToken)
+    private async Task<(RealWorldIntentInterpretation? Interpretation, string? FailureReasonCode)>
+        TryInterpretWithAiAsync(
+            UserChatRequest request,
+            CompanionLocationGrounding grounding,
+            LocalDiscoveryConstraintExtractionResult localDiscovery,
+            RealWorldIntentInterpretation deterministicSeed,
+            CancellationToken cancellationToken)
     {
         try
         {
@@ -222,7 +321,7 @@ public sealed class RealWorldIntentInterpreter(
                 request.UserMessage,
                 grounding,
                 localDiscovery,
-                deterministic);
+                deterministicSeed);
             var aiRequest = AIRequest.Create(
                 taskType: AITaskType.UserChatSimple,
                 preferredModelClass: route.ModelClass,
@@ -234,7 +333,7 @@ public sealed class RealWorldIntentInterpreter(
                 systemInstructions: promptBuilder.BuildSystemInstructions(),
                 structuredOutputSchemaName: "real_world_intent_interpretation_v1",
                 temperature: 0.1d,
-                maxOutputTokens: 280,
+                maxOutputTokens: 320,
                 metadata: request.Metadata);
 
             var response = await aiClient.SendAsync(aiRequest, route, cancellationToken);
@@ -244,21 +343,27 @@ public sealed class RealWorldIntentInterpreter(
                     "Real-world interpreter AI call failed correlationId={CorrelationId} reason={Reason}",
                     request.CorrelationId,
                     response.FailureReason ?? "unknown");
-                return null;
+                return (null, "real_world_interpreter_ai_call_failed");
             }
 
             var payload = response.StructuredPayloadJson ?? response.Content;
             if (string.IsNullOrWhiteSpace(payload))
             {
-                return null;
+                return (null, "real_world_interpreter_invalid_ai_payload");
             }
 
             var parsed = JsonSerializer.Deserialize<RealWorldInterpreterAiResponse>(payload, JsonOptions);
-            return NormalizeAiResponse(parsed);
+            var normalized = NormalizeAiResponse(parsed);
+            if (normalized is null)
+            {
+                return (null, "real_world_interpreter_invalid_ai_payload");
+            }
+
+            return (normalized, null);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return null;
+            return (null, "real_world_interpreter_ai_transient_cancellation");
         }
         catch (Exception ex)
         {
@@ -266,223 +371,8 @@ public sealed class RealWorldIntentInterpreter(
                 ex,
                 "Real-world interpreter AI parsing failed correlationId={CorrelationId}",
                 request.CorrelationId);
-            return null;
+            return (null, "real_world_interpreter_invalid_ai_payload");
         }
-    }
-
-    private static RealWorldIntentInterpretation MergeDeterministicAndAi(
-        string userMessage,
-        RealWorldIntentInterpretation deterministic,
-        RealWorldIntentInterpretation ai,
-        LocalDiscoveryConstraintExtractionResult localDiscovery)
-    {
-        var reasonCodes = new HashSet<string>(deterministic.ReasonCodes, StringComparer.Ordinal);
-        reasonCodes.UnionWith(ai.ReasonCodes);
-        reasonCodes.Add("real_world_interpreter_ai_merge_applied");
-
-        var warnings = new HashSet<string>(deterministic.Warnings, StringComparer.Ordinal);
-        warnings.UnionWith(ai.Warnings);
-
-        var financeGuardrail = IsFinancePlanningQuestion(userMessage) && !IsExplicitVendorLookup(userMessage);
-        if (financeGuardrail)
-        {
-            reasonCodes.Add("real_world_financial_guardrail_enforced");
-            return deterministic with
-            {
-                IntentFamily = RealWorldIntentFamily.FinancialGuidance,
-                RecommendedExecutionMode = RealWorldExecutionMode.FinancialGuidanceOnly,
-                PlacesApplicable = false,
-                FinancialRelated = true,
-                CandidateDomains = [],
-                ReasonCodes = reasonCodes.ToArray(),
-                Warnings = warnings.ToArray()
-            };
-        }
-
-        var shouldUseAiInterpretation = ai.Confidence >= Math.Max(0.55d, deterministic.Confidence + 0.1d);
-        var mergedDomains = deterministic.CandidateDomains
-            .Concat(ai.CandidateDomains)
-            .Distinct()
-            .Take(6)
-            .ToArray();
-
-        if (!shouldUseAiInterpretation)
-        {
-            return deterministic with
-            {
-                CandidateDomains = mergedDomains,
-                ReasonCodes = reasonCodes.ToArray(),
-                Warnings = warnings.ToArray()
-            };
-        }
-
-        var resolved = ai with
-        {
-            CandidateDomains = mergedDomains,
-            HasNearMeLanguage = deterministic.HasNearMeLanguage || ai.HasNearMeLanguage,
-            HasExplicitLocality = deterministic.HasExplicitLocality || localDiscovery.HasExplicitLocality,
-            Confidence = Math.Round(Math.Clamp(Math.Max(ai.Confidence, deterministic.Confidence), 0d, 0.98d), 4),
-            ReasonCodes = reasonCodes.ToArray(),
-            Warnings = warnings.ToArray()
-        };
-
-        if (resolved.ClarificationNeeded && resolved.RecommendedExecutionMode != RealWorldExecutionMode.ClarifyLight)
-        {
-            resolved = resolved with
-            {
-                RecommendedExecutionMode = RealWorldExecutionMode.ClarifyLight,
-                ReasonCodes = resolved.ReasonCodes
-                    .Concat(["real_world_interpreter_clarify_mode_enforced"])
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray()
-            };
-        }
-
-        return resolved;
-    }
-
-    private static RealWorldIntentInterpretation BuildDeterministicInterpretation(
-        string userMessage,
-        LocalDiscoveryConstraintExtractionResult localDiscovery)
-    {
-        var normalized = Normalize(userMessage);
-        var reasonCodes = new HashSet<string>(StringComparer.Ordinal);
-        var warnings = new HashSet<string>(StringComparer.Ordinal);
-        var domains = ExtractDomains(normalized);
-
-        var nearMe = localDiscovery.HasNearMeLanguage || CompanionLocationGroundingParser.RequiresCurrentLocation(userMessage);
-        var explicitLocality = localDiscovery.HasExplicitLocality;
-        var financePlanning = IsFinancePlanningQuestion(normalized);
-        var vendorLookup = IsExplicitVendorLookup(normalized);
-        var exploratory = IsExploratoryPrompt(normalized);
-        var serviceFocused = IsServicePrompt(normalized);
-        var themedFoodDrink = IsFoodDrinkTheme(normalized) || IsOutdoorTheme(normalized);
-
-        RealWorldIntentFamily family;
-        RealWorldExecutionMode mode;
-        var placesApplicable = false;
-        var financialRelated = financePlanning;
-        var clarificationNeeded = false;
-        double confidence;
-
-        if (financePlanning && !vendorLookup)
-        {
-            family = RealWorldIntentFamily.FinancialGuidance;
-            mode = RealWorldExecutionMode.FinancialGuidanceOnly;
-            confidence = 0.88d;
-            reasonCodes.Add("real_world_financial_guardrail_triggered");
-            domains.Clear();
-        }
-        else if (exploratory)
-        {
-            family = RealWorldIntentFamily.ExploratoryAssistance;
-            mode = RealWorldExecutionMode.ExploratoryMultiDomainSearch;
-            placesApplicable = true;
-            confidence = 0.82d;
-            reasonCodes.Add("real_world_exploratory_prompt_detected");
-            if (domains.Count == 0)
-            {
-                domains.Add(RealWorldDiscoveryDomain.ExploratoryEveningActivity);
-            }
-        }
-        else if (vendorLookup)
-        {
-            var commerceDiscovery = IsCommerceDiscoveryPrompt(normalized, domains);
-            family = commerceDiscovery
-                ? RealWorldIntentFamily.CommerceDiscovery
-                : RealWorldIntentFamily.PlaceDiscovery;
-            mode = commerceDiscovery && themedFoodDrink
-                ? RealWorldExecutionMode.FocusedThemeSearch
-                : RealWorldExecutionMode.FocusedPlaceSearch;
-            placesApplicable = true;
-            confidence = 0.84d;
-            reasonCodes.Add(
-                commerceDiscovery
-                    ? "real_world_commerce_lookup_detected"
-                    : "real_world_vendor_lookup_mapped_to_place_discovery");
-            if (domains.Count == 0)
-            {
-                domains.Add(
-                    commerceDiscovery
-                        ? RealWorldDiscoveryDomain.CommerceGeneral
-                        : RealWorldDiscoveryDomain.EntertainmentGeneral);
-            }
-        }
-        else if (serviceFocused)
-        {
-            family = RealWorldIntentFamily.ServiceDiscovery;
-            mode = RealWorldExecutionMode.FocusedPlaceSearch;
-            placesApplicable = true;
-            confidence = 0.78d;
-            reasonCodes.Add("real_world_service_discovery_detected");
-            if (domains.Count == 0)
-            {
-                domains.Add(RealWorldDiscoveryDomain.ServiceGeneral);
-            }
-        }
-        else if (localDiscovery.IsLocalDiscoveryCandidate || domains.Count > 0)
-        {
-            family = RealWorldIntentFamily.PlaceDiscovery;
-            mode = themedFoodDrink
-                ? RealWorldExecutionMode.FocusedThemeSearch
-                : RealWorldExecutionMode.FocusedPlaceSearch;
-            placesApplicable = true;
-            confidence = Math.Max(0.68d, localDiscovery.Confidence);
-            reasonCodes.Add("real_world_place_discovery_detected");
-            if (domains.Count == 0)
-            {
-                domains.Add(RealWorldDiscoveryDomain.EntertainmentGeneral);
-            }
-        }
-        else
-        {
-            family = RealWorldIntentFamily.Ambiguous;
-            mode = RealWorldExecutionMode.ClarifyLight;
-            placesApplicable = false;
-            clarificationNeeded = true;
-            confidence = 0.44d;
-            reasonCodes.Add("real_world_ambiguous_prompt");
-            warnings.Add("real_world_interpreter_low_confidence");
-        }
-
-        var requiresLocation = placesApplicable && (nearMe || !explicitLocality);
-        if (nearMe)
-        {
-            reasonCodes.Add("real_world_near_me_detected");
-        }
-
-        if (explicitLocality)
-        {
-            reasonCodes.Add("real_world_explicit_locality_detected");
-        }
-
-        if (themedFoodDrink && mode == RealWorldExecutionMode.FocusedThemeSearch)
-        {
-            reasonCodes.Add("real_world_themed_mode_selected");
-        }
-
-        if (mode == RealWorldExecutionMode.ClarifyLight && string.IsNullOrWhiteSpace(userMessage))
-        {
-            warnings.Add("real_world_empty_prompt");
-        }
-
-        return new RealWorldIntentInterpretation(
-            IntentFamily: family,
-            RecommendedExecutionMode: mode,
-            PlacesApplicable: placesApplicable,
-            FinancialRelated: financialRelated,
-            RequiresLocation: requiresLocation,
-            Exploratory: exploratory,
-            ClarificationNeeded: clarificationNeeded,
-            HasNearMeLanguage: nearMe,
-            HasExplicitLocality: explicitLocality,
-            Confidence: Math.Round(Math.Clamp(confidence, 0d, 0.98d), 4),
-            CandidateDomains: domains.Distinct().Take(6).ToArray(),
-            ClarificationPrompt: clarificationNeeded
-                ? "Do you want nearby places, financial guidance, or a specific area to search?"
-                : null,
-            ReasonCodes: reasonCodes.ToArray(),
-            Warnings: warnings.ToArray());
     }
 
     private static RealWorldIntentInterpretation? NormalizeAiResponse(RealWorldInterpreterAiResponse? ai)
@@ -500,10 +390,16 @@ public sealed class RealWorldIntentInterpreter(
 
         var domains = (ai.CandidateDomains ?? [])
             .Select(TryParseDomain)
-            .Where(domain => domain.HasValue)
-            .Select(domain => domain!.Value)
+            .Where(static domain => domain.HasValue)
+            .Select(static domain => domain!.Value)
             .Distinct()
-            .Take(6)
+            .Take(8)
+            .ToArray();
+        var concepts = (ai.CandidateConcepts ?? [])
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(RealWorldDeterministicFallbackBuilder.NormalizeConceptToken)
+            .Distinct(StringComparer.Ordinal)
+            .Take(10)
             .ToArray();
         var confidence = Math.Round(Math.Clamp(ai.Confidence ?? 0.5d, 0d, 0.98d), 4);
 
@@ -520,8 +416,15 @@ public sealed class RealWorldIntentInterpreter(
             Confidence: confidence,
             CandidateDomains: domains,
             ClarificationPrompt: ai.ClarificationPrompt,
-            ReasonCodes: (ai.ReasonCodes ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToArray(),
-            Warnings: []);
+            ReasonCodes: (ai.ReasonCodes ?? [])
+                .Where(static x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray(),
+            Warnings: [])
+        {
+            CandidateConcepts = concepts,
+            InterpretationSource = RealWorldInterpretationSource.AiPrimary
+        };
     }
 
     private static bool TryParseIntentFamily(string? value, out RealWorldIntentFamily family)
@@ -549,252 +452,9 @@ public sealed class RealWorldIntentInterpreter(
             "food_drink_general" => RealWorldDiscoveryDomain.FoodDrinkGeneral,
             "service_general" => RealWorldDiscoveryDomain.ServiceGeneral,
             "commerce_general" => RealWorldDiscoveryDomain.CommerceGeneral,
+            "park_walk" => RealWorldDiscoveryDomain.ParkWalk,
             _ => null
         };
-    }
-
-    private static List<RealWorldDiscoveryDomain> ExtractDomains(string normalized)
-    {
-        var domains = new List<RealWorldDiscoveryDomain>(6);
-
-        void Add(RealWorldDiscoveryDomain domain)
-        {
-            if (!domains.Contains(domain))
-            {
-                domains.Add(domain);
-            }
-        }
-
-        if (ContainsAny(normalized, "coffee", "cafe", "cafes"))
-        {
-            Add(RealWorldDiscoveryDomain.Cafe);
-        }
-
-        if (ContainsAny(normalized, "restaurant", "restaurants", "dine", "dining", "eat"))
-        {
-            Add(RealWorldDiscoveryDomain.Restaurant);
-        }
-
-        if (ContainsAny(normalized, "takeaway", "takeaways", "take out", "delivery"))
-        {
-            Add(RealWorldDiscoveryDomain.Takeaway);
-        }
-
-        if (ContainsAny(normalized, "pub", "pubs", "bar", "bars", "drinks", "drinking"))
-        {
-            Add(RealWorldDiscoveryDomain.PubBar);
-        }
-
-        if (ContainsAny(normalized, "cinema", "cinemas", "movie", "movies", "theater", "theatre"))
-        {
-            Add(RealWorldDiscoveryDomain.MovieTheater);
-        }
-
-        if (ContainsAny(normalized, "park", "parks", "walk", "walking", "hike", "long walks"))
-        {
-            Add(RealWorldDiscoveryDomain.ParkWalk);
-            Add(RealWorldDiscoveryDomain.OutdoorActivity);
-        }
-
-        if (ContainsAny(normalized, "playground", "playgrounds"))
-        {
-            Add(RealWorldDiscoveryDomain.Playground);
-        }
-
-        if (ContainsAny(normalized, "pharmacy", "chemist"))
-        {
-            Add(RealWorldDiscoveryDomain.Pharmacy);
-            Add(RealWorldDiscoveryDomain.ServiceGeneral);
-        }
-
-        if (ContainsAny(normalized, "petrol", "gas station", "fuel"))
-        {
-            Add(RealWorldDiscoveryDomain.PetrolStation);
-            Add(RealWorldDiscoveryDomain.ServiceGeneral);
-        }
-
-        if (ContainsAny(normalized, "gym", "fitness"))
-        {
-            Add(RealWorldDiscoveryDomain.Gym);
-            Add(RealWorldDiscoveryDomain.ServiceGeneral);
-        }
-
-        if (ContainsAny(normalized, "xbox", "ps5", "playstation", "console", "laptop", "electronics"))
-        {
-            Add(RealWorldDiscoveryDomain.ElectronicsRetail);
-            Add(RealWorldDiscoveryDomain.CommerceGeneral);
-        }
-
-        if (ContainsAny(normalized, "red bull", "energy drink"))
-        {
-            Add(RealWorldDiscoveryDomain.ConvenienceStore);
-            Add(RealWorldDiscoveryDomain.Grocery);
-        }
-
-        if (ContainsAny(normalized, "fish and chips", "chips"))
-        {
-            Add(RealWorldDiscoveryDomain.Takeaway);
-            Add(RealWorldDiscoveryDomain.Restaurant);
-        }
-
-        if (ContainsAny(normalized, "shopping", "mall", "shop for", "buy ", "purchase "))
-        {
-            Add(RealWorldDiscoveryDomain.ShoppingGeneral);
-            Add(RealWorldDiscoveryDomain.CommerceGeneral);
-        }
-
-        if (ContainsAny(normalized, "fun", "things to do", "visit", "where can i go"))
-        {
-            Add(RealWorldDiscoveryDomain.EntertainmentGeneral);
-        }
-
-        if (ContainsAny(normalized, "tonight", "this evening", "evening"))
-        {
-            Add(RealWorldDiscoveryDomain.ExploratoryEveningActivity);
-        }
-
-        if (ContainsAny(normalized, "family", "kids", "children"))
-        {
-            Add(RealWorldDiscoveryDomain.ExploratoryFamilyActivity);
-        }
-
-        return domains;
-    }
-
-    private static bool IsServicePrompt(string normalized)
-    {
-        return ContainsAny(normalized, "pharmacy", "chemist", "petrol", "fuel", "gas station", "gym", "fitness");
-    }
-
-    private static bool IsExploratoryPrompt(string normalized)
-    {
-        return ContainsAny(
-            normalized,
-            "what can i do",
-            "what should i do",
-            "something fun",
-            "somewhere nice",
-            "where should i go",
-            "places to visit",
-            "things to do");
-    }
-
-    private static bool IsFoodDrinkTheme(string normalized)
-    {
-        return ContainsAny(normalized, "what should i eat", "something to eat", "something to drink", "food", "drink");
-    }
-
-    private static bool IsOutdoorTheme(string normalized)
-    {
-        return ContainsAny(normalized, "long walk", "long walks", "walk in", "good places to walk");
-    }
-
-    private static bool IsFinancePlanningQuestion(string value)
-    {
-        return ContainsAny(
-            value,
-            "save for",
-            "save up",
-            "can i afford",
-            "how can i afford",
-            "budget for",
-            "cut my expenses",
-            "reduce my spending",
-            "what can i cut",
-            "how much can i cut",
-            "monthly budget",
-            "spending plan",
-            "afford to buy");
-    }
-
-    private static bool IsExplicitVendorLookup(string value)
-    {
-        var hasStrongVendorPhrase = ContainsAny(
-            value,
-            "where can i buy",
-            "where can i get",
-            "places that sell",
-            "shops that sell",
-            "stores that sell");
-        if (hasStrongVendorPhrase)
-        {
-            return true;
-        }
-
-        var hasDiscoveryVerb = ContainsAny(
-            value,
-            "find ",
-            "show me",
-            "suggest",
-            "recommend",
-            "where should i go",
-            "places to go",
-            "places to visit");
-        var hasPlaceNounOrSignal = ContainsAny(
-            value,
-            "place",
-            "places",
-            "shop",
-            "shops",
-            "store",
-            "stores",
-            "restaurant",
-            "cafe",
-            "pub",
-            "bar",
-            "cinema",
-            "museum",
-            "park",
-            "pharmacy",
-            "petrol",
-            "near me",
-            "nearby",
-            "around here");
-
-        return hasDiscoveryVerb && hasPlaceNounOrSignal;
-    }
-
-    private static bool IsCommerceDiscoveryPrompt(
-        string normalized,
-        IReadOnlyCollection<RealWorldDiscoveryDomain> domains)
-    {
-        if (ContainsAny(
-                normalized,
-                "buy ",
-                "purchase ",
-                "places that sell",
-                "shops that sell",
-                "stores that sell",
-                "shop for"))
-        {
-            return true;
-        }
-
-        if (ContainsAny(normalized, "xbox", "ps5", "playstation", "laptop", "electronics", "red bull"))
-        {
-            return true;
-        }
-
-        return domains.Contains(RealWorldDiscoveryDomain.ElectronicsRetail)
-               || domains.Contains(RealWorldDiscoveryDomain.CommerceGeneral)
-               || domains.Contains(RealWorldDiscoveryDomain.ShoppingGeneral);
-    }
-
-    private static bool ContainsAny(string source, params string[] values)
-    {
-        return values.Any(value => source.Contains(value, StringComparison.Ordinal));
-    }
-
-    private static string Normalize(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        var cleaned = value.Trim().ToLowerInvariant();
-        cleaned = Regex.Replace(cleaned, @"[^\p{L}\p{N}\s'\-]", " ");
-        return Regex.Replace(cleaned, "\\s+", " ").Trim();
     }
 
     private sealed record RealWorldInterpreterAiResponse(
@@ -807,7 +467,7 @@ public sealed class RealWorldIntentInterpreter(
         bool? ClarificationNeeded,
         double? Confidence,
         IReadOnlyList<string>? CandidateDomains,
+        IReadOnlyList<string>? CandidateConcepts,
         string? ClarificationPrompt,
         IReadOnlyList<string>? ReasonCodes);
 }
-

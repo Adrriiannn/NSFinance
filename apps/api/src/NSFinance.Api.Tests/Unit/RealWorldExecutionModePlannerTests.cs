@@ -152,4 +152,54 @@ public sealed class RealWorldExecutionModePlannerTests
         Assert.True(plan.UseDirectPlacesExecution);
         Assert.InRange(plan.SelectedDomains.Count, 1, 4);
     }
+
+    [Fact]
+    public void Plan_AiPrimaryLowConfidence_UsesClarifyLightTrustGuard()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            RecommendedExecutionMode: RealWorldExecutionMode.FocusedPlaceSearch,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: true,
+            Exploratory: false,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: true,
+            HasExplicitLocality: false,
+            Confidence: 0.30d,
+            CandidateDomains: [RealWorldDiscoveryDomain.Cafe],
+            ClarificationPrompt: null,
+            ReasonCodes: ["test"],
+            Warnings: [])
+        {
+            InterpretationSource = RealWorldInterpretationSource.AiPrimary
+        };
+
+        var plan = planner.Plan(
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: null,
+                Latitude: null,
+                Longitude: null,
+                RadiusMeters: null,
+                TypedArea: null,
+                LocalityLabel: null,
+                AccuracyBucket: null,
+                CapturedAtUtc: null),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.60d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: []));
+
+        Assert.Equal(RealWorldExecutionMode.ClarifyLight, plan.Mode);
+        Assert.False(plan.ShouldUsePlaces);
+        Assert.Contains("execution_mode:low_confidence_clarify", plan.ReasonCodes);
+    }
 }

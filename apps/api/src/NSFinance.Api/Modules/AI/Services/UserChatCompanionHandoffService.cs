@@ -505,6 +505,7 @@ public sealed class UserChatCompanionHandoffService(
             $"real_world_intent_family:{interpretation.IntentFamily.ToString().ToLowerInvariant()}",
             $"real_world_execution_mode:{plan.Mode.ToString().ToLowerInvariant()}",
             $"real_world_confidence:{interpretation.Confidence:0.##}",
+            $"real_world_interpreter_source:{interpretation.InterpretationSource.ToString().ToLowerInvariant()}",
             ResolveGroundingSourceWarning(grounding, localDiscovery)
         };
 
