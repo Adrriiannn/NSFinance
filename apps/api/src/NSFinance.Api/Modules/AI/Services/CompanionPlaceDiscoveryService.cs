@@ -387,15 +387,21 @@ public sealed class MerchantPlaceLookupService(
 public sealed class GooglePlacesCompanionSearchService(
     ICompanionPlaceDiscoveryService discoveryService,
     ILocalDiscoveryQueryShaper localDiscoveryQueryShaper,
+    ICompanionLocalityResolutionService localityResolutionService,
+    IOptions<GooglePlacesOptions> options,
     ILogger<GooglePlacesCompanionSearchService> logger) : IPlacesSearchService
 {
+    private readonly GooglePlacesOptions placesOptions = options.Value;
+
     public async Task<PlaceSearchResult> SearchAsync(
         string query,
         string country,
         PlaceSearchLocationContext? locationContext,
         CancellationToken cancellationToken)
     {
+        var warnings = new HashSet<string>(StringComparer.Ordinal);
         var shapedQuery = localDiscoveryQueryShaper.Shape(query, locationContext);
+        AppendQueryShapeWarnings(shapedQuery, warnings);
         logger.LogInformation(
             "Companion places query shaped localDiscoveryCandidate={IsCandidate} confidence={Confidence} hasNearMeLanguage={HasNearMeLanguage} hasExplicitLocality={HasExplicitLocality} reasonCodes={ReasonCodes}",
             shapedQuery.Constraints.IsLocalDiscoveryCandidate,
@@ -403,15 +409,287 @@ public sealed class GooglePlacesCompanionSearchService(
             shapedQuery.Constraints.HasNearMeLanguage,
             shapedQuery.Constraints.HasExplicitLocality,
             string.Join(',', shapedQuery.ReasonCodes));
-        var result = await discoveryService.DiscoverAsync(
-            new CompanionPlaceDiscoveryRequest(
-                Query: shapedQuery.Query,
-                CountryCode: country,
-                Latitude: locationContext?.Latitude,
-                Longitude: locationContext?.Longitude,
-                RadiusMeters: locationContext?.RadiusMeters),
+
+        var effectiveLocationContext = await ResolveLocationBiasAsync(
+            locationContext,
+            shapedQuery.Constraints,
+            country,
+            warnings,
             cancellationToken);
 
+        var primaryRequest = BuildDiscoveryRequest(
+            query: shapedQuery.Query,
+            countryCode: country,
+            locationContext: effectiveLocationContext);
+        logger.LogInformation(
+            "Companion places primary search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters}",
+            primaryRequest.Query,
+            primaryRequest.Latitude.HasValue && primaryRequest.Longitude.HasValue,
+            primaryRequest.RadiusMeters ?? 0);
+        var primaryResult = await discoveryService.DiscoverAsync(
+            primaryRequest,
+            cancellationToken);
+        warnings.UnionWith(primaryResult.Warnings ?? []);
+
+        if (primaryResult.Succeeded && primaryResult.Candidates.Count > 0)
+        {
+            warnings.Add("places_query_shape:results_found_primary");
+            return BuildSearchResult(primaryResult, warnings);
+        }
+
+        if (!primaryResult.Succeeded)
+        {
+            warnings.Add("places_query_shape:primary_search_failed");
+            return BuildSearchResult(primaryResult, warnings);
+        }
+
+        warnings.Add("places_query_shape:no_results_primary");
+        var fallbackQuery = BuildFallbackQuery(
+            originalQuery: query,
+            constraints: shapedQuery.Constraints,
+            locationContext: effectiveLocationContext);
+        if (string.IsNullOrWhiteSpace(fallbackQuery)
+            || string.Equals(
+                fallbackQuery.Trim(),
+                shapedQuery.Query.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            warnings.Add("places_query_shape:no_results_fallback");
+            return BuildSearchResult(primaryResult, warnings);
+        }
+
+        warnings.Add("places_query_shape:fallback_text_search");
+        var fallbackLocationContext = BuildFallbackLocationContext(
+            effectiveLocationContext,
+            warnings);
+        var fallbackRequest = BuildDiscoveryRequest(
+            query: fallbackQuery,
+            countryCode: country,
+            locationContext: fallbackLocationContext);
+        logger.LogInformation(
+            "Companion places fallback search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters}",
+            fallbackRequest.Query,
+            fallbackRequest.Latitude.HasValue && fallbackRequest.Longitude.HasValue,
+            fallbackRequest.RadiusMeters ?? 0);
+
+        var fallbackResult = await discoveryService.DiscoverAsync(
+            fallbackRequest,
+            cancellationToken);
+        warnings.UnionWith(fallbackResult.Warnings ?? []);
+        if (fallbackResult.Succeeded && fallbackResult.Candidates.Count > 0)
+        {
+            warnings.Add("places_query_shape:results_found_fallback");
+            return BuildSearchResult(fallbackResult, warnings);
+        }
+
+        if (!fallbackResult.Succeeded)
+        {
+            warnings.Add("places_query_shape:fallback_search_failed");
+            return BuildSearchResult(primaryResult, warnings);
+        }
+
+        warnings.Add("places_query_shape:no_results_fallback");
+        return BuildSearchResult(fallbackResult, warnings);
+    }
+
+    private async Task<PlaceSearchLocationContext?> ResolveLocationBiasAsync(
+        PlaceSearchLocationContext? locationContext,
+        LocalDiscoveryConstraintExtractionResult constraints,
+        string? countryCode,
+        ISet<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        if (locationContext?.Latitude.HasValue == true
+            && locationContext.Longitude.HasValue)
+        {
+            warnings.Add("places_query_shape:locality_bias_applied");
+            return locationContext;
+        }
+
+        var locality = Normalize(locationContext?.TypedArea)
+                       ?? Normalize(constraints.LocalityHint)
+                       ?? Normalize(locationContext?.LocalityLabel);
+        if (string.IsNullOrWhiteSpace(locality))
+        {
+            return locationContext;
+        }
+
+        var resolved = await localityResolutionService.ResolveAsync(
+            locality,
+            countryCode,
+            languageCode: null,
+            cancellationToken);
+        if (!resolved.HasCoordinates || !resolved.Latitude.HasValue || !resolved.Longitude.HasValue)
+        {
+            warnings.Add("places_query_shape:locality_resolution_failed");
+            return locationContext;
+        }
+
+        warnings.Add("places_query_shape:locality_resolution_succeeded");
+        warnings.Add("places_query_shape:locality_bias_applied");
+        return new PlaceSearchLocationContext(
+            Source: "locality_resolution",
+            Latitude: resolved.Latitude,
+            Longitude: resolved.Longitude,
+            RadiusMeters: locationContext?.RadiusMeters
+                          ?? Math.Clamp(placesOptions.DefaultSearchRadiusMeters, 1_000, 15_000),
+            TypedArea: locationContext?.TypedArea ?? locality,
+            LocalityLabel: locationContext?.LocalityLabel ?? resolved.ResolvedLocalityLabel ?? locality,
+            AccuracyBucket: locationContext?.AccuracyBucket,
+            CapturedAtUtc: locationContext?.CapturedAtUtc);
+    }
+
+    private static CompanionPlaceDiscoveryRequest BuildDiscoveryRequest(
+        string query,
+        string? countryCode,
+        PlaceSearchLocationContext? locationContext)
+    {
+        return new CompanionPlaceDiscoveryRequest(
+            Query: query,
+            CountryCode: countryCode,
+            Latitude: locationContext?.Latitude,
+            Longitude: locationContext?.Longitude,
+            RadiusMeters: locationContext?.RadiusMeters);
+    }
+
+    private static string BuildFallbackQuery(
+        string originalQuery,
+        LocalDiscoveryConstraintExtractionResult constraints,
+        PlaceSearchLocationContext? locationContext)
+    {
+        var locality = Normalize(locationContext?.TypedArea)
+                       ?? Normalize(constraints.LocalityHint)
+                       ?? Normalize(locationContext?.LocalityLabel);
+        var canonicalType = ResolveFallbackType(constraints);
+        var preferencePrefix = constraints.PreferenceHints.Any(value =>
+            string.Equals(value, "dog_friendly", StringComparison.OrdinalIgnoreCase))
+            ? "dog friendly "
+            : string.Empty;
+        var timeSuffix = constraints.TimeHints.Any(value =>
+            string.Equals(value, "open_now", StringComparison.OrdinalIgnoreCase))
+            ? " open now"
+            : string.Empty;
+        var fallback = $"{preferencePrefix}{canonicalType}{timeSuffix}".Trim();
+
+        if (!string.IsNullOrWhiteSpace(locality))
+        {
+            fallback = $"{fallback} in {locality}";
+        }
+        else if (constraints.HasNearMeLanguage)
+        {
+            fallback = $"{fallback} nearby";
+        }
+
+        if (string.IsNullOrWhiteSpace(fallback))
+        {
+            fallback = originalQuery.Trim();
+        }
+
+        return fallback.Length <= 180
+            ? fallback
+            : fallback[..180].TrimEnd();
+    }
+
+    private static string ResolveFallbackType(LocalDiscoveryConstraintExtractionResult constraints)
+    {
+        if (constraints.PlaceTypeHints.Count > 0)
+        {
+            return constraints.PlaceTypeHints[0] switch
+            {
+                "tourist_attraction" => "tourist attractions",
+                "movie_theater" => "cinema",
+                "performing_arts_theater" => "theatre",
+                "pet_friendly" => "pet friendly places",
+                _ => constraints.PlaceTypeHints[0].Replace('_', ' ')
+            };
+        }
+
+        if (constraints.AudienceHints.Any(value =>
+                string.Equals(value, "kids", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "playgrounds";
+        }
+
+        if (constraints.AudienceHints.Any(value =>
+                string.Equals(value, "family", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "family friendly attractions";
+        }
+
+        return "tourist attractions";
+    }
+
+    private static PlaceSearchLocationContext? BuildFallbackLocationContext(
+        PlaceSearchLocationContext? currentContext,
+        ISet<string> warnings)
+    {
+        if (currentContext?.Latitude.HasValue != true || !currentContext.Longitude.HasValue)
+        {
+            return currentContext;
+        }
+
+        var currentRadius = Math.Clamp(
+            currentContext.RadiusMeters ?? 2_500,
+            500,
+            50_000);
+        var widenedRadius = Math.Clamp((int)Math.Round(currentRadius * 1.8d), 1_500, 15_000);
+        if (widenedRadius <= currentRadius)
+        {
+            return currentContext;
+        }
+
+        warnings.Add("places_query_shape:fallback_radius_widened");
+        return currentContext with
+        {
+            RadiusMeters = widenedRadius
+        };
+    }
+
+    private static void AppendQueryShapeWarnings(
+        LocalDiscoveryShapedQueryResult shapedQuery,
+        ISet<string> warnings)
+    {
+        foreach (var reasonCode in shapedQuery.ReasonCodes)
+        {
+            warnings.Add($"places_query_shape:{reasonCode}");
+            switch (reasonCode)
+            {
+                case "local_discovery_query_locality_applied":
+                    warnings.Add("places_query_shape:locality_bias_applied");
+                    break;
+                case "local_discovery_query_place_types_appended":
+                case "local_discovery_query_default_type_appended":
+                    warnings.Add("places_query_shape:type_hint_applied");
+                    break;
+                case "local_discovery_query_audience_appended":
+                    warnings.Add("places_query_shape:audience_hint_applied");
+                    break;
+                case "local_discovery_query_preference_appended":
+                    warnings.Add("places_query_shape:preference_hint_applied");
+                    break;
+            }
+        }
+
+        if (shapedQuery.Constraints.PlaceTypeHints.Count > 0)
+        {
+            warnings.Add("places_query_shape:type_hint_applied");
+        }
+
+        if (shapedQuery.Constraints.AudienceHints.Count > 0)
+        {
+            warnings.Add("places_query_shape:audience_hint_applied");
+        }
+
+        if (shapedQuery.Constraints.PreferenceHints.Count > 0)
+        {
+            warnings.Add("places_query_shape:preference_hint_applied");
+        }
+    }
+
+    private static PlaceSearchResult BuildSearchResult(
+        CompanionPlaceDiscoveryResult result,
+        ISet<string> warnings)
+    {
         var items = result.Candidates
             .Select(candidate => new PlaceSearchItem(
                 PlaceId: candidate.PlaceId,
@@ -460,15 +738,19 @@ public sealed class GooglePlacesCompanionSearchService(
                 EditorialSummary: candidate.EditorialSummary,
                 Location: candidate.Location))
             .ToArray();
-        var warnings = (result.Warnings ?? [])
-            .Concat(shapedQuery.ReasonCodes.Select(code => $"places_query_shape:{code}"))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
 
         return new PlaceSearchResult(
             Items: items,
-            Metadata: result.Metadata,
-            Warnings: warnings);
+            Metadata: result.Metadata with
+            {
+                ReturnedCandidateCount = items.Length
+            },
+            Warnings: warnings.ToArray());
+    }
+
+    private static string? Normalize(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }
 

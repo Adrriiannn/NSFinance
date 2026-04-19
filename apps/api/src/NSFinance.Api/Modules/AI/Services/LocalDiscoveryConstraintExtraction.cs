@@ -395,6 +395,16 @@ public sealed class LocalDiscoveryQueryShaper(
             query = $"{query} {string.Join(' ', placeTypePhrases.Take(2))}";
             reasonCodes.Add("local_discovery_query_place_types_appended");
         }
+        else if (placeTypePhrases.Length == 0
+                 && extracted.IsLocalDiscoveryCandidate)
+        {
+            var inferredDiscoveryType = InferFallbackDiscoveryType(extracted.AudienceHints);
+            if (!ContainsAny(query, [inferredDiscoveryType]))
+            {
+                query = $"{query} {inferredDiscoveryType}";
+                reasonCodes.Add("local_discovery_query_default_type_appended");
+            }
+        }
 
         var audiencePhrases = extracted.AudienceHints.Select(ToQueryPhrase).ToArray();
         if (audiencePhrases.Length > 0
@@ -456,5 +466,20 @@ public sealed class LocalDiscoveryQueryShaper(
             "open_now" => "open now",
             _ => value.Replace('_', ' ')
         };
+    }
+
+    private static string InferFallbackDiscoveryType(IReadOnlyList<string> audienceHints)
+    {
+        if (audienceHints.Any(value => string.Equals(value, "kids", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "playgrounds";
+        }
+
+        if (audienceHints.Any(value => string.Equals(value, "family", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "family friendly attractions";
+        }
+
+        return "tourist attractions";
     }
 }

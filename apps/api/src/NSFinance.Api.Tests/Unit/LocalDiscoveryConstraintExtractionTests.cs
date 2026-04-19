@@ -17,6 +17,7 @@ public sealed class LocalDiscoveryConstraintExtractionTests
     [InlineData("kids playgrounds near me")]
     [InlineData("places to visit near me")]
     [InlineData("museums around Dublin")]
+    [InlineData("parks in Lucan")]
     [InlineData("something fun nearby")]
     [InlineData("where can I go with family this weekend")]
     [InlineData("family places in Lucan")]
@@ -62,5 +63,16 @@ public sealed class LocalDiscoveryConstraintExtractionTests
         Assert.Contains(
             "local_discovery_query_shaped",
             shaped.ReasonCodes);
+    }
+
+    [Fact]
+    public void Shape_BroadFamilyPrompt_AppendsDefaultDiscoveryType()
+    {
+        var shaped = _shaper.Shape(
+            "family places in Dublin",
+            new PlaceSearchLocationContext(TypedArea: "Dublin"));
+
+        Assert.Contains("family friendly attractions", shaped.Query, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("local_discovery_query_default_type_appended", shaped.ReasonCodes);
     }
 }

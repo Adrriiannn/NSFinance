@@ -190,6 +190,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IMerchantPlaceLookupService, MerchantPlaceLookupService>();
         services.AddScoped<ILocalDiscoveryConstraintExtractor, LocalDiscoveryConstraintExtractor>();
         services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
+        services.AddScoped<ICompanionLocalityResolutionService, CompanionLocalityResolutionService>();
         services.AddScoped<IPlacesSearchService, GooglePlacesCompanionSearchService>();
         services.AddScoped<IPlaceDetailsService, GooglePlacesPlaceDetailsService>();
         services.AddScoped<IReviewInsightsService, NullReviewInsightsService>();
