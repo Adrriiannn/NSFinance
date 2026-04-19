@@ -136,6 +136,77 @@ public sealed class GooglePlacesCompanionSearchServiceTests
         Assert.Contains("places_query_shape:no_results_fallback", result.Warnings ?? []);
     }
 
+    [Fact]
+    public async Task SearchAsync_GpsNearMe_AppliesDistanceAwareReranking()
+    {
+        var farther = BuildCandidate(
+            placeId: "farther",
+            latitude: 53.3900,
+            longitude: -6.5000);
+        var closer = BuildCandidate(
+            placeId: "closer",
+            latitude: 53.3571,
+            longitude: -6.4487);
+        var discovery = new TrackingCompanionDiscoveryService(
+            [
+                BuildResult(candidates: [farther, closer])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "coffee shops near me",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000),
+            CancellationToken.None);
+
+        Assert.Equal("closer", result.Items[0].PlaceId);
+        Assert.Contains("places_ranking:gps_distance_applied", result.Warnings ?? []);
+        Assert.Contains("places_ranking:near_me_distance_ranked", result.Warnings ?? []);
+    }
+
+    [Fact]
+    public async Task SearchAsync_NonGpsLocality_DoesNotApplyDistanceRanking()
+    {
+        var first = BuildCandidate("first", latitude: 53.3900, longitude: -6.5000);
+        var second = BuildCandidate("second", latitude: 53.3571, longitude: -6.4487);
+        var discovery = new TrackingCompanionDiscoveryService(
+            [
+                BuildResult(candidates: [first, second])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "museums around Dublin",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "typed_area",
+                TypedArea: "Dublin"),
+            CancellationToken.None);
+
+        Assert.Equal("first", result.Items[0].PlaceId);
+        Assert.Contains("places_ranking:distance_not_applicable_non_gps", result.Warnings ?? []);
+    }
+
     private static GooglePlacesCompanionSearchService CreateSut(
         TrackingCompanionDiscoveryService discovery,
         ICompanionLocalityResolutionService resolver)
@@ -144,6 +215,7 @@ public sealed class GooglePlacesCompanionSearchServiceTests
             discovery,
             new LocalDiscoveryQueryShaper(new LocalDiscoveryConstraintExtractor()),
             resolver,
+            new CompanionPlaceRankingPolicy(),
             Options.Create(new GooglePlacesOptions
             {
                 Enabled = true,
@@ -171,7 +243,10 @@ public sealed class GooglePlacesCompanionSearchServiceTests
             Warnings: []);
     }
 
-    private static CompanionPlaceCandidate BuildCandidate(string placeId)
+    private static CompanionPlaceCandidate BuildCandidate(
+        string placeId,
+        double latitude = 53.3498,
+        double longitude = -6.2603)
     {
         return new CompanionPlaceCandidate(
             PlaceId: placeId,
@@ -216,7 +291,7 @@ public sealed class GooglePlacesCompanionSearchServiceTests
             PaymentOptions: new PlacePaymentOptionsSummary(null, null, null, null),
             AccessibilityOptions: new PlaceAccessibilitySummary(null, null, null, null),
             EditorialSummary: new PlaceEditorialSummary(null, null),
-            Location: new PlaceLocationSummary(53.3498, -6.2603));
+            Location: new PlaceLocationSummary(latitude, longitude));
     }
 
     private sealed class TrackingCompanionDiscoveryService(

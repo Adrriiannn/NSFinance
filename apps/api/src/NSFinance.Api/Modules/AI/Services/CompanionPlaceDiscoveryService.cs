@@ -388,6 +388,7 @@ public sealed class GooglePlacesCompanionSearchService(
     ICompanionPlaceDiscoveryService discoveryService,
     ILocalDiscoveryQueryShaper localDiscoveryQueryShaper,
     ICompanionLocalityResolutionService localityResolutionService,
+    ICompanionPlaceRankingPolicy placeRankingPolicy,
     IOptions<GooglePlacesOptions> options,
     ILogger<GooglePlacesCompanionSearchService> logger) : IPlacesSearchService
 {
@@ -409,6 +410,7 @@ public sealed class GooglePlacesCompanionSearchService(
             shapedQuery.Constraints.HasNearMeLanguage,
             shapedQuery.Constraints.HasExplicitLocality,
             string.Join(',', shapedQuery.ReasonCodes));
+        var rankingContext = BuildRankingContext(locationContext, shapedQuery.Constraints);
 
         var effectiveLocationContext = await ResolveLocationBiasAsync(
             locationContext,
@@ -434,13 +436,13 @@ public sealed class GooglePlacesCompanionSearchService(
         if (primaryResult.Succeeded && primaryResult.Candidates.Count > 0)
         {
             warnings.Add("places_query_shape:results_found_primary");
-            return BuildSearchResult(primaryResult, warnings);
+            return BuildSearchResult(primaryResult, warnings, rankingContext);
         }
 
         if (!primaryResult.Succeeded)
         {
             warnings.Add("places_query_shape:primary_search_failed");
-            return BuildSearchResult(primaryResult, warnings);
+            return BuildSearchResult(primaryResult, warnings, rankingContext);
         }
 
         warnings.Add("places_query_shape:no_results_primary");
@@ -455,7 +457,7 @@ public sealed class GooglePlacesCompanionSearchService(
                 StringComparison.OrdinalIgnoreCase))
         {
             warnings.Add("places_query_shape:no_results_fallback");
-            return BuildSearchResult(primaryResult, warnings);
+            return BuildSearchResult(primaryResult, warnings, rankingContext);
         }
 
         warnings.Add("places_query_shape:fallback_text_search");
@@ -479,17 +481,17 @@ public sealed class GooglePlacesCompanionSearchService(
         if (fallbackResult.Succeeded && fallbackResult.Candidates.Count > 0)
         {
             warnings.Add("places_query_shape:results_found_fallback");
-            return BuildSearchResult(fallbackResult, warnings);
+            return BuildSearchResult(fallbackResult, warnings, rankingContext);
         }
 
         if (!fallbackResult.Succeeded)
         {
             warnings.Add("places_query_shape:fallback_search_failed");
-            return BuildSearchResult(primaryResult, warnings);
+            return BuildSearchResult(primaryResult, warnings, rankingContext);
         }
 
         warnings.Add("places_query_shape:no_results_fallback");
-        return BuildSearchResult(fallbackResult, warnings);
+        return BuildSearchResult(fallbackResult, warnings, rankingContext);
     }
 
     private async Task<PlaceSearchLocationContext?> ResolveLocationBiasAsync(
@@ -686,11 +688,19 @@ public sealed class GooglePlacesCompanionSearchService(
         }
     }
 
-    private static PlaceSearchResult BuildSearchResult(
+    private PlaceSearchResult BuildSearchResult(
         CompanionPlaceDiscoveryResult result,
-        ISet<string> warnings)
+        ISet<string> warnings,
+        CompanionPlaceRankingContext rankingContext)
     {
-        var items = result.Candidates
+        var ranking = placeRankingPolicy.Rank(result.Candidates, rankingContext);
+        warnings.UnionWith(ranking.Diagnostics);
+        logger.LogInformation(
+            "Companion places ranking applied={Applied} candidateCount={CandidateCount} diagnostics={Diagnostics}",
+            rankingContext.ApplyDistanceRanking,
+            ranking.RankedCandidates.Count,
+            string.Join(',', ranking.Diagnostics));
+        var items = ranking.RankedCandidates
             .Select(candidate => new PlaceSearchItem(
                 PlaceId: candidate.PlaceId,
                 Name: candidate.DisplayName,
@@ -746,6 +756,22 @@ public sealed class GooglePlacesCompanionSearchService(
                 ReturnedCandidateCount = items.Length
             },
             Warnings: warnings.ToArray());
+    }
+
+    private static CompanionPlaceRankingContext BuildRankingContext(
+        PlaceSearchLocationContext? locationContext,
+        LocalDiscoveryConstraintExtractionResult constraints)
+    {
+        var isGpsGrounded = string.Equals(locationContext?.Source, "gps", StringComparison.OrdinalIgnoreCase)
+                            && locationContext?.Latitude.HasValue == true
+                            && locationContext?.Longitude.HasValue == true;
+        var applyDistanceRanking = isGpsGrounded && constraints.HasNearMeLanguage;
+
+        return new CompanionPlaceRankingContext(
+            ApplyDistanceRanking: applyDistanceRanking,
+            UserLatitude: locationContext?.Latitude,
+            UserLongitude: locationContext?.Longitude,
+            PlaceTypeHints: constraints.PlaceTypeHints);
     }
 
     private static string? Normalize(string? value)

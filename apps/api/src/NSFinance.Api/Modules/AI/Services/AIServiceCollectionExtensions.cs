@@ -191,6 +191,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ILocalDiscoveryConstraintExtractor, LocalDiscoveryConstraintExtractor>();
         services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
         services.AddScoped<ICompanionLocalityResolutionService, CompanionLocalityResolutionService>();
+        services.AddScoped<ICompanionPlaceRankingPolicy, CompanionPlaceRankingPolicy>();
         services.AddScoped<IPlacesSearchService, GooglePlacesCompanionSearchService>();
         services.AddScoped<IPlaceDetailsService, GooglePlacesPlaceDetailsService>();
         services.AddScoped<IReviewInsightsService, NullReviewInsightsService>();
