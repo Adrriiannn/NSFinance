@@ -126,6 +126,12 @@ public static class AIServiceCollectionExtensions
                 options => options.BaseFreshnessHoursInfoSeverity > 0,
                 "Companion advice freshness window for info severity must be > 0")
             .ValidateOnStart();
+        services.AddOptions<GooglePlacesOptions>()
+            .Bind(configuration.GetSection(GooglePlacesOptions.SectionName))
+            .Services
+            .AddSingleton<IValidateOptions<GooglePlacesOptions>, GooglePlacesOptionsValidator>();
+        services.AddOptions<GooglePlacesOptions>()
+            .ValidateOnStart();
 
         services.AddHttpClient("AI.AzureOpenAI", (sp, client) =>
         {
@@ -133,11 +139,24 @@ public static class AIServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(aiOptions.Execution.TimeoutSeconds, 5, 120));
             client.DefaultRequestHeaders.UserAgent.ParseAdd(AzureAIClientUserAgent);
         });
+        services.AddHttpClient<IGooglePlacesClient, GooglePlacesClient>((sp, client) =>
+        {
+            var placesOptions = sp.GetRequiredService<IOptions<GooglePlacesOptions>>().Value;
+            if (Uri.TryCreate(placesOptions.BaseUrl, UriKind.Absolute, out var baseUri))
+            {
+                client.BaseAddress = baseUri;
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(1, placesOptions.TimeoutSeconds));
+        });
 
         services.AddSingleton<AzureOpenAIApiKeyAuthStrategy>();
         services.AddSingleton<AzureOpenAIManagedIdentityAuthStrategy>();
         services.AddSingleton<IAIProviderCircuitBreaker, AIProviderCircuitBreaker>();
         services.AddSingleton<IMerchantInvestigationResultCache, InMemoryMerchantInvestigationResultCache>();
+        services.AddSingleton<IGooglePlacesCache, InMemoryGooglePlacesCache>();
+        services.AddSingleton<IGooglePlacesCacheKeyBuilder, GooglePlacesCacheKeyBuilder>();
+        services.AddSingleton<IGooglePlacesFieldMaskProvider, GooglePlacesFieldMaskProvider>();
 
         services.AddScoped<IAIProviderTransport, MockAIProviderTransport>();
         services.AddScoped<IAIProviderTransport, AzureOpenAIProviderTransport>();
@@ -167,8 +186,10 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IUserFinancialProfileLifecycleInvariantValidator, UserFinancialProfileLifecycleInvariantValidator>();
         services.AddScoped<IUserFinancialProfileFreshnessEvaluator, UserFinancialProfileFreshnessEvaluator>();
         services.AddScoped<IUserFinancialContextProfileService, UserFinancialContextProfileService>();
-        services.AddScoped<IPlacesSearchService, NullPlacesSearchService>();
-        services.AddScoped<IPlaceDetailsService, NullPlaceDetailsService>();
+        services.AddScoped<ICompanionPlaceDiscoveryService, CompanionPlaceDiscoveryService>();
+        services.AddScoped<IMerchantPlaceLookupService, MerchantPlaceLookupService>();
+        services.AddScoped<IPlacesSearchService, GooglePlacesCompanionSearchService>();
+        services.AddScoped<IPlaceDetailsService, GooglePlacesPlaceDetailsService>();
         services.AddScoped<IReviewInsightsService, NullReviewInsightsService>();
         services.AddScoped<ICompanionIntentNormalizer, CompanionIntentNormalizer>();
         services.AddScoped<ICompanionIntentSignalExtractor, CompanionIntentSignalExtractor>();

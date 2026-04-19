@@ -64,4 +64,65 @@ public sealed class CompanionContextShaperTests
         Assert.Contains(CompanionTool.BudgetStatus.ToOutputKey(), trimmed.Outputs.Keys);
         Assert.Contains(trimmed.AdjustedRecords, record => record.Status == CompanionToolExecutionStatus.TrimmedOut);
     }
+
+    [Fact]
+    public void ShapePlaceSearch_MapsRichPlaceFields_AndRespectsConfiguredItemCap()
+    {
+        var sut = new CompanionContextShaper(Options.Create(new CompanionOrchestrationOptions
+        {
+            MaxPlaceItems = 2
+        }));
+        var places = new PlaceSearchResult(
+            Items:
+            [
+                new PlaceSearchItem(
+                    PlaceId: "p1",
+                    Name: "Cafe One",
+                    Category: "Cafe",
+                    PriceLevel: "PRICE_LEVEL_MODERATE",
+                    DisplayName: "Cafe One Display",
+                    PrimaryType: "cafe",
+                    PrimaryTypeDisplayName: "Cafe",
+                    Types: ["cafe", "food"],
+                    NationalPhoneNumber: "+3531000001",
+                    FormattedAddress: "1 Main Street",
+                    ShortFormattedAddress: "1 Main St",
+                    Rating: 4.5,
+                    UserRatingCount: 120,
+                    GoogleMapsUri: "https://maps.google.com/?q=p1",
+                    WebsiteUri: "https://p1.example.com",
+                    OpeningHours: new PlaceOpeningHoursSummary(
+                        OpenNow: true,
+                        WeekdayDescriptions: ["Monday: 8:00 AM - 5:00 PM"],
+                        NextOpenTimeUtc: null),
+                    BusinessStatus: "OPERATIONAL",
+                    PaymentOptions: new PlacePaymentOptionsSummary(
+                        AcceptsCreditCards: true,
+                        AcceptsDebitCards: true,
+                        AcceptsCashOnly: false,
+                        AcceptsNfc: true),
+                    AccessibilityOptions: new PlaceAccessibilitySummary(
+                        WheelchairAccessibleParking: true,
+                        WheelchairAccessibleEntrance: true,
+                        WheelchairAccessibleRestroom: true,
+                        WheelchairAccessibleSeating: true),
+                    EditorialSummary: new PlaceEditorialSummary(
+                        Text: "Friendly cafe",
+                        LanguageCode: "en"),
+                    Location: new PlaceLocationSummary(53.3, -6.2)),
+                new PlaceSearchItem("p2", "Cafe Two", "Cafe", "PRICE_LEVEL_INEXPENSIVE"),
+                new PlaceSearchItem("p3", "Cafe Three", "Cafe", "PRICE_LEVEL_INEXPENSIVE")
+            ]);
+
+        var shaped = sut.ShapePlaceSearch(places);
+
+        var output = Assert.IsType<CompanionPlacesSearchContext>(shaped.Output);
+        Assert.Equal(3, output.TotalItemCount);
+        Assert.Equal(2, output.Items.Count);
+        Assert.Contains(shaped.TrimIndicators, indicator => indicator == "payload_trimmed:place_search_items");
+        Assert.Equal("cafe", output.Items[0].PrimaryType);
+        Assert.NotNull(output.Items[0].PaymentOptions);
+        Assert.NotNull(output.Items[0].AccessibilityOptions);
+        Assert.NotNull(output.Items[0].Location);
+    }
 }

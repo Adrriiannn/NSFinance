@@ -10,7 +10,7 @@ public sealed class CompanionOrchestrationOptions
     public int MaxSpendDomains { get; set; } = 6;
     public int MaxRecurringItems { get; set; } = 5;
     public int MaxTransactionRows { get; set; } = 8;
-    public int MaxPlaceItems { get; set; } = 3;
+    public int MaxPlaceItems { get; set; } = 8;
     public int MaxSummaryTextLength { get; set; } = 200;
     public int MaxSecondaryOptionalTools { get; set; } = 3;
 }

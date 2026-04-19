@@ -84,20 +84,76 @@ public sealed record TransactionQueryItem(
     int? CategoryCode);
 
 public sealed record PlaceSearchResult(
-    IReadOnlyList<PlaceSearchItem> Items);
+    IReadOnlyList<PlaceSearchItem> Items,
+    PlaceSearchMetadata? Metadata = null,
+    IReadOnlyList<string>? Warnings = null);
 
 public sealed record PlaceSearchItem(
     string PlaceId,
     string Name,
     string? Category,
-    string? PriceLevel);
+    string? PriceLevel,
+    string? ResourceName = null,
+    string? DisplayName = null,
+    string? PrimaryType = null,
+    string? PrimaryTypeDisplayName = null,
+    IReadOnlyList<string>? Types = null,
+    string? NationalPhoneNumber = null,
+    string? FormattedAddress = null,
+    string? ShortFormattedAddress = null,
+    double? Rating = null,
+    int? UserRatingCount = null,
+    string? GoogleMapsUri = null,
+    string? WebsiteUri = null,
+    PlaceOpeningHoursSummary? OpeningHours = null,
+    string? BusinessStatus = null,
+    string? IconMaskBaseUri = null,
+    string? IconBackgroundColor = null,
+    bool? Takeout = null,
+    bool? Delivery = null,
+    bool? DineIn = null,
+    bool? Reservable = null,
+    bool? ServesBreakfast = null,
+    bool? ServesLunch = null,
+    bool? ServesDinner = null,
+    bool? ServesBeer = null,
+    bool? ServesWine = null,
+    bool? ServesBrunch = null,
+    bool? ServesVegetarianFood = null,
+    bool? OutdoorSeating = null,
+    bool? LiveMusic = null,
+    bool? MenuForChildren = null,
+    bool? ServesCocktails = null,
+    bool? ServesDessert = null,
+    bool? ServesCoffee = null,
+    bool? AllowsDogs = null,
+    bool? Restroom = null,
+    bool? GoodForGroups = null,
+    bool? GoodForWatchingSports = null,
+    PlacePaymentOptionsSummary? PaymentOptions = null,
+    PlaceAccessibilitySummary? AccessibilityOptions = null,
+    PlaceEditorialSummary? EditorialSummary = null,
+    PlaceLocationSummary? Location = null);
 
 public sealed record PlaceDetailsResult(
     string PlaceId,
     string Name,
     string? Address,
     string? Website,
-    string? PriceLevel);
+    string? PriceLevel,
+    string? NationalPhoneNumber = null,
+    string? GoogleMapsUri = null,
+    string? BusinessStatus = null,
+    double? Rating = null,
+    int? UserRatingCount = null,
+    string? PrimaryType = null,
+    string? PrimaryTypeDisplayName = null,
+    IReadOnlyList<string>? Types = null,
+    PlaceOpeningHoursSummary? OpeningHours = null,
+    PlacePaymentOptionsSummary? PaymentOptions = null,
+    PlaceAccessibilitySummary? AccessibilityOptions = null,
+    PlaceEditorialSummary? EditorialSummary = null,
+    PlaceLocationSummary? Location = null);
 
 public sealed record ReviewInsightsResult(
     string PlaceId,
