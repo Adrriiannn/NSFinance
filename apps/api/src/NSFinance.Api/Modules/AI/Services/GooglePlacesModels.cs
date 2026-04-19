@@ -88,6 +88,15 @@ public sealed record CompanionPlaceDiscoveryRequest(
     double? Longitude = null,
     int? RadiusMeters = null);
 
+public sealed record CompanionNearbyDiscoveryRequest(
+    double Latitude,
+    double Longitude,
+    int RadiusMeters,
+    IReadOnlyList<string> IncludedTypes,
+    string? CountryCode = null,
+    string? LanguageCode = null,
+    int? MaxCandidates = null);
+
 public sealed record CompanionPlaceDiscoveryResult(
     bool Succeeded,
     IReadOnlyList<CompanionPlaceCandidate> Candidates,
@@ -127,6 +136,10 @@ public interface ICompanionPlaceDiscoveryService
 {
     Task<CompanionPlaceDiscoveryResult> DiscoverAsync(
         CompanionPlaceDiscoveryRequest request,
+        CancellationToken cancellationToken);
+
+    Task<CompanionPlaceDiscoveryResult> DiscoverNearbyAsync(
+        CompanionNearbyDiscoveryRequest request,
         CancellationToken cancellationToken);
 }
 

@@ -184,6 +184,22 @@ public sealed class CompanionLocalityResolutionServiceTests
             return Task.FromResult(SearchResult);
         }
 
+        public Task<GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>> SearchNearbyAsync(
+            GooglePlacesSearchNearbyRequest request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                new GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>(
+                    Succeeded: false,
+                    Value: [],
+                    TimedOut: false,
+                    StatusCode: HttpStatusCode.BadRequest,
+                    ErrorCode: "not_used",
+                    ErrorMessage: "not_used",
+                    Elapsed: TimeSpan.Zero));
+        }
+
         public Task<GooglePlacesClientResult<GooglePlacesClientPlace?>> GetPlaceDetailsAsync(
             string placeId,
             string fieldMask,

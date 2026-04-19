@@ -132,6 +132,64 @@ public sealed class GooglePlacesClientTests
     }
 
     [Fact]
+    public async Task SearchNearbyAsync_UsesNearbyEndpoint_AndDistancePreference()
+    {
+        var handler = new StubHttpMessageHandler(async (request, _) =>
+        {
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal("/v1/places:searchNearby", request.RequestUri?.AbsolutePath);
+            Assert.Equal("test-api-key", request.Headers.GetValues("X-Goog-Api-Key").Single());
+            Assert.Equal(
+                "places.displayName,places.location",
+                request.Headers.GetValues("X-Goog-FieldMask").Single());
+
+            var payload = await request.Content!.ReadAsStringAsync();
+            Assert.Contains("\"includedTypes\":[\"cafe\",\"restaurant\"]", payload, StringComparison.Ordinal);
+            Assert.Contains("\"rankPreference\":\"DISTANCE\"", payload, StringComparison.Ordinal);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "places": [
+                        {
+                          "id": "nearby-1",
+                          "name": "places/nearby-1",
+                          "displayName": { "text": "Nearby Cafe", "languageCode": "en" },
+                          "location": { "latitude": 53.35, "longitude": -6.26 }
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        });
+        using var httpClient = CreateHttpClient(handler);
+        var sut = new GooglePlacesClient(
+            httpClient,
+            Options.Create(CreateOptions(timeoutSeconds: 8)),
+            NullLogger<GooglePlacesClient>.Instance);
+
+        var result = await sut.SearchNearbyAsync(
+            new GooglePlacesSearchNearbyRequest(
+                Latitude: 53.3498,
+                Longitude: -6.2603,
+                RadiusMeters: 1800,
+                IncludedTypes: ["cafe", "restaurant"],
+                MaxResultCount: 6,
+                RegionCode: "IE",
+                LanguageCode: "en",
+                FieldMask: "places.displayName,places.location",
+                UseCaseTag: "companion_nearby"),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Single(result.Value ?? []);
+    }
+
+    [Fact]
     public async Task SearchTextAsync_MapsProviderErrorCode()
     {
         var handler = new StubHttpMessageHandler((_, _) =>

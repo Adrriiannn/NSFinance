@@ -93,7 +93,14 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["theatre"] = "performing_arts_theater",
             ["theater"] = "performing_arts_theater",
             ["pub"] = "bar",
-            ["bar"] = "bar"
+            ["bar"] = "bar",
+            ["petrol"] = "gas_station",
+            ["fuel"] = "gas_station",
+            ["gas"] = "gas_station",
+            ["pharmacy"] = "pharmacy",
+            ["chemist"] = "pharmacy",
+            ["gym"] = "gym",
+            ["fitness"] = "gym"
         };
 
     private static readonly Dictionary<string, string> AudienceMap =

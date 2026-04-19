@@ -18,6 +18,17 @@ public sealed record GooglePlacesSearchTextRequest(
     string FieldMask,
     string UseCaseTag);
 
+public sealed record GooglePlacesSearchNearbyRequest(
+    double Latitude,
+    double Longitude,
+    int RadiusMeters,
+    IReadOnlyList<string> IncludedTypes,
+    int MaxResultCount,
+    string? RegionCode,
+    string? LanguageCode,
+    string FieldMask,
+    string UseCaseTag);
+
 public sealed record GooglePlacesClientPlace(
     string PlaceId,
     string ResourceName,
@@ -78,6 +89,10 @@ public interface IGooglePlacesClient
         GooglePlacesSearchTextRequest request,
         CancellationToken cancellationToken);
 
+    Task<GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>> SearchNearbyAsync(
+        GooglePlacesSearchNearbyRequest request,
+        CancellationToken cancellationToken);
+
     Task<GooglePlacesClientResult<GooglePlacesClientPlace?>> GetPlaceDetailsAsync(
         string placeId,
         string fieldMask,
@@ -120,6 +135,41 @@ public sealed class GooglePlacesClient(
         using var httpRequest = new HttpRequestMessage(
             HttpMethod.Post,
             "/v1/places:searchText")
+        {
+            Content = JsonContent.Create(payload, options: SerializerOptions)
+        };
+        ApplyHeaders(httpRequest, request.FieldMask);
+
+        return await SendAndParseAsync<IReadOnlyList<GooglePlacesClientPlace>>(
+            request.UseCaseTag,
+            httpRequest,
+            responseParser: ParseSearchResponseAsync,
+            fallbackValue: [],
+            cancellationToken);
+    }
+
+    public async Task<GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>> SearchNearbyAsync(
+        GooglePlacesSearchNearbyRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (!placesOptions.Enabled)
+        {
+            return new GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>(
+                Succeeded: false,
+                Value: [],
+                TimedOut: false,
+                StatusCode: null,
+                ErrorCode: "places_disabled",
+                ErrorMessage: "Google Places integration is disabled.",
+                Elapsed: TimeSpan.Zero);
+        }
+
+        var payload = BuildNearbyPayload(request);
+        using var httpRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/places:searchNearby")
         {
             Content = JsonContent.Create(payload, options: SerializerOptions)
         };
@@ -311,6 +361,39 @@ public sealed class GooglePlacesClient(
                            ?? NormalizeOptional(placesOptions.DefaultLanguageCode),
             regionCode = NormalizeOptional(request.RegionCode)
                          ?? NormalizeOptional(placesOptions.DefaultRegionCode)
+        };
+    }
+
+    private object BuildNearbyPayload(GooglePlacesSearchNearbyRequest request)
+    {
+        var includedTypes = request.IncludedTypes
+            .Where(type => !string.IsNullOrWhiteSpace(type))
+            .Select(type => type.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToArray();
+
+        return new
+        {
+            maxResultCount = request.MaxResultCount,
+            languageCode = NormalizeOptional(request.LanguageCode)
+                           ?? NormalizeOptional(placesOptions.DefaultLanguageCode),
+            regionCode = NormalizeOptional(request.RegionCode)
+                         ?? NormalizeOptional(placesOptions.DefaultRegionCode),
+            includedTypes,
+            rankPreference = "DISTANCE",
+            locationRestriction = new
+            {
+                circle = new
+                {
+                    center = new
+                    {
+                        latitude = request.Latitude,
+                        longitude = request.Longitude
+                    },
+                    radius = Math.Max(100, request.RadiusMeters)
+                }
+            }
         };
     }
 

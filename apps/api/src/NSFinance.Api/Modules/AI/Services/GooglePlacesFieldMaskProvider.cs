@@ -3,6 +3,7 @@ namespace NSFinance.Api.Modules.AI.Services;
 public interface IGooglePlacesFieldMaskProvider
 {
     string CompanionDiscoverySearchMask { get; }
+    string CompanionNearbySearchMask { get; }
     string MerchantLookupSearchMask { get; }
     string PlaceDetailsMask { get; }
 }
@@ -10,6 +11,56 @@ public interface IGooglePlacesFieldMaskProvider
 public sealed class GooglePlacesFieldMaskProvider : IGooglePlacesFieldMaskProvider
 {
     public string CompanionDiscoverySearchMask { get; } = string.Join(
+        ",",
+        [
+            "places.id",
+            "places.name",
+            "places.displayName",
+            "places.primaryType",
+            "places.primaryTypeDisplayName",
+            "places.types",
+            "places.nationalPhoneNumber",
+            "places.formattedAddress",
+            "places.shortFormattedAddress",
+            "places.rating",
+            "places.userRatingCount",
+            "places.googleMapsUri",
+            "places.websiteUri",
+            "places.regularOpeningHours.openNow",
+            "places.regularOpeningHours.weekdayDescriptions",
+            "places.regularOpeningHours.nextOpenTime",
+            "places.businessStatus",
+            "places.priceLevel",
+            "places.iconMaskBaseUri",
+            "places.iconBackgroundColor",
+            "places.takeout",
+            "places.delivery",
+            "places.dineIn",
+            "places.reservable",
+            "places.servesBreakfast",
+            "places.servesLunch",
+            "places.servesDinner",
+            "places.servesBeer",
+            "places.servesWine",
+            "places.servesBrunch",
+            "places.servesVegetarianFood",
+            "places.editorialSummary",
+            "places.outdoorSeating",
+            "places.liveMusic",
+            "places.menuForChildren",
+            "places.servesCocktails",
+            "places.servesDessert",
+            "places.servesCoffee",
+            "places.allowsDogs",
+            "places.restroom",
+            "places.goodForGroups",
+            "places.goodForWatchingSports",
+            "places.paymentOptions",
+            "places.accessibilityOptions",
+            "places.location"
+        ]);
+
+    public string CompanionNearbySearchMask { get; } = string.Join(
         ",",
         [
             "places.id",

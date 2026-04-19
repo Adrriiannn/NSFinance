@@ -82,6 +82,7 @@ public sealed class InMemoryGooglePlacesCache : IGooglePlacesCache
 public interface IGooglePlacesCacheKeyBuilder
 {
     string BuildCompanionDiscoveryKey(CompanionPlaceDiscoveryRequest request, int maxCandidates);
+    string BuildCompanionNearbyKey(CompanionNearbyDiscoveryRequest request, int maxCandidates);
     string BuildMerchantLookupKey(MerchantPlaceLookupRequest request, int maxCandidates);
     string BuildPlaceDetailsKey(string placeId);
 }
@@ -103,6 +104,28 @@ public sealed class GooglePlacesCacheKeyBuilder : IGooglePlacesCacheKeyBuilder
         return BuildHashedKey(
             "companion_discovery",
             $"{query}|{region}|{language}|{maxCandidates}|{latitude}|{longitude}|{radius}");
+    }
+
+    public string BuildCompanionNearbyKey(CompanionNearbyDiscoveryRequest request, int maxCandidates)
+    {
+        var region = NormalizeText(request.CountryCode);
+        var language = NormalizeText(request.LanguageCode);
+        var latitude = request.Latitude.ToString("0.#######", CultureInfo.InvariantCulture);
+        var longitude = request.Longitude.ToString("0.#######", CultureInfo.InvariantCulture);
+        var radius = request.RadiusMeters.ToString(CultureInfo.InvariantCulture);
+        var types = request.IncludedTypes.Count == 0
+            ? string.Empty
+            : string.Join(
+                ",",
+                request.IncludedTypes
+                    .Where(type => !string.IsNullOrWhiteSpace(type))
+                    .Select(NormalizeText)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(type => type, StringComparer.Ordinal));
+
+        return BuildHashedKey(
+            "companion_nearby",
+            $"{region}|{language}|{maxCandidates}|{latitude}|{longitude}|{radius}|{types}");
     }
 
     public string BuildMerchantLookupKey(MerchantPlaceLookupRequest request, int maxCandidates)

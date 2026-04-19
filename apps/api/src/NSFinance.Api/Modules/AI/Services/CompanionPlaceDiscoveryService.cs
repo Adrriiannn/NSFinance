@@ -12,6 +12,8 @@ public sealed class CompanionPlaceDiscoveryService(
 {
     private const string DiscoveryUseCase = "companion_discovery";
     private const string CompanionFieldMaskVariant = "companion_discovery_v1";
+    private const string NearbyDiscoveryUseCase = "companion_discovery_nearby";
+    private const string CompanionNearbyFieldMaskVariant = "companion_nearby_v1";
     private readonly GooglePlacesOptions placesOptions = options.Value;
 
     public async Task<CompanionPlaceDiscoveryResult> DiscoverAsync(
@@ -136,6 +138,130 @@ public sealed class CompanionPlaceDiscoveryService(
         return success;
     }
 
+    public async Task<CompanionPlaceDiscoveryResult> DiscoverNearbyAsync(
+        CompanionNearbyDiscoveryRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var nowUtc = DateTime.UtcNow;
+        var maxCandidates = Math.Clamp(
+            request.MaxCandidates ?? Math.Max(4, placesOptions.MaxCompanionCandidates),
+            1,
+            16);
+        var includedTypes = request.IncludedTypes
+            .Where(type => !string.IsNullOrWhiteSpace(type))
+            .Select(type => type.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToArray();
+        if (includedTypes.Length == 0)
+        {
+            return BuildNearbyResult(
+                succeeded: false,
+                fromCache: false,
+                requestedCount: maxCandidates,
+                candidates: [],
+                elapsed: TimeSpan.Zero,
+                timedOut: false,
+                providerErrorCode: "nearby_empty_types",
+                warnings: ["nearby_empty_types"]);
+        }
+
+        var radiusMeters = Math.Clamp(
+            request.RadiusMeters,
+            200,
+            25_000);
+        var cacheKey = cacheKeyBuilder.BuildCompanionNearbyKey(
+            request with { IncludedTypes = includedTypes, RadiusMeters = radiusMeters },
+            maxCandidates);
+        if (cache.TryGet(cacheKey, nowUtc, out CompanionPlaceDiscoveryResult cached))
+        {
+            logger.LogInformation(
+                "Google Places nearby discovery cache hit queryHash={QueryHash} requested={Requested} returned={Returned}",
+                cacheKey,
+                maxCandidates,
+                cached.Candidates.Count);
+
+            return cached with
+            {
+                Metadata = cached.Metadata with
+                {
+                    FromCache = true,
+                    Elapsed = TimeSpan.Zero
+                }
+            };
+        }
+
+        var providerResult = await placesClient.SearchNearbyAsync(
+            new GooglePlacesSearchNearbyRequest(
+                Latitude: request.Latitude,
+                Longitude: request.Longitude,
+                RadiusMeters: radiusMeters,
+                IncludedTypes: includedTypes,
+                MaxResultCount: maxCandidates,
+                RegionCode: request.CountryCode,
+                LanguageCode: request.LanguageCode,
+                FieldMask: fieldMaskProvider.CompanionNearbySearchMask,
+                UseCaseTag: NearbyDiscoveryUseCase),
+            cancellationToken);
+        if (!providerResult.Succeeded)
+        {
+            var failureWarnings = new List<string>(2)
+            {
+                "nearby_provider_unavailable"
+            };
+            if (providerResult.TimedOut)
+            {
+                failureWarnings.Add("nearby_timeout");
+            }
+
+            var failed = BuildNearbyResult(
+                succeeded: false,
+                fromCache: false,
+                requestedCount: maxCandidates,
+                candidates: [],
+                elapsed: providerResult.Elapsed,
+                timedOut: providerResult.TimedOut,
+                providerErrorCode: providerResult.ErrorCode,
+                warnings: failureWarnings);
+            cache.Set(
+                cacheKey,
+                failed,
+                nowUtc,
+                TimeSpan.FromSeconds(Math.Max(1, placesOptions.FailureCacheTtlSeconds)));
+            return failed;
+        }
+
+        var candidates = (providerResult.Value ?? [])
+            .Take(maxCandidates)
+            .Select(MapToCandidate)
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.PlaceId))
+            .ToArray();
+        var success = BuildNearbyResult(
+            succeeded: true,
+            fromCache: false,
+            requestedCount: maxCandidates,
+            candidates: candidates,
+            elapsed: providerResult.Elapsed,
+            timedOut: false,
+            providerErrorCode: null,
+            warnings: []);
+        cache.Set(
+            cacheKey,
+            success,
+            nowUtc,
+            TimeSpan.FromSeconds(Math.Max(1, placesOptions.CompanionCacheTtlSeconds)));
+        logger.LogInformation(
+            "Google Places nearby discovery success requested={Requested} returned={Returned} elapsedMs={ElapsedMs} fieldMaskVariant={FieldMaskVariant}",
+            maxCandidates,
+            candidates.Length,
+            providerResult.Elapsed.TotalMilliseconds,
+            CompanionNearbyFieldMaskVariant);
+        return success;
+    }
+
     private static CompanionPlaceCandidate MapToCandidate(GooglePlacesClientPlace place)
     {
         return new CompanionPlaceCandidate(
@@ -203,6 +329,31 @@ public sealed class CompanionPlaceDiscoveryService(
                 RequestedCandidateCount: requestedCount,
                 ReturnedCandidateCount: candidates.Count,
                 FieldMaskVariant: CompanionFieldMaskVariant,
+                Elapsed: elapsed,
+                TimedOut: timedOut,
+                ProviderErrorCode: providerErrorCode),
+            Warnings: warnings);
+    }
+
+    private static CompanionPlaceDiscoveryResult BuildNearbyResult(
+        bool succeeded,
+        bool fromCache,
+        int requestedCount,
+        IReadOnlyList<CompanionPlaceCandidate> candidates,
+        TimeSpan elapsed,
+        bool timedOut,
+        string? providerErrorCode,
+        IReadOnlyList<string> warnings)
+    {
+        return new CompanionPlaceDiscoveryResult(
+            Succeeded: succeeded,
+            Candidates: candidates,
+            Metadata: new PlaceSearchMetadata(
+                UseCase: NearbyDiscoveryUseCase,
+                FromCache: fromCache,
+                RequestedCandidateCount: requestedCount,
+                ReturnedCandidateCount: candidates.Count,
+                FieldMaskVariant: CompanionNearbyFieldMaskVariant,
                 Elapsed: elapsed,
                 TimedOut: timedOut,
                 ProviderErrorCode: providerErrorCode),
@@ -388,6 +539,8 @@ public sealed class GooglePlacesCompanionSearchService(
     ICompanionPlaceDiscoveryService discoveryService,
     ILocalDiscoveryQueryShaper localDiscoveryQueryShaper,
     ICompanionLocalityResolutionService localityResolutionService,
+    ICompanionNearbyTypeMapper nearbyTypeMapper,
+    ICompanionNearbyHybridRetrievalPolicy hybridRetrievalPolicy,
     ICompanionPlaceRankingPolicy placeRankingPolicy,
     IOptions<GooglePlacesOptions> options,
     ILogger<GooglePlacesCompanionSearchService> logger) : IPlacesSearchService
@@ -410,7 +563,6 @@ public sealed class GooglePlacesCompanionSearchService(
             shapedQuery.Constraints.HasNearMeLanguage,
             shapedQuery.Constraints.HasExplicitLocality,
             string.Join(',', shapedQuery.ReasonCodes));
-        var rankingContext = BuildRankingContext(locationContext, shapedQuery.Constraints);
 
         var effectiveLocationContext = await ResolveLocationBiasAsync(
             locationContext,
@@ -418,6 +570,9 @@ public sealed class GooglePlacesCompanionSearchService(
             country,
             warnings,
             cancellationToken);
+        var rankingContext = BuildRankingContext(effectiveLocationContext, shapedQuery.Constraints);
+        var hybridDecision = hybridRetrievalPolicy.Decide(locationContext, shapedQuery.Constraints);
+        warnings.Add(hybridDecision.ReasonCode);
 
         var primaryRequest = BuildDiscoveryRequest(
             query: shapedQuery.Query,
@@ -428,10 +583,57 @@ public sealed class GooglePlacesCompanionSearchService(
             primaryRequest.Query,
             primaryRequest.Latitude.HasValue && primaryRequest.Longitude.HasValue,
             primaryRequest.RadiusMeters ?? 0);
+        warnings.Add("places_retrieval:text_search_used");
         var primaryResult = await discoveryService.DiscoverAsync(
             primaryRequest,
             cancellationToken);
         warnings.UnionWith(primaryResult.Warnings ?? []);
+        warnings.Add($"places_retrieval:text_search_candidate_count:{primaryResult.Candidates.Count}");
+
+        if (hybridDecision.UseHybridRetrieval)
+        {
+            var nearbyTypeMapping = nearbyTypeMapper.Map(query, shapedQuery.Constraints);
+            foreach (var reasonCode in nearbyTypeMapping.ReasonCodes)
+            {
+                warnings.Add($"places_retrieval:{reasonCode}");
+            }
+
+            CompanionPlaceDiscoveryResult mergedResult;
+            if (nearbyTypeMapping.IncludedTypes.Count == 0)
+            {
+                warnings.Add("places_retrieval:nearby_search_skipped_no_type_mapping");
+                mergedResult = primaryResult;
+            }
+            else
+            {
+                warnings.Add("places_retrieval:nearby_search_used");
+                var nearbyRequest = BuildNearbyRequest(
+                    countryCode: country,
+                    locationContext: effectiveLocationContext,
+                    includedTypes: nearbyTypeMapping.IncludedTypes);
+                var nearbyResult = await discoveryService.DiscoverNearbyAsync(
+                    nearbyRequest,
+                    cancellationToken);
+                warnings.UnionWith(nearbyResult.Warnings ?? []);
+                warnings.Add($"places_retrieval:nearby_search_candidate_count:{nearbyResult.Candidates.Count}");
+                mergedResult = MergeHybridResults(primaryResult, nearbyResult, warnings);
+            }
+
+            if (mergedResult.Succeeded && mergedResult.Candidates.Count > 0)
+            {
+                warnings.Add("places_query_shape:results_found_primary");
+            }
+            else if (!mergedResult.Succeeded)
+            {
+                warnings.Add("places_query_shape:primary_search_failed");
+            }
+            else
+            {
+                warnings.Add("places_query_shape:no_results_primary");
+            }
+
+            return BuildSearchResult(mergedResult, warnings, rankingContext);
+        }
 
         if (primaryResult.Succeeded && primaryResult.Candidates.Count > 0)
         {
@@ -492,6 +694,23 @@ public sealed class GooglePlacesCompanionSearchService(
 
         warnings.Add("places_query_shape:no_results_fallback");
         return BuildSearchResult(fallbackResult, warnings, rankingContext);
+    }
+
+    private CompanionNearbyDiscoveryRequest BuildNearbyRequest(
+        string? countryCode,
+        PlaceSearchLocationContext? locationContext,
+        IReadOnlyList<string> includedTypes)
+    {
+        return new CompanionNearbyDiscoveryRequest(
+            Latitude: locationContext?.Latitude ?? 0d,
+            Longitude: locationContext?.Longitude ?? 0d,
+            RadiusMeters: Math.Clamp(
+                locationContext?.RadiusMeters ?? placesOptions.DefaultSearchRadiusMeters,
+                500,
+                15_000),
+            IncludedTypes: includedTypes,
+            CountryCode: countryCode,
+            MaxCandidates: Math.Clamp(Math.Max(placesOptions.MaxCompanionCandidates, 8), 4, 12));
     }
 
     private async Task<PlaceSearchLocationContext?> ResolveLocationBiasAsync(
@@ -700,7 +919,9 @@ public sealed class GooglePlacesCompanionSearchService(
             rankingContext.ApplyDistanceRanking,
             ranking.RankedCandidates.Count,
             string.Join(',', ranking.Diagnostics));
+        var maxFinalItems = Math.Clamp(placesOptions.MaxCompanionCandidates, 1, 8);
         var items = ranking.RankedCandidates
+            .Take(maxFinalItems)
             .Select(candidate => new PlaceSearchItem(
                 PlaceId: candidate.PlaceId,
                 Name: candidate.DisplayName,
@@ -772,6 +993,170 @@ public sealed class GooglePlacesCompanionSearchService(
             UserLatitude: locationContext?.Latitude,
             UserLongitude: locationContext?.Longitude,
             PlaceTypeHints: constraints.PlaceTypeHints);
+    }
+
+    private static CompanionPlaceDiscoveryResult MergeHybridResults(
+        CompanionPlaceDiscoveryResult textResult,
+        CompanionPlaceDiscoveryResult nearbyResult,
+        ISet<string> warnings)
+    {
+        warnings.Add("places_retrieval:hybrid_merge_applied");
+        var dedupe = new Dictionary<string, CompanionPlaceCandidate>(StringComparer.OrdinalIgnoreCase);
+        var overlapCount = 0;
+        foreach (var candidate in textResult.Candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.PlaceId))
+            {
+                continue;
+            }
+
+            dedupe[candidate.PlaceId] = candidate;
+        }
+
+        foreach (var candidate in nearbyResult.Candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.PlaceId))
+            {
+                continue;
+            }
+
+            if (dedupe.TryGetValue(candidate.PlaceId, out var existing))
+            {
+                overlapCount += 1;
+                dedupe[candidate.PlaceId] = MergeCandidate(existing, candidate);
+            }
+            else
+            {
+                dedupe[candidate.PlaceId] = candidate;
+            }
+        }
+
+        warnings.Add($"places_retrieval:deduped_overlap_count:{overlapCount}");
+        warnings.Add($"places_retrieval:merged_candidate_count:{dedupe.Count}");
+        var mergedCandidates = dedupe.Values.ToArray();
+        var mergedSucceeded = textResult.Succeeded || nearbyResult.Succeeded;
+        var baseMetadata = textResult.Succeeded
+            ? textResult.Metadata
+            : nearbyResult.Metadata;
+        var providerErrorCode = mergedSucceeded
+            ? null
+            : textResult.Metadata.ProviderErrorCode ?? nearbyResult.Metadata.ProviderErrorCode;
+
+        return new CompanionPlaceDiscoveryResult(
+            Succeeded: mergedSucceeded,
+            Candidates: mergedCandidates,
+            Metadata: baseMetadata with
+            {
+                UseCase = "companion_hybrid",
+                FieldMaskVariant = "companion_hybrid_v1",
+                RequestedCandidateCount = Math.Max(
+                    textResult.Metadata.RequestedCandidateCount,
+                    nearbyResult.Metadata.RequestedCandidateCount),
+                ReturnedCandidateCount = mergedCandidates.Length,
+                TimedOut = textResult.Metadata.TimedOut && nearbyResult.Metadata.TimedOut,
+                ProviderErrorCode = providerErrorCode
+            },
+            Warnings: textResult.Warnings
+                .Concat(nearbyResult.Warnings)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray());
+    }
+
+    private static CompanionPlaceCandidate MergeCandidate(
+        CompanionPlaceCandidate primary,
+        CompanionPlaceCandidate secondary)
+    {
+        return primary with
+        {
+            ResourceName = Pick(primary.ResourceName, secondary.ResourceName) ?? primary.ResourceName,
+            DisplayName = Pick(primary.DisplayName, secondary.DisplayName) ?? primary.DisplayName,
+            PrimaryType = Pick(primary.PrimaryType, secondary.PrimaryType),
+            PrimaryTypeDisplayName = Pick(primary.PrimaryTypeDisplayName, secondary.PrimaryTypeDisplayName),
+            Types = Merge(primary.Types, secondary.Types),
+            NationalPhoneNumber = Pick(primary.NationalPhoneNumber, secondary.NationalPhoneNumber),
+            FormattedAddress = Pick(primary.FormattedAddress, secondary.FormattedAddress),
+            ShortFormattedAddress = Pick(primary.ShortFormattedAddress, secondary.ShortFormattedAddress),
+            Rating = primary.Rating ?? secondary.Rating,
+            UserRatingCount = primary.UserRatingCount ?? secondary.UserRatingCount,
+            GoogleMapsUri = Pick(primary.GoogleMapsUri, secondary.GoogleMapsUri),
+            WebsiteUri = Pick(primary.WebsiteUri, secondary.WebsiteUri),
+            BusinessStatus = Pick(primary.BusinessStatus, secondary.BusinessStatus),
+            PriceLevel = Pick(primary.PriceLevel, secondary.PriceLevel),
+            IconMaskBaseUri = Pick(primary.IconMaskBaseUri, secondary.IconMaskBaseUri),
+            IconBackgroundColor = Pick(primary.IconBackgroundColor, secondary.IconBackgroundColor),
+            Takeout = primary.Takeout ?? secondary.Takeout,
+            Delivery = primary.Delivery ?? secondary.Delivery,
+            DineIn = primary.DineIn ?? secondary.DineIn,
+            Reservable = primary.Reservable ?? secondary.Reservable,
+            ServesBreakfast = primary.ServesBreakfast ?? secondary.ServesBreakfast,
+            ServesLunch = primary.ServesLunch ?? secondary.ServesLunch,
+            ServesDinner = primary.ServesDinner ?? secondary.ServesDinner,
+            ServesBeer = primary.ServesBeer ?? secondary.ServesBeer,
+            ServesWine = primary.ServesWine ?? secondary.ServesWine,
+            ServesBrunch = primary.ServesBrunch ?? secondary.ServesBrunch,
+            ServesVegetarianFood = primary.ServesVegetarianFood ?? secondary.ServesVegetarianFood,
+            OutdoorSeating = primary.OutdoorSeating ?? secondary.OutdoorSeating,
+            LiveMusic = primary.LiveMusic ?? secondary.LiveMusic,
+            MenuForChildren = primary.MenuForChildren ?? secondary.MenuForChildren,
+            ServesCocktails = primary.ServesCocktails ?? secondary.ServesCocktails,
+            ServesDessert = primary.ServesDessert ?? secondary.ServesDessert,
+            ServesCoffee = primary.ServesCoffee ?? secondary.ServesCoffee,
+            AllowsDogs = primary.AllowsDogs ?? secondary.AllowsDogs,
+            Restroom = primary.Restroom ?? secondary.Restroom,
+            GoodForGroups = primary.GoodForGroups ?? secondary.GoodForGroups,
+            GoodForWatchingSports = primary.GoodForWatchingSports ?? secondary.GoodForWatchingSports,
+            PaymentOptions = Merge(primary.PaymentOptions, secondary.PaymentOptions),
+            AccessibilityOptions = Merge(primary.AccessibilityOptions, secondary.AccessibilityOptions),
+            EditorialSummary = Merge(primary.EditorialSummary, secondary.EditorialSummary),
+            Location = primary.Location ?? secondary.Location
+        };
+    }
+
+    private static string? Pick(string? first, string? second)
+    {
+        return string.IsNullOrWhiteSpace(first) ? second : first;
+    }
+
+    private static IReadOnlyList<string> Merge(
+        IReadOnlyList<string> first,
+        IReadOnlyList<string> second)
+    {
+        return first
+            .Concat(second)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static PlacePaymentOptionsSummary Merge(
+        PlacePaymentOptionsSummary first,
+        PlacePaymentOptionsSummary second)
+    {
+        return new PlacePaymentOptionsSummary(
+            AcceptsCreditCards: first.AcceptsCreditCards ?? second.AcceptsCreditCards,
+            AcceptsDebitCards: first.AcceptsDebitCards ?? second.AcceptsDebitCards,
+            AcceptsCashOnly: first.AcceptsCashOnly ?? second.AcceptsCashOnly,
+            AcceptsNfc: first.AcceptsNfc ?? second.AcceptsNfc);
+    }
+
+    private static PlaceAccessibilitySummary Merge(
+        PlaceAccessibilitySummary first,
+        PlaceAccessibilitySummary second)
+    {
+        return new PlaceAccessibilitySummary(
+            WheelchairAccessibleParking: first.WheelchairAccessibleParking ?? second.WheelchairAccessibleParking,
+            WheelchairAccessibleEntrance: first.WheelchairAccessibleEntrance ?? second.WheelchairAccessibleEntrance,
+            WheelchairAccessibleRestroom: first.WheelchairAccessibleRestroom ?? second.WheelchairAccessibleRestroom,
+            WheelchairAccessibleSeating: first.WheelchairAccessibleSeating ?? second.WheelchairAccessibleSeating);
+    }
+
+    private static PlaceEditorialSummary Merge(
+        PlaceEditorialSummary first,
+        PlaceEditorialSummary second)
+    {
+        return new PlaceEditorialSummary(
+            Text: Pick(first.Text, second.Text),
+            LanguageCode: Pick(first.LanguageCode, second.LanguageCode));
     }
 
     private static string? Normalize(string? value)

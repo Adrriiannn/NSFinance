@@ -185,6 +185,46 @@ public sealed class CompanionPlaceDiscoveryServiceTests
         Assert.Single(fakeClient.PlaceDetailsRequests);
     }
 
+    [Fact]
+    public async Task DiscoverNearbyAsync_UsesNearbyMaskAndCache()
+    {
+        var fakeClient = new FakeGooglePlacesClient
+        {
+            NearbySearchResult = new GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>(
+                Succeeded: true,
+                Value: [BuildPlace(7)],
+                TimedOut: false,
+                StatusCode: System.Net.HttpStatusCode.OK,
+                ErrorCode: null,
+                ErrorMessage: null,
+                Elapsed: TimeSpan.FromMilliseconds(18))
+        };
+        var fieldMasks = new GooglePlacesFieldMaskProvider();
+        var sut = new CompanionPlaceDiscoveryService(
+            fakeClient,
+            fieldMasks,
+            new InMemoryGooglePlacesCache(),
+            new GooglePlacesCacheKeyBuilder(),
+            Options.Create(CreateOptions()),
+            NullLogger<CompanionPlaceDiscoveryService>.Instance);
+        var request = new CompanionNearbyDiscoveryRequest(
+            Latitude: 53.3570,
+            Longitude: -6.4486,
+            RadiusMeters: 1500,
+            IncludedTypes: ["cafe"]);
+
+        var first = await sut.DiscoverNearbyAsync(request, CancellationToken.None);
+        var second = await sut.DiscoverNearbyAsync(request, CancellationToken.None);
+
+        Assert.True(first.Succeeded);
+        Assert.True(second.Succeeded);
+        Assert.Equal("companion_nearby_v1", first.Metadata.FieldMaskVariant);
+        Assert.False(first.Metadata.FromCache);
+        Assert.True(second.Metadata.FromCache);
+        var nearbyRequest = Assert.Single(fakeClient.NearbyRequests);
+        Assert.Equal(fieldMasks.CompanionNearbySearchMask, nearbyRequest.FieldMask);
+    }
+
     private static GooglePlacesOptions CreateOptions(
         int maxCompanionCandidates = 8,
         int maxMerchantLookupCandidates = 5)
@@ -263,6 +303,7 @@ public sealed class CompanionPlaceDiscoveryServiceTests
     private sealed class FakeGooglePlacesClient : IGooglePlacesClient
     {
         public List<GooglePlacesSearchTextRequest> SearchRequests { get; } = [];
+        public List<GooglePlacesSearchNearbyRequest> NearbyRequests { get; } = [];
         public List<(string PlaceId, string FieldMask, string UseCaseTag)> PlaceDetailsRequests { get; } = [];
 
         public GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>> SearchResult { get; set; } =
@@ -285,6 +326,16 @@ public sealed class CompanionPlaceDiscoveryServiceTests
                 ErrorMessage: null,
                 Elapsed: TimeSpan.Zero);
 
+        public GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>> NearbySearchResult { get; set; } =
+            new(
+                Succeeded: true,
+                Value: [],
+                TimedOut: false,
+                StatusCode: System.Net.HttpStatusCode.OK,
+                ErrorCode: null,
+                ErrorMessage: null,
+                Elapsed: TimeSpan.Zero);
+
         public Task<GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>> SearchTextAsync(
             GooglePlacesSearchTextRequest request,
             CancellationToken cancellationToken)
@@ -292,6 +343,15 @@ public sealed class CompanionPlaceDiscoveryServiceTests
             cancellationToken.ThrowIfCancellationRequested();
             SearchRequests.Add(request);
             return Task.FromResult(SearchResult);
+        }
+
+        public Task<GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>> SearchNearbyAsync(
+            GooglePlacesSearchNearbyRequest request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            NearbyRequests.Add(request);
+            return Task.FromResult(NearbySearchResult);
         }
 
         public Task<GooglePlacesClientResult<GooglePlacesClientPlace?>> GetPlaceDetailsAsync(

@@ -34,4 +34,16 @@ public sealed class GooglePlacesFieldMaskProviderTests
         Assert.DoesNotContain("places.accessibilityOptions", merchantMask, StringComparison.Ordinal);
         Assert.True(merchantMask.Split(',').Length < companionMask.Split(',').Length);
     }
+
+    [Fact]
+    public void CompanionNearbyMask_IsExplicitAndNoWildcard()
+    {
+        var nearbyMask = sut.CompanionNearbySearchMask;
+
+        Assert.DoesNotContain("*", nearbyMask, StringComparison.Ordinal);
+        Assert.Contains("places.displayName", nearbyMask, StringComparison.Ordinal);
+        Assert.Contains("places.location", nearbyMask, StringComparison.Ordinal);
+        Assert.DoesNotContain("places.reviews", nearbyMask, StringComparison.Ordinal);
+        Assert.DoesNotContain("places.photos", nearbyMask, StringComparison.Ordinal);
+    }
 }

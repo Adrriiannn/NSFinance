@@ -10,8 +10,13 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     public async Task SearchAsync_WithGpsGrounding_ForwardsCoordinatesToDiscoveryRequest()
     {
         var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
             [
                 BuildResult(candidates: [BuildCandidate("playground-1")])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [])
             ]);
         var sut = CreateSut(
             discovery,
@@ -43,6 +48,7 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     public async Task SearchAsync_WithTypedArea_ResolvesLocalityToCoordinates()
     {
         var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
             [
                 BuildResult(candidates: [BuildCandidate("museum-1")])
             ]);
@@ -75,6 +81,7 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     public async Task SearchAsync_PrimaryNoResults_FallbackReturnsResults()
     {
         var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
             [
                 BuildResult(candidates: []),
                 BuildResult(candidates: [BuildCandidate("museum-2")])
@@ -108,6 +115,7 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     public async Task SearchAsync_PrimaryAndFallbackNoResults_ReturnsBoundedNoData()
     {
         var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
             [
                 BuildResult(candidates: []),
                 BuildResult(candidates: [])
@@ -148,8 +156,13 @@ public sealed class GooglePlacesCompanionSearchServiceTests
             latitude: 53.3571,
             longitude: -6.4487);
         var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
             [
                 BuildResult(candidates: [farther, closer])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [])
             ]);
         var sut = CreateSut(
             discovery,
@@ -182,6 +195,7 @@ public sealed class GooglePlacesCompanionSearchServiceTests
         var first = BuildCandidate("first", latitude: 53.3900, longitude: -6.5000);
         var second = BuildCandidate("second", latitude: 53.3571, longitude: -6.4487);
         var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
             [
                 BuildResult(candidates: [first, second])
             ]);
@@ -207,6 +221,158 @@ public sealed class GooglePlacesCompanionSearchServiceTests
         Assert.Contains("places_ranking:distance_not_applicable_non_gps", result.Warnings ?? []);
     }
 
+    [Fact]
+    public async Task SearchAsync_GpsNearMe_UsesHybridRetrieval_AndDedupesByPlaceId()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates:
+                [
+                    BuildCandidate("text-only", latitude: 53.3572, longitude: -6.4488),
+                    BuildCandidate("overlap", latitude: 53.3580, longitude: -6.4500)
+                ])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates:
+                [
+                    BuildCandidate("overlap", latitude: 53.3580, longitude: -6.4500),
+                    BuildCandidate("nearby-only", latitude: 53.3571, longitude: -6.4487)
+                ])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "coffee shops near me",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000),
+            CancellationToken.None);
+
+        Assert.Single(discovery.Requests);
+        Assert.Single(discovery.NearbyRequests);
+        Assert.Equal(3, result.Items.Count);
+        Assert.Equal(3, result.Items.Select(item => item.PlaceId).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Contains("places_retrieval:text_search_used", result.Warnings ?? []);
+        Assert.Contains("places_retrieval:nearby_search_used", result.Warnings ?? []);
+        Assert.Contains("places_retrieval:hybrid_merge_applied", result.Warnings ?? []);
+        Assert.Contains("places_retrieval:deduped_overlap_count:1", result.Warnings ?? []);
+    }
+
+    [Fact]
+    public async Task SearchAsync_NonGpsQuery_DoesNotUseHybridNearbySearch()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("museum-1")])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "museums around Dublin",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "query_locality",
+                TypedArea: "Dublin"),
+            CancellationToken.None);
+
+        Assert.Single(discovery.Requests);
+        Assert.Empty(discovery.NearbyRequests);
+        Assert.Contains("places_retrieval:hybrid_not_applicable_non_gps", result.Warnings ?? []);
+    }
+
+    [Fact]
+    public async Task SearchAsync_GpsNearMe_NoNearbyTypeMapping_SkipsNearbySearchSafely()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("generic-1")])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "somewhere near me",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000),
+            CancellationToken.None);
+
+        Assert.Single(discovery.Requests);
+        Assert.Empty(discovery.NearbyRequests);
+        Assert.Contains("places_retrieval:nearby_search_skipped_no_type_mapping", result.Warnings ?? []);
+    }
+
+    [Fact]
+    public async Task SearchAsync_HybridMerge_AppliesDistanceRankingOnMergedCandidates()
+    {
+        var farther = BuildCandidate("far-text", latitude: 53.3900, longitude: -6.5000);
+        var closerFromNearby = BuildCandidate("near-nearby", latitude: 53.3571, longitude: -6.4487);
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [farther])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [closerFromNearby])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "coffee shops near me",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000),
+            CancellationToken.None);
+
+        Assert.Equal("near-nearby", result.Items[0].PlaceId);
+        Assert.Contains("places_ranking:gps_distance_applied", result.Warnings ?? []);
+    }
+
     private static GooglePlacesCompanionSearchService CreateSut(
         TrackingCompanionDiscoveryService discovery,
         ICompanionLocalityResolutionService resolver)
@@ -215,6 +381,8 @@ public sealed class GooglePlacesCompanionSearchServiceTests
             discovery,
             new LocalDiscoveryQueryShaper(new LocalDiscoveryConstraintExtractor()),
             resolver,
+            new CompanionNearbyTypeMapper(),
+            new CompanionNearbyHybridRetrievalPolicy(),
             new CompanionPlaceRankingPolicy(),
             Options.Create(new GooglePlacesOptions
             {
@@ -295,10 +463,13 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     }
 
     private sealed class TrackingCompanionDiscoveryService(
-        IReadOnlyList<CompanionPlaceDiscoveryResult> results) : ICompanionPlaceDiscoveryService
+        IReadOnlyList<CompanionPlaceDiscoveryResult> textResults,
+        IReadOnlyList<CompanionPlaceDiscoveryResult>? nearbyResults = null) : ICompanionPlaceDiscoveryService
     {
-        private int index;
+        private int textIndex;
+        private int nearbyIndex;
         public List<CompanionPlaceDiscoveryRequest> Requests { get; } = [];
+        public List<CompanionNearbyDiscoveryRequest> NearbyRequests { get; } = [];
 
         public Task<CompanionPlaceDiscoveryResult> DiscoverAsync(
             CompanionPlaceDiscoveryRequest request,
@@ -306,10 +477,29 @@ public sealed class GooglePlacesCompanionSearchServiceTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(request);
-            var current = index < results.Count
-                ? results[index]
-                : results[^1];
-            index += 1;
+            var current = textIndex < textResults.Count
+                ? textResults[textIndex]
+                : textResults[^1];
+            textIndex += 1;
+            return Task.FromResult(current);
+        }
+
+        public Task<CompanionPlaceDiscoveryResult> DiscoverNearbyAsync(
+            CompanionNearbyDiscoveryRequest request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            NearbyRequests.Add(request);
+            var sequence = nearbyResults ?? [];
+            if (sequence.Count == 0)
+            {
+                return Task.FromResult(BuildResult(candidates: []));
+            }
+
+            var current = nearbyIndex < sequence.Count
+                ? sequence[nearbyIndex]
+                : sequence[^1];
+            nearbyIndex += 1;
             return Task.FromResult(current);
         }
     }
