@@ -2,194 +2,450 @@
 
 public sealed class ExploratoryDomainSelectionPolicy : IExploratoryDomainSelectionPolicy
 {
-    private static readonly IReadOnlyList<RealWorldDiscoveryDomain> EveningDefaults =
-    [
-        RealWorldDiscoveryDomain.PubBar,
-        RealWorldDiscoveryDomain.MovieTheater,
-        RealWorldDiscoveryDomain.Restaurant,
-        RealWorldDiscoveryDomain.ParkWalk
-    ];
+    private readonly IRealWorldDomainCapabilityCatalog domainCapabilityCatalog;
 
-    private static readonly IReadOnlyList<RealWorldDiscoveryDomain> FamilyDefaults =
-    [
-        RealWorldDiscoveryDomain.Playground,
-        RealWorldDiscoveryDomain.ParkWalk,
-        RealWorldDiscoveryDomain.MovieTheater,
-        RealWorldDiscoveryDomain.Restaurant
-    ];
+    public ExploratoryDomainSelectionPolicy(IRealWorldDomainCapabilityCatalog domainCapabilityCatalog)
+    {
+        this.domainCapabilityCatalog = domainCapabilityCatalog;
+    }
 
-    private static readonly IReadOnlyList<RealWorldDiscoveryDomain> ChillDefaults =
-    [
-        RealWorldDiscoveryDomain.ParkWalk,
-        RealWorldDiscoveryDomain.Cafe,
-        RealWorldDiscoveryDomain.MovieTheater,
-        RealWorldDiscoveryDomain.Restaurant
-    ];
+    public ExploratoryDomainSelectionPolicy()
+        : this(new RealWorldDomainCapabilityCatalog())
+    {
+    }
 
-    public IReadOnlyList<RealWorldDiscoveryDomain> Select(
+    public RealWorldDomainSelectionResult Select(
         RealWorldIntentInterpretation interpretation,
         string userQuery,
         int maxDomains)
     {
         var cap = Math.Clamp(maxDomains, 1, 4);
-        var normalized = userQuery?.Trim().ToLowerInvariant() ?? string.Empty;
-        var selected = new List<RealWorldDiscoveryDomain>(cap);
-        var prefersFamily = normalized.Contains("family", StringComparison.Ordinal)
-                            || normalized.Contains("kids", StringComparison.Ordinal)
-                            || normalized.Contains("children", StringComparison.Ordinal);
-        var prefersEvening = normalized.Contains("tonight", StringComparison.Ordinal)
-                             || normalized.Contains("evening", StringComparison.Ordinal)
-                             || normalized.Contains("night", StringComparison.Ordinal);
-        var prefersChill = normalized.Contains("chill", StringComparison.Ordinal)
-                           || normalized.Contains("quiet", StringComparison.Ordinal)
-                           || normalized.Contains("calm", StringComparison.Ordinal)
-                           || normalized.Contains("relax", StringComparison.Ordinal);
-        var prefersOutdoor = normalized.Contains("walk", StringComparison.Ordinal)
-                             || normalized.Contains("park", StringComparison.Ordinal)
-                             || normalized.Contains("outdoor", StringComparison.Ordinal)
-                             || normalized.Contains("nature", StringComparison.Ordinal);
-        var candidateOrder = interpretation.CandidateDomains
-            .Where(static domain => !IsMetaDomain(domain))
+        var mode = interpretation.RecommendedExecutionMode;
+        var normalizedQuery = userQuery?.Trim().ToLowerInvariant() ?? string.Empty;
+        var reasonCodes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "real_world_catalog_selection_started",
+            $"real_world_catalog_selection_mode:{mode.ToString().ToLowerInvariant()}"
+        };
+        var signals = QuerySignals.From(normalizedQuery);
+        reasonCodes.Add(signals.HasAnySignal
+            ? "real_world_planner_query_signal_used"
+            : "real_world_planner_query_signal_missing");
+
+        var candidateRanks = interpretation.CandidateDomains
             .Distinct()
-            .Select((domain, index) => new
+            .Select((domain, index) => new { domain, index })
+            .ToDictionary(static x => x.domain, static x => x.index);
+        var candidateConcepts = interpretation.CandidateConcepts
+            .Where(static concept => !string.IsNullOrWhiteSpace(concept))
+            .Select(static concept => concept.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+        var scored = domainCapabilityCatalog.GetDomains()
+            .Where(capability => IsEligibleForMode(capability, mode))
+            .Select(capability =>
             {
-                Domain = domain,
-                Index = index,
-                Score = ScoreDomain(domain, prefersFamily, prefersEvening, prefersChill, prefersOutdoor)
+                reasonCodes.Add($"real_world_catalog_domain_considered:{ToReasonToken(capability.Domain)}");
+                var score = ScoreDomain(
+                    interpretation,
+                    capability,
+                    signals,
+                    candidateRanks,
+                    candidateConcepts,
+                    out var aiCandidateMatch,
+                    out var querySignalMatch);
+                return new ScoredDomain(
+                    Capability: capability,
+                    Score: score,
+                    AiCandidateMatch: aiCandidateMatch,
+                    QuerySignalMatch: querySignalMatch);
             })
             .OrderByDescending(static x => x.Score)
-            .ThenBy(static x => x.Index)
-            .Select(static x => x.Domain)
+            .ThenBy(x => candidateRanks.TryGetValue(x.Capability.Domain, out var rank) ? rank : int.MaxValue)
+            .ThenBy(static x => x.Capability.Domain)
             .ToArray();
+        var selected = new List<RealWorldDiscoveryDomain>(cap);
+        var selectedFamilies = new HashSet<RealWorldDomainFamily>();
+        var deferredForDiversity = new List<ScoredDomain>(cap);
 
-        void AddCandidate(RealWorldDiscoveryDomain domain)
+        void SelectDomain(ScoredDomain scoredDomain, string source)
         {
-            if (selected.Contains(domain))
+            selected.Add(scoredDomain.Capability.Domain);
+            selectedFamilies.Add(scoredDomain.Capability.Family);
+            reasonCodes.Add($"real_world_catalog_domain_selected:{ToReasonToken(scoredDomain.Capability.Domain)}");
+            reasonCodes.Add(
+                $"real_world_catalog_selection_reason:{ToReasonToken(scoredDomain.Capability.Domain)}:{source}");
+            if (scoredDomain.AiCandidateMatch)
             {
-                return;
+                reasonCodes.Add(
+                    $"real_world_catalog_selection_reason:{ToReasonToken(scoredDomain.Capability.Domain)}:ai_candidate");
             }
 
+            if (scoredDomain.QuerySignalMatch)
+            {
+                reasonCodes.Add(
+                    $"real_world_catalog_selection_reason:{ToReasonToken(scoredDomain.Capability.Domain)}:query_signal");
+            }
+        }
+
+        foreach (var scoredDomain in scored)
+        {
             if (selected.Count >= cap)
             {
-                return;
+                break;
             }
 
-            if (IsRedundantWithSelected(domain, selected))
+            if (selected.Contains(scoredDomain.Capability.Domain))
             {
-                return;
+                continue;
             }
 
-            selected.Add(domain);
+            if (IsRedundantWithSelected(scoredDomain.Capability, selected))
+            {
+                reasonCodes.Add("real_world_catalog_candidate_family_conflict_resolved");
+                continue;
+            }
+
+            if (mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch
+                && selectedFamilies.Contains(scoredDomain.Capability.Family))
+            {
+                var allowFamilyPriority = signals.PrefersFamily
+                                          && scoredDomain.Capability.SuitableFamily
+                                          && !scoredDomain.Capability.SuitableNightlife;
+                if (allowFamilyPriority)
+                {
+                    reasonCodes.Add("real_world_catalog_family_signal_priority_applied");
+                    SelectDomain(scoredDomain, "catalog_family_priority");
+                    continue;
+                }
+
+                deferredForDiversity.Add(scoredDomain);
+                reasonCodes.Add("real_world_catalog_diversity_suppression_applied");
+                continue;
+            }
+
+            SelectDomain(scoredDomain, "catalog_ranked");
         }
 
-        foreach (var domain in candidateOrder)
+        if (mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch)
         {
-            AddCandidate(domain);
+            foreach (var scoredDomain in deferredForDiversity)
+            {
+                if (selected.Count >= cap)
+                {
+                    break;
+                }
+
+                if (selected.Contains(scoredDomain.Capability.Domain)
+                    || IsRedundantWithSelected(scoredDomain.Capability, selected))
+                {
+                    continue;
+                }
+
+                SelectDomain(scoredDomain, "catalog_ranked_diversity_fill");
+            }
         }
 
         if (selected.Count == 0)
         {
-            var defaults = prefersFamily
-                ? FamilyDefaults
-                : prefersChill
-                    ? ChillDefaults
-                    : prefersEvening
-                        ? EveningDefaults
-                : EveningDefaults;
-            foreach (var domain in defaults)
+            reasonCodes.Add("real_world_catalog_default_backfill_used");
+            foreach (var scoredDomain in scored.Where(static domain => domain.Capability.ExploratoryFallbackEligible))
             {
-                AddCandidate(domain);
+                if (selected.Count >= cap)
+                {
+                    break;
+                }
+
+                if (selected.Contains(scoredDomain.Capability.Domain)
+                    || IsRedundantWithSelected(scoredDomain.Capability, selected))
+                {
+                    continue;
+                }
+
+                SelectDomain(scoredDomain, "catalog_fallback");
             }
         }
 
-        if (selected.Count == 0)
-        {
-            AddCandidate(RealWorldDiscoveryDomain.EntertainmentGeneral);
-        }
-
-        return selected;
+        return new RealWorldDomainSelectionResult(
+            SelectedDomains: selected,
+            ReasonCodes: reasonCodes.ToArray());
     }
 
-    private static bool IsMetaDomain(RealWorldDiscoveryDomain domain)
+    private static bool IsEligibleForMode(
+        RealWorldDomainCapability capability,
+        RealWorldExecutionMode mode)
     {
-        return domain is RealWorldDiscoveryDomain.ExploratoryEveningActivity
-            or RealWorldDiscoveryDomain.ExploratoryFamilyActivity;
+        if (capability.Family == RealWorldDomainFamily.Meta)
+        {
+            return false;
+        }
+
+        return mode switch
+        {
+            RealWorldExecutionMode.ExploratoryMultiDomainSearch => capability.SupportsExploratorySearch,
+            RealWorldExecutionMode.FocusedThemeSearch => capability.SupportsFocusedThemeSearch,
+            _ => capability.SupportsFocusedPlaceSearch
+        };
     }
 
     private static int ScoreDomain(
-        RealWorldDiscoveryDomain domain,
-        bool prefersFamily,
-        bool prefersEvening,
-        bool prefersChill,
-        bool prefersOutdoor)
+        RealWorldIntentInterpretation interpretation,
+        RealWorldDomainCapability capability,
+        QuerySignals signals,
+        IReadOnlyDictionary<RealWorldDiscoveryDomain, int> candidateRanks,
+        IReadOnlySet<string> candidateConcepts,
+        out bool aiCandidateMatch,
+        out bool querySignalMatch)
     {
+        aiCandidateMatch = candidateRanks.TryGetValue(capability.Domain, out var candidateRank);
+        querySignalMatch = false;
+
         var score = 0;
-        if (prefersFamily)
+        if (aiCandidateMatch)
         {
-            score += domain switch
-            {
-                RealWorldDiscoveryDomain.Playground => 6,
-                RealWorldDiscoveryDomain.ParkWalk => 4,
-                RealWorldDiscoveryDomain.MovieTheater => 3,
-                RealWorldDiscoveryDomain.Restaurant => 2,
-                RealWorldDiscoveryDomain.PubBar => -4,
-                RealWorldDiscoveryDomain.NightlifeGeneral => -5,
-                _ => 0
-            };
+            score += 42 - Math.Min(candidateRank, 8) * 2;
         }
 
-        if (prefersEvening)
+        var conceptMatches = capability.CanonicalConcepts
+            .Count(candidateConcepts.Contains);
+        if (conceptMatches > 0)
         {
-            score += domain switch
-            {
-                RealWorldDiscoveryDomain.PubBar => 3,
-                RealWorldDiscoveryDomain.MovieTheater => 3,
-                RealWorldDiscoveryDomain.Restaurant => 2,
-                RealWorldDiscoveryDomain.NightlifeGeneral => 2,
-                _ => 0
-            };
+            score += 14 + ((conceptMatches - 1) * 4);
         }
 
-        if (prefersChill)
+        if (interpretation.IntentFamily == RealWorldIntentFamily.CommerceDiscovery)
         {
-            score += domain switch
-            {
-                RealWorldDiscoveryDomain.ParkWalk => 4,
-                RealWorldDiscoveryDomain.Cafe => 3,
-                RealWorldDiscoveryDomain.MovieTheater => 2,
-                RealWorldDiscoveryDomain.PubBar => -2,
-                RealWorldDiscoveryDomain.NightlifeGeneral => -3,
-                _ => 0
-            };
+            score += capability.SupportsCommerceDiscovery ? 18 : -8;
         }
 
-        if (prefersOutdoor)
+        if (interpretation.IntentFamily == RealWorldIntentFamily.ServiceDiscovery)
         {
-            score += domain switch
-            {
-                RealWorldDiscoveryDomain.ParkWalk => 5,
-                RealWorldDiscoveryDomain.OutdoorActivity => 4,
-                _ => 0
-            };
+            score += capability.SupportsServiceDiscovery || capability.SupportsEssentialService ? 18 : -8;
+        }
+
+        if (signals.PrefersFamily)
+        {
+            score += capability.SuitableFamily ? 14 : 0;
+            score += capability.SuitableNightlife ? -8 : 0;
+            querySignalMatch |= capability.SuitableFamily || capability.SuitableNightlife;
+        }
+
+        if (signals.PrefersEvening)
+        {
+            score += capability.SuitableEvening ? 9 : 0;
+            querySignalMatch |= capability.SuitableEvening;
+        }
+
+        if (signals.PrefersChill)
+        {
+            score += capability.SuitableChill ? 11 : 0;
+            score += capability.SuitableNightlife ? -4 : 0;
+            querySignalMatch |= capability.SuitableChill || capability.SuitableNightlife;
+        }
+
+        if (signals.PrefersOutdoor)
+        {
+            score += capability.SuitableOutdoor ? 10 : 0;
+            querySignalMatch |= capability.SuitableOutdoor;
+        }
+
+        if (signals.PrefersActive)
+        {
+            score += capability.SuitableActive ? 8 : 0;
+            querySignalMatch |= capability.SuitableActive;
+        }
+
+        if (signals.PrefersFoodDrink)
+        {
+            score += capability.Family == RealWorldDomainFamily.FoodDrink ? 11 : 0;
+            querySignalMatch |= capability.Family == RealWorldDomainFamily.FoodDrink;
+        }
+
+        if (signals.PrefersEntertainment)
+        {
+            var entertainmentMatch = capability.Family is RealWorldDomainFamily.Entertainment
+                or RealWorldDomainFamily.Outdoor;
+            score += entertainmentMatch ? 9 : 0;
+            querySignalMatch |= entertainmentMatch;
+        }
+
+        if (signals.PrefersCommerce)
+        {
+            score += capability.SupportsCommerceDiscovery ? 12 : 0;
+            querySignalMatch |= capability.SupportsCommerceDiscovery;
+        }
+
+        if (signals.PrefersService || signals.PrefersErrand)
+        {
+            var serviceMatch = capability.SupportsServiceDiscovery
+                               || capability.SupportsEssentialService
+                               || capability.SuitableQuickErrand;
+            score += serviceMatch ? 11 : 0;
+            querySignalMatch |= serviceMatch;
+        }
+
+        if (signals.PrefersNightlife)
+        {
+            score += capability.SuitableNightlife ? 12 : 0;
+            querySignalMatch |= capability.SuitableNightlife;
+        }
+
+        if (signals.PrefersBudget)
+        {
+            score += capability.SuitableBudgetFriendly ? 7 : 0;
+            querySignalMatch |= capability.SuitableBudgetFriendly;
+        }
+
+        if (signals.PrefersSolo)
+        {
+            score += capability.SuitableSolo ? 4 : 0;
+            querySignalMatch |= capability.SuitableSolo;
+        }
+
+        if (signals.PrefersSocial)
+        {
+            score += capability.SuitableSocial ? 4 : 0;
+            querySignalMatch |= capability.SuitableSocial;
+        }
+
+        if (interpretation.HasNearMeLanguage && !capability.NearMeAppropriate)
+        {
+            score -= 6;
+        }
+
+        if (interpretation.HasExplicitLocality && !capability.ExplicitLocalityAppropriate)
+        {
+            score -= 4;
+        }
+
+        if (capability.IsGeneric)
+        {
+            score -= 2;
+        }
+
+        if (capability.ExploratoryFallbackEligible)
+        {
+            score += 1;
         }
 
         return score;
     }
 
-    private static bool IsRedundantWithSelected(
-        RealWorldDiscoveryDomain candidate,
-        IReadOnlyCollection<RealWorldDiscoveryDomain> selected)
+    private bool IsRedundantWithSelected(
+        RealWorldDomainCapability candidate,
+        IReadOnlyCollection<RealWorldDiscoveryDomain> selectedDomains)
     {
-        if (candidate == RealWorldDiscoveryDomain.NightlifeGeneral
-            && selected.Contains(RealWorldDiscoveryDomain.PubBar))
+        if (!candidate.IsGeneric)
         {
-            return true;
+            return false;
         }
 
-        return candidate == RealWorldDiscoveryDomain.FoodDrinkGeneral
-               && (selected.Contains(RealWorldDiscoveryDomain.Restaurant)
-                   || selected.Contains(RealWorldDiscoveryDomain.Cafe)
-                   || selected.Contains(RealWorldDiscoveryDomain.Takeaway));
+        foreach (var selectedDomain in selectedDomains)
+        {
+            if (!domainCapabilityCatalog.TryGetDomain(selectedDomain, out var selectedCapability))
+            {
+                continue;
+            }
+
+            if (selectedCapability.Family == candidate.Family && !selectedCapability.IsGeneric)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ToReasonToken(RealWorldDiscoveryDomain domain)
+    {
+        return domain.ToString().ToLowerInvariant();
+    }
+
+    private sealed record ScoredDomain(
+        RealWorldDomainCapability Capability,
+        int Score,
+        bool AiCandidateMatch,
+        bool QuerySignalMatch);
+
+    private sealed record QuerySignals(
+        bool PrefersFamily,
+        bool PrefersEvening,
+        bool PrefersChill,
+        bool PrefersOutdoor,
+        bool PrefersActive,
+        bool PrefersFoodDrink,
+        bool PrefersEntertainment,
+        bool PrefersCommerce,
+        bool PrefersService,
+        bool PrefersNightlife,
+        bool PrefersBudget,
+        bool PrefersSocial,
+        bool PrefersSolo,
+        bool PrefersErrand)
+    {
+        public bool HasAnySignal =>
+            PrefersFamily
+            || PrefersEvening
+            || PrefersChill
+            || PrefersOutdoor
+            || PrefersActive
+            || PrefersFoodDrink
+            || PrefersEntertainment
+            || PrefersCommerce
+            || PrefersService
+            || PrefersNightlife
+            || PrefersBudget
+            || PrefersSocial
+            || PrefersSolo
+            || PrefersErrand;
+
+        public static QuerySignals From(string normalizedQuery)
+        {
+            return new QuerySignals(
+                PrefersFamily: ContainsAny(normalizedQuery, "family", "kids", "children"),
+                PrefersEvening: ContainsAny(normalizedQuery, "tonight", "evening", "night", "weekend"),
+                PrefersChill: ContainsAny(normalizedQuery, "chill", "quiet", "calm", "relax"),
+                PrefersOutdoor: ContainsAny(normalizedQuery, "walk", "park", "outdoor", "nature"),
+                PrefersActive: ContainsAny(normalizedQuery, "active", "adventure", "fitness", "sport", "hike"),
+                PrefersFoodDrink: ContainsAny(
+                    normalizedQuery,
+                    "eat",
+                    "food",
+                    "drink",
+                    "coffee",
+                    "cafe",
+                    "restaurant",
+                    "dine",
+                    "brunch"),
+                PrefersEntertainment: ContainsAny(
+                    normalizedQuery,
+                    "fun",
+                    "entertainment",
+                    "movie",
+                    "cinema",
+                    "theater",
+                    "theatre",
+                    "film"),
+                PrefersCommerce: ContainsAny(normalizedQuery, "buy", "shop", "purchase", "sell"),
+                PrefersService: ContainsAny(
+                    normalizedQuery,
+                    "service",
+                    "pharmacy",
+                    "chemist",
+                    "petrol",
+                    "fuel",
+                    "gas station"),
+                PrefersNightlife: ContainsAny(normalizedQuery, "nightlife", "pub", "bar", "drinks", "drinking"),
+                PrefersBudget: ContainsAny(normalizedQuery, "budget", "cheap", "affordable", "value"),
+                PrefersSocial: ContainsAny(normalizedQuery, "friends", "group", "together", "social"),
+                PrefersSolo: ContainsAny(normalizedQuery, "alone", "solo", "myself"),
+                PrefersErrand: ContainsAny(normalizedQuery, "quick", "errand", "pick up", "pick-up"));
+        }
+
+        private static bool ContainsAny(string text, params string[] terms)
+        {
+            return terms.Any(term => text.Contains(term, StringComparison.Ordinal));
+        }
     }
 }
 
@@ -284,25 +540,27 @@ public sealed class RealWorldExecutionModePlanner(
                 ReasonCodes: reasonCodes.ToArray());
         }
 
-        var selectedDomains = interpretation.RecommendedExecutionMode switch
+        var maxDomains = interpretation.RecommendedExecutionMode switch
         {
-            RealWorldExecutionMode.ExploratoryMultiDomainSearch => exploratoryDomainSelectionPolicy
-                .Select(interpretation, normalizedQuery, 4),
-            RealWorldExecutionMode.FocusedThemeSearch => exploratoryDomainSelectionPolicy
-                .Select(interpretation, normalizedQuery, 2),
-            _ => interpretation.CandidateDomains
-                .Where(domain => domain is not RealWorldDiscoveryDomain.ExploratoryEveningActivity
-                                  and not RealWorldDiscoveryDomain.ExploratoryFamilyActivity)
-                .Distinct()
-                .Take(1)
-                .ToArray()
+            RealWorldExecutionMode.ExploratoryMultiDomainSearch => 4,
+            RealWorldExecutionMode.FocusedThemeSearch => 2,
+            _ => 1
         };
+        var domainSelection = exploratoryDomainSelectionPolicy.Select(
+            interpretation,
+            normalizedQuery,
+            maxDomains);
+        reasonCodes.UnionWith(domainSelection.ReasonCodes);
+        var selectedDomains = domainSelection.SelectedDomains;
 
         if (selectedDomains.Count == 0)
         {
-            selectedDomains = interpretation.RecommendedExecutionMode == RealWorldExecutionMode.FocusedThemeSearch
-                ? [RealWorldDiscoveryDomain.FoodDrinkGeneral, RealWorldDiscoveryDomain.EntertainmentGeneral]
-                : [RealWorldDiscoveryDomain.EntertainmentGeneral];
+            selectedDomains = interpretation.CandidateDomains
+                .Where(domain => domain is not RealWorldDiscoveryDomain.ExploratoryEveningActivity
+                                  and not RealWorldDiscoveryDomain.ExploratoryFamilyActivity)
+                .Distinct()
+                .Take(Math.Max(1, maxDomains))
+                .ToArray();
             reasonCodes.Add("execution_mode:default_domain_selection_applied");
             reasonCodes.Add("real_world_planner_default_domain_selection_used");
         }

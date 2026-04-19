@@ -48,6 +48,17 @@ public enum RealWorldDiscoveryDomain
     ExploratoryFamilyActivity = 21
 }
 
+public enum RealWorldDomainFamily
+{
+    FoodDrink = 0,
+    Entertainment = 1,
+    Outdoor = 2,
+    EssentialService = 3,
+    RetailCommerce = 4,
+    Wellness = 5,
+    Meta = 6
+}
+
 public enum RealWorldFailureScenario
 {
     MissingLocation = 0,
@@ -97,6 +108,37 @@ public sealed record RealWorldExecutionPlan(
     bool RequiresLocationGrounding,
     IReadOnlyList<RealWorldDiscoveryDomain> SelectedDomains,
     string? ClarificationPrompt,
+    IReadOnlyList<string> ReasonCodes);
+
+public sealed record RealWorldDomainCapability(
+    RealWorldDiscoveryDomain Domain,
+    RealWorldDomainFamily Family,
+    IReadOnlyList<string> CanonicalConcepts,
+    bool SupportsFocusedPlaceSearch,
+    bool SupportsFocusedThemeSearch,
+    bool SupportsExploratorySearch,
+    bool SupportsCommerceDiscovery,
+    bool SupportsServiceDiscovery,
+    bool SupportsEssentialService,
+    bool SuitableEvening,
+    bool SuitableFamily,
+    bool SuitableChill,
+    bool SuitableActive,
+    bool SuitableSocial,
+    bool SuitableSolo,
+    bool SuitableQuickErrand,
+    bool SuitablePlannedOuting,
+    bool SuitableBudgetFriendly,
+    bool SuitableNightlife,
+    bool SuitableIndoor,
+    bool SuitableOutdoor,
+    bool NearMeAppropriate,
+    bool ExplicitLocalityAppropriate,
+    bool ExploratoryFallbackEligible,
+    bool IsGeneric);
+
+public sealed record RealWorldDomainSelectionResult(
+    IReadOnlyList<RealWorldDiscoveryDomain> SelectedDomains,
     IReadOnlyList<string> ReasonCodes);
 
 public sealed record RealWorldPlacesExecutionRequest(
@@ -185,9 +227,16 @@ public interface IRealWorldExecutionModePlanner
         LocalDiscoveryConstraintExtractionResult localDiscovery);
 }
 
+public interface IRealWorldDomainCapabilityCatalog
+{
+    IReadOnlyList<RealWorldDomainCapability> GetDomains();
+
+    bool TryGetDomain(RealWorldDiscoveryDomain domain, out RealWorldDomainCapability capability);
+}
+
 public interface IExploratoryDomainSelectionPolicy
 {
-    IReadOnlyList<RealWorldDiscoveryDomain> Select(
+    RealWorldDomainSelectionResult Select(
         RealWorldIntentInterpretation interpretation,
         string userQuery,
         int maxDomains);

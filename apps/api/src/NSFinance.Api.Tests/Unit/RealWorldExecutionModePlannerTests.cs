@@ -4,8 +4,13 @@ namespace NSFinance.Api.Tests.Unit;
 
 public sealed class RealWorldExecutionModePlannerTests
 {
-    private readonly RealWorldExecutionModePlanner planner =
-        new(new ExploratoryDomainSelectionPolicy());
+    private readonly IRealWorldDomainCapabilityCatalog domainCatalog = new RealWorldDomainCapabilityCatalog();
+    private readonly RealWorldExecutionModePlanner planner;
+
+    public RealWorldExecutionModePlannerTests()
+    {
+        planner = new RealWorldExecutionModePlanner(new ExploratoryDomainSelectionPolicy(domainCatalog));
+    }
 
     [Fact]
     public void Plan_NearMeWithoutGrounding_UsesMissingLocationGuard()
@@ -156,6 +161,8 @@ public sealed class RealWorldExecutionModePlannerTests
         Assert.InRange(plan.SelectedDomains.Count, 1, 4);
         Assert.Contains("real_world_planner_query_signal_used", plan.ReasonCodes);
         Assert.Contains("real_world_planner_ai_domains_preserved", plan.ReasonCodes);
+        Assert.Contains("real_world_catalog_selection_started", plan.ReasonCodes);
+        Assert.Contains(plan.ReasonCodes, code => code.StartsWith("real_world_catalog_domain_selected:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -265,6 +272,7 @@ public sealed class RealWorldExecutionModePlannerTests
 
         Assert.Contains(RealWorldDiscoveryDomain.Playground, plan.SelectedDomains);
         Assert.DoesNotContain(RealWorldDiscoveryDomain.NightlifeGeneral, plan.SelectedDomains);
+        Assert.Contains("real_world_catalog_family_signal_priority_applied", plan.ReasonCodes);
     }
 
     [Fact]
@@ -314,5 +322,117 @@ public sealed class RealWorldExecutionModePlannerTests
                 ReasonCodes: []));
 
         Assert.Contains("real_world_planner_query_signal_missing", plan.ReasonCodes);
+    }
+
+    [Fact]
+    public void Plan_ExploratorySelection_DiversifiesAcrossCatalogFamilies()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.ExploratoryAssistance,
+            RecommendedExecutionMode: RealWorldExecutionMode.ExploratoryMultiDomainSearch,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: true,
+            Exploratory: true,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: true,
+            HasExplicitLocality: false,
+            Confidence: 0.90d,
+            CandidateDomains:
+            [
+                RealWorldDiscoveryDomain.Cafe,
+                RealWorldDiscoveryDomain.Restaurant,
+                RealWorldDiscoveryDomain.Takeaway,
+                RealWorldDiscoveryDomain.PubBar,
+                RealWorldDiscoveryDomain.MovieTheater,
+                RealWorldDiscoveryDomain.ParkWalk
+            ],
+            ClarificationPrompt: null,
+            ReasonCodes: ["test"],
+            Warnings: []);
+
+        var plan = planner.Plan(
+            "something fun near me tonight",
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: "gps",
+                Latitude: 53.35,
+                Longitude: -6.26,
+                RadiusMeters: 1500,
+                TypedArea: null,
+                LocalityLabel: "Dublin",
+                AccuracyBucket: "high",
+                CapturedAtUtc: DateTimeOffset.UtcNow),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.9d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: [],
+                AudienceHints: [],
+                TimeHints: ["tonight"],
+                PreferenceHints: [],
+                ReasonCodes: []));
+
+        var families = plan.SelectedDomains
+            .Select(domain => domainCatalog.TryGetDomain(domain, out var capability) ? capability.Family : RealWorldDomainFamily.Meta)
+            .Distinct()
+            .ToArray();
+        Assert.True(families.Length >= 2);
+    }
+
+    [Fact]
+    public void Plan_ThemedFoodRequest_PrefersFoodDrinkDomainsFromCatalog()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            RecommendedExecutionMode: RealWorldExecutionMode.FocusedThemeSearch,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: false,
+            Exploratory: false,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: false,
+            HasExplicitLocality: true,
+            Confidence: 0.83d,
+            CandidateDomains:
+            [
+                RealWorldDiscoveryDomain.FoodDrinkGeneral,
+                RealWorldDiscoveryDomain.EntertainmentGeneral
+            ],
+            ClarificationPrompt: null,
+            ReasonCodes: ["test"],
+            Warnings: []);
+
+        var plan = planner.Plan(
+            "what should i eat tonight in dublin",
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: "typed_area",
+                Latitude: null,
+                Longitude: null,
+                RadiusMeters: null,
+                TypedArea: "Dublin",
+                LocalityLabel: "Dublin",
+                AccuracyBucket: null,
+                CapturedAtUtc: null),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.86d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: true,
+                LocalityHint: "dublin",
+                PlaceTypeHints: ["restaurant"],
+                AudienceHints: [],
+                TimeHints: ["tonight"],
+                PreferenceHints: [],
+                ReasonCodes: []));
+
+        Assert.NotEmpty(plan.SelectedDomains);
+        Assert.Contains(
+            plan.SelectedDomains,
+            domain => domainCatalog.TryGetDomain(domain, out var capability)
+                      && capability.Family == RealWorldDomainFamily.FoodDrink);
     }
 }
