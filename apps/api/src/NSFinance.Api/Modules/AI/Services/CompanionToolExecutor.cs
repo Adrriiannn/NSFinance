@@ -45,6 +45,7 @@ public sealed class CompanionToolExecutor(
                     plannedTool,
                     status: CompanionToolExecutionStatus.SkippedCap,
                     reasonCode: $"{CompanionOrchestrationReasonCodes.CapExceededOrSkippedPrefix}:tool_call_budget"));
+                LogPlacesSkip(plannedTool.Tool, "tool_call_budget");
                 continue;
             }
 
@@ -54,6 +55,7 @@ public sealed class CompanionToolExecutor(
                     plannedTool,
                     status: CompanionToolExecutionStatus.SkippedContextCap,
                     reasonCode: $"{CompanionOrchestrationReasonCodes.CapExceededOrSkippedPrefix}:context_key_budget"));
+                LogPlacesSkip(plannedTool.Tool, "context_key_budget");
                 continue;
             }
 
@@ -65,6 +67,7 @@ public sealed class CompanionToolExecutor(
                         plannedTool,
                         status: CompanionToolExecutionStatus.SkippedDependency,
                         reasonCode: $"{CompanionOrchestrationReasonCodes.CapExceededOrSkippedPrefix}:missing_place_search_dependency"));
+                    LogPlacesSkip(plannedTool.Tool, "missing_place_search_dependency");
                     continue;
                 }
             }
@@ -89,6 +92,7 @@ public sealed class CompanionToolExecutor(
                     ReasonCode: reasonCode,
                     Warnings: [reasonCode],
                     IncludedInContext: false));
+                LogPlacesFailure(plannedTool.Tool, reasonCode);
                 continue;
             }
             catch (Exception ex)
@@ -104,6 +108,7 @@ public sealed class CompanionToolExecutor(
                     ReasonCode: reasonCode,
                     Warnings: [reasonCode],
                     IncludedInContext: false));
+                LogPlacesFailure(plannedTool.Tool, reasonCode);
                 continue;
             }
 
@@ -121,12 +126,14 @@ public sealed class CompanionToolExecutor(
                     ReasonCode: reasonCode,
                     Warnings: shaped.Warnings.Concat([reasonCode]).ToArray(),
                     IncludedInContext: false));
+                LogPlacesNoData(plannedTool.Tool);
                 continue;
             }
 
             outputs[shaped.OutputKey] = shaped.Output;
             warnings.AddRange(shaped.Warnings);
             warnings.AddRange(shaped.TrimIndicators);
+            LogPlacesSuccess(plannedTool.Tool, shaped.Output);
             records.Add(new CompanionToolExecutionRecord(
                 PlannedTool: plannedTool,
                 Status: CompanionToolExecutionStatus.Success,
@@ -222,5 +229,59 @@ public sealed class CompanionToolExecutor(
             _ => "tool_failed"
         };
         return CompanionOrchestrationReasonCodes.WithTool(prefix, tool);
+    }
+
+    private void LogPlacesSkip(CompanionTool tool, string reason)
+    {
+        if (tool is not (CompanionTool.PlacesSearch or CompanionTool.PlaceDetails))
+        {
+            return;
+        }
+
+        logger.LogInformation(
+            "Companion places tool skipped tool={Tool} reason={Reason}",
+            tool,
+            reason);
+    }
+
+    private void LogPlacesFailure(CompanionTool tool, string reasonCode)
+    {
+        if (tool is not (CompanionTool.PlacesSearch or CompanionTool.PlaceDetails))
+        {
+            return;
+        }
+
+        logger.LogWarning(
+            "Companion places tool failed tool={Tool} reasonCode={ReasonCode}",
+            tool,
+            reasonCode);
+    }
+
+    private void LogPlacesNoData(CompanionTool tool)
+    {
+        if (tool is not (CompanionTool.PlacesSearch or CompanionTool.PlaceDetails))
+        {
+            return;
+        }
+
+        logger.LogInformation(
+            "Companion places tool returned no data tool={Tool}",
+            tool);
+    }
+
+    private void LogPlacesSuccess(CompanionTool tool, object? output)
+    {
+        switch (tool)
+        {
+            case CompanionTool.PlacesSearch when output is CompanionPlacesSearchContext places:
+                logger.LogInformation(
+                    "Companion places search succeeded candidateCount={CandidateCount} totalItemCount={TotalItemCount}",
+                    places.Items.Count,
+                    places.TotalItemCount);
+                break;
+            case CompanionTool.PlaceDetails:
+                logger.LogInformation("Companion place details succeeded");
+                break;
+        }
     }
 }

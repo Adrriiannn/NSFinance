@@ -88,4 +88,50 @@ public sealed class CompanionInsufficiencyEvaluatorTests
         Assert.False(decision.HasInsufficientData);
         Assert.Contains(decision.Warnings, warning => warning.StartsWith("optional_tool_failed", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Evaluate_LocalPlacesMissingPlacesGrounding_BlocksAI()
+    {
+        var routing = new CompanionIntentRoutingResult(
+            IntentFamily: FinancialCompanionIntent.LocalPlacesOutings,
+            PrimaryIntent: FinancialCompanionIntent.LocalPlacesOutings,
+            SecondaryIntents: [],
+            Confidence: 0.81d,
+            ReasonCodes: ["signal_local_places_phrase"],
+            IsAmbiguous: false,
+            IsUnsupported: false);
+        var plan = new CompanionExecutionPlan(
+            PlannedTools:
+            [
+                new CompanionPlannedTool(
+                    CompanionTool.PlacesSearch,
+                    IsRequired: true,
+                    Order: 60,
+                    InclusionReason: "primary_required",
+                    SourceIntents: [FinancialCompanionIntent.LocalPlacesOutings])
+            ],
+            SkippedTools: [],
+            Warnings: []);
+        var records = new[]
+        {
+            new CompanionToolExecutionRecord(
+                plan.PlannedTools[0],
+                CompanionToolExecutionStatus.NoData,
+                CompanionTool.PlacesSearch.ToContractName(),
+                CompanionTool.PlacesSearch.ToOutputKey(),
+                null,
+                "tool_returned_no_data:places_search",
+                ["tool_returned_no_data:places_search"],
+                false)
+        };
+
+        var decision = _sut.Evaluate(routing, plan, records, []);
+
+        Assert.False(decision.CanProceedToAI);
+        Assert.True(decision.HasInsufficientData);
+        Assert.Contains("local_places_intent_missing_places_grounding", decision.Reasons);
+        Assert.Contains(CompanionTool.PlacesSearch.ToContractName(), decision.MissingRequiredTools);
+        Assert.Contains("places_search_planned", decision.Warnings);
+        Assert.Contains("places_search_no_data", decision.Warnings);
+    }
 }

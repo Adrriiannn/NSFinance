@@ -89,6 +89,8 @@ public sealed class CompanionInsufficiencyEvaluator : ICompanionInsufficiencyEva
             }
         }
 
+        AppendLocalPlacesDiagnostics(routing, plan, records, reasons, warnings, missingRequired);
+
         foreach (var optionalRecord in records.Where(record => !record.PlannedTool.IsRequired))
         {
             if (optionalRecord.Status == CompanionToolExecutionStatus.Failed)
@@ -117,5 +119,61 @@ public sealed class CompanionInsufficiencyEvaluator : ICompanionInsufficiencyEva
             Reasons: reasons.Distinct(StringComparer.Ordinal).ToArray(),
             MissingRequiredTools: missingRequired.Distinct(StringComparer.Ordinal).ToArray(),
             Warnings: warnings.Distinct(StringComparer.Ordinal).ToArray());
+    }
+
+    private static void AppendLocalPlacesDiagnostics(
+        CompanionIntentRoutingResult routing,
+        CompanionExecutionPlan plan,
+        IReadOnlyList<CompanionToolExecutionRecord> records,
+        ICollection<string> reasons,
+        ICollection<string> warnings,
+        IReadOnlyCollection<string> missingRequired)
+    {
+        if (routing.PrimaryIntent != FinancialCompanionIntent.LocalPlacesOutings
+            && routing.IntentFamily != FinancialCompanionIntent.LocalPlacesOutings)
+        {
+            return;
+        }
+
+        var placesPlanned = plan.PlannedTools.Any(tool => tool.Tool == CompanionTool.PlacesSearch);
+        if (!placesPlanned)
+        {
+            reasons.Add("local_places_intent_missing_places_grounding");
+            warnings.Add("places_search_not_planned");
+            return;
+        }
+
+        warnings.Add("places_search_planned");
+        var placesRecord = records.FirstOrDefault(record => record.PlannedTool.Tool == CompanionTool.PlacesSearch);
+        if (placesRecord is null)
+        {
+            reasons.Add("local_places_intent_missing_places_grounding");
+            warnings.Add("places_search_not_executed");
+            return;
+        }
+
+        switch (placesRecord.Status)
+        {
+            case CompanionToolExecutionStatus.Success:
+                warnings.Add("places_search_succeeded");
+                break;
+            case CompanionToolExecutionStatus.NoData:
+                reasons.Add("local_places_intent_missing_places_grounding");
+                warnings.Add("places_search_no_data");
+                break;
+            case CompanionToolExecutionStatus.Failed:
+                reasons.Add("local_places_intent_missing_places_grounding");
+                warnings.Add("places_search_failed");
+                break;
+            default:
+                reasons.Add("local_places_intent_missing_places_grounding");
+                warnings.Add("places_search_skipped");
+                break;
+        }
+
+        if (missingRequired.Contains(CompanionTool.PlacesSearch.ToContractName(), StringComparer.Ordinal))
+        {
+            reasons.Add("local_places_intent_missing_places_grounding");
+        }
     }
 }

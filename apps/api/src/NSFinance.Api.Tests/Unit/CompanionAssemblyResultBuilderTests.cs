@@ -73,4 +73,122 @@ public sealed class CompanionAssemblyResultBuilderTests
         Assert.Contains(CompanionTool.TransactionQuery.ToContractName() + ":cap_exceeded_or_skipped:plan_optional_budget", result.Evidence.SkippedTools);
         Assert.Contains("payload_trimmed:transaction_matches_rows", result.Evidence.TrimmedPayloadIndicators ?? []);
     }
+
+    [Fact]
+    public void Build_PlacesExecution_AddsPlacesDiagnosticsToEvidence()
+    {
+        var sut = new CompanionAssemblyResultBuilder(new CompanionEvidenceBuilder());
+        var profile = new UserFinancialContextSnapshot(
+            Country: "IE",
+            Currency: "EUR",
+            MonthlyIncomeRange: "2000-4000",
+            KnownObligationsJson: "[]",
+            BudgetStructureJson: "{}",
+            ActivePlansJson: "[]",
+            SpendingTendenciesJson: "[]",
+            CategoryFlexibilityMarkersJson: "[]",
+            AdviceStylePreference: "balanced");
+        var placesPlan = new CompanionExecutionPlan(
+            PlannedTools:
+            [
+                new CompanionPlannedTool(
+                    CompanionTool.PlacesSearch,
+                    true,
+                    60,
+                    "primary_required",
+                    [FinancialCompanionIntent.LocalPlacesOutings])
+            ],
+            SkippedTools: [],
+            Warnings: []);
+        var placesOutput = new CompanionPlacesSearchContext(
+            TotalItemCount: 2,
+            Items:
+            [
+                new CompanionPlaceSearchContextItem(
+                    PlaceId: "p1",
+                    Name: "Cafe One",
+                    Category: "Cafe",
+                    PriceLevel: "PRICE_LEVEL_MODERATE",
+                    PrimaryType: "cafe",
+                    PrimaryTypeDisplayName: "Cafe",
+                    Types: ["cafe"],
+                    NationalPhoneNumber: null,
+                    FormattedAddress: null,
+                    ShortFormattedAddress: "Main Street",
+                    Rating: 4.5,
+                    UserRatingCount: 120,
+                    GoogleMapsUri: null,
+                    WebsiteUri: null,
+                    OpeningHours: new PlaceOpeningHoursSummary(true, ["Monday: 9:00 AM - 5:00 PM"], null),
+                    BusinessStatus: "OPERATIONAL",
+                    IconMaskBaseUri: null,
+                    IconBackgroundColor: null,
+                    Takeout: null,
+                    Delivery: null,
+                    DineIn: null,
+                    Reservable: null,
+                    ServesBreakfast: null,
+                    ServesLunch: null,
+                    ServesDinner: null,
+                    ServesBeer: null,
+                    ServesWine: null,
+                    ServesBrunch: null,
+                    ServesVegetarianFood: null,
+                    OutdoorSeating: null,
+                    LiveMusic: null,
+                    MenuForChildren: null,
+                    ServesCocktails: null,
+                    ServesDessert: null,
+                    ServesCoffee: null,
+                    AllowsDogs: null,
+                    Restroom: null,
+                    GoodForGroups: null,
+                    GoodForWatchingSports: null,
+                    PaymentOptions: null,
+                    AccessibilityOptions: null,
+                    EditorialSummary: null,
+                    Location: null)
+            ]);
+        var execution = new CompanionToolExecutionResult(
+            ContextOutputs: new Dictionary<string, object?>
+            {
+                [CompanionTool.PlacesSearch.ToOutputKey()] = placesOutput
+            },
+            Records:
+            [
+                new CompanionToolExecutionRecord(
+                    placesPlan.PlannedTools[0],
+                    CompanionToolExecutionStatus.Success,
+                    CompanionTool.PlacesSearch.ToContractName(),
+                    CompanionTool.PlacesSearch.ToOutputKey(),
+                    placesOutput,
+                    null,
+                    [],
+                    true)
+            ],
+            Warnings: []);
+        var trim = new CompanionContextTrimResult(
+            Outputs: execution.ContextOutputs,
+            TrimmedIndicators: [],
+            Warnings: [],
+            AdjustedRecords: execution.Records);
+        var insufficiency = new CompanionInsufficiencyDecision(
+            CanProceedToAI: true,
+            HasInsufficientData: false,
+            Reasons: [],
+            MissingRequiredTools: [],
+            Warnings: []);
+
+        var result = sut.Build(
+            primaryIntent: FinancialCompanionIntent.LocalPlacesOutings,
+            profile: profile,
+            plan: placesPlan,
+            execution: execution,
+            trim: trim,
+            insufficiency: insufficiency);
+
+        Assert.Contains("places_search_planned", result.Evidence.BasisSummary);
+        Assert.Contains("places_search_succeeded", result.Evidence.BasisSummary);
+        Assert.Contains("places_search_candidate_count:1", result.Evidence.BasisSummary);
+    }
 }

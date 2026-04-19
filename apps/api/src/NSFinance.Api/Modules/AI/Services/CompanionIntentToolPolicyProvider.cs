@@ -46,8 +46,8 @@ public sealed class CompanionIntentToolPolicyProvider : ICompanionIntentToolPoli
                 DisallowedTools: []),
             [FinancialCompanionIntent.LocalPlacesOutings] = new(
                 FinancialCompanionIntent.LocalPlacesOutings,
-                RequiredTools: [CompanionTool.FinancialSummary, CompanionTool.BudgetStatus],
-                OptionalTools: [CompanionTool.PlacesSearch, CompanionTool.PlaceDetails, CompanionTool.ReviewInsights],
+                RequiredTools: [CompanionTool.PlacesSearch],
+                OptionalTools: [CompanionTool.FinancialSummary, CompanionTool.BudgetStatus, CompanionTool.PlaceDetails],
                 DisallowedTools: []),
             [FinancialCompanionIntent.GeneralFinancialQuestion] = new(
                 FinancialCompanionIntent.GeneralFinancialQuestion,

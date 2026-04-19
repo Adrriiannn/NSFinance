@@ -158,6 +158,36 @@ public sealed class FinancialCompanionContextAssemblerTests
         Assert.True(tx.Items.Count <= 8);
     }
 
+    [Fact]
+    public async Task Assemble_LocalPlaces_WhenPlacesMissing_BlocksProgression()
+    {
+        var tools = new TrackingTools
+        {
+            ReturnNoPlaces = true
+        };
+        var sut = CreateAssembler(tools);
+        var routing = new CompanionIntentRoutingResult(
+            IntentFamily: FinancialCompanionIntent.LocalPlacesOutings,
+            PrimaryIntent: FinancialCompanionIntent.LocalPlacesOutings,
+            SecondaryIntents: [],
+            Confidence: 0.84d,
+            ReasonCodes: ["signal_local_places_phrase"],
+            IsAmbiguous: false,
+            IsUnsupported: false);
+
+        var result = await sut.AssembleAsync(
+            new FinancialCompanionRequest(Guid.NewGuid(), "s6", "Where can I go nearby for dinner tonight?"),
+            routing,
+            DefaultProfile,
+            CancellationToken.None);
+
+        Assert.False(result.CanProceedToAI);
+        Assert.True(result.HasInsufficientData);
+        Assert.Contains("IPlacesSearchService", result.Evidence.MissingRequiredTools);
+        Assert.Contains("local_places_intent_missing_places_grounding", result.InsufficientDataReasons);
+        Assert.Contains("missing_required_places_search", result.InsufficientDataReasons);
+    }
+
     private static FinancialCompanionContextAssembler CreateAssembler(TrackingTools tools)
     {
         var orchestrationOptions = Microsoft.Extensions.Options.Options.Create(new CompanionOrchestrationOptions());
@@ -200,6 +230,7 @@ public sealed class FinancialCompanionContextAssemblerTests
     {
         public bool FailSummary { get; set; }
         public int TransactionItemCount { get; set; }
+        public bool ReturnNoPlaces { get; set; }
 
         public int SummaryCalls { get; private set; }
         public int BudgetCalls { get; private set; }
@@ -261,6 +292,11 @@ public sealed class FinancialCompanionContextAssemblerTests
         public Task<PlaceSearchResult> SearchAsync(string query, string country, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (ReturnNoPlaces)
+            {
+                return Task.FromResult(new PlaceSearchResult([]));
+            }
+
             return Task.FromResult(
                 new PlaceSearchResult(
                 [

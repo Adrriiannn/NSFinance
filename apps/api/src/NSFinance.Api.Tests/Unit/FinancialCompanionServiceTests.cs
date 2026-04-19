@@ -132,6 +132,58 @@ public sealed class FinancialCompanionServiceTests
         Assert.Contains(response.Warnings, warning => warning.Contains("missing_required_budget_status", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task ExecuteAsync_LocalPlacesIntent_BuildsResponseFromGroundedPlaces()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = Guid.NewGuid();
+        SeedUser(dbContext, userId);
+        var tools = new TrackingTools();
+        var service = CreateService(dbContext, tools, enforceSoftCap: false);
+
+        var response = await service.ExecuteAsync(
+            new FinancialCompanionRequest(
+                UserId: userId,
+                SessionId: "session-places-1",
+                UserQuery: "Where can I go nearby for dinner tonight?"),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Equal(FinancialCompanionIntent.LocalPlacesOutings, response.Intent);
+        Assert.Contains("IPlacesSearchService", response.ToolsUsed);
+        Assert.Contains("Cafe One", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("Bistro Two", response.ReplyText, StringComparison.Ordinal);
+        Assert.Equal("places_grounded_response", response.ModelUsed);
+        Assert.Null(response.AdvicePacket);
+        Assert.False(response.HasInsufficientData);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_LocalPlacesIntent_NoPlacesData_ReturnsExplicitFallback()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = Guid.NewGuid();
+        SeedUser(dbContext, userId);
+        var tools = new TrackingTools
+        {
+            ReturnNoPlaces = true
+        };
+        var service = CreateService(dbContext, tools, enforceSoftCap: false);
+
+        var response = await service.ExecuteAsync(
+            new FinancialCompanionRequest(
+                UserId: userId,
+                SessionId: "session-places-2",
+                UserQuery: "Any places around me for a cheap night out?"),
+            CancellationToken.None);
+
+        Assert.False(response.Succeeded);
+        Assert.True(response.HasInsufficientData);
+        Assert.Equal("orchestration_fallback", response.ModelUsed);
+        Assert.Contains("places", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("missing_required_places_search", response.InsufficientDataReasons ?? []);
+    }
+
     private static FinancialCompanionService CreateService(
         AppDbContext dbContext,
         TrackingTools tools,
@@ -202,11 +254,13 @@ public sealed class FinancialCompanionServiceTests
                 new AdviceLifecycleMetadataBuilder(),
                 new AdviceSummaryBuilder()),
             adviceOptions);
+        var placesResponseBuilder = new CompanionPlacesResponseBuilder(orchestrationOptions);
         return new FinancialCompanionService(
             dbContext,
             tools,
             new CompanionIntentRouter(NullLogger<CompanionIntentRouter>.Instance),
             assembler,
+            placesResponseBuilder,
             adviceDecision,
             Options.Create(new CompanionAISettingsOptions
             {
@@ -305,6 +359,8 @@ public sealed class FinancialCompanionServiceTests
         IReviewInsightsService
     {
         public bool FailBudgetStatus { get; set; }
+        public bool ReturnNoPlaces { get; set; }
+        public bool ThrowPlacesUnavailable { get; set; }
 
         public int SummaryCalls { get; private set; }
         public int BudgetCalls { get; private set; }
@@ -376,7 +432,46 @@ public sealed class FinancialCompanionServiceTests
         public Task<PlaceSearchResult> SearchAsync(string query, string country, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(new PlaceSearchResult([]));
+            if (ThrowPlacesUnavailable)
+            {
+                throw new InvalidOperationException("places provider unavailable");
+            }
+
+            if (ReturnNoPlaces)
+            {
+                return Task.FromResult(new PlaceSearchResult([]));
+            }
+
+            return Task.FromResult(
+                new PlaceSearchResult(
+                [
+                    new PlaceSearchItem(
+                        PlaceId: "p1",
+                        Name: "Cafe One",
+                        Category: "Cafe",
+                        PriceLevel: "PRICE_LEVEL_MODERATE",
+                        DisplayName: "Cafe One",
+                        Rating: 4.6,
+                        UserRatingCount: 420,
+                        ShortFormattedAddress: "Lucan Village",
+                        OpeningHours: new PlaceOpeningHoursSummary(
+                            OpenNow: true,
+                            WeekdayDescriptions: ["Monday: 8:00 AM - 6:00 PM"],
+                            NextOpenTimeUtc: null)),
+                    new PlaceSearchItem(
+                        PlaceId: "p2",
+                        Name: "Bistro Two",
+                        Category: "Restaurant",
+                        PriceLevel: "PRICE_LEVEL_INEXPENSIVE",
+                        DisplayName: "Bistro Two",
+                        Rating: 4.4,
+                        UserRatingCount: 280,
+                        ShortFormattedAddress: "Dublin City Centre",
+                        OpeningHours: new PlaceOpeningHoursSummary(
+                            OpenNow: false,
+                            WeekdayDescriptions: ["Monday: 10:00 AM - 8:00 PM"],
+                            NextOpenTimeUtc: DateTimeOffset.UtcNow.AddHours(2)))
+                ]));
         }
 
         public Task<PlaceDetailsResult> GetDetailsAsync(string placeId, CancellationToken cancellationToken)

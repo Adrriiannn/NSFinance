@@ -46,7 +46,7 @@ public sealed class CompanionEvidenceBuilder : ICompanionEvidenceBuilder
             .Where(record => !record.IncludedInContext && record.Status != CompanionToolExecutionStatus.Success)
             .Select(record => $"{record.ContractName}:{record.ReasonCode ?? record.Status.ToString()}"));
 
-        var basisSummary = BuildBasisSummary(contextOutputs);
+        var basisSummary = BuildBasisSummary(plan, records, contextOutputs);
         return new CompanionContextEvidence(
             ToolsUsed: toolsUsed,
             RequiredToolsUsed: requiredUsed,
@@ -60,7 +60,10 @@ public sealed class CompanionEvidenceBuilder : ICompanionEvidenceBuilder
             ExecutionWarnings: warnings.Distinct(StringComparer.Ordinal).ToArray());
     }
 
-    private static IReadOnlyList<string> BuildBasisSummary(IReadOnlyDictionary<string, object?> outputs)
+    private static IReadOnlyList<string> BuildBasisSummary(
+        CompanionExecutionPlan plan,
+        IReadOnlyList<CompanionToolExecutionRecord> records,
+        IReadOnlyDictionary<string, object?> outputs)
     {
         var basis = new List<string>(outputs.Count);
         if (outputs.ContainsKey(CompanionTool.FinancialSummary.ToOutputKey()))
@@ -103,6 +106,56 @@ public sealed class CompanionEvidenceBuilder : ICompanionEvidenceBuilder
             basis.Add("based_on_review_insights");
         }
 
+        AppendPlacesDiagnostics(plan, records, outputs, basis);
+
         return basis;
+    }
+
+    private static void AppendPlacesDiagnostics(
+        CompanionExecutionPlan plan,
+        IReadOnlyList<CompanionToolExecutionRecord> records,
+        IReadOnlyDictionary<string, object?> outputs,
+        ICollection<string> basis)
+    {
+        if (plan.PlannedTools.Any(tool => tool.Tool == CompanionTool.PlacesSearch))
+        {
+            basis.Add("places_search_planned");
+        }
+
+        var placesRecord = records.FirstOrDefault(record => record.PlannedTool.Tool == CompanionTool.PlacesSearch);
+        if (placesRecord is not null)
+        {
+            basis.Add(placesRecord.Status switch
+            {
+                CompanionToolExecutionStatus.Success => "places_search_succeeded",
+                CompanionToolExecutionStatus.NoData => "places_search_no_data",
+                CompanionToolExecutionStatus.Failed => "places_search_failed",
+                _ => "places_search_skipped"
+            });
+        }
+
+        if (outputs.TryGetValue(CompanionTool.PlacesSearch.ToOutputKey(), out var output)
+            && output is CompanionPlacesSearchContext placesSearch)
+        {
+            basis.Add($"places_search_candidate_count:{placesSearch.Items.Count}");
+        }
+
+        if (plan.PlannedTools.Any(tool => tool.Tool == CompanionTool.PlaceDetails))
+        {
+            basis.Add("place_details_planned");
+        }
+
+        var detailsRecord = records.FirstOrDefault(record => record.PlannedTool.Tool == CompanionTool.PlaceDetails);
+        if (detailsRecord is not null)
+        {
+            basis.Add(detailsRecord.Status switch
+            {
+                CompanionToolExecutionStatus.Success => "place_details_succeeded",
+                CompanionToolExecutionStatus.NoData => "place_details_no_data",
+                CompanionToolExecutionStatus.SkippedDependency => "place_details_skipped_missing_dependency",
+                CompanionToolExecutionStatus.Failed => "place_details_failed",
+                _ => "place_details_skipped"
+            });
+        }
     }
 }

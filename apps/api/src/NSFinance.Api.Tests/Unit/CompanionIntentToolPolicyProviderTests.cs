@@ -12,7 +12,6 @@ public sealed class CompanionIntentToolPolicyProviderTests
     [InlineData(FinancialCompanionIntent.Affordability, true, true, true)]
     [InlineData(FinancialCompanionIntent.BudgetStatus, true, true, false)]
     [InlineData(FinancialCompanionIntent.PlanProgress, true, true, true)]
-    [InlineData(FinancialCompanionIntent.LocalPlacesOutings, true, true, true)]
     [InlineData(FinancialCompanionIntent.GeneralFinancialQuestion, true, true, true)]
     public void Resolve_IntentMappings_AreExplicitAndGrounded(
         FinancialCompanionIntent intent,
@@ -37,6 +36,19 @@ public sealed class CompanionIntentToolPolicyProviderTests
         {
             Assert.True(policy.OptionalTools.Count > 0 || policy.RequiredTools.Contains(CompanionTool.BudgetStatus));
         }
+    }
+
+    [Fact]
+    public void Resolve_LocalPlacesOutings_RequiresPlacesGrounding()
+    {
+        var policy = _sut.Resolve(FinancialCompanionIntent.LocalPlacesOutings);
+
+        Assert.Contains(CompanionTool.PlacesSearch, policy.RequiredTools);
+        Assert.DoesNotContain(CompanionTool.FinancialSummary, policy.RequiredTools);
+        Assert.DoesNotContain(CompanionTool.BudgetStatus, policy.RequiredTools);
+        Assert.Contains(CompanionTool.FinancialSummary, policy.OptionalTools);
+        Assert.Contains(CompanionTool.BudgetStatus, policy.OptionalTools);
+        Assert.Contains(CompanionTool.PlaceDetails, policy.OptionalTools);
     }
 
     [Theory]

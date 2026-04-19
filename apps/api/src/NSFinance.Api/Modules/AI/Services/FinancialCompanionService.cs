@@ -17,6 +17,7 @@ public sealed class FinancialCompanionService(
     IUserFinancialContextProfileService profileService,
     ICompanionIntentRouter intentRouter,
     IFinancialCompanionContextAssembler contextAssembler,
+    ICompanionPlacesResponseBuilder placesResponseBuilder,
     IFinancialAdviceDecisionService adviceDecisionService,
     IOptions<CompanionAISettingsOptions> options,
     ILogger<FinancialCompanionService> logger) : IFinancialCompanionService
@@ -134,6 +135,49 @@ public sealed class FinancialCompanionService(
                 cancellationToken);
         }
 
+        if (ShouldUsePlacesResponsePath(routing))
+        {
+            var placesResponse = placesResponseBuilder.Build(assembly.Context);
+            warnings.AddRange(placesResponse.Warnings);
+            var placesEvidence = ToResponseEvidence(assembly.Evidence);
+            if (placesEvidence is not null)
+            {
+                placesEvidence = placesEvidence with
+                {
+                    BasisSummary = placesEvidence.BasisSummary
+                        .Concat(placesResponse.BasisSummaryAdditions)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray(),
+                    ExecutionWarnings = (placesEvidence.ExecutionWarnings ?? [])
+                        .Concat(placesResponse.Warnings)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray()
+                };
+            }
+
+            return await PersistAndReturnAsync(
+                request,
+                responseIntent,
+                assembly.ToolsUsed,
+                warnings,
+                placesResponse.ReplyText,
+                modelUsed: "places_grounded_response",
+                responseTimeMs: 0,
+                tokensInput: 0,
+                tokensOutput: 0,
+                succeeded: placesResponse.Succeeded,
+                failureReason: placesResponse.Succeeded
+                    ? null
+                    : "local_places_grounding_unavailable",
+                evidence: placesEvidence,
+                hasInsufficientData: placesResponse.HasInsufficientData || assembly.HasInsufficientData,
+                insufficientDataReasons: placesResponse.HasInsufficientData
+                    ? placesResponse.InsufficientDataReasons
+                    : assembly.InsufficientDataReasons,
+                advicePacket: null,
+                cancellationToken);
+        }
+
         var start = DateTime.UtcNow;
         var decision = await adviceDecisionService.DecideAsync(
             request,
@@ -204,7 +248,28 @@ public sealed class FinancialCompanionService(
         {
             return
                 "I need a bit more detail to help. You can ask about budget status, spending "
-                + "analysis, affordability, or where to cut back.";
+            + "analysis, affordability, or where to cut back.";
+        }
+
+        if (reasons.Any(reason => reason.Contains("places_search", StringComparison.Ordinal)))
+        {
+            if (reasons.Any(reason => reason.Contains("required_tool_returned_no_data:places_search", StringComparison.Ordinal)))
+            {
+                return
+                    "I couldn't find matching places for that request right now. "
+                    + "Try a nearby area or a more specific place type.";
+            }
+
+            return
+                "I couldn't retrieve grounded place results right now. "
+                + "Please try again in a moment.";
+        }
+
+        if (reasons.Any(reason => reason.Contains("local_places_intent_missing_places_grounding", StringComparison.Ordinal)))
+        {
+            return
+                "I don't have enough place-grounding data yet to answer that reliably. "
+                + "Please try the request again shortly.";
         }
 
         if (reasons.Any(reason => reason.Contains("financial_summary", StringComparison.Ordinal)))
@@ -220,6 +285,12 @@ public sealed class FinancialCompanionService(
         return
             "I don't have enough grounded data yet to answer that reliably. "
             + "I can provide a partial answer once more data is available.";
+    }
+
+    private static bool ShouldUsePlacesResponsePath(CompanionIntentRoutingResult routing)
+    {
+        return routing.PrimaryIntent == FinancialCompanionIntent.LocalPlacesOutings
+               || routing.IntentFamily == FinancialCompanionIntent.LocalPlacesOutings;
     }
 
     private async Task<FinancialCompanionResponse> PersistAndReturnAsync(
