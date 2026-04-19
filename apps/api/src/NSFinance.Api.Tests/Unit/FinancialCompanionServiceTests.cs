@@ -184,6 +184,36 @@ public sealed class FinancialCompanionServiceTests
         Assert.Contains("missing_required_places_search", response.InsufficientDataReasons ?? []);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_LocalPlacesIntent_WithGpsMetadata_PassesCoordinatesToPlacesSearch()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = Guid.NewGuid();
+        SeedUser(dbContext, userId);
+        var tools = new TrackingTools();
+        var service = CreateService(dbContext, tools, enforceSoftCap: false);
+
+        var response = await service.ExecuteAsync(
+            new FinancialCompanionRequest(
+                UserId: userId,
+                SessionId: "session-places-gps-1",
+                UserQuery: "Find coffee near me",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "2500"
+                }),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.NotNull(tools.LastPlacesLocationContext);
+        Assert.Equal(53.357123d, tools.LastPlacesLocationContext!.Latitude);
+        Assert.Equal(-6.44789d, tools.LastPlacesLocationContext.Longitude);
+        Assert.Equal(2500, tools.LastPlacesLocationContext.RadiusMeters);
+    }
+
     private static FinancialCompanionService CreateService(
         AppDbContext dbContext,
         TrackingTools tools,
@@ -361,6 +391,7 @@ public sealed class FinancialCompanionServiceTests
         public bool FailBudgetStatus { get; set; }
         public bool ReturnNoPlaces { get; set; }
         public bool ThrowPlacesUnavailable { get; set; }
+        public PlaceSearchLocationContext? LastPlacesLocationContext { get; private set; }
 
         public int SummaryCalls { get; private set; }
         public int BudgetCalls { get; private set; }
@@ -429,9 +460,14 @@ public sealed class FinancialCompanionServiceTests
             return Task.FromResult(new TransactionQueryResult([]));
         }
 
-        public Task<PlaceSearchResult> SearchAsync(string query, string country, CancellationToken cancellationToken)
+        public Task<PlaceSearchResult> SearchAsync(
+            string query,
+            string country,
+            PlaceSearchLocationContext? locationContext,
+            CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            LastPlacesLocationContext = locationContext;
             if (ThrowPlacesUnavailable)
             {
                 throw new InvalidOperationException("places provider unavailable");

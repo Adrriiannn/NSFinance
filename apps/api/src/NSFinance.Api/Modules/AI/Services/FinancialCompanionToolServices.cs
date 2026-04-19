@@ -199,7 +199,11 @@ public sealed class TransactionQueryService(AppDbContext dbContext) : ITransacti
 
 public sealed class NullPlacesSearchService : IPlacesSearchService
 {
-    public Task<PlaceSearchResult> SearchAsync(string query, string country, CancellationToken cancellationToken)
+    public Task<PlaceSearchResult> SearchAsync(
+        string query,
+        string country,
+        PlaceSearchLocationContext? locationContext,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new PlaceSearchResult([]));

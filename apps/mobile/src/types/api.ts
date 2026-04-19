@@ -897,6 +897,24 @@ export type SendAIChatMessageRequest = {
   conversationThreadId?: string | null;
   requirePersistentMemory?: boolean;
   allowFallbackOnPersistentFailure?: boolean;
+  state?: {
+    activeTopic?: string | null;
+    userIntent?: string | null;
+    constraints?: Record<string, string> | null;
+    summaries?: string[] | null;
+    budgetPreference?: string | null;
+    locationPreference?: string | null;
+    merchantInvestigationSubject?: string | null;
+    recentConclusions?: string[] | null;
+  } | null;
+  recentTurns?: {
+    role: "system" | "developer" | "user" | "assistant";
+    content: string;
+    timestampUtc?: string | null;
+    topic?: string | null;
+    isResolved: boolean;
+  }[] | null;
+  metadata?: Record<string, string> | null;
   correlationId?: string | null;
 };
 

@@ -171,13 +171,48 @@ public sealed class CompanionToolExecutor(
             CompanionTool.TransactionQuery => contextShaper.ShapeTransactionMatches(
                 await transactionQueryService.QueryAsync(request.UserId, request.UserQuery, _options.MaxTransactionRows, cancellationToken)),
             CompanionTool.PlacesSearch => contextShaper.ShapePlaceSearch(
-                await placesSearchService.SearchAsync(request.UserQuery, profile.Country, cancellationToken)),
+                await placesSearchService.SearchAsync(
+                    request.UserQuery,
+                    profile.Country,
+                    BuildPlaceSearchLocationContext(request),
+                    cancellationToken)),
             CompanionTool.PlaceDetails => contextShaper.ShapePlaceDetails(
                 await placeDetailsService.GetDetailsAsync(GetTopPlaceId(currentOutputs), cancellationToken)),
             CompanionTool.ReviewInsights => contextShaper.ShapeReviewInsights(
                 await reviewInsightsService.GetInsightsAsync(GetTopPlaceId(currentOutputs), cancellationToken)),
             _ => throw new InvalidOperationException($"Unhandled companion tool: {tool}")
         };
+    }
+
+    private PlaceSearchLocationContext? BuildPlaceSearchLocationContext(FinancialCompanionRequest request)
+    {
+        var grounding = CompanionLocationGroundingParser.Parse(
+            request.Metadata,
+            state: null);
+        if (!grounding.HasCoordinates && !grounding.HasTypedArea)
+        {
+            logger.LogInformation(
+                "Companion places search executing without explicit location grounding source={Source}",
+                grounding.Source ?? "none");
+            return null;
+        }
+
+        logger.LogInformation(
+            "Companion places search grounding source={Source} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} radiusMeters={RadiusMeters}",
+            grounding.Source ?? "none",
+            grounding.HasCoordinates,
+            grounding.HasTypedArea,
+            grounding.RadiusMeters ?? 0);
+
+        return new PlaceSearchLocationContext(
+            Source: grounding.Source,
+            Latitude: grounding.Latitude,
+            Longitude: grounding.Longitude,
+            RadiusMeters: grounding.RadiusMeters,
+            TypedArea: grounding.TypedArea,
+            LocalityLabel: grounding.LocalityLabel,
+            AccuracyBucket: grounding.AccuracyBucket,
+            CapturedAtUtc: grounding.CapturedAtUtc);
     }
 
     private static string GetTopPlaceId(IReadOnlyDictionary<string, object?> outputs)

@@ -390,12 +390,17 @@ public sealed class GooglePlacesCompanionSearchService(
     public async Task<PlaceSearchResult> SearchAsync(
         string query,
         string country,
+        PlaceSearchLocationContext? locationContext,
         CancellationToken cancellationToken)
     {
+        var effectiveQuery = BuildEffectiveQuery(query, locationContext);
         var result = await discoveryService.DiscoverAsync(
             new CompanionPlaceDiscoveryRequest(
-                Query: query,
-                CountryCode: country),
+                Query: effectiveQuery,
+                CountryCode: country,
+                Latitude: locationContext?.Latitude,
+                Longitude: locationContext?.Longitude,
+                RadiusMeters: locationContext?.RadiusMeters),
             cancellationToken);
 
         var items = result.Candidates
@@ -451,6 +456,31 @@ public sealed class GooglePlacesCompanionSearchService(
             Items: items,
             Metadata: result.Metadata,
             Warnings: result.Warnings);
+    }
+
+    private static string BuildEffectiveQuery(
+        string query,
+        PlaceSearchLocationContext? locationContext)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return string.Empty;
+        }
+
+        if (locationContext?.Latitude.HasValue == true
+            && locationContext.Longitude.HasValue)
+        {
+            return query.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(locationContext?.TypedArea))
+        {
+            return CompanionLocationGroundingParser.ApplyTypedAreaToQuery(
+                query,
+                locationContext.TypedArea);
+        }
+
+        return query.Trim();
     }
 }
 

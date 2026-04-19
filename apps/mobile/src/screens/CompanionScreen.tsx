@@ -24,6 +24,21 @@ import { getDockAwareContentBottomInset } from "../layout/contentFrame";
 import { getEffectiveBottomSystemInset } from "../theme/insets";
 import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../theme/tokens";
 import { sendAIChatMessage } from "../features/ai/aiChatApi";
+import {
+  buildChatLocationMetadata,
+  buildChatLocationState,
+  type ChatLocationContext,
+  isNearbyLocationDependentPrompt,
+  normalizeTypedArea
+} from "../features/ai/location/chatLocationGrounding";
+import { LocationPermissionPromptModal } from "../features/ai/location/LocationPermissionPromptModal";
+import { LocationTypedAreaModal } from "../features/ai/location/LocationTypedAreaModal";
+import {
+  getForegroundLocationPermissionState,
+  getFreshForegroundLocationSnapshot,
+  openLocationSettings,
+  requestForegroundLocationAccess
+} from "../features/ai/location/locationPermissionService";
 import { formatUnknownError } from "../lib/api/errors";
 
 type PromptSeed = {
@@ -365,6 +380,11 @@ type CompanionScreenProps = {
   sourceOverride?: "app" | "planningHub";
 };
 
+type PendingNearbyRequest = {
+  chatId: string;
+  prompt: string;
+};
+
 export default function CashflowCompanionScreen({ sourceOverride }: CompanionScreenProps = {}) {
   const tokens = useThemeTokens();
   const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourcePlanningHubTab?: string }>();
@@ -383,6 +403,12 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
   const [sendingChatId, setSendingChatId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendInfo, setSendInfo] = useState<string | null>(null);
+  const [nearbyPermissionPromptVisible, setNearbyPermissionPromptVisible] = useState(false);
+  const [locationSettingsPromptVisible, setLocationSettingsPromptVisible] = useState(false);
+  const [typedAreaPromptVisible, setTypedAreaPromptVisible] = useState(false);
+  const [typedAreaInput, setTypedAreaInput] = useState("");
+  const [pendingNearbyRequest, setPendingNearbyRequest] = useState<PendingNearbyRequest | null>(null);
+  const [locationActionInProgress, setLocationActionInProgress] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [keyboardOverlap, setKeyboardOverlap] = useState(0);
@@ -457,6 +483,20 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     setSendError(null);
     setSendInfo(null);
   }, [activeChatId]);
+
+  useEffect(() => {
+    if (!pendingNearbyRequest) {
+      return;
+    }
+
+    if (pendingNearbyRequest.chatId !== activeChatId) {
+      setPendingNearbyRequest(null);
+      setNearbyPermissionPromptVisible(false);
+      setLocationSettingsPromptVisible(false);
+      setTypedAreaPromptVisible(false);
+      setLocationActionInProgress(false);
+    }
+  }, [activeChatId, pendingNearbyRequest]);
 
   useFocusEffect(
     useCallback(() => {
@@ -594,7 +634,10 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     );
   }, []);
 
-  const sendPrompt = useCallback(async (prompt: string) => {
+  const dispatchPrompt = useCallback(async (
+    prompt: string,
+    locationContext?: ChatLocationContext | null
+  ) => {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt || !activeChat) {
       return;
@@ -634,12 +677,24 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     setSendingChatId(activeChat.id);
 
     try {
+      const locationMetadata = locationContext
+        ? buildChatLocationMetadata(locationContext)
+        : null;
+      const locationState = locationContext
+        ? buildChatLocationState(locationContext)
+        : null;
+      console.info("[CompanionChatLocation]", {
+        event: "chat_send_location_mode",
+        mode: locationContext?.source ?? "none"
+      });
       const response = await sendAIChatMessage({
         message: trimmedPrompt,
         clientRequestId,
         conversationThreadId: activeChat.conversationThreadId,
         requirePersistentMemory: true,
-        allowFallbackOnPersistentFailure: false
+        allowFallbackOnPersistentFailure: false,
+        state: locationState,
+        metadata: locationMetadata
       });
 
       setChatThreadId(activeChat.id, response.conversationThreadId);
@@ -697,6 +752,125 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       setSendingChatId(null);
     }
   }, [activeChat, appendMessageToChat, isSending, setChatThreadId]);
+
+  const sendPrompt = useCallback(async (prompt: string) => {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt || !activeChat) {
+      return;
+    }
+
+    const requiresNearbyGrounding = isNearbyLocationDependentPrompt(trimmedPrompt);
+    if (!requiresNearbyGrounding) {
+      await dispatchPrompt(trimmedPrompt, null);
+      return;
+    }
+
+    const permissionState = await getForegroundLocationPermissionState();
+    console.info("[CompanionChatLocation]", {
+      event: "nearby_prompt_permission_state",
+      permissionState
+    });
+
+    if (permissionState === "granted") {
+      const snapshot = await getFreshForegroundLocationSnapshot(false);
+      if (snapshot) {
+        await dispatchPrompt(trimmedPrompt, {
+          source: "gps",
+          latitude: snapshot.latitude,
+          longitude: snapshot.longitude,
+          accuracyMeters: snapshot.accuracyMeters,
+          capturedAtUtc: snapshot.capturedAtUtc,
+          localityLabel: snapshot.localityLabel
+        });
+        return;
+      }
+
+      setPendingNearbyRequest({
+        chatId: activeChat.id,
+        prompt: trimmedPrompt
+      });
+      setTypedAreaInput("");
+      setTypedAreaPromptVisible(true);
+      return;
+    }
+
+    setPendingNearbyRequest({
+      chatId: activeChat.id,
+      prompt: trimmedPrompt
+    });
+    if (permissionState === "denied_can_ask_again" || permissionState === "unknown") {
+      setNearbyPermissionPromptVisible(true);
+      return;
+    }
+
+    setLocationSettingsPromptVisible(true);
+  }, [activeChat, dispatchPrompt]);
+
+  const clearPendingNearbyRequest = useCallback(() => {
+    setPendingNearbyRequest(null);
+    setTypedAreaInput("");
+    setLocationActionInProgress(false);
+    setNearbyPermissionPromptVisible(false);
+    setLocationSettingsPromptVisible(false);
+    setTypedAreaPromptVisible(false);
+  }, []);
+
+  const handleAllowNearbyPermission = useCallback(async () => {
+    if (!pendingNearbyRequest || locationActionInProgress) {
+      return;
+    }
+
+    setLocationActionInProgress(true);
+    const result = await requestForegroundLocationAccess();
+    console.info("[CompanionChatLocation]", {
+      event: "nearby_permission_request_result",
+      permissionState: result.permissionState
+    });
+    if (result.permissionState === "granted" && result.snapshot) {
+      const prompt = pendingNearbyRequest.prompt;
+      clearPendingNearbyRequest();
+      await dispatchPrompt(prompt, {
+        source: "gps",
+        latitude: result.snapshot.latitude,
+        longitude: result.snapshot.longitude,
+        accuracyMeters: result.snapshot.accuracyMeters,
+        capturedAtUtc: result.snapshot.capturedAtUtc,
+        localityLabel: result.snapshot.localityLabel
+      });
+      return;
+    }
+
+    setLocationActionInProgress(false);
+    setNearbyPermissionPromptVisible(false);
+    if (result.permissionState === "denied_open_settings" || result.permissionState === "unavailable") {
+      setLocationSettingsPromptVisible(true);
+      return;
+    }
+
+    setTypedAreaPromptVisible(true);
+  }, [clearPendingNearbyRequest, dispatchPrompt, locationActionInProgress, pendingNearbyRequest]);
+
+  const handleOpenLocationSettings = useCallback(async () => {
+    await openLocationSettings();
+  }, []);
+
+  const handleUseTypedAreaForPendingPrompt = useCallback(async () => {
+    if (!pendingNearbyRequest) {
+      return;
+    }
+
+    const normalizedArea = normalizeTypedArea(typedAreaInput);
+    if (!normalizedArea) {
+      return;
+    }
+
+    const prompt = pendingNearbyRequest.prompt;
+    clearPendingNearbyRequest();
+    await dispatchPrompt(prompt, {
+      source: "typed_area",
+      typedArea: normalizedArea
+    });
+  }, [clearPendingNearbyRequest, dispatchPrompt, pendingNearbyRequest, typedAreaInput]);
 
   const startNewChat = () => {
     const nextChat = createChat();
@@ -1180,6 +1354,77 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
             href,
             "companion-bottom-nav-item"
           );
+        }}
+      />
+
+      <LocationPermissionPromptModal
+        visible={nearbyPermissionPromptVisible}
+        onRequestClose={clearPendingNearbyRequest}
+        title="Allow location for nearby places"
+        message="This request needs location to find places near you. You can allow location now or enter an area manually."
+        actions={[
+          {
+            label: "Allow location",
+            onPress: () => {
+              void handleAllowNearbyPermission();
+            },
+            variant: "primary",
+            disabled: locationActionInProgress
+          },
+          {
+            label: "Enter area manually",
+            onPress: () => {
+              setNearbyPermissionPromptVisible(false);
+              setTypedAreaPromptVisible(true);
+            },
+            variant: "secondary",
+            disabled: locationActionInProgress
+          },
+          {
+            label: "Not now",
+            onPress: clearPendingNearbyRequest,
+            variant: "secondary",
+            disabled: locationActionInProgress
+          }
+        ]}
+      />
+
+      <LocationPermissionPromptModal
+        visible={locationSettingsPromptVisible}
+        onRequestClose={clearPendingNearbyRequest}
+        title="Enable location in Settings"
+        message="Location permission is currently blocked by your OS. Open Settings to enable it, or type an area for this request."
+        actions={[
+          {
+            label: "Open Settings",
+            onPress: () => {
+              void handleOpenLocationSettings();
+            },
+            variant: "primary"
+          },
+          {
+            label: "Enter area manually",
+            onPress: () => {
+              setLocationSettingsPromptVisible(false);
+              setTypedAreaPromptVisible(true);
+            },
+            variant: "secondary"
+          },
+          {
+            label: "Not now",
+            onPress: clearPendingNearbyRequest,
+            variant: "secondary"
+          }
+        ]}
+      />
+
+      <LocationTypedAreaModal
+        visible={typedAreaPromptVisible}
+        value={typedAreaInput}
+        onChangeValue={setTypedAreaInput}
+        onCancel={clearPendingNearbyRequest}
+        onConfirm={() => {
+          void handleUseTypedAreaForPendingPrompt();
         }}
       />
 

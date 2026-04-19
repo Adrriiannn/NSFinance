@@ -22,7 +22,8 @@ public sealed class UserChatOrchestrator(
     IConversationMessageService? conversationMessageService = null,
     IConversationStateService? conversationStateService = null,
     IConversationSummaryService? conversationSummaryService = null,
-    IPersistentConversationContextService? persistentConversationContextService = null) : IUserChatOrchestrator
+    IPersistentConversationContextService? persistentConversationContextService = null,
+    IUserChatCompanionHandoffService? companionHandoffService = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -261,6 +262,21 @@ public sealed class UserChatOrchestrator(
         else
         {
             (contextMessages, contextSummary, structuredState, contextReasonCodes) = BuildTransientContext(request, taskType);
+        }
+
+        var companionHandoffResponse = await TryExecuteCompanionHandoffAsync(
+            request,
+            taskType,
+            route,
+            warnings,
+            contextSummary,
+            canUsePersistentMemory,
+            conversationThreadId,
+            conversationTurnId,
+            cancellationToken);
+        if (companionHandoffResponse is not null)
+        {
+            return companionHandoffResponse;
         }
 
         var prompt = promptBuilder.BuildUserChatPrompt(
@@ -533,7 +549,7 @@ public sealed class UserChatOrchestrator(
         }
 
         logger.LogInformation(
-            "User chat orchestrated correlationId={CorrelationId} complexity={Complexity} task={TaskType} model={Model} deployment={Deployment} succeeded={Succeeded} contextReasonCodes={ContextReasonCodes} reasonCodes={ReasonCodes}",
+            "User chat orchestrated path=generic_ai correlationId={CorrelationId} complexity={Complexity} task={TaskType} model={Model} deployment={Deployment} succeeded={Succeeded} contextReasonCodes={ContextReasonCodes} reasonCodes={ReasonCodes}",
             request.CorrelationId,
             complexity.Complexity,
             taskType,
@@ -550,6 +566,151 @@ public sealed class UserChatOrchestrator(
             ConversationThreadId = conversationThreadId,
             ConversationTurnId = conversationTurnId,
             TurnStatus = canUsePersistentMemory ? ConversationTurnStatus.Completed : null
+        };
+    }
+
+    private async Task<UserChatResponse?> TryExecuteCompanionHandoffAsync(
+        UserChatRequest request,
+        AITaskType taskType,
+        AIModelRoute route,
+        IReadOnlyList<string> existingWarnings,
+        string? contextSummary,
+        bool canUsePersistentMemory,
+        Guid? conversationThreadId,
+        Guid? conversationTurnId,
+        CancellationToken cancellationToken)
+    {
+        if (companionHandoffService is null)
+        {
+            return null;
+        }
+
+        var sessionId = conversationThreadId?.ToString("N") ?? request.CorrelationId;
+        var companionResponse = await companionHandoffService.TryExecuteAsync(
+            request,
+            route,
+            sessionId,
+            cancellationToken);
+        if (companionResponse is null)
+        {
+            return null;
+        }
+
+        var merged = companionResponse with
+        {
+            ReferencedContextSummary = contextSummary,
+            Warnings = existingWarnings
+                .Concat(companionResponse.Warnings)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            ConversationThreadId = conversationThreadId,
+            ConversationTurnId = conversationTurnId
+        };
+
+        logger.LogInformation(
+            "User chat companion handoff completed correlationId={CorrelationId} succeeded={Succeeded} model={Model} warnings={Warnings}",
+            request.CorrelationId,
+            merged.Succeeded,
+            merged.ModelUsed,
+            string.Join(',', merged.Warnings));
+
+        if (!canUsePersistentMemory
+            || !request.UserId.HasValue
+            || !conversationThreadId.HasValue
+            || !conversationTurnId.HasValue)
+        {
+            return merged;
+        }
+
+        var persistentUserId = request.UserId.Value;
+        var persistentThreadId = conversationThreadId.Value;
+        var persistentTurnId = conversationTurnId.Value;
+        var companionRoute = route with
+        {
+            Model = string.IsNullOrWhiteSpace(merged.ModelUsed) ? route.Model : merged.ModelUsed,
+            Deployment = string.IsNullOrWhiteSpace(merged.ModelUsed) ? route.Deployment : merged.ModelUsed,
+            Reason = "companion_handoff_local_places"
+        };
+
+        await conversationTurnService!.MarkAIInProgressAsync(
+            persistentUserId,
+            persistentThreadId,
+            persistentTurnId,
+            companionRoute,
+            cancellationToken);
+
+        if (!merged.Succeeded)
+        {
+            await conversationTurnService.MarkFailedAsync(
+                persistentUserId,
+                persistentThreadId,
+                persistentTurnId,
+                merged.FailureReason ?? "companion_handoff_failed",
+                merged.ReplyText,
+                cancellationToken);
+
+            return merged with
+            {
+                TurnStatus = ConversationTurnStatus.Failed
+            };
+        }
+
+        await conversationTurnService.MarkAICompletedAsync(
+            persistentUserId,
+            persistentThreadId,
+            persistentTurnId,
+            responseLatencyMs: 0,
+            cancellationToken);
+
+        try
+        {
+            await PersistAssistantTurnContextAsync(
+                persistentUserId,
+                persistentThreadId,
+                taskType,
+                companionRoute,
+                persistentTurnId,
+                merged,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await conversationTurnService.MarkFailedAsync(
+                persistentUserId,
+                persistentThreadId,
+                persistentTurnId,
+                "assistant_persistence_failed",
+                ex.Message,
+                CancellationToken.None);
+            logger.LogError(
+                ex,
+                "Assistant persistence failed after companion handoff correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId}",
+                request.CorrelationId,
+                persistentThreadId,
+                persistentTurnId);
+
+            return BuildFailedTurnResponse(
+                "I prepared a grounded response but couldn't persist it safely. Please retry.",
+                companionRoute,
+                merged.Warnings.Append("assistant_persistence_failed").ToArray(),
+                "assistant_persistence_failed",
+                conversationThreadId,
+                conversationTurnId,
+                ConversationTurnStatus.Failed,
+                isDuplicateRequest: false,
+                isTurnInProgress: false,
+                contextSummary: contextSummary);
+        }
+
+        await conversationTurnService.MarkCompletedAsync(
+            persistentUserId,
+            persistentThreadId,
+            persistentTurnId,
+            cancellationToken);
+
+        return merged with
+        {
+            TurnStatus = ConversationTurnStatus.Completed
         };
     }
 

@@ -240,6 +240,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IMerchantInvestigationResponseParser, MerchantInvestigationResponseParser>();
         services.AddScoped<IUserChatResponseParser, UserChatResponseParser>();
         services.AddScoped<IMerchantInvestigationOrchestrator, MerchantInvestigationOrchestrator>();
+        services.AddScoped<IUserChatCompanionHandoffService, UserChatCompanionHandoffService>();
         services.AddScoped<IUserChatOrchestrator, UserChatOrchestrator>();
 
         // Keep existing merchant resolution seam intact while allowing provider swap via AI options.

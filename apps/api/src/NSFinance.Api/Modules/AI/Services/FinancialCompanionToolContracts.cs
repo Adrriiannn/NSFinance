@@ -32,7 +32,11 @@ public interface IUserFinancialContextProfileService
 
 public interface IPlacesSearchService
 {
-    Task<PlaceSearchResult> SearchAsync(string query, string country, CancellationToken cancellationToken);
+    Task<PlaceSearchResult> SearchAsync(
+        string query,
+        string country,
+        PlaceSearchLocationContext? locationContext,
+        CancellationToken cancellationToken);
 }
 
 public interface IPlaceDetailsService
@@ -87,6 +91,16 @@ public sealed record PlaceSearchResult(
     IReadOnlyList<PlaceSearchItem> Items,
     PlaceSearchMetadata? Metadata = null,
     IReadOnlyList<string>? Warnings = null);
+
+public sealed record PlaceSearchLocationContext(
+    string? Source = null,
+    double? Latitude = null,
+    double? Longitude = null,
+    int? RadiusMeters = null,
+    string? TypedArea = null,
+    string? LocalityLabel = null,
+    string? AccuracyBucket = null,
+    DateTimeOffset? CapturedAtUtc = null);
 
 public sealed record PlaceSearchItem(
     string PlaceId,

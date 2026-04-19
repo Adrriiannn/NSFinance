@@ -289,7 +289,11 @@ public sealed class FinancialCompanionContextAssemblerTests
             return Task.FromResult(new TransactionQueryResult(rows));
         }
 
-        public Task<PlaceSearchResult> SearchAsync(string query, string country, CancellationToken cancellationToken)
+        public Task<PlaceSearchResult> SearchAsync(
+            string query,
+            string country,
+            PlaceSearchLocationContext? locationContext,
+            CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (ReturnNoPlaces)
