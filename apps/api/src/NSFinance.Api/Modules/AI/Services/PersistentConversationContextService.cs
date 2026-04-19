@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
@@ -21,115 +22,150 @@ public sealed class PersistentConversationContextService(
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
+        var stopwatch = Stopwatch.StartNew();
+        var stage = "start";
+        logger.LogInformation(
+            "PersistentConversationContext build start correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} task={TaskType} cancellationRequested={CancellationRequested}",
+            request.CorrelationId,
+            request.ConversationThreadId,
+            request.ConversationTurnId,
+            request.TaskType,
+            cancellationToken.IsCancellationRequested);
+
         var memoryOptions = options.Value.Memory;
         var budget = ResolveBudget(memoryOptions, request.TaskType);
         var reasonCodes = new List<string>();
 
-        await EnsureThreadOwnershipAsync(request.UserId, request.ConversationThreadId, cancellationToken);
-
-        var refreshResult = await conversationSummaryService.RefreshSummaryIfNeededAsync(
-            request.UserId,
-            request.ConversationThreadId,
-            request.TaskType,
-            request.CorrelationId,
-            cancellationToken);
-        reasonCodes.AddRange(refreshResult.ReasonCodes);
-
-        var latestState = await conversationStateService.GetLatestStateAsync(
-            request.UserId,
-            request.ConversationThreadId,
-            cancellationToken);
-        if (latestState is not null)
+        try
         {
-            reasonCodes.Add("state_snapshot_loaded");
+            stage = "ensure_thread_ownership";
+            await EnsureThreadOwnershipAsync(request.UserId, request.ConversationThreadId, cancellationToken);
+
+            stage = "refresh_summary_if_needed";
+            var refreshResult = await conversationSummaryService.RefreshSummaryIfNeededAsync(
+                request.UserId,
+                request.ConversationThreadId,
+                request.TaskType,
+                request.CorrelationId,
+                cancellationToken);
+            reasonCodes.AddRange(refreshResult.ReasonCodes);
+
+            stage = "load_latest_state";
+            var latestState = await conversationStateService.GetLatestStateAsync(
+                request.UserId,
+                request.ConversationThreadId,
+                cancellationToken);
+            if (latestState is not null)
+            {
+                reasonCodes.Add("state_snapshot_loaded");
+            }
+
+            var fetchCount = Math.Clamp(
+                budget.MaxRecentMessages * Math.Max(1, memoryOptions.RecentMessageFetchMultiplier),
+                budget.MaxRecentMessages,
+                500);
+
+            stage = "fetch_recent_messages";
+            var fetchedMessages = await dbContext.ConversationMessages
+                .AsNoTracking()
+                .Include(x => x.ConversationTurn)
+                .Where(x => x.ConversationThreadId == request.ConversationThreadId)
+                .OrderByDescending(x => x.MessageOrder)
+                .Take(fetchCount)
+                .ToListAsync(cancellationToken);
+            fetchedMessages = fetchedMessages.OrderBy(x => x.MessageOrder).ToList();
+
+            var filteredResult = FilterMessages(fetchedMessages, latestState?.State, budget.MaxRecentMessages);
+            reasonCodes.AddRange(filteredResult.ReasonCodes);
+
+            var summaryText = TrimSummary(refreshResult.LatestSummary?.SummaryText, budget.MaxSummaryChars);
+            if (!string.IsNullOrWhiteSpace(summaryText))
+            {
+                reasonCodes.Add("summary_included");
+            }
+
+            var structuredState = BuildStructuredState(latestState?.State, budget, memoryOptions.MaxStateValueLength);
+            if (structuredState.Count > 0)
+            {
+                reasonCodes.Add("structured_state_included");
+            }
+
+            var contextMessages = new List<AIMessage>(filteredResult.Included.Count + 1);
+            contextMessages.AddRange(filteredResult.Included.Select(ToAIMessage));
+
+            if (request.IncludeCurrentUserMessage && !string.IsNullOrWhiteSpace(request.CurrentUserMessage))
+            {
+                contextMessages.Add(AIMessage.User(request.CurrentUserMessage.Trim()));
+                reasonCodes.Add("current_user_message_included");
+            }
+
+            var maxPromptTokens = request.MaxPromptTokensOverride ?? budget.MaxPromptTokens;
+            var trimmedByBudget = TrimMessagesToBudget(contextMessages, filteredResult.Included, maxPromptTokens, out var trimReason);
+            if (!string.IsNullOrWhiteSpace(trimReason))
+            {
+                reasonCodes.Add(trimReason);
+            }
+
+            var finalContextMessages = trimmedByBudget.ContextMessages;
+            var includedMessageIds = trimmedByBudget.IncludedMessages.Select(x => x.Id).ToArray();
+            var excludedMessageIds = filteredResult.Excluded.Select(x => x.Id)
+                .Concat(trimmedByBudget.ExcludedByBudget.Select(x => x.Id))
+                .Distinct()
+                .ToArray();
+
+            var estimatedPromptTokens = EstimateTokens(finalContextMessages);
+            reasonCodes.Add("context_built");
+
+            stage = "persist_build_log";
+            await PersistBuildLogIfEnabledAsync(
+                request,
+                estimatedPromptTokens,
+                trimReason,
+                includedMessageIds.Length,
+                refreshResult.LatestSummary?.SummaryVersion,
+                latestState?.StateVersion,
+                memoryOptions,
+                cancellationToken);
+
+            stopwatch.Stop();
+            logger.LogInformation(
+                "Persistent conversation context built correlationId={CorrelationId} threadId={ThreadId} task={TaskType} stage={Stage} included={IncludedCount} excluded={ExcludedCount} estTokens={EstimatedTokens} trimReason={TrimReason} elapsedMs={ElapsedMs}",
+                request.CorrelationId,
+                request.ConversationThreadId,
+                request.TaskType,
+                stage,
+                includedMessageIds.Length,
+                excludedMessageIds.Length,
+                estimatedPromptTokens,
+                trimReason ?? "none",
+                stopwatch.ElapsedMilliseconds);
+
+            return new PersistentConversationContextBuildResult(
+                ContextMessages: finalContextMessages,
+                IncludedMessageIds: includedMessageIds,
+                ExcludedMessageIds: excludedMessageIds,
+                ContextSummary: summaryText,
+                IncludedSummaryVersion: refreshResult.LatestSummary?.SummaryVersion,
+                IncludedStateVersion: latestState?.StateVersion,
+                StructuredState: structuredState,
+                EstimatedPromptTokenCount: estimatedPromptTokens,
+                TrimReason: trimReason,
+                ReasonCodes: reasonCodes);
         }
-
-        var fetchCount = Math.Clamp(
-            budget.MaxRecentMessages * Math.Max(1, memoryOptions.RecentMessageFetchMultiplier),
-            budget.MaxRecentMessages,
-            500);
-
-        var fetchedMessages = await dbContext.ConversationMessages
-            .AsNoTracking()
-            .Include(x => x.ConversationTurn)
-            .Where(x => x.ConversationThreadId == request.ConversationThreadId)
-            .OrderByDescending(x => x.MessageOrder)
-            .Take(fetchCount)
-            .ToListAsync(cancellationToken);
-        fetchedMessages = fetchedMessages.OrderBy(x => x.MessageOrder).ToList();
-
-        var filteredResult = FilterMessages(fetchedMessages, latestState?.State, budget.MaxRecentMessages);
-        reasonCodes.AddRange(filteredResult.ReasonCodes);
-
-        var summaryText = TrimSummary(refreshResult.LatestSummary?.SummaryText, budget.MaxSummaryChars);
-        if (!string.IsNullOrWhiteSpace(summaryText))
+        catch (OperationCanceledException ex)
         {
-            reasonCodes.Add("summary_included");
+            stopwatch.Stop();
+            logger.LogWarning(
+                ex,
+                "Persistent conversation context build cancelled correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} stage={Stage} elapsedMs={ElapsedMs} cancellationRequested={CancellationRequested}",
+                request.CorrelationId,
+                request.ConversationThreadId,
+                request.ConversationTurnId,
+                stage,
+                stopwatch.ElapsedMilliseconds,
+                cancellationToken.IsCancellationRequested);
+            throw;
         }
-
-        var structuredState = BuildStructuredState(latestState?.State, budget, memoryOptions.MaxStateValueLength);
-        if (structuredState.Count > 0)
-        {
-            reasonCodes.Add("structured_state_included");
-        }
-
-        var contextMessages = new List<AIMessage>(filteredResult.Included.Count + 1);
-        contextMessages.AddRange(filteredResult.Included.Select(ToAIMessage));
-
-        if (request.IncludeCurrentUserMessage && !string.IsNullOrWhiteSpace(request.CurrentUserMessage))
-        {
-            contextMessages.Add(AIMessage.User(request.CurrentUserMessage.Trim()));
-            reasonCodes.Add("current_user_message_included");
-        }
-
-        var maxPromptTokens = request.MaxPromptTokensOverride ?? budget.MaxPromptTokens;
-        var trimmedByBudget = TrimMessagesToBudget(contextMessages, filteredResult.Included, maxPromptTokens, out var trimReason);
-        if (!string.IsNullOrWhiteSpace(trimReason))
-        {
-            reasonCodes.Add(trimReason);
-        }
-
-        var finalContextMessages = trimmedByBudget.ContextMessages;
-        var includedMessageIds = trimmedByBudget.IncludedMessages.Select(x => x.Id).ToArray();
-        var excludedMessageIds = filteredResult.Excluded.Select(x => x.Id)
-            .Concat(trimmedByBudget.ExcludedByBudget.Select(x => x.Id))
-            .Distinct()
-            .ToArray();
-
-        var estimatedPromptTokens = EstimateTokens(finalContextMessages);
-        reasonCodes.Add("context_built");
-
-        await PersistBuildLogIfEnabledAsync(
-            request,
-            estimatedPromptTokens,
-            trimReason,
-            includedMessageIds.Length,
-            refreshResult.LatestSummary?.SummaryVersion,
-            latestState?.StateVersion,
-            memoryOptions,
-            cancellationToken);
-
-        logger.LogInformation(
-            "Persistent conversation context built correlationId={CorrelationId} threadId={ThreadId} task={TaskType} included={IncludedCount} excluded={ExcludedCount} estTokens={EstimatedTokens} trimReason={TrimReason}",
-            request.CorrelationId,
-            request.ConversationThreadId,
-            request.TaskType,
-            includedMessageIds.Length,
-            excludedMessageIds.Length,
-            estimatedPromptTokens,
-            trimReason ?? "none");
-
-        return new PersistentConversationContextBuildResult(
-            ContextMessages: finalContextMessages,
-            IncludedMessageIds: includedMessageIds,
-            ExcludedMessageIds: excludedMessageIds,
-            ContextSummary: summaryText,
-            IncludedSummaryVersion: refreshResult.LatestSummary?.SummaryVersion,
-            IncludedStateVersion: latestState?.StateVersion,
-            StructuredState: structuredState,
-            EstimatedPromptTokenCount: estimatedPromptTokens,
-            TrimReason: trimReason,
-            ReasonCodes: reasonCodes);
     }
 
     private static TaskContextBudgetOptions ResolveBudget(ConversationMemoryOptions memory, AITaskType taskType)

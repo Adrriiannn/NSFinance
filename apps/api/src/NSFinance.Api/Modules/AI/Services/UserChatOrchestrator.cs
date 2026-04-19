@@ -23,7 +23,8 @@ public sealed class UserChatOrchestrator(
     IConversationStateService? conversationStateService = null,
     IConversationSummaryService? conversationSummaryService = null,
     IPersistentConversationContextService? persistentConversationContextService = null,
-    IUserChatCompanionHandoffService? companionHandoffService = null) : IUserChatOrchestrator
+    IUserChatCompanionHandoffService? companionHandoffService = null,
+    ILocalDiscoveryConstraintExtractor? localDiscoveryConstraintExtractor = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -853,6 +854,14 @@ public sealed class UserChatOrchestrator(
         List<string> warnings,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        logger.LogInformation(
+            "Persistent context build start correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} cancellationRequested={CancellationRequested}",
+            request.CorrelationId,
+            conversationThreadId,
+            conversationTurnId,
+            cancellationToken.IsCancellationRequested);
+
         try
         {
             var persistentContext = await persistentConversationContextService!.BuildContextAsync(
@@ -866,6 +875,14 @@ public sealed class UserChatOrchestrator(
                     CurrentUserMessage: request.UserMessage,
                     IncludeCurrentUserMessage: false),
                 cancellationToken);
+            stopwatch.Stop();
+            logger.LogInformation(
+                "Persistent context build succeeded correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} elapsedMs={ElapsedMs} estimatedTokens={EstimatedTokens}",
+                request.CorrelationId,
+                conversationThreadId,
+                conversationTurnId,
+                stopwatch.ElapsedMilliseconds,
+                persistentContext.EstimatedPromptTokenCount);
 
             return ContextBuildResult.Success(
                 persistentContext.ContextMessages,
@@ -875,10 +892,40 @@ public sealed class UserChatOrchestrator(
                 "persistent",
                 persistentContext.EstimatedPromptTokenCount);
         }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+            logger.LogWarning(
+                ex,
+                "Persistent context build cancelled by request token correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} elapsedMs={ElapsedMs}",
+                request.CorrelationId,
+                conversationThreadId,
+                conversationTurnId,
+                stopwatch.ElapsedMilliseconds);
+            throw;
+        }
         catch (Exception ex)
         {
+            stopwatch.Stop();
             var reasonCategory = ClassifyPersistentContextFailure(ex);
-            var fallbackPolicy = ResolveTransientFallbackPolicy(request);
+            var localDiscoveryCandidate = IsLocalDiscoveryCandidate(request);
+            var fallbackPolicy = ResolveTransientFallbackPolicy(
+                request,
+                reasonCategory,
+                localDiscoveryCandidate);
+            warnings.Add($"persistent_context_failure:{reasonCategory}");
+
+            logger.LogWarning(
+                ex,
+                "Persistent context build failed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} reason={ReasonCategory} localDiscoveryCandidate={LocalDiscoveryCandidate} elapsedMs={ElapsedMs} cancellationRequested={CancellationRequested}",
+                request.CorrelationId,
+                conversationThreadId,
+                conversationTurnId,
+                reasonCategory,
+                localDiscoveryCandidate,
+                stopwatch.ElapsedMilliseconds,
+                cancellationToken.IsCancellationRequested);
+
             if (!fallbackPolicy.Allowed)
             {
                 logger.LogError(
@@ -937,6 +984,11 @@ public sealed class UserChatOrchestrator(
                 ex,
                 cancellationToken);
 
+            if (fallbackPolicy.Mode == "local_discovery_nonessential_context")
+            {
+                warnings.Add("persistent_context_optional_for_local_discovery");
+            }
+
             var transient = BuildTransientContext(request, taskType);
             return ContextBuildResult.Success(
                 transient.ContextMessages,
@@ -948,10 +1000,19 @@ public sealed class UserChatOrchestrator(
         }
     }
 
-    private (bool Allowed, string Mode, bool AllowedByConfig, string? DenyReason) ResolveTransientFallbackPolicy(UserChatRequest request)
+    private (bool Allowed, string Mode, bool AllowedByConfig, string? DenyReason) ResolveTransientFallbackPolicy(
+        UserChatRequest request,
+        string reasonCategory,
+        bool localDiscoveryCandidate)
     {
         var chatOptions = options.Value.ChatTurns;
         var isProduction = hostEnvironment?.IsProduction() == true;
+
+        if (localDiscoveryCandidate
+            && reasonCategory is "persistent_context_cancelled" or "persistent_context_timeout")
+        {
+            return (true, "local_discovery_nonessential_context", false, null);
+        }
 
         if (request.AllowTransientFallbackOnPersistentFailure)
         {
@@ -978,6 +1039,16 @@ public sealed class UserChatOrchestrator(
 
     private static string ClassifyPersistentContextFailure(Exception exception)
     {
+        if (exception is OperationCanceledException)
+        {
+            return "persistent_context_cancelled";
+        }
+
+        if (exception is TimeoutException)
+        {
+            return "persistent_context_timeout";
+        }
+
         var message = exception.Message;
         if (message.Contains("thread", StringComparison.OrdinalIgnoreCase)
             && message.Contains("not found", StringComparison.OrdinalIgnoreCase))
@@ -1031,6 +1102,7 @@ public sealed class UserChatOrchestrator(
             ["deployment"] = route.Deployment,
             ["usePersistentMemory"] = request.UsePersistentMemory,
             ["allowTransientFallbackOnPersistentFailure"] = request.AllowTransientFallbackOnPersistentFailure,
+            ["persistentContextCancellationRequested"] = cancellationToken.IsCancellationRequested,
             ["exceptionType"] = exception?.GetType().Name
         });
 
@@ -1044,7 +1116,37 @@ public sealed class UserChatOrchestrator(
                 SubjectKey: conversationTurnId?.ToString("N") ?? conversationThreadId?.ToString("N") ?? request.UserId?.ToString("N"),
                 FailureMessage: exception?.Message ?? $"Transient fallback ({fallbackMode}) for {reasonCategory}",
                 DetailsJson: details),
-            cancellationToken);
+            CancellationToken.None);
+    }
+
+    private bool IsLocalDiscoveryCandidate(UserChatRequest request)
+    {
+        if (localDiscoveryConstraintExtractor is not null)
+        {
+            var extracted = localDiscoveryConstraintExtractor.Extract(request.UserMessage);
+            if (extracted.IsLocalDiscoveryCandidate)
+            {
+                return true;
+            }
+        }
+
+        if (CompanionLocationGroundingParser.RequiresCurrentLocation(request.UserMessage))
+        {
+            return true;
+        }
+
+        if (request.Metadata is null)
+        {
+            return false;
+        }
+
+        if (request.Metadata.TryGetValue("chat_path", out var chatPath)
+            && string.Equals(chatPath, "companion_local_places", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private async Task<UserChatResponse> BuildDuplicateTurnResponseAsync(

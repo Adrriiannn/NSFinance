@@ -20,6 +20,9 @@ public sealed class OperationalFailureRecorder(
         var nowUtc = DateTime.UtcNow;
         var failureType = TrimRequired(input.FailureType, 120);
         var fingerprint = TrimRequired(input.Fingerprint, 320);
+        var persistenceToken = cancellationToken.IsCancellationRequested
+            ? CancellationToken.None
+            : cancellationToken;
 
         try
         {
@@ -28,7 +31,7 @@ public sealed class OperationalFailureRecorder(
                     x => x.Area == input.Area
                          && x.FailureType == failureType
                          && x.Fingerprint == fingerprint,
-                    cancellationToken);
+                    persistenceToken);
 
             if (existing is null)
             {
@@ -59,7 +62,7 @@ public sealed class OperationalFailureRecorder(
                 existing.DetailsJson = Trim(input.DetailsJson, 4000) ?? existing.DetailsJson;
             }
 
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await dbContext.SaveChangesAsync(persistenceToken);
         }
         catch (Exception ex)
         {
