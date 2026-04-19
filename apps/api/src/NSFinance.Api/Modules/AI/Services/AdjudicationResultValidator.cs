@@ -56,7 +56,11 @@ public sealed class AdjudicationResultValidator : IAdjudicationResultValidator
                         Outcome: ParseOutcome(adjustment.Outcome),
                         RefinedSummary: sanitizedSummary,
                         ConfidenceDelta: CoerceConfidenceDelta(adjustment.ConfidenceDelta),
-                        NuanceNotes: adjustment.NuanceNotes?.Where(item => !string.IsNullOrWhiteSpace(item)).Take(4).ToArray() ?? [],
+                        NuanceNotes: adjustment.NuanceNotes?
+                                         .Where(item => !string.IsNullOrWhiteSpace(item))
+                                         .Take(4)
+                                         .ToArray()
+                                     ?? [],
                         ReasonCode: string.IsNullOrWhiteSpace(adjustment.ReasonCode) ? null : adjustment.ReasonCode.Trim()));
             }
         }

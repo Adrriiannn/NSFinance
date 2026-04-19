@@ -62,6 +62,13 @@ public sealed class CategoryPressureEvaluator(
             var uncertainty = hasBaseline
                 ? Array.Empty<string>()
                 : ["missing_category_specific_baseline"];
+            var currency = context.Summary?.Currency ?? "currency";
+            var evidenceSummary = hasBaseline
+                ? $"{domainName ?? "Category"} spend is {FinancialAdviceFormatting.FormatRatio(ratio)} "
+                  + "vs your own baseline "
+                  + $"({FinancialAdviceFormatting.FormatCurrency(delta, context.Summary?.Currency)} above baseline)."
+                : $"{domainName ?? "Category"} accounts for {FinancialAdviceFormatting.FormatPercentage(concentration)} "
+                  + "of tracked spending and stands out as a concentration pressure point.";
 
             var actions = new List<FinancialAdviceActionCandidate>(2);
             if (isProtectedDomain)
@@ -70,7 +77,9 @@ public sealed class CategoryPressureEvaluator(
                     ActionId: $"review_{domain.DomainCode}_usage",
                     ActionType: FinancialAdviceActionType.ReviewSpend,
                     Title: "Review billing and usage changes",
-                    Guidance: "This category appears essential. Focus on billing accuracy, duplicate charges, or provider plans before reductions.",
+                    Guidance:
+                    "This category appears essential. Focus on billing accuracy, duplicate charges, "
+                    + "or provider plans before reductions.",
                     TargetDomainCode: domain.DomainCode,
                     IsProtectedCategory: true));
             }
@@ -103,13 +112,17 @@ public sealed class CategoryPressureEvaluator(
                     RelatedIntent: context.Routing.PrimaryIntent,
                     Severity: severity,
                     Confidence: confidence,
-                    EvidenceSummary: hasBaseline
-                        ? $"{domainName ?? "Category"} spend is {FinancialAdviceFormatting.FormatRatio(ratio)} vs your own baseline ({FinancialAdviceFormatting.FormatCurrency(delta, context.Summary?.Currency)} above baseline)."
-                        : $"{domainName ?? "Category"} accounts for {FinancialAdviceFormatting.FormatPercentage(concentration)} of tracked spending and stands out as a concentration pressure point.",
+                    EvidenceSummary: evidenceSummary,
                     SupportingMetrics:
                     [
-                        new FinancialAdviceEvidenceMetric("currentDomainSpend", currentAmount, context.Summary?.Currency ?? "currency"),
-                        new FinancialAdviceEvidenceMetric("baselineDomainSpend", baselineAmount, context.Summary?.Currency ?? "currency"),
+                        new FinancialAdviceEvidenceMetric(
+                            "currentDomainSpend",
+                            currentAmount,
+                            currency),
+                        new FinancialAdviceEvidenceMetric(
+                            "baselineDomainSpend",
+                            baselineAmount,
+                            currency),
                         new FinancialAdviceEvidenceMetric("domainSpendRatio", ratio, "ratio"),
                         new FinancialAdviceEvidenceMetric("domainSpendConcentration", concentration, "ratio")
                     ],

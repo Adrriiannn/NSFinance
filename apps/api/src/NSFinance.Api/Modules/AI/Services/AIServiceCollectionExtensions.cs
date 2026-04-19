@@ -19,47 +19,112 @@ public static class AIServiceCollectionExtensions
             .ValidateOnStart();
         services.AddOptions<CompanionAISettingsOptions>()
             .Bind(configuration.GetSection(CompanionAISettingsOptions.SectionName))
-            .Validate(options => options.MaxTokensPerResponse > 0, "CompanionAI max tokens must be > 0")
-            .Validate(options => options.MaxTurnsPerSession > 0, "CompanionAI max turns must be > 0")
-            .Validate(options => options.DailySoftCapPerUser > 0, "CompanionAI daily soft cap must be > 0")
+            .Validate(
+                options => options.MaxTokensPerResponse > 0,
+                "CompanionAI max tokens must be > 0")
+            .Validate(
+                options => options.MaxTurnsPerSession > 0,
+                "CompanionAI max turns must be > 0")
+            .Validate(
+                options => options.DailySoftCapPerUser > 0,
+                "CompanionAI daily soft cap must be > 0")
             .ValidateOnStart();
         services.AddOptions<CompanionOrchestrationOptions>()
             .Bind(configuration.GetSection(CompanionOrchestrationOptions.SectionName))
-            .Validate(options => options.MaxToolCallsPerRequest > 0, "Companion orchestration max tool calls must be > 0")
-            .Validate(options => options.MaxContextKeys > 0, "Companion orchestration max context keys must be > 0")
-            .Validate(options => options.MaxSerializedContextChars > 1_000, "Companion orchestration max serialized context chars must be > 1000")
-            .Validate(options => options.MaxSpendDomains > 0, "Companion orchestration max spend domains must be > 0")
-            .Validate(options => options.MaxRecurringItems > 0, "Companion orchestration max recurring items must be > 0")
-            .Validate(options => options.MaxTransactionRows > 0, "Companion orchestration max transaction rows must be > 0")
-            .Validate(options => options.MaxPlaceItems > 0, "Companion orchestration max place items must be > 0")
-            .Validate(options => options.MaxSummaryTextLength >= 60, "Companion orchestration max summary text length must be >= 60")
-            .Validate(options => options.MaxSecondaryOptionalTools >= 0, "Companion orchestration max secondary optional tools must be >= 0")
+            .Validate(
+                options => options.MaxToolCallsPerRequest > 0,
+                "Companion orchestration max tool calls must be > 0")
+            .Validate(
+                options => options.MaxContextKeys > 0,
+                "Companion orchestration max context keys must be > 0")
+            .Validate(
+                options => options.MaxSerializedContextChars > 1_000,
+                "Companion orchestration max serialized context chars must be > 1000")
+            .Validate(
+                options => options.MaxSpendDomains > 0,
+                "Companion orchestration max spend domains must be > 0")
+            .Validate(
+                options => options.MaxRecurringItems > 0,
+                "Companion orchestration max recurring items must be > 0")
+            .Validate(
+                options => options.MaxTransactionRows > 0,
+                "Companion orchestration max transaction rows must be > 0")
+            .Validate(
+                options => options.MaxPlaceItems > 0,
+                "Companion orchestration max place items must be > 0")
+            .Validate(
+                options => options.MaxSummaryTextLength >= 60,
+                "Companion orchestration max summary text length must be >= 60")
+            .Validate(
+                options => options.MaxSecondaryOptionalTools >= 0,
+                "Companion orchestration max secondary optional tools must be >= 0")
             .ValidateOnStart();
         services.AddOptions<CompanionProfileLifecycleOptions>()
             .Bind(configuration.GetSection(CompanionProfileLifecycleOptions.SectionName))
-            .Validate(options => options.StaleAfterHours > 0, "Companion profile stale threshold must be > 0")
-            .Validate(options => options.RefreshNeededAfterHours > options.StaleAfterHours, "Companion profile refresh-needed threshold must be > stale threshold")
-            .Validate(options => options.MaxActivePlans > 0, "Companion profile max active plans must be > 0")
-            .Validate(options => options.MaxRecurringObligations > 0, "Companion profile max recurring obligations must be > 0")
-            .Validate(options => options.SpendingAnalysisLookbackDays >= 14, "Companion profile spending lookback days must be >= 14")
-            .Validate(options => options.ProfileSchemaVersion > 0, "Companion profile schema version must be > 0")
+            .Validate(
+                options => options.StaleAfterHours > 0,
+                "Companion profile stale threshold must be > 0")
+            .Validate(
+                options => options.RefreshNeededAfterHours > options.StaleAfterHours,
+                "Companion profile refresh-needed threshold must be > stale threshold")
+            .Validate(
+                options => options.MaxActivePlans > 0,
+                "Companion profile max active plans must be > 0")
+            .Validate(
+                options => options.MaxRecurringObligations > 0,
+                "Companion profile max recurring obligations must be > 0")
+            .Validate(
+                options => options.SpendingAnalysisLookbackDays >= 14,
+                "Companion profile spending lookback days must be >= 14")
+            .Validate(
+                options => options.ProfileSchemaVersion > 0,
+                "Companion profile schema version must be > 0")
             .ValidateOnStart();
         services.AddOptions<CompanionAdviceOptions>()
             .Bind(configuration.GetSection(CompanionAdviceOptions.SectionName))
-            .Validate(options => options.MaxAdjudicatedFindings > 0, "Companion advice max adjudicated findings must be > 0")
-            .Validate(options => options.MaxAdjudicationInputChars >= 1_000, "Companion advice adjudication input chars must be >= 1000")
-            .Validate(options => options.MaxAdjudicationOutputTokens >= 120, "Companion advice adjudication output tokens must be >= 120")
-            .Validate(options => options.BorderlineConfidenceThreshold >= 0.4d && options.BorderlineConfidenceThreshold <= 0.9d, "Companion advice borderline confidence threshold must be in [0.4,0.9]")
-            .Validate(options => options.HighConfidenceSkipThreshold >= options.BorderlineConfidenceThreshold, "Companion advice high confidence threshold must be >= borderline threshold")
-            .Validate(options => options.CategoryPressureIncreaseRatioThreshold >= 1.05m, "Companion advice category pressure ratio threshold must be >= 1.05")
-            .Validate(options => options.RecurringPressureIncreaseRatioThreshold >= 1.01m, "Companion advice recurring pressure ratio threshold must be >= 1.01")
-            .Validate(options => options.RecurringToIncomePressureRatioThreshold > 0m, "Companion advice recurring-to-income ratio threshold must be > 0")
-            .Validate(options => options.BudgetLowRemainingRatioThreshold > 0m, "Companion advice budget low remaining ratio threshold must be > 0")
-            .Validate(options => options.AffordabilityBufferRatioThreshold > 0m, "Companion advice affordability buffer ratio threshold must be > 0")
-            .Validate(options => options.BaseFreshnessHoursHighSeverity > 0, "Companion advice freshness window for high severity must be > 0")
-            .Validate(options => options.BaseFreshnessHoursModerateSeverity > 0, "Companion advice freshness window for moderate severity must be > 0")
-            .Validate(options => options.BaseFreshnessHoursLowSeverity > 0, "Companion advice freshness window for low severity must be > 0")
-            .Validate(options => options.BaseFreshnessHoursInfoSeverity > 0, "Companion advice freshness window for info severity must be > 0")
+            .Validate(
+                options => options.MaxAdjudicatedFindings > 0,
+                "Companion advice max adjudicated findings must be > 0")
+            .Validate(
+                options => options.MaxAdjudicationInputChars >= 1_000,
+                "Companion advice adjudication input chars must be >= 1000")
+            .Validate(
+                options => options.MaxAdjudicationOutputTokens >= 120,
+                "Companion advice adjudication output tokens must be >= 120")
+            .Validate(
+                options => options.BorderlineConfidenceThreshold >= 0.4d
+                           && options.BorderlineConfidenceThreshold <= 0.9d,
+                "Companion advice borderline confidence threshold must be in [0.4,0.9]")
+            .Validate(
+                options => options.HighConfidenceSkipThreshold >= options.BorderlineConfidenceThreshold,
+                "Companion advice high confidence threshold must be >= borderline threshold")
+            .Validate(
+                options => options.CategoryPressureIncreaseRatioThreshold >= 1.05m,
+                "Companion advice category pressure ratio threshold must be >= 1.05")
+            .Validate(
+                options => options.RecurringPressureIncreaseRatioThreshold >= 1.01m,
+                "Companion advice recurring pressure ratio threshold must be >= 1.01")
+            .Validate(
+                options => options.RecurringToIncomePressureRatioThreshold > 0m,
+                "Companion advice recurring-to-income ratio threshold must be > 0")
+            .Validate(
+                options => options.BudgetLowRemainingRatioThreshold > 0m,
+                "Companion advice budget low remaining ratio threshold must be > 0")
+            .Validate(
+                options => options.AffordabilityBufferRatioThreshold > 0m,
+                "Companion advice affordability buffer ratio threshold must be > 0")
+            .Validate(
+                options => options.BaseFreshnessHoursHighSeverity > 0,
+                "Companion advice freshness window for high severity must be > 0")
+            .Validate(
+                options => options.BaseFreshnessHoursModerateSeverity > 0,
+                "Companion advice freshness window for moderate severity must be > 0")
+            .Validate(
+                options => options.BaseFreshnessHoursLowSeverity > 0,
+                "Companion advice freshness window for low severity must be > 0")
+            .Validate(
+                options => options.BaseFreshnessHoursInfoSeverity > 0,
+                "Companion advice freshness window for info severity must be > 0")
             .ValidateOnStart();
 
         services.AddHttpClient("AI.AzureOpenAI", (sp, client) =>

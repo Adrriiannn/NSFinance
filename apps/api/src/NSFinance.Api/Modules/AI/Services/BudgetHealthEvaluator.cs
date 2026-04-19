@@ -31,6 +31,12 @@ public sealed class BudgetHealthEvaluator(
         if (remaining < 0m || spendRatio >= monthProgress + adviceOptions.BudgetSlippageRatioThreshold)
         {
             var severity = remaining < 0m ? FinancialAdviceSeverity.High : FinancialAdviceSeverity.Moderate;
+            var evidenceSummary = remaining < 0m
+                ? $"You are currently {FinancialAdviceFormatting.FormatCurrency(Math.Abs(remaining), "currency")} "
+                  + "over your active monthly budget."
+                : "Month-to-date spend is ahead of budget pacing "
+                  + $"({FinancialAdviceFormatting.FormatPercentage(spendRatio)} spent with "
+                  + $"{FinancialAdviceFormatting.FormatPercentage(monthProgress)} of month elapsed).";
             session.Findings.Add(
                 findingFactory.Create(
                     new FinancialAdviceFindingBuildRequest(
@@ -39,9 +45,7 @@ public sealed class BudgetHealthEvaluator(
                         RelatedIntent: context.Routing.PrimaryIntent,
                         Severity: severity,
                         Confidence: 0.88d,
-                        EvidenceSummary: remaining < 0m
-                            ? $"You are currently {FinancialAdviceFormatting.FormatCurrency(Math.Abs(remaining), "currency")} over your active monthly budget."
-                            : $"Month-to-date spend is ahead of budget pacing ({FinancialAdviceFormatting.FormatPercentage(spendRatio)} spent with {FinancialAdviceFormatting.FormatPercentage(monthProgress)} of month elapsed).",
+                        EvidenceSummary: evidenceSummary,
                         SupportingMetrics:
                         [
                             new FinancialAdviceEvidenceMetric("monthlyBudget", monthlyBudget, "currency"),
@@ -61,7 +65,9 @@ public sealed class BudgetHealthEvaluator(
                                 ActionId: "rebalance_monthly_budget",
                                 ActionType: FinancialAdviceActionType.AdjustBudget,
                                 Title: "Rebalance the monthly budget",
-                                Guidance: "Rebalance discretionary categories first and protect essentials while recovering plan alignment."),
+                                Guidance:
+                                "Rebalance discretionary categories first and protect essentials "
+                                + "while recovering plan alignment."),
                             new FinancialAdviceActionCandidate(
                                 ActionId: "pause_nonessential_spend_short_term",
                                 ActionType: FinancialAdviceActionType.ReduceSpend,
@@ -88,7 +94,9 @@ public sealed class BudgetHealthEvaluator(
                         RelatedIntent: context.Routing.PrimaryIntent,
                         Severity: FinancialAdviceSeverity.Low,
                         Confidence: 0.78d,
-                        EvidenceSummary: $"Remaining budget is down to {FinancialAdviceFormatting.FormatPercentage(remainingRatio)} with part of the month still ahead.",
+                        EvidenceSummary:
+                        $"Remaining budget is down to {FinancialAdviceFormatting.FormatPercentage(remainingRatio)} "
+                        + "with part of the month still ahead.",
                         SupportingMetrics:
                         [
                             new FinancialAdviceEvidenceMetric("remainingBudgetRatio", remainingRatio, "ratio"),

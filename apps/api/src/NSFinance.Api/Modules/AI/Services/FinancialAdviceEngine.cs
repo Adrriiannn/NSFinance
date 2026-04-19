@@ -128,7 +128,8 @@ public sealed class FinancialAdviceEngine(
                     RelatedIntent: context.Routing.PrimaryIntent,
                     Severity: FinancialAdviceSeverity.Info,
                     Confidence: 0.72d,
-                    EvidenceSummary: "No material financial pressure signal was detected from your current baseline and recent activity.",
+                    EvidenceSummary:
+                    "No material financial pressure signal was detected from your current baseline and recent activity.",
                     SupportingMetrics: [],
                     DomainCode: null,
                     DomainName: null,

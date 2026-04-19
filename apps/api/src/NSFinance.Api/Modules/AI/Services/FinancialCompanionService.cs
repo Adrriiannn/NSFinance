@@ -21,6 +21,11 @@ public sealed class FinancialCompanionService(
     IOptions<CompanionAISettingsOptions> options,
     ILogger<FinancialCompanionService> logger) : IFinancialCompanionService
 {
+    private const string CompanionLogTemplate =
+        "[AI_COMPANION] userId={UserId} sessionId={SessionId} intent={Intent} "
+        + "tools_used={ToolsUsed} tokens_input={TokensInput} tokens_output={TokensOutput} "
+        + "model={Model} response_time={ResponseTimeMs}";
+
     private readonly CompanionAISettingsOptions _settings = options.Value;
 
     public async Task<FinancialCompanionResponse> ExecuteAsync(
@@ -190,12 +195,16 @@ public sealed class FinancialCompanionService(
     {
         if (routing.IsUnsupported)
         {
-            return "I can help with budgeting, affordability, spending, and savings guidance, but this request is outside my supported scope.";
+            return
+                "I can help with budgeting, affordability, spending, and savings guidance, "
+                + "but this request is outside my supported scope.";
         }
 
         if (routing.IsAmbiguous)
         {
-            return "I need a bit more detail to help. You can ask about budget status, spending analysis, affordability, or where to cut back.";
+            return
+                "I need a bit more detail to help. You can ask about budget status, spending "
+                + "analysis, affordability, or where to cut back.";
         }
 
         if (reasons.Any(reason => reason.Contains("financial_summary", StringComparison.Ordinal)))
@@ -208,7 +217,9 @@ public sealed class FinancialCompanionService(
             return "I don't have enough grounded budget data yet to answer that reliably.";
         }
 
-        return "I don't have enough grounded data yet to answer that reliably. I can provide a partial answer once more data is available.";
+        return
+            "I don't have enough grounded data yet to answer that reliably. "
+            + "I can provide a partial answer once more data is available.";
     }
 
     private async Task<FinancialCompanionResponse> PersistAndReturnAsync(
@@ -231,7 +242,7 @@ public sealed class FinancialCompanionService(
     {
         var toolsUsedText = toolsUsed.Count == 0 ? "none" : string.Join(",", toolsUsed);
         logger.LogInformation(
-            "[AI_COMPANION] userId={UserId} sessionId={SessionId} intent={Intent} tools_used={ToolsUsed} tokens_input={TokensInput} tokens_output={TokensOutput} model={Model} response_time={ResponseTimeMs}",
+            CompanionLogTemplate,
             request.UserId,
             request.SessionId,
             intent,

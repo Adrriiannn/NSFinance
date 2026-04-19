@@ -49,6 +49,12 @@ public sealed class RecurringSpendEvaluator(
         var uncertainty = hasBaselineRecurring
             ? Array.Empty<string>()
             : ["missing_recurring_baseline"];
+        var currency = context.Summary?.Currency ?? "currency";
+        var evidenceSummary = hasBaselineRecurring
+            ? $"Recurring monthly commitments are {FinancialAdviceFormatting.FormatRatio(ratio)} "
+              + "vs your historical recurring baseline."
+            : "Recurring commitments are taking about "
+              + $"{FinancialAdviceFormatting.FormatPercentage(recurringToIncome)} of recent monthly income.";
 
         var actions = new List<FinancialAdviceActionCandidate>(2)
         {
@@ -72,13 +78,17 @@ public sealed class RecurringSpendEvaluator(
                     RelatedIntent: context.Routing.PrimaryIntent,
                     Severity: severity,
                     Confidence: confidence,
-                    EvidenceSummary: hasBaselineRecurring
-                        ? $"Recurring monthly commitments are {FinancialAdviceFormatting.FormatRatio(ratio)} vs your historical recurring baseline."
-                        : $"Recurring commitments are taking about {FinancialAdviceFormatting.FormatPercentage(recurringToIncome)} of recent monthly income.",
+                    EvidenceSummary: evidenceSummary,
                     SupportingMetrics:
                     [
-                        new FinancialAdviceEvidenceMetric("recurringMonthlyTotal", recurringTotal, context.Summary?.Currency ?? "currency"),
-                        new FinancialAdviceEvidenceMetric("baselineRecurringMonthlyTotal", baselineRecurring, context.Summary?.Currency ?? "currency"),
+                        new FinancialAdviceEvidenceMetric(
+                            "recurringMonthlyTotal",
+                            recurringTotal,
+                            currency),
+                        new FinancialAdviceEvidenceMetric(
+                            "baselineRecurringMonthlyTotal",
+                            baselineRecurring,
+                            currency),
                         new FinancialAdviceEvidenceMetric("recurringToIncomeRatio", recurringToIncome, "ratio"),
                         new FinancialAdviceEvidenceMetric("recurringIncreaseRatio", ratio, "ratio")
                     ],

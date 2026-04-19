@@ -23,6 +23,10 @@ public sealed class PlanDriftEvaluator(
 
         if (hasDrift)
         {
+            var evidenceSummary = "Recent spending is "
+                                  + $"{FinancialAdviceFormatting.FormatRatio(ratio)} "
+                                  + "versus active plan targets, indicating drift.";
+
             session.Findings.Add(
                 findingFactory.Create(
                     new FinancialAdviceFindingBuildRequest(
@@ -31,10 +35,13 @@ public sealed class PlanDriftEvaluator(
                         RelatedIntent: context.Routing.PrimaryIntent,
                         Severity: FinancialAdviceSeverity.Moderate,
                         Confidence: 0.76d,
-                        EvidenceSummary: $"Recent spending is {FinancialAdviceFormatting.FormatRatio(ratio)} versus active plan targets, indicating drift.",
+                        EvidenceSummary: evidenceSummary,
                         SupportingMetrics:
                         [
-                            new FinancialAdviceEvidenceMetric("activePlanExpectedSpend", planSpendTarget, context.Summary.Currency),
+                            new FinancialAdviceEvidenceMetric(
+                                "activePlanExpectedSpend",
+                                planSpendTarget,
+                                context.Summary.Currency),
                             new FinancialAdviceEvidenceMetric("actualSpendLast30Days", actualSpend, context.Summary.Currency),
                             new FinancialAdviceEvidenceMetric("planSpendRatio", ratio, "ratio"),
                             new FinancialAdviceEvidenceMetric("activePlanCount", context.Baseline.ActivePlanCount, "count")
@@ -50,7 +57,8 @@ public sealed class PlanDriftEvaluator(
                                 ActionId: "review_active_plan_targets",
                                 ActionType: FinancialAdviceActionType.ReviewPlan,
                                 Title: "Review active plan targets",
-                                Guidance: "Review target assumptions and adjust plan lines that no longer reflect current spending.")
+                                Guidance:
+                                "Review target assumptions and adjust plan lines that no longer reflect current spending.")
                         ],
                         UncertaintyMarkers: [],
                         AiAdjudicationAllowed: true,
@@ -79,7 +87,10 @@ public sealed class PlanDriftEvaluator(
                         new FinancialAdviceEvidenceMetric("activePlanExpectedSpend", planSpendTarget, context.Summary.Currency),
                         new FinancialAdviceEvidenceMetric("actualSpendLast30Days", actualSpend, context.Summary.Currency),
                         new FinancialAdviceEvidenceMetric("planSpendRatio", ratio, "ratio"),
-                        new FinancialAdviceEvidenceMetric("netLast30Days", context.Summary.NetLast30Days, context.Summary.Currency)
+                        new FinancialAdviceEvidenceMetric(
+                            "netLast30Days",
+                            context.Summary.NetLast30Days,
+                            context.Summary.Currency)
                     ],
                     DomainCode: null,
                     DomainName: null,

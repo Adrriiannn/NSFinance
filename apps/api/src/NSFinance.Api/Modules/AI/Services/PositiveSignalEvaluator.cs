@@ -31,11 +31,18 @@ public sealed class PositiveSignalEvaluator(
                     RelatedIntent: context.Routing.PrimaryIntent,
                     Severity: FinancialAdviceSeverity.Info,
                     Confidence: 0.70d,
-                    EvidenceSummary: "Current signals show a positive direction: budget remains positive and net cashflow is above zero.",
+                    EvidenceSummary:
+                    "Current signals show a positive direction: budget remains positive and net cashflow is above zero.",
                     SupportingMetrics:
                     [
-                        new FinancialAdviceEvidenceMetric("remainingBudget", context.Budget.RemainingBudget ?? 0m, context.Summary.Currency),
-                        new FinancialAdviceEvidenceMetric("netLast30Days", context.Summary.NetLast30Days, context.Summary.Currency)
+                        new FinancialAdviceEvidenceMetric(
+                            "remainingBudget",
+                            context.Budget.RemainingBudget ?? 0m,
+                            context.Summary.Currency),
+                        new FinancialAdviceEvidenceMetric(
+                            "netLast30Days",
+                            context.Summary.NetLast30Days,
+                            context.Summary.Currency)
                     ],
                     DomainCode: null,
                     DomainName: null,

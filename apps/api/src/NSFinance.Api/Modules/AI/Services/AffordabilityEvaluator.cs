@@ -38,6 +38,11 @@ public sealed class AffordabilityEvaluator(
         var severity = net < 0m || affordabilityRoom < 0m
             ? FinancialAdviceSeverity.High
             : FinancialAdviceSeverity.Moderate;
+        var evidenceSummary = net < 0m
+            ? "Recent monthly net cashflow is negative, which indicates affordability pressure."
+            : "Affordability room after recurring commitments is limited "
+              + $"({FinancialAdviceFormatting.FormatPercentage(roomToIncome)} of income).";
+
         session.Findings.Add(
             findingFactory.Create(
                 new FinancialAdviceFindingBuildRequest(
@@ -46,9 +51,7 @@ public sealed class AffordabilityEvaluator(
                     RelatedIntent: context.Routing.PrimaryIntent,
                     Severity: severity,
                     Confidence: 0.86d,
-                    EvidenceSummary: net < 0m
-                        ? "Recent monthly net cashflow is negative, which indicates affordability pressure."
-                        : $"Affordability room after recurring commitments is limited ({FinancialAdviceFormatting.FormatPercentage(roomToIncome)} of income).",
+                    EvidenceSummary: evidenceSummary,
                     SupportingMetrics:
                     [
                         new FinancialAdviceEvidenceMetric("incomeLast30Days", income, context.Summary.Currency),
@@ -69,7 +72,9 @@ public sealed class AffordabilityEvaluator(
                             ActionId: "build_affordability_buffer",
                             ActionType: FinancialAdviceActionType.BuildBuffer,
                             Title: "Rebuild affordability buffer",
-                            Guidance: "Prioritize preserving essentials and rebuild a small monthly buffer before discretionary increases."),
+                            Guidance:
+                            "Prioritize preserving essentials and rebuild a small monthly buffer "
+                            + "before discretionary increases."),
                         new FinancialAdviceActionCandidate(
                             ActionId: "sequence_large_purchases",
                             ActionType: FinancialAdviceActionType.ReviewSpend,
