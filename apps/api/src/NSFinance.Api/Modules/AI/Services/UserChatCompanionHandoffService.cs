@@ -43,12 +43,13 @@ public sealed class UserChatCompanionHandoffService(
             localDiscovery);
 
         logger.LogInformation(
-            "User chat real-world planner intentFamily={IntentFamily} mode={ExecutionMode} confidence={Confidence} placesApplicable={PlacesApplicable} directPlaces={DirectPlaces} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} explicitLocality={HasExplicitLocality} permissionState={PermissionState} refreshAttempted={RefreshAttempted} refreshOutcome={RefreshOutcome}",
+            "User chat real-world planner intentFamily={IntentFamily} mode={ExecutionMode} confidence={Confidence} placesApplicable={PlacesApplicable} directPlaces={DirectPlaces} routeAuthoritative={RouteAuthoritative} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} explicitLocality={HasExplicitLocality} permissionState={PermissionState} refreshAttempted={RefreshAttempted} refreshOutcome={RefreshOutcome}",
             interpretation.IntentFamily,
             plan.Mode,
             interpretation.Confidence,
             interpretation.PlacesApplicable,
             plan.UseDirectPlacesExecution,
+            plan.ShouldUsePlaces && plan.UseDirectPlacesExecution,
             grounding.HasCoordinates,
             grounding.HasTypedArea,
             localDiscovery.HasExplicitLocality,
@@ -92,8 +93,7 @@ public sealed class UserChatCompanionHandoffService(
                 requestMetadata: request.Metadata);
         }
 
-        if (plan.UseDirectPlacesExecution
-            || plan.Mode is RealWorldExecutionMode.ExploratoryMultiDomainSearch or RealWorldExecutionMode.FocusedThemeSearch)
+        if (plan.UseDirectPlacesExecution)
         {
             return await ExecuteDirectPlacesModeAsync(
                 request,
@@ -145,7 +145,7 @@ public sealed class UserChatCompanionHandoffService(
 
         if (!execution.Succeeded || !execution.HasAnyResults)
         {
-            var failureScenario = execution.FailureScenario ?? RealWorldFailureScenario.ProviderUnavailable;
+            var failureScenario = execution.FailureScenario ?? RealWorldFailureScenario.ProviderRequestFailure;
             return BuildFailureResponse(
                 route,
                 plan,
@@ -229,7 +229,7 @@ public sealed class UserChatCompanionHandoffService(
                 interpretation,
                 grounding,
                 localDiscovery,
-                RealWorldFailureScenario.ProviderUnavailable,
+                RealWorldFailureScenario.InternalRoutingConflict,
                 exploratory: false,
                 clarificationPrompt: null,
                 requestMetadata: request.Metadata,
@@ -242,7 +242,12 @@ public sealed class UserChatCompanionHandoffService(
         var succeeded = companionResponse.Succeeded || !string.IsNullOrWhiteSpace(companionResponse.ReplyText);
         if (!succeeded || companionResponse.HasInsufficientData)
         {
-            var scenario = ClassifyCompanionFailureScenario(companionResponse);
+            var scenario = ClassifyCompanionFailureScenario(companionResponse, plan);
+            if (scenario == RealWorldFailureScenario.InternalRoutingConflict)
+            {
+                warningSet.Add("real_world_route_conflict_detected");
+            }
+
             return BuildFailureResponse(
                 route,
                 plan,
@@ -295,6 +300,7 @@ public sealed class UserChatCompanionHandoffService(
             warningSet.UnionWith(additionalWarnings);
         }
 
+        NormalizeTerminalWarnings(warningSet, plan, scenario, fallback.Warnings);
         warningSet.Add($"real_world_failure_scenario:{scenario.ToString().ToLowerInvariant()}");
 
         return new UserChatResponse(
@@ -366,12 +372,20 @@ public sealed class UserChatCompanionHandoffService(
             return null;
         }
 
+        var effectiveTypedArea = grounding.HasCoordinates
+            ? null
+            : CompanionLocationGroundingParser.IsValidAreaHint(grounding.TypedArea)
+                ? grounding.TypedArea
+                : CompanionLocationGroundingParser.IsValidAreaHint(localDiscovery.LocalityHint)
+                    ? localDiscovery.LocalityHint
+                    : null;
+
         return new PlaceSearchLocationContext(
             Source: grounding.Source,
             Latitude: grounding.Latitude,
             Longitude: grounding.Longitude,
             RadiusMeters: grounding.RadiusMeters,
-            TypedArea: grounding.TypedArea ?? localDiscovery.LocalityHint,
+            TypedArea: effectiveTypedArea,
             LocalityLabel: grounding.LocalityLabel ?? localDiscovery.LocalityHint,
             AccuracyBucket: grounding.AccuracyBucket,
             CapturedAtUtc: grounding.CapturedAtUtc);
@@ -419,12 +433,18 @@ public sealed class UserChatCompanionHandoffService(
             }
         }
 
-        if (grounding.HasTypedArea)
+        if (grounding.HasCoordinates)
+        {
+            return query;
+        }
+
+        if (CompanionLocationGroundingParser.IsValidAreaHint(grounding.TypedArea))
         {
             return CompanionLocationGroundingParser.ApplyTypedAreaToQuery(query, grounding.TypedArea);
         }
 
-        if (localDiscovery.HasExplicitLocality && !string.IsNullOrWhiteSpace(localDiscovery.LocalityHint))
+        if (localDiscovery.HasExplicitLocality
+            && CompanionLocationGroundingParser.IsValidAreaHint(localDiscovery.LocalityHint))
         {
             return CompanionLocationGroundingParser.ApplyTypedAreaToQuery(query, localDiscovery.LocalityHint);
         }
@@ -573,6 +593,15 @@ public sealed class UserChatCompanionHandoffService(
         if (plan.ShouldUsePlaces)
         {
             warnings.Add("chat_path_companion_local_places");
+            if (plan.UseDirectPlacesExecution)
+            {
+                warnings.Add("real_world_route_authoritative");
+                warnings.Add("real_world_route_legacy_router_bypassed");
+            }
+            else
+            {
+                warnings.Add("real_world_route_legacy_router_allowed");
+            }
         }
 
         foreach (var reasonCode in interpretation.ReasonCodes)
@@ -588,12 +617,25 @@ public sealed class UserChatCompanionHandoffService(
         return warnings;
     }
 
-    private static RealWorldFailureScenario ClassifyCompanionFailureScenario(FinancialCompanionResponse response)
+    private static RealWorldFailureScenario ClassifyCompanionFailureScenario(
+        FinancialCompanionResponse response,
+        RealWorldExecutionPlan plan)
     {
         var reasons = (response.InsufficientDataReasons ?? [])
             .Concat(response.Warnings)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToArray();
+
+        if (plan.ShouldUsePlaces
+            && (response.Intent == FinancialCompanionIntent.Unsupported
+                || reasons.Any(reason =>
+                    reason.Contains("unsupported", StringComparison.OrdinalIgnoreCase)
+                    || reason.Contains("outside_supported_companion_scope", StringComparison.OrdinalIgnoreCase)
+                    || reason.Contains("no_supported_financial_intent_detected", StringComparison.OrdinalIgnoreCase)
+                    || reason.Contains("insufficient_unsupported_query_scope", StringComparison.OrdinalIgnoreCase))))
+        {
+            return RealWorldFailureScenario.InternalRoutingConflict;
+        }
 
         if (reasons.Any(reason => reason.Contains("missing_places_grounding", StringComparison.OrdinalIgnoreCase)))
         {
@@ -619,7 +661,46 @@ public sealed class UserChatCompanionHandoffService(
             return RealWorldFailureScenario.NoMatchesFound;
         }
 
-        return RealWorldFailureScenario.ProviderUnavailable;
+        return plan.ShouldUsePlaces
+            ? RealWorldFailureScenario.InternalRoutingConflict
+            : RealWorldFailureScenario.ProviderUnavailable;
+    }
+
+    private static readonly string[] LegacyUnsupportedWarningFragments =
+    [
+        "route_outside_supported_companion_scope",
+        "outside_supported_companion_scope",
+        "intent_unsupported",
+        "unsupported_query_scope",
+        "insufficient_unsupported_query_scope",
+        "no_supported_financial_intent_detected"
+    ];
+
+    private static void NormalizeTerminalWarnings(
+        HashSet<string> warningSet,
+        RealWorldExecutionPlan plan,
+        RealWorldFailureScenario scenario,
+        IReadOnlyList<string> fallbackWarnings)
+    {
+        var allowedFallbackWarnings = new HashSet<string>(fallbackWarnings, StringComparer.OrdinalIgnoreCase);
+        warningSet.RemoveWhere(warning =>
+            warning.StartsWith("fallback_", StringComparison.OrdinalIgnoreCase)
+            && !allowedFallbackWarnings.Contains(warning));
+
+        if (scenario != RealWorldFailureScenario.ProviderUnavailable)
+        {
+            warningSet.Remove("fallback_provider_unavailable");
+        }
+
+        warningSet.RemoveWhere(warning =>
+            warning.StartsWith("real_world_failure_scenario:", StringComparison.OrdinalIgnoreCase));
+
+        if (plan.ShouldUsePlaces && plan.UseDirectPlacesExecution)
+        {
+            warningSet.RemoveWhere(warning =>
+                LegacyUnsupportedWarningFragments.Any(fragment =>
+                    warning.Contains(fragment, StringComparison.OrdinalIgnoreCase)));
+        }
     }
 
     private static string ResolveGroundingSourceWarning(

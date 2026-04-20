@@ -35,4 +35,13 @@ public sealed class RealWorldFailureMessageBuilderTests
 
         Assert.Equal(clarification, message.ReplyText);
     }
+
+    [Fact]
+    public void Build_InternalRoutingConflict_UsesSpecificFallbackWarning()
+    {
+        var message = sut.Build(RealWorldFailureScenario.InternalRoutingConflict, exploratory: false);
+
+        Assert.Contains("routing", message.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fallback_internal_routing_conflict", message.Warnings);
+    }
 }

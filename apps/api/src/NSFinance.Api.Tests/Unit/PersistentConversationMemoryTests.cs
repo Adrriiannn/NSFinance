@@ -607,7 +607,7 @@ public sealed class PersistentConversationMemoryTests
 
         Assert.True(response.Succeeded);
         Assert.Null(response.FailureReason);
-        Assert.Equal(1, companion.CallCount);
+        Assert.Equal(0, companion.CallCount);
         Assert.Contains("persistent_memory_fallback_to_transient", response.Warnings);
         Assert.Contains("persistent_context_failure:persistent_context_cancelled", response.Warnings);
         Assert.Contains("persistent_context_optional_for_local_discovery", response.Warnings);

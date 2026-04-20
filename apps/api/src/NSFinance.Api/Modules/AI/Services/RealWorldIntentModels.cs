@@ -68,7 +68,8 @@ public enum RealWorldFailureScenario
     NoMatchesFound = 4,
     ClarificationNeeded = 5,
     DomainNotActionable = 6,
-    ExploratoryPartialResults = 7
+    ExploratoryPartialResults = 7,
+    InternalRoutingConflict = 8
 }
 
 public enum RealWorldInterpretationSource

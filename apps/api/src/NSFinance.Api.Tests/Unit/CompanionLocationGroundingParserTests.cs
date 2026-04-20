@@ -97,4 +97,23 @@ public sealed class CompanionLocationGroundingParserTests
         Assert.Contains("Dublin city centre", rewritten, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("near me", rewritten, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void ApplyTypedAreaToQuery_InvalidAreaHint_DoesNotMutateQuery()
+    {
+        var original = "Find me cinemas near me";
+        var rewritten = CompanionLocationGroundingParser.ApplyTypedAreaToQuery(original, "46?");
+
+        Assert.Equal(original, rewritten);
+    }
+
+    [Theory]
+    [InlineData("45", false)]
+    [InlineData("46?", false)]
+    [InlineData("Dublin 9", true)]
+    [InlineData("Lucan Village", true)]
+    public void IsValidAreaHint_RejectsMalformedNumericFragments(string value, bool expected)
+    {
+        Assert.Equal(expected, CompanionLocationGroundingParser.IsValidAreaHint(value));
+    }
 }

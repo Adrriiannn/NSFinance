@@ -59,7 +59,7 @@ public static class CompanionLocationGroundingParser
         var latitude = ParseDouble(GetValue(metadata, state, CompanionLocationMetadataKeys.Latitude));
         var longitude = ParseDouble(GetValue(metadata, state, CompanionLocationMetadataKeys.Longitude));
         var radiusMeters = ParseInt(GetValue(metadata, state, CompanionLocationMetadataKeys.RadiusMeters));
-        var typedArea = NormalizeOptional(GetValue(metadata, state, CompanionLocationMetadataKeys.TypedArea));
+        var typedArea = SanitizeAreaHint(GetValue(metadata, state, CompanionLocationMetadataKeys.TypedArea));
         var localityLabel = NormalizeOptional(GetValue(metadata, state, CompanionLocationMetadataKeys.LocalityLabel));
         var accuracyBucket = NormalizeOptional(GetValue(metadata, state, CompanionLocationMetadataKeys.AccuracyBucket));
         var capturedAtUtc = ParseDateTimeOffset(GetValue(metadata, state, CompanionLocationMetadataKeys.CapturedAtUtc));
@@ -108,7 +108,7 @@ public static class CompanionLocationGroundingParser
             return query;
         }
 
-        var normalizedArea = NormalizeOptional(typedArea);
+        var normalizedArea = SanitizeAreaHint(typedArea);
         if (string.IsNullOrWhiteSpace(normalizedArea))
         {
             return query.Trim();
@@ -126,6 +126,46 @@ public static class CompanionLocationGroundingParser
         }
 
         return $"{query.Trim()} in {normalizedArea}";
+    }
+
+    public static bool IsValidAreaHint(string? value)
+    {
+        var normalized = NormalizeOptional(value);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        if (normalized.Length is < 3 or > 80)
+        {
+            return false;
+        }
+
+        if (!normalized.Any(char.IsLetter))
+        {
+            return false;
+        }
+
+        if (Regex.IsMatch(normalized, @"^\d+[a-zA-Z]?$", RegexOptions.CultureInvariant))
+        {
+            return false;
+        }
+
+        var tokens = normalized.Split(
+            ' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (tokens.Length is 0 or > 6)
+        {
+            return false;
+        }
+
+        if (tokens[0].All(char.IsDigit))
+        {
+            return false;
+        }
+
+        var numericTokens = tokens.Count(token => token.All(char.IsDigit));
+        return numericTokens <= 1;
     }
 
     private static string? GetValue(
@@ -225,7 +265,7 @@ public static class CompanionLocationGroundingParser
 
     private static string? NormalizeStateLocationPreference(string? locationPreference)
     {
-        var normalized = NormalizeOptional(locationPreference);
+        var normalized = SanitizeAreaHint(locationPreference);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return null;
@@ -239,5 +279,11 @@ public static class CompanionLocationGroundingParser
         }
 
         return normalized;
+    }
+
+    private static string? SanitizeAreaHint(string? value)
+    {
+        var normalized = NormalizeOptional(value);
+        return IsValidAreaHint(normalized) ? normalized : null;
     }
 }

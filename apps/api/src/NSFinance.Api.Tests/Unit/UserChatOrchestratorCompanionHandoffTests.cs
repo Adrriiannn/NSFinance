@@ -42,10 +42,14 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("Cafe One", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("grounded nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("chat_path_companion_local_places", response.Warnings);
+        Assert.Contains("real_world_route_authoritative", response.Warnings);
+        Assert.DoesNotContain(response.Warnings, warning =>
+            warning.Contains("intent_unsupported", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
         Assert.Equal(0, aiClient.CallCount);
-        Assert.Equal(1, companion.CallCount);
+        Assert.Equal(0, companion.CallCount);
     }
 
     [Fact]
@@ -92,11 +96,12 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("City Cinema", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("grounded nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("real_world_grounding_coordinates_present", response.Warnings);
         Assert.DoesNotContain("nearby_location_missing", response.Warnings);
+        Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
         Assert.Equal(0, aiClient.CallCount);
-        Assert.Equal(1, companion.CallCount);
+        Assert.Equal(0, companion.CallCount);
     }
 
     [Fact]
@@ -243,10 +248,11 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("National Museum", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("grounded nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("nearby_grounding_source:query_locality", response.Warnings);
+        Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
         Assert.Equal(0, aiClient.CallCount);
-        Assert.Equal(1, companion.CallCount);
+        Assert.Equal(0, companion.CallCount);
     }
 
     [Fact]
@@ -361,10 +367,53 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         Assert.Equal(0, aiClient.CallCount);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_DirectPlacesInvalidRequest_UsesProviderRequestFailureClassification()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var sut = CreateSut(companion, aiClient, new FailingPlacesSearchService("INVALID_ARGUMENT"));
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "coffee shops near me",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-8",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "1500"
+                },
+                ClientRequestId: "req-8",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("fallback_provider_request_failure", response.Warnings);
+        Assert.Contains("real_world_failure_scenario:providerrequestfailure", response.Warnings);
+        Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
     private static UserChatOrchestrator CreateSut(
         TrackingCompanionService companion,
         TrackingAIClient aiClient,
-        TrackingPlacesSearchService? placesSearchService = null)
+        IPlacesSearchService? placesSearchService = null)
     {
         placesSearchService ??= new TrackingPlacesSearchService();
         var interpreter = new RealWorldIntentInterpreter(
@@ -576,11 +625,16 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             var normalized = query.ToLowerInvariant();
             var item = normalized switch
             {
+                var q when q.Contains("cafe", StringComparison.Ordinal)
+                    || q.Contains("coffee", StringComparison.Ordinal)
+                    => BuildItem("cafe-1", "Cafe One", "Cafe"),
                 var q when q.Contains("pub", StringComparison.Ordinal)
                     => BuildItem("pub-1", "Riverside Pub", "Pub"),
                 var q when q.Contains("movie", StringComparison.Ordinal)
                     || q.Contains("cinema", StringComparison.Ordinal)
                     => BuildItem("cinema-1", "City Cinema", "Cinema"),
+                var q when q.Contains("museum", StringComparison.Ordinal)
+                    => BuildItem("museum-1", "National Museum", "Museum"),
                 var q when q.Contains("restaurant", StringComparison.Ordinal)
                     || q.Contains("food", StringComparison.Ordinal)
                     => BuildItem("restaurant-1", "Dockside Kitchen", "Restaurant"),
@@ -608,6 +662,31 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
                     OpenNow: true,
                     WeekdayDescriptions: [],
                     NextOpenTimeUtc: null));
+        }
+    }
+
+    private sealed class FailingPlacesSearchService(string providerErrorCode) : IPlacesSearchService
+    {
+        public Task<PlaceSearchResult> SearchAsync(
+            string query,
+            string country,
+            PlaceSearchLocationContext? locationContext,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                new PlaceSearchResult(
+                    Items: [],
+                    Metadata: new PlaceSearchMetadata(
+                        UseCase: "companion_discovery",
+                        FromCache: false,
+                        RequestedCandidateCount: 8,
+                        ReturnedCandidateCount: 0,
+                        FieldMaskVariant: "companion_discovery",
+                        Elapsed: TimeSpan.FromMilliseconds(5),
+                        TimedOut: false,
+                        ProviderErrorCode: providerErrorCode),
+                    Warnings: ["places_test_failure_injected"]));
         }
     }
 }

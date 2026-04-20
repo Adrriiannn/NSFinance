@@ -440,10 +440,14 @@ public sealed class LocalDiscoveryQueryShaper(
         var effectiveTypedArea = !string.IsNullOrWhiteSpace(locationContext?.TypedArea)
             ? Normalize(locationContext?.TypedArea)
             : Normalize(extracted.LocalityHint);
-        if (!string.IsNullOrWhiteSpace(effectiveTypedArea))
+        if (CompanionLocationGroundingParser.IsValidAreaHint(effectiveTypedArea))
         {
             query = CompanionLocationGroundingParser.ApplyTypedAreaToQuery(query, effectiveTypedArea);
             reasonCodes.Add("local_discovery_query_locality_applied");
+        }
+        else if (!string.IsNullOrWhiteSpace(effectiveTypedArea))
+        {
+            reasonCodes.Add("local_discovery_query_locality_skipped_low_confidence");
         }
 
         var placeTypePhrases = extracted.PlaceTypeHints.Select(ToQueryPhrase).ToArray();

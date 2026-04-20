@@ -104,6 +104,7 @@ public sealed class RealWorldExecutionModePlannerTests
 
         Assert.Equal(RealWorldExecutionMode.FocusedPlaceSearch, plan.Mode);
         Assert.True(plan.ShouldUsePlaces);
+        Assert.True(plan.UseDirectPlacesExecution);
     }
 
     [Fact]

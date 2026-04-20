@@ -579,10 +579,11 @@ public sealed class RealWorldExecutionModePlanner(
             reasonCodes.Add("real_world_planner_domains_backfilled");
         }
 
-        var useDirectPlacesExecution = interpretation.IntentFamily is RealWorldIntentFamily.CommerceDiscovery
-            or RealWorldIntentFamily.ServiceDiscovery
-            || interpretation.RecommendedExecutionMode is RealWorldExecutionMode.ExploratoryMultiDomainSearch
-                or RealWorldExecutionMode.FocusedThemeSearch;
+        var useDirectPlacesExecution = interpretation.PlacesApplicable
+                                       && interpretation.RecommendedExecutionMode is
+                                           RealWorldExecutionMode.FocusedPlaceSearch
+                                           or RealWorldExecutionMode.FocusedThemeSearch
+                                           or RealWorldExecutionMode.ExploratoryMultiDomainSearch;
 
         return new RealWorldExecutionPlan(
             Mode: interpretation.RecommendedExecutionMode,
@@ -785,6 +786,12 @@ public sealed class RealWorldFailureMessageBuilder : IRealWorldFailureMessageBui
                     "I found some good options, but a few categories didn’t return strong matches yet.",
                 Warnings: ["fallback_exploratory_partial"],
                 FollowUpIntentHints: ["refine_place_preferences", "retry_local_search"]),
+            RealWorldFailureScenario.InternalRoutingConflict => new RealWorldFailureMessage(
+                ReplyText:
+                    "I understood this as a place search, but hit an internal routing issue. "
+                    + "Please try again now.",
+                Warnings: ["fallback_internal_routing_conflict"],
+                FollowUpIntentHints: ["retry_local_search", "provide_typed_location"]),
             _ => new RealWorldFailureMessage(
                 ReplyText: "I couldn’t complete that request right now.",
                 Warnings: ["fallback_generic"],
