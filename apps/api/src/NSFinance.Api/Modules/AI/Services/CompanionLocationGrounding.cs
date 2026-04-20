@@ -13,6 +13,10 @@ public static class CompanionLocationMetadataKeys
     public const string LocalityLabel = "chat_location_locality_label";
     public const string AccuracyBucket = "chat_location_accuracy_bucket";
     public const string CapturedAtUtc = "chat_location_captured_at_utc";
+    public const string PermissionState = "chat_location_permission_state";
+    public const string NearbyPrompt = "chat_location_nearby_prompt";
+    public const string RefreshAttempted = "chat_location_refresh_attempted";
+    public const string RefreshOutcome = "chat_location_refresh_outcome";
 }
 
 public sealed record CompanionLocationGrounding(
@@ -51,14 +55,14 @@ public static class CompanionLocationGroundingParser
         IReadOnlyDictionary<string, string>? metadata,
         ConversationStateSnapshot? state)
     {
-        var source = NormalizeOptional(GetValue(metadata, CompanionLocationMetadataKeys.Source));
-        var latitude = ParseDouble(GetValue(metadata, CompanionLocationMetadataKeys.Latitude));
-        var longitude = ParseDouble(GetValue(metadata, CompanionLocationMetadataKeys.Longitude));
-        var radiusMeters = ParseInt(GetValue(metadata, CompanionLocationMetadataKeys.RadiusMeters));
-        var typedArea = NormalizeOptional(GetValue(metadata, CompanionLocationMetadataKeys.TypedArea));
-        var localityLabel = NormalizeOptional(GetValue(metadata, CompanionLocationMetadataKeys.LocalityLabel));
-        var accuracyBucket = NormalizeOptional(GetValue(metadata, CompanionLocationMetadataKeys.AccuracyBucket));
-        var capturedAtUtc = ParseDateTimeOffset(GetValue(metadata, CompanionLocationMetadataKeys.CapturedAtUtc));
+        var source = NormalizeOptional(GetValue(metadata, state, CompanionLocationMetadataKeys.Source));
+        var latitude = ParseDouble(GetValue(metadata, state, CompanionLocationMetadataKeys.Latitude));
+        var longitude = ParseDouble(GetValue(metadata, state, CompanionLocationMetadataKeys.Longitude));
+        var radiusMeters = ParseInt(GetValue(metadata, state, CompanionLocationMetadataKeys.RadiusMeters));
+        var typedArea = NormalizeOptional(GetValue(metadata, state, CompanionLocationMetadataKeys.TypedArea));
+        var localityLabel = NormalizeOptional(GetValue(metadata, state, CompanionLocationMetadataKeys.LocalityLabel));
+        var accuracyBucket = NormalizeOptional(GetValue(metadata, state, CompanionLocationMetadataKeys.AccuracyBucket));
+        var capturedAtUtc = ParseDateTimeOffset(GetValue(metadata, state, CompanionLocationMetadataKeys.CapturedAtUtc));
 
         if (string.IsNullOrWhiteSpace(typedArea))
         {
@@ -126,19 +130,33 @@ public static class CompanionLocationGroundingParser
 
     private static string? GetValue(
         IReadOnlyDictionary<string, string>? metadata,
+        ConversationStateSnapshot? state,
         string key)
     {
-        if (metadata is null || metadata.Count == 0)
+        var metadataValue = GetDictionaryValue(metadata, key);
+        if (!string.IsNullOrWhiteSpace(metadataValue))
+        {
+            return metadataValue;
+        }
+
+        return GetDictionaryValue(state?.Constraints, key);
+    }
+
+    private static string? GetDictionaryValue(
+        IReadOnlyDictionary<string, string>? values,
+        string key)
+    {
+        if (values is null || values.Count == 0)
         {
             return null;
         }
 
-        if (metadata.TryGetValue(key, out var value))
+        if (values.TryGetValue(key, out var value))
         {
             return value;
         }
 
-        foreach (var pair in metadata)
+        foreach (var pair in values)
         {
             if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
             {

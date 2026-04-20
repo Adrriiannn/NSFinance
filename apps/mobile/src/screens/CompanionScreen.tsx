@@ -25,11 +25,13 @@ import { getEffectiveBottomSystemInset } from "../theme/insets";
 import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../theme/tokens";
 import { sendAIChatMessage } from "../features/ai/aiChatApi";
 import {
+  buildNearbyGroundingDiagnosticsMetadata,
   buildChatLocationMetadata,
   buildChatLocationState,
   type ChatLocationContext,
   isNearbyLocationDependentPrompt,
-  normalizeTypedArea
+  normalizeTypedArea,
+  resolveNearbyGpsContext
 } from "../features/ai/location/chatLocationGrounding";
 import { LocationPermissionPromptModal } from "../features/ai/location/LocationPermissionPromptModal";
 import { LocationTypedAreaModal } from "../features/ai/location/LocationTypedAreaModal";
@@ -383,6 +385,7 @@ type CompanionScreenProps = {
 type PendingNearbyRequest = {
   chatId: string;
   prompt: string;
+  diagnosticsMetadata: Record<string, string>;
 };
 
 export default function CashflowCompanionScreen({ sourceOverride }: CompanionScreenProps = {}) {
@@ -636,7 +639,8 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
 
   const dispatchPrompt = useCallback(async (
     prompt: string,
-    locationContext?: ChatLocationContext | null
+    locationContext?: ChatLocationContext | null,
+    diagnosticsMetadata?: Record<string, string> | null
   ) => {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt || !activeChat) {
@@ -680,12 +684,17 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       const locationMetadata = locationContext
         ? buildChatLocationMetadata(locationContext)
         : null;
+      const mergedMetadata = {
+        ...(diagnosticsMetadata ?? {}),
+        ...(locationMetadata ?? {})
+      };
       const locationState = locationContext
         ? buildChatLocationState(locationContext)
         : null;
       console.info("[CompanionChatLocation]", {
         event: "chat_send_location_mode",
-        mode: locationContext?.source ?? "none"
+        mode: locationContext?.source ?? "none",
+        hasLocationDiagnostics: Boolean(diagnosticsMetadata && Object.keys(diagnosticsMetadata).length > 0)
       });
       const response = await sendAIChatMessage({
         message: trimmedPrompt,
@@ -694,7 +703,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
         requirePersistentMemory: true,
         allowFallbackOnPersistentFailure: false,
         state: locationState,
-        metadata: locationMetadata
+        metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : null
       });
 
       setChatThreadId(activeChat.id, response.conversationThreadId);
@@ -772,31 +781,33 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     });
 
     if (permissionState === "granted") {
-      const snapshot = await getFreshForegroundLocationSnapshot(false);
-      if (snapshot) {
-        await dispatchPrompt(trimmedPrompt, {
-          source: "gps",
-          latitude: snapshot.latitude,
-          longitude: snapshot.longitude,
-          accuracyMeters: snapshot.accuracyMeters,
-          capturedAtUtc: snapshot.capturedAtUtc,
-          localityLabel: snapshot.localityLabel
-        });
+      const resolution = await resolveNearbyGpsContext(getFreshForegroundLocationSnapshot);
+      const diagnostics = buildNearbyGroundingDiagnosticsMetadata(permissionState, resolution);
+
+      if (resolution.context) {
+        await dispatchPrompt(trimmedPrompt, resolution.context, diagnostics);
         return;
       }
 
       setPendingNearbyRequest({
         chatId: activeChat.id,
-        prompt: trimmedPrompt
+        prompt: trimmedPrompt,
+        diagnosticsMetadata: diagnostics
       });
       setTypedAreaInput("");
       setTypedAreaPromptVisible(true);
       return;
     }
 
+    const pendingDiagnostics = buildNearbyGroundingDiagnosticsMetadata(permissionState, {
+      context: null,
+      refreshAttempted: false,
+      outcome: "failed"
+    });
     setPendingNearbyRequest({
       chatId: activeChat.id,
-      prompt: trimmedPrompt
+      prompt: trimmedPrompt,
+      diagnosticsMetadata: pendingDiagnostics
     });
     if (permissionState === "denied_can_ask_again" || permissionState === "unknown") {
       setNearbyPermissionPromptVisible(true);
@@ -828,6 +839,18 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     });
     if (result.permissionState === "granted" && result.snapshot) {
       const prompt = pendingNearbyRequest.prompt;
+      const diagnostics = buildNearbyGroundingDiagnosticsMetadata(result.permissionState, {
+        context: {
+          source: "gps",
+          latitude: result.snapshot.latitude,
+          longitude: result.snapshot.longitude,
+          accuracyMeters: result.snapshot.accuracyMeters,
+          capturedAtUtc: result.snapshot.capturedAtUtc,
+          localityLabel: result.snapshot.localityLabel
+        },
+        refreshAttempted: true,
+        outcome: "success"
+      });
       clearPendingNearbyRequest();
       await dispatchPrompt(prompt, {
         source: "gps",
@@ -836,10 +859,24 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
         accuracyMeters: result.snapshot.accuracyMeters,
         capturedAtUtc: result.snapshot.capturedAtUtc,
         localityLabel: result.snapshot.localityLabel
-      });
+      }, diagnostics);
       return;
     }
 
+    setPendingNearbyRequest((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        diagnosticsMetadata: buildNearbyGroundingDiagnosticsMetadata(result.permissionState, {
+          context: null,
+          refreshAttempted: true,
+          outcome: "failed"
+        })
+      };
+    });
     setLocationActionInProgress(false);
     setNearbyPermissionPromptVisible(false);
     if (result.permissionState === "denied_open_settings" || result.permissionState === "unavailable") {
@@ -865,11 +902,12 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     }
 
     const prompt = pendingNearbyRequest.prompt;
+    const diagnostics = pendingNearbyRequest.diagnosticsMetadata;
     clearPendingNearbyRequest();
     await dispatchPrompt(prompt, {
       source: "typed_area",
       typedArea: normalizedArea
-    });
+    }, diagnostics);
   }, [clearPendingNearbyRequest, dispatchPrompt, pendingNearbyRequest, typedAreaInput]);
 
   const startNewChat = () => {

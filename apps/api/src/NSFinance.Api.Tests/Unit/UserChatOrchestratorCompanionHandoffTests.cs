@@ -49,6 +49,57 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_LocalPlacesWithGpsStateConstraints_UsesCompanionHandoff()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "1. City Cinema - open now\n2. Riverside Cinema - moderate pricing",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: ["IPlacesSearchService"],
+                Warnings: ["places_response_built_from_grounded_candidates"],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "places_grounded_response",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var sut = CreateSut(companion, aiClient);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "can you please show me some cinemas near me?",
+                RecentTurns: [],
+                State: new ConversationStateSnapshot(
+                    ActiveTopic: null,
+                    UserIntent: null,
+                    Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Source] = "gps",
+                        [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                        [CompanionLocationMetadataKeys.RadiusMeters] = "1500"
+                    },
+                    Summaries: [],
+                    BudgetPreference: null,
+                    LocationPreference: "current_location",
+                    MerchantInvestigationSubject: null,
+                    RecentConclusions: []),
+                CorrelationId: "corr-1b",
+                Metadata: null,
+                ClientRequestId: "req-1b",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("City Cinema", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("real_world_grounding_coordinates_present", response.Warnings);
+        Assert.DoesNotContain("nearby_location_missing", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(1, companion.CallCount);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_LocalPlacesWithoutGrounding_ReturnsSafePrompt_WithoutProviderInvocation()
     {
         var companion = new TrackingCompanionService(
@@ -80,6 +131,49 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         Assert.True(response.Succeeded);
         Assert.Contains("location permission", response.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("nearby_location_missing", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_LocalPlacesWithoutGroundingButPermissionContext_EmitsGroundingDiagnostics()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var sut = CreateSut(companion, aiClient);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Any cinemas near me?",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-2b",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.NearbyPrompt] = "true",
+                    [CompanionLocationMetadataKeys.PermissionState] = "granted",
+                    [CompanionLocationMetadataKeys.RefreshAttempted] = "true",
+                    [CompanionLocationMetadataKeys.RefreshOutcome] = "failed"
+                },
+                ClientRequestId: "req-2b",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("location permission", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("real_world_grounding_missing_despite_permission_context", response.Warnings);
+        Assert.Contains("real_world_grounding_send_without_coordinates_after_refresh_attempt", response.Warnings);
         Assert.Equal(0, aiClient.CallCount);
         Assert.Equal(0, companion.CallCount);
     }

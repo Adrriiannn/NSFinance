@@ -43,7 +43,7 @@ public sealed class UserChatCompanionHandoffService(
             localDiscovery);
 
         logger.LogInformation(
-            "User chat real-world planner intentFamily={IntentFamily} mode={ExecutionMode} confidence={Confidence} placesApplicable={PlacesApplicable} directPlaces={DirectPlaces} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} explicitLocality={HasExplicitLocality}",
+            "User chat real-world planner intentFamily={IntentFamily} mode={ExecutionMode} confidence={Confidence} placesApplicable={PlacesApplicable} directPlaces={DirectPlaces} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} explicitLocality={HasExplicitLocality} permissionState={PermissionState} refreshAttempted={RefreshAttempted} refreshOutcome={RefreshOutcome}",
             interpretation.IntentFamily,
             plan.Mode,
             interpretation.Confidence,
@@ -51,7 +51,10 @@ public sealed class UserChatCompanionHandoffService(
             plan.UseDirectPlacesExecution,
             grounding.HasCoordinates,
             grounding.HasTypedArea,
-            localDiscovery.HasExplicitLocality);
+            localDiscovery.HasExplicitLocality,
+            ReadMetadataValue(request.Metadata, CompanionLocationMetadataKeys.PermissionState) ?? "none",
+            MetadataFlagTrue(request.Metadata, CompanionLocationMetadataKeys.RefreshAttempted),
+            ReadMetadataValue(request.Metadata, CompanionLocationMetadataKeys.RefreshOutcome) ?? "none");
 
         if (plan.Mode == RealWorldExecutionMode.FinancialGuidanceOnly)
         {
@@ -64,10 +67,12 @@ public sealed class UserChatCompanionHandoffService(
                 route,
                 plan,
                 interpretation,
+                grounding,
                 localDiscovery,
                 RealWorldFailureScenario.ClarificationNeeded,
                 exploratory: false,
-                clarificationPrompt: plan.ClarificationPrompt);
+                clarificationPrompt: plan.ClarificationPrompt,
+                requestMetadata: request.Metadata);
         }
 
         if (plan.Mode == RealWorldExecutionMode.MissingLocationGuard)
@@ -79,10 +84,12 @@ public sealed class UserChatCompanionHandoffService(
                 route,
                 plan,
                 interpretation,
+                grounding,
                 localDiscovery,
                 scenario,
                 exploratory: false,
-                clarificationPrompt: null);
+                clarificationPrompt: null,
+                requestMetadata: request.Metadata);
         }
 
         if (plan.UseDirectPlacesExecution
@@ -132,7 +139,7 @@ public sealed class UserChatCompanionHandoffService(
                 Mode: plan.Mode),
             cancellationToken);
 
-        var warningSet = BuildBaseWarnings(plan, interpretation, localDiscovery, grounding);
+        var warningSet = BuildBaseWarnings(plan, interpretation, localDiscovery, grounding, request.Metadata);
         warningSet.UnionWith(execution.Warnings);
         warningSet.UnionWith(execution.ReasonCodes);
 
@@ -143,10 +150,12 @@ public sealed class UserChatCompanionHandoffService(
                 route,
                 plan,
                 interpretation,
+                grounding,
                 localDiscovery,
                 failureScenario,
                 exploratory: plan.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch,
                 clarificationPrompt: null,
+                requestMetadata: request.Metadata,
                 additionalWarnings: warningSet);
         }
 
@@ -218,14 +227,16 @@ public sealed class UserChatCompanionHandoffService(
                 route,
                 plan,
                 interpretation,
+                grounding,
                 localDiscovery,
                 RealWorldFailureScenario.ProviderUnavailable,
                 exploratory: false,
                 clarificationPrompt: null,
+                requestMetadata: request.Metadata,
                 additionalWarnings: ["real_world_companion_execution_exception"]);
         }
 
-        var warningSet = BuildBaseWarnings(plan, interpretation, localDiscovery, grounding);
+        var warningSet = BuildBaseWarnings(plan, interpretation, localDiscovery, grounding, request.Metadata);
         warningSet.UnionWith(companionResponse.Warnings);
 
         var succeeded = companionResponse.Succeeded || !string.IsNullOrWhiteSpace(companionResponse.ReplyText);
@@ -236,10 +247,12 @@ public sealed class UserChatCompanionHandoffService(
                 route,
                 plan,
                 interpretation,
+                grounding,
                 localDiscovery,
                 scenario,
                 exploratory: plan.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch,
                 clarificationPrompt: null,
+                requestMetadata: request.Metadata,
                 additionalWarnings: warningSet);
         }
 
@@ -261,10 +274,12 @@ public sealed class UserChatCompanionHandoffService(
         AIModelRoute route,
         RealWorldExecutionPlan plan,
         RealWorldIntentInterpretation interpretation,
+        CompanionLocationGrounding grounding,
         LocalDiscoveryConstraintExtractionResult localDiscovery,
         RealWorldFailureScenario scenario,
         bool exploratory,
         string? clarificationPrompt,
+        IReadOnlyDictionary<string, string>? requestMetadata,
         IEnumerable<string>? additionalWarnings = null)
     {
         var fallback = failureMessageBuilder.Build(scenario, exploratory, clarificationPrompt);
@@ -272,7 +287,8 @@ public sealed class UserChatCompanionHandoffService(
             plan,
             interpretation,
             localDiscovery,
-            grounding: new CompanionLocationGrounding(null, null, null, null, null, null, null, null));
+            grounding,
+            requestMetadata);
         warningSet.UnionWith(fallback.Warnings);
         if (additionalWarnings is not null)
         {
@@ -501,8 +517,10 @@ public sealed class UserChatCompanionHandoffService(
         RealWorldExecutionPlan plan,
         RealWorldIntentInterpretation interpretation,
         LocalDiscoveryConstraintExtractionResult localDiscovery,
-        CompanionLocationGrounding grounding)
+        CompanionLocationGrounding grounding,
+        IReadOnlyDictionary<string, string>? requestMetadata)
     {
+        var groundingSource = ResolveGroundingSourceWarning(grounding, localDiscovery);
         var warnings = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "chat_path_companion_real_world",
@@ -510,8 +528,47 @@ public sealed class UserChatCompanionHandoffService(
             $"real_world_execution_mode:{plan.Mode.ToString().ToLowerInvariant()}",
             $"real_world_confidence:{interpretation.Confidence:0.##}",
             $"real_world_interpreter_source:{interpretation.InterpretationSource.ToString().ToLowerInvariant()}",
-            ResolveGroundingSourceWarning(grounding, localDiscovery)
+            groundingSource
         };
+
+        var hasGroundingMetadata = HasAnyGroundingMetadata(requestMetadata);
+        if (hasGroundingMetadata)
+        {
+            warnings.Add("real_world_grounding_payload_received");
+        }
+
+        warnings.Add(grounding.HasCoordinates
+            ? "real_world_grounding_coordinates_present"
+            : "real_world_grounding_coordinates_missing");
+
+        if (grounding.HasTypedArea)
+        {
+            warnings.Add("real_world_grounding_typed_area_present");
+        }
+
+        if (localDiscovery.HasExplicitLocality || !string.IsNullOrWhiteSpace(grounding.LocalityLabel))
+        {
+            warnings.Add("real_world_grounding_explicit_locality_present");
+        }
+
+        var normalizedGroundingSource = groundingSource.Replace("nearby_", "real_world_", StringComparison.Ordinal);
+        warnings.Add(normalizedGroundingSource);
+
+        var hasPermissionContext =
+            !string.IsNullOrWhiteSpace(ReadMetadataValue(requestMetadata, CompanionLocationMetadataKeys.PermissionState));
+        if (hasPermissionContext
+            && !grounding.HasCoordinates
+            && !grounding.HasTypedArea
+            && !localDiscovery.HasExplicitLocality)
+        {
+            warnings.Add("real_world_grounding_missing_despite_permission_context");
+        }
+
+        if (MetadataFlagTrue(requestMetadata, CompanionLocationMetadataKeys.RefreshAttempted)
+            && !grounding.HasCoordinates)
+        {
+            warnings.Add("real_world_grounding_send_without_coordinates_after_refresh_attempt");
+        }
 
         if (plan.ShouldUsePlaces)
         {
@@ -589,11 +646,6 @@ public sealed class UserChatCompanionHandoffService(
 
     private static bool IsOpenSettingsRequired(IReadOnlyDictionary<string, string>? metadata)
     {
-        if (metadata is null)
-        {
-            return false;
-        }
-
         var candidates = new[]
         {
             "chat_location_permission_state",
@@ -603,7 +655,8 @@ public sealed class UserChatCompanionHandoffService(
 
         foreach (var key in candidates)
         {
-            if (!metadata.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value))
+            var value = ReadMetadataValue(metadata, key);
+            if (string.IsNullOrWhiteSpace(value))
             {
                 continue;
             }
@@ -618,6 +671,62 @@ public sealed class UserChatCompanionHandoffService(
         }
 
         return false;
+    }
+
+    private static bool HasAnyGroundingMetadata(IReadOnlyDictionary<string, string>? metadata)
+    {
+        if (metadata is null || metadata.Count == 0)
+        {
+            return false;
+        }
+
+        var keys =
+            new[]
+            {
+                CompanionLocationMetadataKeys.Source,
+                CompanionLocationMetadataKeys.Latitude,
+                CompanionLocationMetadataKeys.Longitude,
+                CompanionLocationMetadataKeys.TypedArea,
+                CompanionLocationMetadataKeys.LocalityLabel,
+                CompanionLocationMetadataKeys.PermissionState,
+                CompanionLocationMetadataKeys.RefreshAttempted,
+                CompanionLocationMetadataKeys.RefreshOutcome
+            };
+
+        return keys.Any(key => !string.IsNullOrWhiteSpace(ReadMetadataValue(metadata, key)));
+    }
+
+    private static bool MetadataFlagTrue(
+        IReadOnlyDictionary<string, string>? metadata,
+        string key)
+    {
+        var value = ReadMetadataValue(metadata, key);
+        return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ReadMetadataValue(
+        IReadOnlyDictionary<string, string>? metadata,
+        string key)
+    {
+        if (metadata is null || metadata.Count == 0)
+        {
+            return null;
+        }
+
+        if (metadata.TryGetValue(key, out var value))
+        {
+            return value;
+        }
+
+        foreach (var pair in metadata)
+        {
+            if (string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return pair.Value;
+            }
+        }
+
+        return null;
     }
 }
 

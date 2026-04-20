@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildNearbyGroundingDiagnosticsMetadata,
   buildChatLocationMetadata,
   buildChatLocationState,
   bucketizeAccuracy,
-  isNearbyLocationDependentPrompt
+  isNearbyLocationDependentPrompt,
+  resolveNearbyGpsContext
 } from "./chatLocationGrounding";
 
 test("nearby prompt detection only matches nearby place intents", () => {
   assert.equal(isNearbyLocationDependentPrompt("Find restaurants near me"), true);
   assert.equal(isNearbyLocationDependentPrompt("Any brunch places around here?"), true);
+  assert.equal(isNearbyLocationDependentPrompt("Can you show cinemas near me?"), true);
+  assert.equal(isNearbyLocationDependentPrompt("Movie theatres nearby"), true);
+  assert.equal(isNearbyLocationDependentPrompt("Convenience stores near me"), true);
   assert.equal(isNearbyLocationDependentPrompt("How is my monthly budget doing?"), false);
   assert.equal(isNearbyLocationDependentPrompt("Find restaurants in Dublin city centre"), false);
 });
@@ -41,6 +46,12 @@ test("gps metadata payload includes bounded radius and optional locality", () =>
   assert.equal(metadata.chat_location_accuracy_bucket, "high");
   assert.equal(metadata.chat_location_locality_label, "Lucan village");
   assert.equal(state?.locationPreference, "Lucan village");
+  assert.equal(state?.constraints?.chat_location_source, "gps");
+  assert.equal(state?.constraints?.chat_location_latitude, "53.3571234");
+  assert.equal(state?.constraints?.chat_location_longitude, "-6.4478900");
+  assert.equal(state?.constraints?.chat_location_radius_meters, "1200");
+  assert.equal(state?.constraints?.chat_location_accuracy_bucket, "high");
+  assert.equal(state?.constraints?.chat_location_locality_label, "Lucan village");
 });
 
 test("typed area metadata and state are structured", () => {
@@ -59,6 +70,7 @@ test("typed area metadata and state are structured", () => {
   });
   assert.equal(state?.locationPreference, "Dublin city centre");
   assert.equal(state?.constraints?.chat_location_source, "typed_area");
+  assert.equal(state?.constraints?.chat_location_typed_area, "Dublin city centre");
 });
 
 test("accuracy bucketing produces expected buckets", () => {
@@ -66,4 +78,61 @@ test("accuracy bucketing produces expected buckets", () => {
   assert.equal(bucketizeAccuracy(70), "medium");
   assert.equal(bucketizeAccuracy(220), "low");
   assert.equal(bucketizeAccuracy(null), null);
+});
+
+test("nearby gps resolution returns first snapshot when available", async () => {
+  const result = await resolveNearbyGpsContext(async (forceFresh) => {
+    assert.equal(forceFresh, false);
+    return {
+      latitude: 53.35,
+      longitude: -6.44,
+      accuracyMeters: 25,
+      capturedAtUtc: "2026-04-20T10:00:00Z",
+      localityLabel: "Lucan"
+    };
+  });
+
+  assert.equal(result.outcome, "success");
+  assert.equal(result.refreshAttempted, true);
+  assert.equal(result.context?.source, "gps");
+  assert.equal(result.context?.latitude, 53.35);
+});
+
+test("nearby gps resolution retries with force-fresh and surfaces diagnostics", async () => {
+  let callCount = 0;
+  const result = await resolveNearbyGpsContext(async (forceFresh) => {
+    callCount += 1;
+    if (callCount === 1) {
+      assert.equal(forceFresh, false);
+      return null;
+    }
+
+    assert.equal(forceFresh, true);
+    return {
+      latitude: 53.34,
+      longitude: -6.42,
+      accuracyMeters: 40,
+      capturedAtUtc: "2026-04-20T10:01:00Z",
+      localityLabel: "Dublin"
+    };
+  });
+
+  assert.equal(callCount, 2);
+  assert.equal(result.outcome, "success");
+  assert.equal(result.refreshAttempted, true);
+  const metadata = buildNearbyGroundingDiagnosticsMetadata("granted", result);
+  assert.equal(metadata.chat_location_permission_state, "granted");
+  assert.equal(metadata.chat_location_refresh_attempted, "true");
+  assert.equal(metadata.chat_location_refresh_outcome, "success");
+});
+
+test("nearby gps resolution reports failed when no snapshot is available", async () => {
+  const result = await resolveNearbyGpsContext(async () => null, {
+    timeoutMs: 500,
+    retryDelayMs: 0
+  });
+
+  assert.equal(result.outcome, "failed");
+  assert.equal(result.refreshAttempted, true);
+  assert.equal(result.context, null);
 });

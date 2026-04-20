@@ -8,7 +8,11 @@ export const chatLocationMetadataKeys = {
   typedArea: "chat_location_typed_area",
   localityLabel: "chat_location_locality_label",
   accuracyBucket: "chat_location_accuracy_bucket",
-  capturedAtUtc: "chat_location_captured_at_utc"
+  capturedAtUtc: "chat_location_captured_at_utc",
+  permissionState: "chat_location_permission_state",
+  nearbyPrompt: "chat_location_nearby_prompt",
+  refreshAttempted: "chat_location_refresh_attempted",
+  refreshOutcome: "chat_location_refresh_outcome"
 } as const;
 
 const nearbySignals = [
@@ -21,6 +25,34 @@ const nearbySignals = [
 ];
 
 const placeSignals = [
+  "cinema",
+  "cinemas",
+  "movie",
+  "movies",
+  "theatre",
+  "theater",
+  "movie theatre",
+  "movie theater",
+  "convenience store",
+  "convenience stores",
+  "shop",
+  "shops",
+  "store",
+  "stores",
+  "museum",
+  "museums",
+  "park",
+  "parks",
+  "playground",
+  "playgrounds",
+  "pharmacy",
+  "pharmacies",
+  "chemist",
+  "petrol station",
+  "gas station",
+  "fuel",
+  "gym",
+  "gyms",
   "restaurant",
   "restaurants",
   "cafe",
@@ -31,7 +63,23 @@ const placeSignals = [
   "bar",
   "pub",
   "places",
-  "place"
+  "place",
+  "visit",
+  "go",
+  "activity",
+  "activities",
+  "fun"
+];
+
+const discoverySignals = [
+  "things to do",
+  "what can i do",
+  "what should i do",
+  "where should i go",
+  "somewhere",
+  "something fun",
+  "places to visit",
+  "where can i go"
 ];
 
 export type ChatGpsLocationContext = {
@@ -64,7 +112,12 @@ export function isNearbyLocationDependentPrompt(prompt: string): boolean {
     return false;
   }
 
-  return placeSignals.some((signal) => normalized.includes(signal));
+  const hasPlaceSignal = placeSignals.some((signal) => normalized.includes(signal));
+  if (hasPlaceSignal) {
+    return true;
+  }
+
+  return discoverySignals.some((signal) => normalized.includes(signal));
 }
 
 export function normalizeTypedArea(value: string): string | null {
@@ -113,20 +166,36 @@ export function buildChatLocationState(
     return {
       locationPreference: context.typedArea,
       constraints: {
-        [chatLocationMetadataKeys.source]: "typed_area"
+        [chatLocationMetadataKeys.source]: "typed_area",
+        [chatLocationMetadataKeys.typedArea]: context.typedArea
       }
     };
   }
 
   const locationPreference = context.localityLabel?.trim() || "current_location";
+  const radiusMeters = Math.max(
+    500,
+    Math.min(10000, context.radiusMeters ?? defaultRadiusFromAccuracy(context.accuracyMeters))
+  );
+  const constraints: Record<string, string> = {
+    [chatLocationMetadataKeys.source]: "gps",
+    [chatLocationMetadataKeys.latitude]: context.latitude.toFixed(7),
+    [chatLocationMetadataKeys.longitude]: context.longitude.toFixed(7),
+    [chatLocationMetadataKeys.radiusMeters]: String(radiusMeters),
+    [chatLocationMetadataKeys.capturedAtUtc]: context.capturedAtUtc
+  };
+  const accuracyBucket = bucketizeAccuracy(context.accuracyMeters);
+  if (accuracyBucket) {
+    constraints[chatLocationMetadataKeys.accuracyBucket] = accuracyBucket;
+  }
+
+  if (context.localityLabel?.trim()) {
+    constraints[chatLocationMetadataKeys.localityLabel] = context.localityLabel.trim();
+  }
+
   return {
     locationPreference,
-    constraints: {
-      [chatLocationMetadataKeys.source]: "gps",
-      [chatLocationMetadataKeys.radiusMeters]: String(
-        Math.max(500, Math.min(10000, context.radiusMeters ?? defaultRadiusFromAccuracy(context.accuracyMeters)))
-      )
-    }
+    constraints
   };
 }
 
@@ -144,6 +213,116 @@ export function bucketizeAccuracy(accuracyMeters: number | null | undefined): st
   }
 
   return "low";
+}
+
+export type NearbyGpsSnapshot = {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number | null;
+  capturedAtUtc: string;
+  localityLabel: string | null;
+};
+
+export type NearbyGpsResolutionOutcome = "success" | "failed" | "timeout";
+
+export type NearbyGpsResolutionResult = {
+  context: ChatGpsLocationContext | null;
+  refreshAttempted: boolean;
+  outcome: NearbyGpsResolutionOutcome;
+};
+
+export async function resolveNearbyGpsContext(
+  getSnapshot: (forceFresh: boolean) => Promise<NearbyGpsSnapshot | null>,
+  options?: {
+    timeoutMs?: number;
+    retryDelayMs?: number;
+  }
+): Promise<NearbyGpsResolutionResult> {
+  const timeoutMs = Math.max(500, Math.min(5000, options?.timeoutMs ?? 2200));
+  const retryDelayMs = Math.max(0, Math.min(600, options?.retryDelayMs ?? 120));
+
+  const first = await tryGetSnapshotWithTimeout(getSnapshot, false, timeoutMs);
+  if (first.snapshot) {
+    return {
+      context: toGpsContext(first.snapshot),
+      refreshAttempted: first.attempted,
+      outcome: "success"
+    };
+  }
+
+  if (retryDelayMs > 0) {
+    await delay(retryDelayMs);
+  }
+
+  const second = await tryGetSnapshotWithTimeout(getSnapshot, true, timeoutMs);
+  if (second.snapshot) {
+    return {
+      context: toGpsContext(second.snapshot),
+      refreshAttempted: true,
+      outcome: "success"
+    };
+  }
+
+  return {
+    context: null,
+    refreshAttempted: true,
+    outcome: first.timedOut || second.timedOut ? "timeout" : "failed"
+  };
+}
+
+export function buildNearbyGroundingDiagnosticsMetadata(
+  permissionState: string,
+  result: NearbyGpsResolutionResult
+): Record<string, string> {
+  return {
+    [chatLocationMetadataKeys.permissionState]: permissionState,
+    [chatLocationMetadataKeys.nearbyPrompt]: "true",
+    [chatLocationMetadataKeys.refreshAttempted]: result.refreshAttempted ? "true" : "false",
+    [chatLocationMetadataKeys.refreshOutcome]: result.outcome
+  };
+}
+
+async function tryGetSnapshotWithTimeout(
+  getSnapshot: (forceFresh: boolean) => Promise<NearbyGpsSnapshot | null>,
+  forceFresh: boolean,
+  timeoutMs: number
+): Promise<{ snapshot: NearbyGpsSnapshot | null; attempted: boolean; timedOut: boolean }> {
+  const timeoutSentinel = Symbol("nearby_gps_timeout");
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<typeof timeoutSentinel>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve(timeoutSentinel), timeoutMs);
+  });
+
+  try {
+    const raced = await Promise.race([getSnapshot(forceFresh), timeoutPromise]);
+    const timedOut = raced === timeoutSentinel;
+    return {
+      snapshot: timedOut ? null : raced,
+      attempted: true,
+      timedOut
+    };
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+function toGpsContext(snapshot: NearbyGpsSnapshot): ChatGpsLocationContext {
+  return {
+    source: "gps",
+    latitude: snapshot.latitude,
+    longitude: snapshot.longitude,
+    accuracyMeters: snapshot.accuracyMeters,
+    capturedAtUtc: snapshot.capturedAtUtc,
+    localityLabel: snapshot.localityLabel
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function defaultRadiusFromAccuracy(accuracyMeters: number | null | undefined): number {
