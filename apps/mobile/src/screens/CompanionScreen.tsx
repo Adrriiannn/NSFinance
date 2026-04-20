@@ -388,6 +388,9 @@ type PendingNearbyRequest = {
   diagnosticsMetadata: Record<string, string>;
 };
 
+const NEARBY_GROUNDING_FAIL_LOUD_MESSAGE =
+  "We couldn’t access your location. Please enable location or type an area.";
+
 export default function CashflowCompanionScreen({ sourceOverride }: CompanionScreenProps = {}) {
   const tokens = useThemeTokens();
   const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourcePlanningHubTab?: string }>();
@@ -637,7 +640,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     );
   }, []);
 
-  const dispatchPrompt = useCallback(async (
+  const sendChatRequest = useCallback(async (
     prompt: string,
     locationContext?: ChatLocationContext | null,
     diagnosticsMetadata?: Record<string, string> | null
@@ -762,19 +765,98 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     }
   }, [activeChat, appendMessageToChat, isSending, setChatThreadId]);
 
-  const sendPrompt = useCallback(async (prompt: string) => {
+  const queueNearbyGroundingPrompt = useCallback((
+    prompt: string,
+    permissionState: string,
+    diagnosticsMetadata: Record<string, string>
+  ) => {
+    if (!activeChat) {
+      return;
+    }
+
+    setPendingNearbyRequest({
+      chatId: activeChat.id,
+      prompt,
+      diagnosticsMetadata
+    });
+    setTypedAreaInput("");
+    setSendError(NEARBY_GROUNDING_FAIL_LOUD_MESSAGE);
+
+    if (permissionState === "granted") {
+      setTypedAreaPromptVisible(true);
+      return;
+    }
+
+    if (permissionState === "denied_can_ask_again" || permissionState === "unknown") {
+      setNearbyPermissionPromptVisible(true);
+      return;
+    }
+
+    setLocationSettingsPromptVisible(true);
+  }, [activeChat]);
+
+  const resolveLatestPermissionState = useCallback(async () => {
+    const first = await getForegroundLocationPermissionState();
+    if (first !== "unknown") {
+      return first;
+    }
+
+    const second = await getForegroundLocationPermissionState();
+    console.info("[CompanionChatLocation]", {
+      event: "chat_grounding_permission_rechecked",
+      initialState: first,
+      finalState: second
+    });
+    return second;
+  }, []);
+
+  const sendWithGrounding = useCallback(async (
+    prompt: string,
+    options?: {
+      forcedLocationContext?: ChatLocationContext | null;
+      diagnosticsMetadata?: Record<string, string> | null;
+    }
+  ) => {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt || !activeChat) {
       return;
     }
 
     const requiresNearbyGrounding = isNearbyLocationDependentPrompt(trimmedPrompt);
+    console.info("[CompanionChatLocation]", {
+      event: "chat_grounding_detected",
+      nearbyDetected: requiresNearbyGrounding
+    });
+
+    const forcedContext = options?.forcedLocationContext ?? null;
+    const forcedDiagnostics = options?.diagnosticsMetadata ?? null;
+
     if (!requiresNearbyGrounding) {
-      await dispatchPrompt(trimmedPrompt, null);
+      console.info("[CompanionChatLocation]", {
+        event: "chat_grounding_attempt_skipped_reason",
+        reason: "not_nearby_prompt"
+      });
+      await sendChatRequest(trimmedPrompt, forcedContext, forcedDiagnostics);
       return;
     }
 
-    const permissionState = await getForegroundLocationPermissionState();
+    if (forcedContext) {
+      console.info("[CompanionChatLocation]", {
+        event: "chat_grounding_attempt_skipped_reason",
+        reason: "pre_resolved_context"
+      });
+      console.info("[CompanionChatLocation]", {
+        event: "chat_grounding_final_state",
+        state: forcedContext.source === "gps" ? "gps" : "typed"
+      });
+      await sendChatRequest(trimmedPrompt, forcedContext, forcedDiagnostics);
+      return;
+    }
+
+    console.info("[CompanionChatLocation]", {
+      event: "chat_grounding_attempt_started"
+    });
+    const permissionState = await resolveLatestPermissionState();
     console.info("[CompanionChatLocation]", {
       event: "nearby_prompt_permission_state",
       permissionState
@@ -785,37 +867,43 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       const diagnostics = buildNearbyGroundingDiagnosticsMetadata(permissionState, resolution);
 
       if (resolution.context) {
-        await dispatchPrompt(trimmedPrompt, resolution.context, diagnostics);
+        console.info("[CompanionChatLocation]", {
+          event: "chat_grounding_final_state",
+          state: "gps"
+        });
+        await sendChatRequest(trimmedPrompt, resolution.context, diagnostics);
         return;
       }
 
-      setPendingNearbyRequest({
-        chatId: activeChat.id,
-        prompt: trimmedPrompt,
-        diagnosticsMetadata: diagnostics
+      console.info("[CompanionChatLocation]", {
+        event: "chat_grounding_attempt_skipped_reason",
+        reason: "gps_resolution_failed",
+        outcome: resolution.outcome
       });
-      setTypedAreaInput("");
-      setTypedAreaPromptVisible(true);
+      console.info("[CompanionChatLocation]", {
+        event: "chat_grounding_final_state",
+        state: "missing"
+      });
+      queueNearbyGroundingPrompt(trimmedPrompt, permissionState, diagnostics);
       return;
     }
 
-    const pendingDiagnostics = buildNearbyGroundingDiagnosticsMetadata(permissionState, {
+    const diagnostics = buildNearbyGroundingDiagnosticsMetadata(permissionState, {
       context: null,
       refreshAttempted: false,
       outcome: "failed"
     });
-    setPendingNearbyRequest({
-      chatId: activeChat.id,
-      prompt: trimmedPrompt,
-      diagnosticsMetadata: pendingDiagnostics
+    console.info("[CompanionChatLocation]", {
+      event: "chat_grounding_attempt_skipped_reason",
+      reason: "permission_not_granted",
+      permissionState
     });
-    if (permissionState === "denied_can_ask_again" || permissionState === "unknown") {
-      setNearbyPermissionPromptVisible(true);
-      return;
-    }
-
-    setLocationSettingsPromptVisible(true);
-  }, [activeChat, dispatchPrompt]);
+    console.info("[CompanionChatLocation]", {
+      event: "chat_grounding_final_state",
+      state: "missing"
+    });
+    queueNearbyGroundingPrompt(trimmedPrompt, permissionState, diagnostics);
+  }, [activeChat, queueNearbyGroundingPrompt, resolveLatestPermissionState, sendChatRequest]);
 
   const clearPendingNearbyRequest = useCallback(() => {
     setPendingNearbyRequest(null);
@@ -852,14 +940,17 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
         outcome: "success"
       });
       clearPendingNearbyRequest();
-      await dispatchPrompt(prompt, {
-        source: "gps",
-        latitude: result.snapshot.latitude,
-        longitude: result.snapshot.longitude,
-        accuracyMeters: result.snapshot.accuracyMeters,
-        capturedAtUtc: result.snapshot.capturedAtUtc,
-        localityLabel: result.snapshot.localityLabel
-      }, diagnostics);
+      await sendWithGrounding(prompt, {
+        forcedLocationContext: {
+          source: "gps",
+          latitude: result.snapshot.latitude,
+          longitude: result.snapshot.longitude,
+          accuracyMeters: result.snapshot.accuracyMeters,
+          capturedAtUtc: result.snapshot.capturedAtUtc,
+          localityLabel: result.snapshot.localityLabel
+        },
+        diagnosticsMetadata: diagnostics
+      });
       return;
     }
 
@@ -885,7 +976,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     }
 
     setTypedAreaPromptVisible(true);
-  }, [clearPendingNearbyRequest, dispatchPrompt, locationActionInProgress, pendingNearbyRequest]);
+  }, [clearPendingNearbyRequest, locationActionInProgress, pendingNearbyRequest, sendWithGrounding]);
 
   const handleOpenLocationSettings = useCallback(async () => {
     await openLocationSettings();
@@ -904,11 +995,14 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     const prompt = pendingNearbyRequest.prompt;
     const diagnostics = pendingNearbyRequest.diagnosticsMetadata;
     clearPendingNearbyRequest();
-    await dispatchPrompt(prompt, {
-      source: "typed_area",
-      typedArea: normalizedArea
-    }, diagnostics);
-  }, [clearPendingNearbyRequest, dispatchPrompt, pendingNearbyRequest, typedAreaInput]);
+    await sendWithGrounding(prompt, {
+      forcedLocationContext: {
+        source: "typed_area",
+        typedArea: normalizedArea
+      },
+      diagnosticsMetadata: diagnostics
+    });
+  }, [clearPendingNearbyRequest, pendingNearbyRequest, sendWithGrounding, typedAreaInput]);
 
   const startNewChat = () => {
     const nextChat = createChat();
@@ -1256,7 +1350,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
                       pressed ? styles.promptChipPressed : null
                     ]}
                     onPress={() => {
-                      void sendPrompt(prompt);
+                      void sendWithGrounding(prompt);
                     }}
                   >
                     <Text style={styles.promptChipText}>{prompt}</Text>
@@ -1300,7 +1394,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
                 pressed ? styles.sendPressed : null
               ]}
               onPress={() => {
-                void sendPrompt(input.trim());
+                void sendWithGrounding(input.trim());
               }}
             >
               <Ionicons
