@@ -557,7 +557,24 @@ public sealed class GooglePlacesCompanionSearchService(
         CancellationToken cancellationToken)
     {
         var warnings = new HashSet<string>(StringComparer.Ordinal);
-        var constraints = localDiscoveryConstraintExtractor.Extract(query);
+        if (locationContext?.PlannerAuthoritative == true)
+        {
+            warnings.Add("real_world_retrieval_plan_authoritative:true");
+        }
+
+        if (locationContext?.PlannerSelectedDomain is not null)
+        {
+            warnings.Add($"real_world_retrieval_plan_domain:{locationContext.PlannerSelectedDomain.Value.ToString().ToLowerInvariant()}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(locationContext?.PlannerSelectedConcept))
+        {
+            warnings.Add($"real_world_retrieval_plan_concept:{locationContext.PlannerSelectedConcept!.Trim().ToLowerInvariant()}");
+        }
+
+        warnings.Add($"real_world_retrieval_plan_near_me:{(locationContext?.HasNearMeSemantic == true).ToString().ToLowerInvariant()}");
+        var extractedConstraints = localDiscoveryConstraintExtractor.Extract(query);
+        var constraints = ApplyPlannerAuthoritativeOverrides(extractedConstraints, locationContext, warnings);
         AppendConstraintWarnings(constraints, warnings);
         logger.LogInformation(
             "Companion places query shaped localDiscoveryCandidate={IsCandidate} confidence={Confidence} hasNearMeLanguage={HasNearMeLanguage} hasExplicitLocality={HasExplicitLocality} reasonCodes={ReasonCodes}",
@@ -746,6 +763,70 @@ public sealed class GooglePlacesCompanionSearchService(
 
         warnings.Add("places_query_shape:no_results_fallback");
         return BuildSearchResult(fallbackResult, warnings, rankingContext);
+    }
+
+    private static LocalDiscoveryConstraintExtractionResult ApplyPlannerAuthoritativeOverrides(
+        LocalDiscoveryConstraintExtractionResult constraints,
+        PlaceSearchLocationContext? locationContext,
+        ISet<string> warnings)
+    {
+        if (locationContext?.PlannerAuthoritative != true)
+        {
+            return constraints;
+        }
+
+        var placeTypeHints = constraints.PlaceTypeHints.ToList();
+        if (locationContext.PlannerSelectedDomain is { } selectedDomain)
+        {
+            var mappedType = MapDomainToPlaceTypeHint(selectedDomain);
+            if (!string.IsNullOrWhiteSpace(mappedType))
+            {
+                placeTypeHints.Insert(0, mappedType!);
+                placeTypeHints = placeTypeHints
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                warnings.Add("real_world_retrieval_planner_type_hint_applied");
+            }
+        }
+
+        warnings.Add("real_world_retrieval_planner_constraints_applied");
+        return constraints with
+        {
+            IsLocalDiscoveryCandidate = true,
+            Confidence = Math.Max(constraints.Confidence, 0.95d),
+            HasNearMeLanguage = constraints.HasNearMeLanguage || locationContext.HasNearMeSemantic,
+            PlaceTypeHints = placeTypeHints
+        };
+    }
+
+    private static string? MapDomainToPlaceTypeHint(RealWorldDiscoveryDomain domain)
+    {
+        return domain switch
+        {
+            RealWorldDiscoveryDomain.Cafe => "cafe",
+            RealWorldDiscoveryDomain.Restaurant => "restaurant",
+            RealWorldDiscoveryDomain.Takeaway => "restaurant",
+            RealWorldDiscoveryDomain.PubBar => "bar",
+            RealWorldDiscoveryDomain.MovieTheater => "movie_theater",
+            RealWorldDiscoveryDomain.ParkWalk => "park",
+            RealWorldDiscoveryDomain.Playground => "playground",
+            RealWorldDiscoveryDomain.Pharmacy => "pharmacy",
+            RealWorldDiscoveryDomain.PetrolStation => "gas_station",
+            RealWorldDiscoveryDomain.Gym => "gym",
+            RealWorldDiscoveryDomain.ElectronicsRetail => "electronics_store",
+            RealWorldDiscoveryDomain.ConvenienceStore => "convenience_store",
+            RealWorldDiscoveryDomain.Grocery => "supermarket",
+            RealWorldDiscoveryDomain.OutdoorActivity => "tourist_attraction",
+            RealWorldDiscoveryDomain.EntertainmentGeneral => "tourist_attraction",
+            RealWorldDiscoveryDomain.NightlifeGeneral => "bar",
+            RealWorldDiscoveryDomain.FoodDrinkGeneral => "restaurant",
+            RealWorldDiscoveryDomain.ServiceGeneral => "pharmacy",
+            RealWorldDiscoveryDomain.CommerceGeneral => "store",
+            RealWorldDiscoveryDomain.ExploratoryEveningActivity => "tourist_attraction",
+            RealWorldDiscoveryDomain.ExploratoryFamilyActivity => "tourist_attraction",
+            _ => null
+        };
     }
 
     private static CompanionPlaceDiscoveryResult BuildRequestConstructionFailure(string failureCode)
@@ -1014,7 +1095,8 @@ public sealed class GooglePlacesCompanionSearchService(
         var isGpsGrounded = string.Equals(locationContext?.Source, "gps", StringComparison.OrdinalIgnoreCase)
                             && locationContext?.Latitude.HasValue == true
                             && locationContext?.Longitude.HasValue == true;
-        var applyDistanceRanking = isGpsGrounded && constraints.HasNearMeLanguage;
+        var applyDistanceRanking = isGpsGrounded
+                                   && (constraints.HasNearMeLanguage || locationContext?.HasNearMeSemantic == true);
 
         return new CompanionPlaceRankingContext(
             ApplyDistanceRanking: applyDistanceRanking,

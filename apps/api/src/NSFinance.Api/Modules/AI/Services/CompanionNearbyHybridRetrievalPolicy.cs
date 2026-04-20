@@ -27,7 +27,8 @@ public sealed class CompanionNearbyHybridRetrievalPolicy : ICompanionNearbyHybri
                 ReasonCode: "places_retrieval:hybrid_not_applicable_non_gps");
         }
 
-        if (!constraints.HasNearMeLanguage)
+        var hasNearMeSemantic = constraints.HasNearMeLanguage || locationContext?.HasNearMeSemantic == true;
+        if (!hasNearMeSemantic)
         {
             return new CompanionNearbyHybridRetrievalDecision(
                 UseHybridRetrieval: false,

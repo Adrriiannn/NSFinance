@@ -609,7 +609,7 @@ public sealed class RealWorldPlacesExecutionService(
         ArgumentNullException.ThrowIfNull(request);
 
         var maxDomains = Math.Clamp(request.MaxDomains, 1, 4);
-        var maxPerDomain = Math.Clamp(request.MaxItemsPerDomain, 1, 3);
+        var maxPerDomain = Math.Clamp(request.MaxItemsPerDomain, 1, 8);
         var maxTotal = Math.Clamp(request.MaxTotalItems, 1, 8);
         var selectedDomains = request.Domains
             .Distinct()
@@ -624,6 +624,21 @@ public sealed class RealWorldPlacesExecutionService(
         {
             $"real_world_places_mode:{request.Mode.ToString().ToLowerInvariant()}"
         };
+        if (request.RetrievalPlan is not null)
+        {
+            reasonCodes.Add($"real_world_retrieval_plan_authoritative:{request.RetrievalPlan.Authoritative.ToString().ToLowerInvariant()}");
+            reasonCodes.Add($"real_world_retrieval_plan_near_me:{request.RetrievalPlan.HasNearMeSemantic.ToString().ToLowerInvariant()}");
+            reasonCodes.Add($"real_world_retrieval_plan_requested_shortlist:{request.RetrievalPlan.RequestedShortlistSize}");
+            foreach (var selectedDomain in request.RetrievalPlan.SelectedDomains)
+            {
+                reasonCodes.Add($"real_world_retrieval_plan_domain:{selectedDomain.ToString().ToLowerInvariant()}");
+            }
+
+            foreach (var concept in request.RetrievalPlan.CanonicalConcepts.Where(static value => !string.IsNullOrWhiteSpace(value)))
+            {
+                reasonCodes.Add($"real_world_retrieval_plan_concept:{concept.Trim().ToLowerInvariant()}");
+            }
+        }
 
         var totalItems = 0;
         var providerFailureCount = 0;
@@ -636,13 +651,19 @@ public sealed class RealWorldPlacesExecutionService(
                 break;
             }
 
-            var query = domain.ToQueryPhrase();
+            var query = BuildDomainAlignedQuery(request.UserQuery, domain, request.RetrievalPlan, reasonCodes);
+            var domainLocationContext = BuildDomainLocationContext(
+                request.LocationContext,
+                request,
+                domain,
+                maxTotal);
             var result = await placesSearchService.SearchAsync(
                 query,
                 request.CountryCode,
-                request.LocationContext,
+                domainLocationContext,
                 cancellationToken);
             warnings.UnionWith(result.Warnings ?? []);
+            reasonCodes.Add($"real_world_places_provider_candidates:{domain.ToString().ToLowerInvariant()}:{result.Items.Count}");
 
             if (!result.Items.Any())
             {
@@ -670,7 +691,12 @@ public sealed class RealWorldPlacesExecutionService(
                 break;
             }
 
-            var items = result.Items
+            var domainFilteredItems = ApplyDomainConsistencyFilter(
+                result.Items,
+                domain,
+                request.Mode,
+                reasonCodes);
+            var items = domainFilteredItems
                 .Take(Math.Min(maxPerDomain, availableSlots))
                 .ToArray();
             totalItems += items.Length;
@@ -680,6 +706,14 @@ public sealed class RealWorldPlacesExecutionService(
                 Items: items,
                 Warnings: result.Warnings ?? []));
             reasonCodes.Add($"real_world_places_domain_results:{domain}:{items.Length}");
+            reasonCodes.Add($"real_world_places_results_returned:{domain.ToString().ToLowerInvariant()}:{result.Items.Count}");
+            reasonCodes.Add($"real_world_places_results_surfaced:{domain.ToString().ToLowerInvariant()}:{items.Length}");
+            if (items.Length < result.Items.Count)
+            {
+                reasonCodes.Add("real_world_places_surface_quality_trim_applied");
+            }
+
+            reasonCodes.Add($"real_world_places_surface_cap_reason:max_per_domain_{maxPerDomain}");
         }
 
         if (groups.Count == 0)
@@ -723,6 +757,148 @@ public sealed class RealWorldPlacesExecutionService(
             FailureScenario: isPartial ? RealWorldFailureScenario.ExploratoryPartialResults : null,
             ReasonCodes: reasonCodes.ToArray(),
             Warnings: warnings.ToArray());
+    }
+
+    private static string BuildDomainAlignedQuery(
+        string userQuery,
+        RealWorldDiscoveryDomain domain,
+        RealWorldPlaceRetrievalPlan? retrievalPlan,
+        ISet<string> reasonCodes)
+    {
+        var domainPhrase = domain.ToQueryPhrase();
+        if (retrievalPlan?.Authoritative == true)
+        {
+            reasonCodes.Add("real_world_retrieval_domain_aligned_query_used");
+            return domainPhrase;
+        }
+
+        if (string.IsNullOrWhiteSpace(userQuery))
+        {
+            return domainPhrase;
+        }
+
+        if (userQuery.Contains(domainPhrase, StringComparison.OrdinalIgnoreCase))
+        {
+            return userQuery.Trim();
+        }
+
+        return $"{userQuery.Trim()} {domainPhrase}".Trim();
+    }
+
+    private static PlaceSearchLocationContext? BuildDomainLocationContext(
+        PlaceSearchLocationContext? locationContext,
+        RealWorldPlacesExecutionRequest request,
+        RealWorldDiscoveryDomain domain,
+        int maxTotal)
+    {
+        if (locationContext is null)
+        {
+            return null;
+        }
+
+        var concept = request.RetrievalPlan?.CanonicalConcepts.FirstOrDefault(value =>
+            !string.IsNullOrWhiteSpace(value));
+        return locationContext with
+        {
+            PlannerSelectedDomain = domain,
+            PlannerSelectedConcept = concept,
+            PlannerAuthoritative = request.RetrievalPlan?.Authoritative ?? locationContext.PlannerAuthoritative,
+            HasNearMeSemantic = request.RetrievalPlan?.HasNearMeSemantic ?? locationContext.HasNearMeSemantic,
+            PlannerExecutionMode = request.Mode,
+            PlannerMaxShortlist = maxTotal
+        };
+    }
+
+    private static IReadOnlyList<PlaceSearchItem> ApplyDomainConsistencyFilter(
+        IReadOnlyList<PlaceSearchItem> items,
+        RealWorldDiscoveryDomain domain,
+        RealWorldExecutionMode mode,
+        ISet<string> reasonCodes)
+    {
+        if (mode != RealWorldExecutionMode.FocusedPlaceSearch || items.Count == 0)
+        {
+            return items;
+        }
+
+        var filters = GetDomainConsistencyHints(domain);
+        if (filters.Count == 0)
+        {
+            return items;
+        }
+
+        var filtered = items
+            .Where(item => IsDomainCompatible(item, filters))
+            .ToArray();
+        if (filtered.Length == 0)
+        {
+            reasonCodes.Add("real_world_places_domain_filter_no_matches_fallback_unfiltered");
+            return items;
+        }
+
+        if (filtered.Length < items.Count)
+        {
+            reasonCodes.Add($"real_world_places_domain_filter_applied:{domain.ToString().ToLowerInvariant()}");
+        }
+
+        return filtered;
+    }
+
+    private static IReadOnlyList<string> GetDomainConsistencyHints(RealWorldDiscoveryDomain domain)
+    {
+        return domain switch
+        {
+            RealWorldDiscoveryDomain.Cafe => ["cafe", "coffee"],
+            RealWorldDiscoveryDomain.Restaurant => ["restaurant", "food"],
+            RealWorldDiscoveryDomain.Takeaway => ["takeaway", "meal_takeaway", "fast_food", "food"],
+            RealWorldDiscoveryDomain.PubBar => ["pub", "bar", "night_club"],
+            RealWorldDiscoveryDomain.MovieTheater => ["movie_theater", "cinema", "movie", "film", "theater", "theatre"],
+            RealWorldDiscoveryDomain.ParkWalk => ["park", "hiking_area", "trail", "outdoor"],
+            RealWorldDiscoveryDomain.Playground => ["playground"],
+            RealWorldDiscoveryDomain.Pharmacy => ["pharmacy", "drugstore", "chemist"],
+            RealWorldDiscoveryDomain.PetrolStation => ["gas_station", "petrol", "fuel"],
+            RealWorldDiscoveryDomain.Gym => ["gym", "fitness"],
+            RealWorldDiscoveryDomain.ElectronicsRetail => ["electronics", "computer", "mobile_phone", "video_game"],
+            RealWorldDiscoveryDomain.ConvenienceStore => ["convenience", "store", "grocery"],
+            RealWorldDiscoveryDomain.Grocery => ["grocery", "supermarket"],
+            _ => []
+        };
+    }
+
+    private static bool IsDomainCompatible(PlaceSearchItem item, IReadOnlyList<string> hints)
+    {
+        if (hints.Count == 0)
+        {
+            return true;
+        }
+
+        var haystacks = new List<string>(6);
+        if (!string.IsNullOrWhiteSpace(item.PrimaryType))
+        {
+            haystacks.Add(item.PrimaryType);
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.PrimaryTypeDisplayName))
+        {
+            haystacks.Add(item.PrimaryTypeDisplayName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.Category))
+        {
+            haystacks.Add(item.Category);
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.DisplayName))
+        {
+            haystacks.Add(item.DisplayName);
+        }
+
+        if (item.Types is not null)
+        {
+            haystacks.AddRange(item.Types.Where(static value => !string.IsNullOrWhiteSpace(value)));
+        }
+
+        return haystacks.Any(value =>
+            hints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
     }
 }
 

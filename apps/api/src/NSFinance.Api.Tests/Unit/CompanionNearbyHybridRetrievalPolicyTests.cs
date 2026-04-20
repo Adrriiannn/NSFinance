@@ -49,6 +49,22 @@ public sealed class CompanionNearbyHybridRetrievalPolicyTests
         Assert.Equal("places_retrieval:hybrid_not_applicable_non_near_me", decision.ReasonCode);
     }
 
+    [Fact]
+    public void Decide_GpsWithPlannerNearMeSemantic_UsesHybrid()
+    {
+        var decision = sut.Decide(
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 1500,
+                HasNearMeSemantic: true),
+            BuildConstraints(hasNearMeLanguage: false));
+
+        Assert.True(decision.UseHybridRetrieval);
+        Assert.Equal("places_retrieval:hybrid_applicable_gps_near_me", decision.ReasonCode);
+    }
+
     private static LocalDiscoveryConstraintExtractionResult BuildConstraints(
         bool hasNearMeLanguage)
     {

@@ -45,6 +45,52 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_PlannerAuthoritativeMovieTheater_PreservesDomainAndNearMeSemantics()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cinema-1")])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cinema-2")])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "movie theaters",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000,
+                PlannerSelectedDomain: RealWorldDiscoveryDomain.MovieTheater,
+                PlannerSelectedConcept: "movietheater",
+                PlannerAuthoritative: true,
+                HasNearMeSemantic: true,
+                PlannerExecutionMode: RealWorldExecutionMode.FocusedPlaceSearch,
+                PlannerMaxShortlist: 8),
+            CancellationToken.None);
+
+        var textRequest = Assert.Single(discovery.Requests);
+        Assert.Equal("cinemas", textRequest.Query);
+        Assert.Single(discovery.NearbyRequests);
+        Assert.Contains("real_world_retrieval_plan_authoritative:true", result.Warnings ?? []);
+        Assert.Contains("real_world_retrieval_plan_domain:movietheater", result.Warnings ?? []);
+        Assert.Contains("places_retrieval:hybrid_applicable_gps_near_me", result.Warnings ?? []);
+    }
+
+    [Fact]
     public async Task SearchAsync_TypoPrompt_BuildsCleanSemanticTextQuery()
     {
         var discovery = new TrackingCompanionDiscoveryService(

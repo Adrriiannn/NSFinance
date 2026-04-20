@@ -125,7 +125,26 @@ public sealed class UserChatCompanionHandoffService(
         LocalDiscoveryConstraintExtractionResult localDiscovery,
         CancellationToken cancellationToken)
     {
-        var locationContext = BuildPlaceSearchLocationContext(grounding, localDiscovery);
+        var maxTotalItems = 8;
+        var maxDomains = plan.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch ? 4 : plan.Mode == RealWorldExecutionMode.FocusedThemeSearch ? 2 : 1;
+        var maxItemsPerDomain = plan.Mode == RealWorldExecutionMode.FocusedPlaceSearch
+            ? maxTotalItems
+            : plan.Mode == RealWorldExecutionMode.FocusedThemeSearch
+                ? 4
+                : 2;
+        var retrievalPlan = new RealWorldPlaceRetrievalPlan(
+            Authoritative: plan.UseDirectPlacesExecution,
+            HasNearMeSemantic: interpretation.HasNearMeLanguage,
+            ExecutionMode: plan.Mode,
+            SelectedDomains: plan.SelectedDomains,
+            CanonicalConcepts: interpretation.CandidateConcepts,
+            RequestedShortlistSize: maxTotalItems);
+        var locationContext = BuildPlaceSearchLocationContext(
+            grounding,
+            localDiscovery,
+            plan,
+            interpretation,
+            maxTotalItems);
         var countryCode = ResolveCountryCode(request.Metadata);
         var execution = await placesExecutionService.ExecuteAsync(
             new RealWorldPlacesExecutionRequest(
@@ -133,10 +152,11 @@ public sealed class UserChatCompanionHandoffService(
                 CountryCode: countryCode,
                 LocationContext: locationContext,
                 Domains: plan.SelectedDomains,
-                MaxDomains: plan.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch ? 4 : 2,
-                MaxItemsPerDomain: 2,
-                MaxTotalItems: 8,
-                Mode: plan.Mode),
+                MaxDomains: maxDomains,
+                MaxItemsPerDomain: maxItemsPerDomain,
+                MaxTotalItems: maxTotalItems,
+                Mode: plan.Mode,
+                RetrievalPlan: retrievalPlan),
             cancellationToken);
 
         var warningSet = BuildBaseWarnings(plan, interpretation, localDiscovery, grounding, request.Metadata);
@@ -321,7 +341,7 @@ public sealed class UserChatCompanionHandoffService(
     {
         var heading = mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch
             ? "Here are a few nearby options across different categories:"
-            : "Here are some grounded nearby options:";
+            : "Here are some nearby options:";
 
         var sections = new List<string>(groups.Count + 1)
         {
@@ -365,7 +385,10 @@ public sealed class UserChatCompanionHandoffService(
 
     private static PlaceSearchLocationContext? BuildPlaceSearchLocationContext(
         CompanionLocationGrounding grounding,
-        LocalDiscoveryConstraintExtractionResult localDiscovery)
+        LocalDiscoveryConstraintExtractionResult localDiscovery,
+        RealWorldExecutionPlan plan,
+        RealWorldIntentInterpretation interpretation,
+        int maxShortlist)
     {
         if (!grounding.HasCoordinates && !grounding.HasTypedArea && !localDiscovery.HasExplicitLocality)
         {
@@ -388,7 +411,13 @@ public sealed class UserChatCompanionHandoffService(
             TypedArea: effectiveTypedArea,
             LocalityLabel: grounding.LocalityLabel ?? localDiscovery.LocalityHint,
             AccuracyBucket: grounding.AccuracyBucket,
-            CapturedAtUtc: grounding.CapturedAtUtc);
+            CapturedAtUtc: grounding.CapturedAtUtc,
+            PlannerSelectedDomain: plan.SelectedDomains.FirstOrDefault(),
+            PlannerSelectedConcept: interpretation.CandidateConcepts.FirstOrDefault(),
+            PlannerAuthoritative: plan.UseDirectPlacesExecution,
+            HasNearMeSemantic: interpretation.HasNearMeLanguage,
+            PlannerExecutionMode: plan.Mode,
+            PlannerMaxShortlist: maxShortlist);
     }
 
     private static string ResolveCountryCode(IReadOnlyDictionary<string, string>? metadata)
@@ -810,4 +839,3 @@ public sealed class UserChatCompanionHandoffService(
         return null;
     }
 }
-

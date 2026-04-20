@@ -42,7 +42,7 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("grounded nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("chat_path_companion_local_places", response.Warnings);
         Assert.Contains("real_world_route_authoritative", response.Warnings);
         Assert.DoesNotContain(response.Warnings, warning =>
@@ -96,7 +96,7 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("grounded nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("real_world_grounding_coordinates_present", response.Warnings);
         Assert.DoesNotContain("nearby_location_missing", response.Warnings);
         Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
@@ -248,7 +248,7 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("grounded nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nearby options", response.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("nearby_grounding_source:query_locality", response.Warnings);
         Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
         Assert.Equal(0, aiClient.CallCount);
@@ -406,6 +406,108 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         Assert.Contains("fallback_provider_request_failure", response.Warnings);
         Assert.Contains("real_world_failure_scenario:providerrequestfailure", response.Warnings);
         Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FocusedMovieTheaterRequest_SurfacesFullBoundedShortlist()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var places = new FixedResultPlacesSearchService(BuildMovieItems(8));
+        var sut = CreateSut(companion, aiClient, places);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "cinemas near me",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-9",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "1500"
+                },
+                ClientRequestId: "req-9",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("1. Cinema 1", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("8. Cinema 8", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("real_world_places_results_returned:movietheater:8", response.Warnings);
+        Assert.Contains("real_world_places_results_surfaced:movietheater:8", response.Warnings);
+        Assert.Equal("movie theaters", places.LastQuery);
+        Assert.True(places.LastLocationContext?.PlannerAuthoritative);
+        Assert.Equal(RealWorldDiscoveryDomain.MovieTheater, places.LastLocationContext?.PlannerSelectedDomain);
+        Assert.True(places.LastLocationContext?.HasNearMeSemantic);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FocusedMovieTheaterRequest_TrimsNonDomainResults_WithDiagnostic()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var mixedItems = BuildMovieItems(5)
+            .Concat(
+            [
+                BuildPlaceItem("coffee-1", "Cafe 1", "Cafe", "cafe"),
+                BuildPlaceItem("coffee-2", "Cafe 2", "Cafe", "cafe"),
+                BuildPlaceItem("store-1", "Store 1", "Store", "store")
+            ])
+            .ToArray();
+        var places = new FixedResultPlacesSearchService(mixedItems);
+        var sut = CreateSut(companion, aiClient, places);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "cinemas near me",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-10",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "1500"
+                },
+                ClientRequestId: "req-10",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.DoesNotContain("Cafe 1", response.ReplyText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Store 1", response.ReplyText, StringComparison.Ordinal);
+        Assert.Contains("real_world_places_domain_filter_applied:movietheater", response.Warnings);
+        Assert.Contains("real_world_places_surface_quality_trim_applied", response.Warnings);
         Assert.Equal(0, aiClient.CallCount);
         Assert.Equal(0, companion.CallCount);
     }
@@ -688,5 +790,60 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
                         ProviderErrorCode: providerErrorCode),
                     Warnings: ["places_test_failure_injected"]));
         }
+    }
+
+    private sealed class FixedResultPlacesSearchService(
+        IReadOnlyList<PlaceSearchItem> items) : IPlacesSearchService
+    {
+        public string? LastQuery { get; private set; }
+        public PlaceSearchLocationContext? LastLocationContext { get; private set; }
+
+        public Task<PlaceSearchResult> SearchAsync(
+            string query,
+            string country,
+            PlaceSearchLocationContext? locationContext,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LastQuery = query;
+            LastLocationContext = locationContext;
+            return Task.FromResult(
+                new PlaceSearchResult(
+                    Items: items,
+                    Metadata: new PlaceSearchMetadata(
+                        UseCase: "companion_discovery",
+                        FromCache: false,
+                        RequestedCandidateCount: 8,
+                        ReturnedCandidateCount: items.Count,
+                        FieldMaskVariant: "companion_discovery",
+                        Elapsed: TimeSpan.FromMilliseconds(5),
+                        TimedOut: false,
+                        ProviderErrorCode: null),
+                    Warnings: []));
+        }
+    }
+
+    private static IReadOnlyList<PlaceSearchItem> BuildMovieItems(int count)
+    {
+        return Enumerable.Range(1, count)
+            .Select(index => BuildPlaceItem($"cinema-{index}", $"Cinema {index}", "Cinema", "movie_theater"))
+            .ToArray();
+    }
+
+    private static PlaceSearchItem BuildPlaceItem(
+        string placeId,
+        string name,
+        string category,
+        string primaryType)
+    {
+        return new PlaceSearchItem(
+            PlaceId: placeId,
+            Name: name,
+            Category: category,
+            PriceLevel: "PRICE_LEVEL_MODERATE",
+            PrimaryType: primaryType,
+            PrimaryTypeDisplayName: category,
+            Types: [primaryType],
+            ShortFormattedAddress: "Dublin");
     }
 }

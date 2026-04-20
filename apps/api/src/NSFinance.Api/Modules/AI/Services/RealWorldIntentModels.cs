@@ -150,7 +150,16 @@ public sealed record RealWorldPlacesExecutionRequest(
     int MaxDomains,
     int MaxItemsPerDomain,
     int MaxTotalItems,
-    RealWorldExecutionMode Mode);
+    RealWorldExecutionMode Mode,
+    RealWorldPlaceRetrievalPlan? RetrievalPlan = null);
+
+public sealed record RealWorldPlaceRetrievalPlan(
+    bool Authoritative,
+    bool HasNearMeSemantic,
+    RealWorldExecutionMode ExecutionMode,
+    IReadOnlyList<RealWorldDiscoveryDomain> SelectedDomains,
+    IReadOnlyList<string> CanonicalConcepts,
+    int RequestedShortlistSize);
 
 public sealed record RealWorldDomainPlacesGroup(
     RealWorldDiscoveryDomain Domain,

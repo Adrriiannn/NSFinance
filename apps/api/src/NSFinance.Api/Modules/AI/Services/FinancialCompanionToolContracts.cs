@@ -100,7 +100,13 @@ public sealed record PlaceSearchLocationContext(
     string? TypedArea = null,
     string? LocalityLabel = null,
     string? AccuracyBucket = null,
-    DateTimeOffset? CapturedAtUtc = null);
+    DateTimeOffset? CapturedAtUtc = null,
+    RealWorldDiscoveryDomain? PlannerSelectedDomain = null,
+    string? PlannerSelectedConcept = null,
+    bool PlannerAuthoritative = false,
+    bool HasNearMeSemantic = false,
+    RealWorldExecutionMode? PlannerExecutionMode = null,
+    int? PlannerMaxShortlist = null);
 
 public sealed record PlaceSearchItem(
     string PlaceId,
