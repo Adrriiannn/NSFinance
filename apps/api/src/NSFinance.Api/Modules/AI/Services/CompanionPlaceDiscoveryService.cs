@@ -910,16 +910,27 @@ public sealed class GooglePlacesCompanionSearchService(
 
         warnings.Add("places_query_shape:locality_resolution_succeeded");
         warnings.Add("places_query_shape:locality_bias_applied");
+        if (locationContext is not null)
+        {
+            return locationContext with
+            {
+                Source = "locality_resolution",
+                Latitude = resolved.Latitude,
+                Longitude = resolved.Longitude,
+                RadiusMeters = locationContext.RadiusMeters
+                              ?? Math.Clamp(placesOptions.DefaultSearchRadiusMeters, 1_000, 15_000),
+                TypedArea = locationContext.TypedArea ?? locality,
+                LocalityLabel = locationContext.LocalityLabel ?? resolved.ResolvedLocalityLabel ?? locality
+            };
+        }
+
         return new PlaceSearchLocationContext(
             Source: "locality_resolution",
             Latitude: resolved.Latitude,
             Longitude: resolved.Longitude,
-            RadiusMeters: locationContext?.RadiusMeters
-                          ?? Math.Clamp(placesOptions.DefaultSearchRadiusMeters, 1_000, 15_000),
-            TypedArea: locationContext?.TypedArea ?? locality,
-            LocalityLabel: locationContext?.LocalityLabel ?? resolved.ResolvedLocalityLabel ?? locality,
-            AccuracyBucket: locationContext?.AccuracyBucket,
-            CapturedAtUtc: locationContext?.CapturedAtUtc);
+            RadiusMeters: Math.Clamp(placesOptions.DefaultSearchRadiusMeters, 1_000, 15_000),
+            TypedArea: locality,
+            LocalityLabel: resolved.ResolvedLocalityLabel ?? locality);
     }
 
     private static CompanionPlaceDiscoveryRequest BuildDiscoveryRequest(

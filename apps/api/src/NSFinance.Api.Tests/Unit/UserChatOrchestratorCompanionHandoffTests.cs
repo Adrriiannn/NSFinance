@@ -327,6 +327,47 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_FinancePlanningWithAttachedGpsMetadata_RemainsFinancialPath()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var sut = CreateSut(companion, aiClient);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "What can I cut to afford a PS5?",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-6b",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "1500"
+                },
+                ClientRequestId: "req-6b",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Equal("generic assistant reply", response.ReplyText);
+        Assert.Equal(1, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ExploratoryWithTypedArea_UsesDirectGroupedPlacesExecution()
     {
         var companion = new TrackingCompanionService(
@@ -406,6 +447,56 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         Assert.Contains("fallback_provider_request_failure", response.Warnings);
         Assert.Contains("real_world_failure_scenario:providerrequestfailure", response.Warnings);
         Assert.DoesNotContain("fallback_provider_unavailable", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ExplicitAreaOverridesDeviceLocation_ForSearchScope()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var places = new FixedResultPlacesSearchService(BuildMovieItems(4));
+        var sut = CreateSut(companion, aiClient, places);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "Where can I go drinking in Dublin 2?",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-7b",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "1800"
+                },
+                ClientRequestId: "req-7b",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains(
+            "real_world_search_scope:explicit_area_overrode_device_location",
+            response.Warnings);
+        Assert.Equal("explicit_area", places.LastLocationContext?.SearchScope);
+        Assert.Null(places.LastLocationContext?.Latitude);
+        Assert.Null(places.LastLocationContext?.Longitude);
+        Assert.Equal("dublin 2", places.LastLocationContext?.TypedArea);
+        Assert.True(places.LastLocationContext?.DeviceLatitude.HasValue);
+        Assert.True(places.LastLocationContext?.DeviceLongitude.HasValue);
         Assert.Equal(0, aiClient.CallCount);
         Assert.Equal(0, companion.CallCount);
     }
@@ -525,6 +616,8 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
             NullLogger<RealWorldIntentInterpreter>.Instance);
         var handoff = new UserChatCompanionHandoffService(
             new LocalDiscoveryConstraintExtractor(),
+            new RealWorldConversationSearchContextService(),
+            new RealWorldSearchScopeResolver(),
             interpreter,
             new RealWorldExecutionModePlanner(new ExploratoryDomainSelectionPolicy()),
             new RealWorldPlacesExecutionService(

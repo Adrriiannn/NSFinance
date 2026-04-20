@@ -485,52 +485,76 @@ public sealed class RealWorldExecutionModePlanner(
                 ReasonCodes: reasonCodes.ToArray());
         }
 
-        if (interpretation.InterpretationSource == RealWorldInterpretationSource.AiPrimary
-            && interpretation.Confidence < 0.45d)
-        {
-            reasonCodes.Add("execution_mode:low_confidence_clarify");
-            reasonCodes.Add(RealWorldInterpreterFallbackReasonCodes.PlannerDowngrade);
-            return new RealWorldExecutionPlan(
-                Mode: RealWorldExecutionMode.ClarifyLight,
-                IntentFamily: interpretation.IntentFamily,
-                ShouldHandoffToCompanion: true,
-                ShouldUsePlaces: false,
-                UseDirectPlacesExecution: false,
-                RequiresLocationGrounding: false,
-                SelectedDomains: [],
-                ClarificationPrompt: interpretation.ClarificationPrompt
-                                     ?? "I can help with nearby places or financial guidance. Tell me which one you want.",
-                ReasonCodes: reasonCodes.ToArray());
-        }
-
-        if (interpretation.ClarificationNeeded
-            || interpretation.RecommendedExecutionMode == RealWorldExecutionMode.ClarifyLight)
-        {
-            return new RealWorldExecutionPlan(
-                Mode: RealWorldExecutionMode.ClarifyLight,
-                IntentFamily: interpretation.IntentFamily,
-                ShouldHandoffToCompanion: true,
-                ShouldUsePlaces: false,
-                UseDirectPlacesExecution: false,
-                RequiresLocationGrounding: false,
-                SelectedDomains: [],
-                ClarificationPrompt: interpretation.ClarificationPrompt,
-                ReasonCodes: reasonCodes.ToArray());
-        }
-
-        var requiresGrounding = interpretation.RequiresLocation
-                                && (interpretation.HasNearMeLanguage
-                                    || !interpretation.HasExplicitLocality);
+        var effectiveInterpretation = interpretation;
         var hasAnyGrounding = grounding.HasCoordinates
                               || grounding.HasTypedArea
                               || localDiscovery.HasExplicitLocality
                               || interpretation.HasExplicitLocality;
+        var shouldEnableExploratoryExecutionByContext = ShouldEnableExploratoryExecutionByContext(
+            normalizedQuery,
+            interpretation,
+            localDiscovery,
+            hasAnyGrounding);
+        if (shouldEnableExploratoryExecutionByContext)
+        {
+            effectiveInterpretation = PromoteToExploratoryExecution(interpretation, localDiscovery);
+            reasonCodes.Add("real_world_exploratory_execution_enabled_by_context");
+            reasonCodes.Add("execution_mode:exploratory_context_override");
+        }
+
+        if (effectiveInterpretation.InterpretationSource == RealWorldInterpretationSource.AiPrimary
+            && effectiveInterpretation.Confidence < 0.45d)
+        {
+            if (!hasAnyGrounding)
+            {
+                reasonCodes.Add("real_world_clarify_preserved_due_to_missing_scope");
+            }
+
+            reasonCodes.Add("execution_mode:low_confidence_clarify");
+            reasonCodes.Add(RealWorldInterpreterFallbackReasonCodes.PlannerDowngrade);
+            return new RealWorldExecutionPlan(
+                Mode: RealWorldExecutionMode.ClarifyLight,
+                IntentFamily: effectiveInterpretation.IntentFamily,
+                ShouldHandoffToCompanion: true,
+                ShouldUsePlaces: false,
+                UseDirectPlacesExecution: false,
+                RequiresLocationGrounding: false,
+                SelectedDomains: [],
+                ClarificationPrompt: effectiveInterpretation.ClarificationPrompt
+                                     ?? "I can help with nearby places or financial guidance. Tell me which one you want.",
+                ReasonCodes: reasonCodes.ToArray());
+        }
+
+        if (effectiveInterpretation.ClarificationNeeded
+            || effectiveInterpretation.RecommendedExecutionMode == RealWorldExecutionMode.ClarifyLight)
+        {
+            if (!hasAnyGrounding)
+            {
+                reasonCodes.Add("real_world_clarify_preserved_due_to_missing_scope");
+            }
+
+            return new RealWorldExecutionPlan(
+                Mode: RealWorldExecutionMode.ClarifyLight,
+                IntentFamily: effectiveInterpretation.IntentFamily,
+                ShouldHandoffToCompanion: true,
+                ShouldUsePlaces: false,
+                UseDirectPlacesExecution: false,
+                RequiresLocationGrounding: false,
+                SelectedDomains: [],
+                ClarificationPrompt: effectiveInterpretation.ClarificationPrompt,
+                ReasonCodes: reasonCodes.ToArray());
+        }
+
+        var requiresGrounding = effectiveInterpretation.RequiresLocation
+                                && (effectiveInterpretation.HasNearMeLanguage
+                                    || !effectiveInterpretation.HasExplicitLocality);
         if (requiresGrounding && !hasAnyGrounding)
         {
             reasonCodes.Add("execution_mode:missing_location_guard");
+            reasonCodes.Add("real_world_clarify_preserved_due_to_missing_scope");
             return new RealWorldExecutionPlan(
                 Mode: RealWorldExecutionMode.MissingLocationGuard,
-                IntentFamily: interpretation.IntentFamily,
+                IntentFamily: effectiveInterpretation.IntentFamily,
                 ShouldHandoffToCompanion: true,
                 ShouldUsePlaces: false,
                 UseDirectPlacesExecution: false,
@@ -540,14 +564,14 @@ public sealed class RealWorldExecutionModePlanner(
                 ReasonCodes: reasonCodes.ToArray());
         }
 
-        var maxDomains = interpretation.RecommendedExecutionMode switch
+        var maxDomains = effectiveInterpretation.RecommendedExecutionMode switch
         {
             RealWorldExecutionMode.ExploratoryMultiDomainSearch => 4,
             RealWorldExecutionMode.FocusedThemeSearch => 2,
             _ => 1
         };
         var domainSelection = exploratoryDomainSelectionPolicy.Select(
-            interpretation,
+            effectiveInterpretation,
             normalizedQuery,
             maxDomains);
         reasonCodes.UnionWith(domainSelection.ReasonCodes);
@@ -555,7 +579,7 @@ public sealed class RealWorldExecutionModePlanner(
 
         if (selectedDomains.Count == 0)
         {
-            selectedDomains = interpretation.CandidateDomains
+            selectedDomains = effectiveInterpretation.CandidateDomains
                 .Where(domain => domain is not RealWorldDiscoveryDomain.ExploratoryEveningActivity
                                   and not RealWorldDiscoveryDomain.ExploratoryFamilyActivity)
                 .Distinct()
@@ -564,7 +588,7 @@ public sealed class RealWorldExecutionModePlanner(
             reasonCodes.Add("execution_mode:default_domain_selection_applied");
             reasonCodes.Add("real_world_planner_default_domain_selection_used");
         }
-        else if (selectedDomains.Any(interpretation.CandidateDomains.Contains))
+        else if (selectedDomains.Any(effectiveInterpretation.CandidateDomains.Contains))
         {
             reasonCodes.Add("real_world_planner_ai_domains_preserved");
         }
@@ -573,28 +597,157 @@ public sealed class RealWorldExecutionModePlanner(
             reasonCodes.Add("real_world_planner_domains_backfilled");
         }
 
-        if (interpretation.ReasonCodes.Any(code =>
+        if (effectiveInterpretation.ReasonCodes.Any(code =>
                 code.Contains("domains_backfilled_from_fallback", StringComparison.OrdinalIgnoreCase)))
         {
             reasonCodes.Add("real_world_planner_domains_backfilled");
         }
 
-        var useDirectPlacesExecution = interpretation.PlacesApplicable
-                                       && interpretation.RecommendedExecutionMode is
+        var useDirectPlacesExecution = effectiveInterpretation.PlacesApplicable
+                                       && effectiveInterpretation.RecommendedExecutionMode is
                                            RealWorldExecutionMode.FocusedPlaceSearch
                                            or RealWorldExecutionMode.FocusedThemeSearch
                                            or RealWorldExecutionMode.ExploratoryMultiDomainSearch;
 
         return new RealWorldExecutionPlan(
-            Mode: interpretation.RecommendedExecutionMode,
-            IntentFamily: interpretation.IntentFamily,
+            Mode: effectiveInterpretation.RecommendedExecutionMode,
+            IntentFamily: effectiveInterpretation.IntentFamily,
             ShouldHandoffToCompanion: true,
             ShouldUsePlaces: true,
             UseDirectPlacesExecution: useDirectPlacesExecution,
             RequiresLocationGrounding: requiresGrounding,
             SelectedDomains: selectedDomains,
-            ClarificationPrompt: interpretation.ClarificationPrompt,
+            ClarificationPrompt: effectiveInterpretation.ClarificationPrompt,
             ReasonCodes: reasonCodes.ToArray());
+    }
+
+    private static bool ShouldEnableExploratoryExecutionByContext(
+        string normalizedQuery,
+        RealWorldIntentInterpretation interpretation,
+        LocalDiscoveryConstraintExtractionResult localDiscovery,
+        bool hasAnyGrounding)
+    {
+        if (!hasAnyGrounding)
+        {
+            return false;
+        }
+
+        if (interpretation.IntentFamily == RealWorldIntentFamily.FinancialGuidance
+            || interpretation.FinancialRelated)
+        {
+            return false;
+        }
+
+        var hasExploratorySignals = interpretation.Exploratory
+                                    || interpretation.IntentFamily == RealWorldIntentFamily.ExploratoryAssistance
+                                    || localDiscovery.IsLocalDiscoveryCandidate
+                                    || ContainsExploratorySignal(normalizedQuery);
+        if (!hasExploratorySignals)
+        {
+            return false;
+        }
+
+        return HasTemporalOutingSignal(localDiscovery, normalizedQuery);
+    }
+
+    private static RealWorldIntentInterpretation PromoteToExploratoryExecution(
+        RealWorldIntentInterpretation interpretation,
+        LocalDiscoveryConstraintExtractionResult localDiscovery)
+    {
+        IReadOnlyList<RealWorldDiscoveryDomain> promotedDomains = interpretation.CandidateDomains
+            .Where(domain => domain is not RealWorldDiscoveryDomain.ExploratoryEveningActivity
+                              and not RealWorldDiscoveryDomain.ExploratoryFamilyActivity)
+            .Distinct()
+            .Take(8)
+            .ToArray();
+        if (promotedDomains.Count == 0)
+        {
+            promotedDomains = BuildFallbackExploratoryDomains(localDiscovery);
+        }
+
+        var promotedReasonCodes = new HashSet<string>(interpretation.ReasonCodes, StringComparer.Ordinal)
+        {
+            "real_world_exploratory_execution_enabled_by_context",
+            "real_world_exploratory_mode_selected"
+        };
+
+        return interpretation with
+        {
+            IntentFamily = interpretation.IntentFamily == RealWorldIntentFamily.Ambiguous
+                ? RealWorldIntentFamily.ExploratoryAssistance
+                : interpretation.IntentFamily,
+            RecommendedExecutionMode = RealWorldExecutionMode.ExploratoryMultiDomainSearch,
+            PlacesApplicable = true,
+            FinancialRelated = false,
+            RequiresLocation = true,
+            Exploratory = true,
+            ClarificationNeeded = false,
+            Confidence = Math.Max(interpretation.Confidence, 0.52d),
+            CandidateDomains = promotedDomains,
+            ClarificationPrompt = null,
+            ReasonCodes = promotedReasonCodes.ToArray()
+        };
+    }
+
+    private static IReadOnlyList<RealWorldDiscoveryDomain> BuildFallbackExploratoryDomains(
+        LocalDiscoveryConstraintExtractionResult localDiscovery)
+    {
+        var fallback = new List<RealWorldDiscoveryDomain>(4)
+        {
+            RealWorldDiscoveryDomain.EntertainmentGeneral
+        };
+        if (localDiscovery.AudienceHints.Any(value =>
+                string.Equals(value, "kids", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "family", StringComparison.OrdinalIgnoreCase)))
+        {
+            fallback.Add(RealWorldDiscoveryDomain.Playground);
+            fallback.Add(RealWorldDiscoveryDomain.ExploratoryFamilyActivity);
+        }
+        else
+        {
+            fallback.Add(RealWorldDiscoveryDomain.FoodDrinkGeneral);
+            fallback.Add(RealWorldDiscoveryDomain.NightlifeGeneral);
+        }
+
+        if (localDiscovery.PreferenceHints.Any(value => string.Equals(value, "quiet", StringComparison.OrdinalIgnoreCase)))
+        {
+            fallback.Add(RealWorldDiscoveryDomain.ParkWalk);
+        }
+
+        return fallback
+            .Distinct()
+            .Take(4)
+            .ToArray();
+    }
+
+    private static bool HasTemporalOutingSignal(
+        LocalDiscoveryConstraintExtractionResult localDiscovery,
+        string normalizedQuery)
+    {
+        if (localDiscovery.TimeHints.Any(value =>
+                string.Equals(value, "tonight", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "weekend", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "today", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return normalizedQuery.Contains("tonight", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("later tonight", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("this evening", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("evening", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("later", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("this weekend", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsExploratorySignal(string normalizedQuery)
+    {
+        return normalizedQuery.Contains("what can i do", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("what should i do", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("where should i go", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("something fun", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("things to do", StringComparison.OrdinalIgnoreCase)
+               || normalizedQuery.Contains("find something to do", StringComparison.OrdinalIgnoreCase);
     }
 }
 

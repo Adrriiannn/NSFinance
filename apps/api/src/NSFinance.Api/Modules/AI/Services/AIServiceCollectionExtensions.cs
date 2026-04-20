@@ -157,6 +157,7 @@ public static class AIServiceCollectionExtensions
         services.AddSingleton<IGooglePlacesCache, InMemoryGooglePlacesCache>();
         services.AddSingleton<IGooglePlacesCacheKeyBuilder, GooglePlacesCacheKeyBuilder>();
         services.AddSingleton<IGooglePlacesFieldMaskProvider, GooglePlacesFieldMaskProvider>();
+        services.AddSingleton<IRealWorldConversationSearchContextService, RealWorldConversationSearchContextService>();
 
         services.AddScoped<IAIProviderTransport, MockAIProviderTransport>();
         services.AddScoped<IAIProviderTransport, AzureOpenAIProviderTransport>();
@@ -201,6 +202,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IRealWorldExecutionModePlanner, RealWorldExecutionModePlanner>();
         services.AddScoped<IRealWorldPlacesExecutionService, RealWorldPlacesExecutionService>();
         services.AddScoped<IRealWorldFailureMessageBuilder, RealWorldFailureMessageBuilder>();
+        services.AddScoped<IRealWorldSearchScopeResolver, RealWorldSearchScopeResolver>();
         services.AddScoped<ICompanionLocalityResolutionService, CompanionLocalityResolutionService>();
         services.AddScoped<ICompanionPlacesVocabularyNormalizer, CompanionPlacesVocabularyNormalizer>();
         services.AddScoped<ICompanionPlacesTextQueryBuilder, CompanionPlacesTextQueryBuilder>();

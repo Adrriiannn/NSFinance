@@ -574,6 +574,8 @@ public sealed class PersistentConversationMemoryTests
             "1. Cafe One - nearby\n2. Cafe Two - open now");
         var handoff = new UserChatCompanionHandoffService(
             new LocalDiscoveryConstraintExtractor(),
+            new RealWorldConversationSearchContextService(),
+            new RealWorldSearchScopeResolver(),
             scope.ServiceProvider.GetRequiredService<IRealWorldIntentInterpreter>(),
             scope.ServiceProvider.GetRequiredService<IRealWorldExecutionModePlanner>(),
             scope.ServiceProvider.GetRequiredService<IRealWorldPlacesExecutionService>(),

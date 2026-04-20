@@ -216,6 +216,112 @@ public sealed class RealWorldExecutionModePlannerTests
         Assert.False(plan.ShouldUsePlaces);
         Assert.Contains("execution_mode:low_confidence_clarify", plan.ReasonCodes);
         Assert.Contains(RealWorldInterpreterFallbackReasonCodes.PlannerDowngrade, plan.ReasonCodes);
+        Assert.Contains("real_world_clarify_preserved_due_to_missing_scope", plan.ReasonCodes);
+    }
+
+    [Fact]
+    public void Plan_AiPrimaryLowConfidenceExploratoryWithScope_PrefersExploratoryExecution()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            RecommendedExecutionMode: RealWorldExecutionMode.ClarifyLight,
+            PlacesApplicable: false,
+            FinancialRelated: false,
+            RequiresLocation: true,
+            Exploratory: false,
+            ClarificationNeeded: true,
+            HasNearMeLanguage: false,
+            HasExplicitLocality: false,
+            Confidence: 0.27d,
+            CandidateDomains: [RealWorldDiscoveryDomain.EntertainmentGeneral],
+            ClarificationPrompt: "where should we search?",
+            ReasonCodes: ["test_low_confidence"],
+            Warnings: [])
+        {
+            InterpretationSource = RealWorldInterpretationSource.AiPrimary
+        };
+
+        var plan = planner.Plan(
+            "what can i do later tonight?",
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: "gps",
+                Latitude: 53.35,
+                Longitude: -6.26,
+                RadiusMeters: 1500,
+                TypedArea: null,
+                LocalityLabel: "Dublin",
+                AccuracyBucket: "high",
+                CapturedAtUtc: DateTimeOffset.UtcNow),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.68d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: [],
+                AudienceHints: [],
+                TimeHints: ["tonight"],
+                PreferenceHints: [],
+                ReasonCodes: ["local_discovery_time_hint"]));
+
+        Assert.Equal(RealWorldExecutionMode.ExploratoryMultiDomainSearch, plan.Mode);
+        Assert.True(plan.ShouldUsePlaces);
+        Assert.True(plan.UseDirectPlacesExecution);
+        Assert.Contains("real_world_exploratory_execution_enabled_by_context", plan.ReasonCodes);
+        Assert.DoesNotContain("execution_mode:low_confidence_clarify", plan.ReasonCodes);
+    }
+
+    [Fact]
+    public void Plan_AiPrimaryLowConfidenceExploratoryWithoutScope_PreservesClarifyLight()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            RecommendedExecutionMode: RealWorldExecutionMode.ClarifyLight,
+            PlacesApplicable: false,
+            FinancialRelated: false,
+            RequiresLocation: true,
+            Exploratory: true,
+            ClarificationNeeded: true,
+            HasNearMeLanguage: false,
+            HasExplicitLocality: false,
+            Confidence: 0.29d,
+            CandidateDomains: [RealWorldDiscoveryDomain.EntertainmentGeneral],
+            ClarificationPrompt: "where should we search?",
+            ReasonCodes: ["test_low_confidence"],
+            Warnings: [])
+        {
+            InterpretationSource = RealWorldInterpretationSource.AiPrimary
+        };
+
+        var plan = planner.Plan(
+            "what can i do later tonight?",
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: null,
+                Latitude: null,
+                Longitude: null,
+                RadiusMeters: null,
+                TypedArea: null,
+                LocalityLabel: null,
+                AccuracyBucket: null,
+                CapturedAtUtc: null),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.68d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: [],
+                AudienceHints: [],
+                TimeHints: ["tonight"],
+                PreferenceHints: [],
+                ReasonCodes: ["local_discovery_time_hint"]));
+
+        Assert.Equal(RealWorldExecutionMode.ClarifyLight, plan.Mode);
+        Assert.False(plan.ShouldUsePlaces);
+        Assert.Contains("execution_mode:low_confidence_clarify", plan.ReasonCodes);
+        Assert.Contains("real_world_clarify_preserved_due_to_missing_scope", plan.ReasonCodes);
     }
 
     [Fact]

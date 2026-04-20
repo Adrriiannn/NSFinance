@@ -106,7 +106,13 @@ public sealed record PlaceSearchLocationContext(
     bool PlannerAuthoritative = false,
     bool HasNearMeSemantic = false,
     RealWorldExecutionMode? PlannerExecutionMode = null,
-    int? PlannerMaxShortlist = null);
+    int? PlannerMaxShortlist = null,
+    string? SearchScope = null,
+    double? DeviceLatitude = null,
+    double? DeviceLongitude = null,
+    int? DeviceRadiusMeters = null,
+    string? DeviceLocalityLabel = null,
+    string? DeviceSource = null);
 
 public sealed record PlaceSearchItem(
     string PlaceId,

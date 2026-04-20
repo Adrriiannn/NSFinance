@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildNearbyGroundingDiagnosticsMetadata,
+  buildChatLocationResolutionDiagnosticsMetadata,
   buildChatLocationMetadata,
   buildChatLocationState,
   bucketizeAccuracy,
   isNearbyLocationDependentPrompt,
+  resolveChatLocationAttachment,
   resolveNearbyGpsContext
 } from "./chatLocationGrounding";
 
@@ -135,4 +137,64 @@ test("nearby gps resolution reports failed when no snapshot is available", async
   assert.equal(result.outcome, "failed");
   assert.equal(result.refreshAttempted, true);
   assert.equal(result.context, null);
+});
+
+test("chat location diagnostics allow non-nearby marker", () => {
+  const metadata = buildChatLocationResolutionDiagnosticsMetadata(
+    "granted",
+    {
+      context: null,
+      refreshAttempted: true,
+      outcome: "failed"
+    },
+    false
+  );
+  assert.equal(metadata.chat_location_nearby_prompt, "false");
+  assert.equal(metadata.chat_location_permission_state, "granted");
+  assert.equal(metadata.chat_location_refresh_attempted, "true");
+});
+
+test("chat location attachment resolves gps for non-nearby prompts when permission is granted", async () => {
+  const attachment = await resolveChatLocationAttachment(
+    "what can i do later tonight?",
+    "granted",
+    async (forceFresh) => {
+      assert.equal(forceFresh, false);
+      return {
+        latitude: 53.35,
+        longitude: -6.26,
+        accuracyMeters: 22,
+        capturedAtUtc: "2026-04-20T19:30:00Z",
+        localityLabel: "Dublin"
+      };
+    }
+  );
+
+  assert.equal(attachment.context?.source, "gps");
+  assert.equal(attachment.requiresNearbyClarification, false);
+  assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
+});
+
+test("chat location attachment keeps non-nearby prompts non-blocking when location cannot be resolved", async () => {
+  const attachment = await resolveChatLocationAttachment(
+    "where can i buy a ps5",
+    "granted",
+    async () => null
+  );
+
+  assert.equal(attachment.context, null);
+  assert.equal(attachment.requiresNearbyClarification, false);
+  assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
+});
+
+test("chat location attachment keeps nearby prompts strict when permission is not granted", async () => {
+  const attachment = await resolveChatLocationAttachment(
+    "cinemas near me",
+    "denied_can_ask_again",
+    async () => null
+  );
+
+  assert.equal(attachment.context, null);
+  assert.equal(attachment.requiresNearbyClarification, true);
+  assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "true");
 });

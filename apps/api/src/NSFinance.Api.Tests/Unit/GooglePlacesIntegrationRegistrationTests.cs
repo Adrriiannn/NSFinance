@@ -25,6 +25,10 @@ public sealed class GooglePlacesIntegrationRegistrationTests
             serviceProvider.GetRequiredService<ICompanionPlaceDiscoveryService>());
         Assert.IsType<MerchantPlaceLookupService>(
             serviceProvider.GetRequiredService<IMerchantPlaceLookupService>());
+        Assert.IsType<RealWorldConversationSearchContextService>(
+            serviceProvider.GetRequiredService<IRealWorldConversationSearchContextService>());
+        Assert.IsType<RealWorldSearchScopeResolver>(
+            serviceProvider.GetRequiredService<IRealWorldSearchScopeResolver>());
 
         // 3.6 review synthesis remains out of scope.
         Assert.IsType<NullReviewInsightsService>(

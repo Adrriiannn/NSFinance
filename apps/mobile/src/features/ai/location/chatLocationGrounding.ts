@@ -231,6 +231,12 @@ export type NearbyGpsResolutionResult = {
   outcome: NearbyGpsResolutionOutcome;
 };
 
+export type ChatLocationAttachmentResolution = {
+  context: ChatLocationContext | null;
+  diagnosticsMetadata: Record<string, string>;
+  requiresNearbyClarification: boolean;
+};
+
 export async function resolveNearbyGpsContext(
   getSnapshot: (forceFresh: boolean) => Promise<NearbyGpsSnapshot | null>,
   options?: {
@@ -274,11 +280,55 @@ export function buildNearbyGroundingDiagnosticsMetadata(
   permissionState: string,
   result: NearbyGpsResolutionResult
 ): Record<string, string> {
+  return buildChatLocationResolutionDiagnosticsMetadata(permissionState, result, true);
+}
+
+export function buildChatLocationResolutionDiagnosticsMetadata(
+  permissionState: string,
+  result: NearbyGpsResolutionResult,
+  nearbyPrompt: boolean
+): Record<string, string> {
   return {
     [chatLocationMetadataKeys.permissionState]: permissionState,
-    [chatLocationMetadataKeys.nearbyPrompt]: "true",
+    [chatLocationMetadataKeys.nearbyPrompt]: nearbyPrompt ? "true" : "false",
     [chatLocationMetadataKeys.refreshAttempted]: result.refreshAttempted ? "true" : "false",
     [chatLocationMetadataKeys.refreshOutcome]: result.outcome
+  };
+}
+
+export async function resolveChatLocationAttachment(
+  prompt: string,
+  permissionState: string,
+  getSnapshot: (forceFresh: boolean) => Promise<NearbyGpsSnapshot | null>
+): Promise<ChatLocationAttachmentResolution> {
+  const requiresNearbyClarification = isNearbyLocationDependentPrompt(prompt);
+  if (permissionState !== "granted") {
+    const diagnosticsMetadata = buildChatLocationResolutionDiagnosticsMetadata(
+      permissionState,
+      {
+        context: null,
+        refreshAttempted: false,
+        outcome: "failed"
+      },
+      requiresNearbyClarification
+    );
+    return {
+      context: null,
+      diagnosticsMetadata,
+      requiresNearbyClarification
+    };
+  }
+
+  const resolution = await resolveNearbyGpsContext(getSnapshot);
+  const diagnosticsMetadata = buildChatLocationResolutionDiagnosticsMetadata(
+    permissionState,
+    resolution,
+    requiresNearbyClarification
+  );
+  return {
+    context: resolution.context,
+    diagnosticsMetadata,
+    requiresNearbyClarification: requiresNearbyClarification && !resolution.context
   };
 }
 

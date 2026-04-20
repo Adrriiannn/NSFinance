@@ -29,9 +29,8 @@ import {
   buildChatLocationMetadata,
   buildChatLocationState,
   type ChatLocationContext,
-  isNearbyLocationDependentPrompt,
   normalizeTypedArea,
-  resolveNearbyGpsContext
+  resolveChatLocationAttachment
 } from "../features/ai/location/chatLocationGrounding";
 import { LocationPermissionPromptModal } from "../features/ai/location/LocationPermissionPromptModal";
 import { LocationTypedAreaModal } from "../features/ai/location/LocationTypedAreaModal";
@@ -822,23 +821,8 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       return;
     }
 
-    const requiresNearbyGrounding = isNearbyLocationDependentPrompt(trimmedPrompt);
-    console.info("[CompanionChatLocation]", {
-      event: "chat_grounding_detected",
-      nearbyDetected: requiresNearbyGrounding
-    });
-
     const forcedContext = options?.forcedLocationContext ?? null;
     const forcedDiagnostics = options?.diagnosticsMetadata ?? null;
-
-    if (!requiresNearbyGrounding) {
-      console.info("[CompanionChatLocation]", {
-        event: "chat_grounding_attempt_skipped_reason",
-        reason: "not_nearby_prompt"
-      });
-      await sendChatRequest(trimmedPrompt, forcedContext, forcedDiagnostics);
-      return;
-    }
 
     if (forcedContext) {
       console.info("[CompanionChatLocation]", {
@@ -853,56 +837,54 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       return;
     }
 
+    const permissionState = await resolveLatestPermissionState();
+    console.info("[CompanionChatLocation]", {
+      event: "chat_prompt_permission_state",
+      permissionState
+    });
     console.info("[CompanionChatLocation]", {
       event: "chat_grounding_attempt_started"
     });
-    const permissionState = await resolveLatestPermissionState();
-    console.info("[CompanionChatLocation]", {
-      event: "nearby_prompt_permission_state",
-      permissionState
-    });
+    const attachment = await resolveChatLocationAttachment(
+      trimmedPrompt,
+      permissionState,
+      getFreshForegroundLocationSnapshot
+    );
+    const mergedDiagnostics = {
+      ...(forcedDiagnostics ?? {}),
+      ...attachment.diagnosticsMetadata
+    };
+    if (attachment.context) {
+      console.info("[CompanionChatLocation]", {
+        event: "chat_grounding_final_state",
+        state: attachment.context.source
+      });
+      await sendChatRequest(trimmedPrompt, attachment.context, mergedDiagnostics);
+      return;
+    }
 
-    if (permissionState === "granted") {
-      const resolution = await resolveNearbyGpsContext(getFreshForegroundLocationSnapshot);
-      const diagnostics = buildNearbyGroundingDiagnosticsMetadata(permissionState, resolution);
-
-      if (resolution.context) {
-        console.info("[CompanionChatLocation]", {
-          event: "chat_grounding_final_state",
-          state: "gps"
-        });
-        await sendChatRequest(trimmedPrompt, resolution.context, diagnostics);
-        return;
-      }
-
+    if (attachment.requiresNearbyClarification) {
       console.info("[CompanionChatLocation]", {
         event: "chat_grounding_attempt_skipped_reason",
-        reason: "gps_resolution_failed",
-        outcome: resolution.outcome
+        reason: permissionState === "granted"
+          ? "gps_resolution_failed"
+          : "permission_not_granted",
+        permissionState,
+        refreshOutcome: attachment.diagnosticsMetadata.chat_location_refresh_outcome
       });
       console.info("[CompanionChatLocation]", {
         event: "chat_grounding_final_state",
         state: "missing"
       });
-      queueNearbyGroundingPrompt(trimmedPrompt, permissionState, diagnostics);
+      queueNearbyGroundingPrompt(trimmedPrompt, permissionState, mergedDiagnostics);
       return;
     }
 
-    const diagnostics = buildNearbyGroundingDiagnosticsMetadata(permissionState, {
-      context: null,
-      refreshAttempted: false,
-      outcome: "failed"
-    });
-    console.info("[CompanionChatLocation]", {
-      event: "chat_grounding_attempt_skipped_reason",
-      reason: "permission_not_granted",
-      permissionState
-    });
     console.info("[CompanionChatLocation]", {
       event: "chat_grounding_final_state",
-      state: "missing"
+      state: "none"
     });
-    queueNearbyGroundingPrompt(trimmedPrompt, permissionState, diagnostics);
+    await sendChatRequest(trimmedPrompt, null, mergedDiagnostics);
   }, [activeChat, queueNearbyGroundingPrompt, resolveLatestPermissionState, sendChatRequest]);
 
   const clearPendingNearbyRequest = useCallback(() => {

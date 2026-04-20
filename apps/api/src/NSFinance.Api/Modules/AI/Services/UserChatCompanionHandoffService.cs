@@ -11,6 +11,8 @@ public interface IUserChatCompanionHandoffService
 
 public sealed class UserChatCompanionHandoffService(
     ILocalDiscoveryConstraintExtractor localDiscoveryConstraintExtractor,
+    IRealWorldConversationSearchContextService conversationSearchContextService,
+    IRealWorldSearchScopeResolver searchScopeResolver,
     IRealWorldIntentInterpreter intentInterpreter,
     IRealWorldExecutionModePlanner executionModePlanner,
     IRealWorldPlacesExecutionService placesExecutionService,
@@ -29,8 +31,16 @@ public sealed class UserChatCompanionHandoffService(
             return null;
         }
 
-        var localDiscovery = localDiscoveryConstraintExtractor.Extract(request.UserMessage);
-        var grounding = CompanionLocationGroundingParser.Parse(request.Metadata, request.State);
+        var requestLocalDiscovery = localDiscoveryConstraintExtractor.Extract(request.UserMessage);
+        var requestGrounding = CompanionLocationGroundingParser.Parse(request.Metadata, request.State);
+        var contextReadResult = conversationSearchContextService.Read(sessionId);
+        var scopeResolution = searchScopeResolver.Resolve(
+            request.UserMessage,
+            requestGrounding,
+            requestLocalDiscovery,
+            contextReadResult);
+        var localDiscovery = scopeResolution.EffectiveLocalDiscovery;
+        var grounding = scopeResolution.EffectiveGrounding;
         var interpretation = await intentInterpreter.InterpretAsync(
             request,
             grounding,
@@ -41,9 +51,20 @@ public sealed class UserChatCompanionHandoffService(
             interpretation,
             grounding,
             localDiscovery);
+        var contextWriteGrounding = BuildContextWriteGrounding(scopeResolution);
+        if (plan.Mode != RealWorldExecutionMode.FinancialGuidanceOnly)
+        {
+            conversationSearchContextService.Write(
+                sessionId,
+                new RealWorldConversationSearchContextWriteInput(
+                    Grounding: contextWriteGrounding,
+                    LocalDiscovery: localDiscovery,
+                    Interpretation: interpretation,
+                    Plan: plan));
+        }
 
         logger.LogInformation(
-            "User chat real-world planner intentFamily={IntentFamily} mode={ExecutionMode} confidence={Confidence} placesApplicable={PlacesApplicable} directPlaces={DirectPlaces} routeAuthoritative={RouteAuthoritative} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} explicitLocality={HasExplicitLocality} permissionState={PermissionState} refreshAttempted={RefreshAttempted} refreshOutcome={RefreshOutcome}",
+            "User chat real-world planner intentFamily={IntentFamily} mode={ExecutionMode} confidence={Confidence} placesApplicable={PlacesApplicable} directPlaces={DirectPlaces} routeAuthoritative={RouteAuthoritative} hasCoordinates={HasCoordinates} hasTypedArea={HasTypedArea} explicitLocality={HasExplicitLocality} scope={SearchScope} explicitAreaOverride={ExplicitAreaOverride} contextReused={ContextReused} permissionState={PermissionState} refreshAttempted={RefreshAttempted} refreshOutcome={RefreshOutcome}",
             interpretation.IntentFamily,
             plan.Mode,
             interpretation.Confidence,
@@ -53,6 +74,9 @@ public sealed class UserChatCompanionHandoffService(
             grounding.HasCoordinates,
             grounding.HasTypedArea,
             localDiscovery.HasExplicitLocality,
+            scopeResolution.SearchScope,
+            scopeResolution.ExplicitAreaOverrodeDeviceLocation,
+            contextReadResult.ContextReused,
             ReadMetadataValue(request.Metadata, CompanionLocationMetadataKeys.PermissionState) ?? "none",
             MetadataFlagTrue(request.Metadata, CompanionLocationMetadataKeys.RefreshAttempted),
             ReadMetadataValue(request.Metadata, CompanionLocationMetadataKeys.RefreshOutcome) ?? "none");
@@ -73,7 +97,8 @@ public sealed class UserChatCompanionHandoffService(
                 RealWorldFailureScenario.ClarificationNeeded,
                 exploratory: false,
                 clarificationPrompt: plan.ClarificationPrompt,
-                requestMetadata: request.Metadata);
+                requestMetadata: request.Metadata,
+                additionalWarnings: scopeResolution.ReasonCodes);
         }
 
         if (plan.Mode == RealWorldExecutionMode.MissingLocationGuard)
@@ -90,7 +115,8 @@ public sealed class UserChatCompanionHandoffService(
                 scenario,
                 exploratory: false,
                 clarificationPrompt: null,
-                requestMetadata: request.Metadata);
+                requestMetadata: request.Metadata,
+                additionalWarnings: scopeResolution.ReasonCodes);
         }
 
         if (plan.UseDirectPlacesExecution)
@@ -102,6 +128,7 @@ public sealed class UserChatCompanionHandoffService(
                 interpretation,
                 grounding,
                 localDiscovery,
+                scopeResolution,
                 cancellationToken);
         }
 
@@ -113,6 +140,7 @@ public sealed class UserChatCompanionHandoffService(
             interpretation,
             grounding,
             localDiscovery,
+            scopeResolution,
             cancellationToken);
     }
 
@@ -123,6 +151,7 @@ public sealed class UserChatCompanionHandoffService(
         RealWorldIntentInterpretation interpretation,
         CompanionLocationGrounding grounding,
         LocalDiscoveryConstraintExtractionResult localDiscovery,
+        RealWorldSearchScopeResolution scopeResolution,
         CancellationToken cancellationToken)
     {
         var maxTotalItems = 8;
@@ -140,8 +169,7 @@ public sealed class UserChatCompanionHandoffService(
             CanonicalConcepts: interpretation.CandidateConcepts,
             RequestedShortlistSize: maxTotalItems);
         var locationContext = BuildPlaceSearchLocationContext(
-            grounding,
-            localDiscovery,
+            scopeResolution,
             plan,
             interpretation,
             maxTotalItems);
@@ -160,6 +188,7 @@ public sealed class UserChatCompanionHandoffService(
             cancellationToken);
 
         var warningSet = BuildBaseWarnings(plan, interpretation, localDiscovery, grounding, request.Metadata);
+        warningSet.UnionWith(scopeResolution.ReasonCodes);
         warningSet.UnionWith(execution.Warnings);
         warningSet.UnionWith(execution.ReasonCodes);
 
@@ -212,12 +241,14 @@ public sealed class UserChatCompanionHandoffService(
         RealWorldIntentInterpretation interpretation,
         CompanionLocationGrounding grounding,
         LocalDiscoveryConstraintExtractionResult localDiscovery,
+        RealWorldSearchScopeResolution scopeResolution,
         CancellationToken cancellationToken)
     {
         var companionQuery = BuildCompanionQuery(request.UserMessage, plan, grounding, localDiscovery);
         var companionMetadata = BuildCompanionMetadata(
             request.Metadata,
             grounding,
+            scopeResolution,
             interpretation,
             plan,
             localDiscovery);
@@ -257,6 +288,7 @@ public sealed class UserChatCompanionHandoffService(
         }
 
         var warningSet = BuildBaseWarnings(plan, interpretation, localDiscovery, grounding, request.Metadata);
+        warningSet.UnionWith(scopeResolution.ReasonCodes);
         warningSet.UnionWith(companionResponse.Warnings);
 
         var succeeded = companionResponse.Succeeded || !string.IsNullOrWhiteSpace(companionResponse.ReplyText);
@@ -383,41 +415,76 @@ public sealed class UserChatCompanionHandoffService(
         return string.Join("\n", sections);
     }
 
+    private static CompanionLocationGrounding BuildContextWriteGrounding(
+        RealWorldSearchScopeResolution scopeResolution)
+    {
+        var effective = scopeResolution.EffectiveGrounding;
+        var secondaryDevice = scopeResolution.SecondaryDeviceGrounding;
+        if (!secondaryDevice.HasCoordinates || string.IsNullOrWhiteSpace(scopeResolution.ExplicitArea))
+        {
+            return effective;
+        }
+
+        return secondaryDevice with
+        {
+            Source = "explicit_area_over_device",
+            TypedArea = scopeResolution.ExplicitArea
+        };
+    }
+
     private static PlaceSearchLocationContext? BuildPlaceSearchLocationContext(
-        CompanionLocationGrounding grounding,
-        LocalDiscoveryConstraintExtractionResult localDiscovery,
+        RealWorldSearchScopeResolution scopeResolution,
         RealWorldExecutionPlan plan,
         RealWorldIntentInterpretation interpretation,
         int maxShortlist)
     {
-        if (!grounding.HasCoordinates && !grounding.HasTypedArea && !localDiscovery.HasExplicitLocality)
+        var grounding = scopeResolution.EffectiveGrounding;
+        var localDiscovery = scopeResolution.EffectiveLocalDiscovery;
+        if (!scopeResolution.HasUsableScope)
         {
             return null;
         }
 
-        var effectiveTypedArea = grounding.HasCoordinates
-            ? null
+        var effectiveTypedArea = CompanionLocationGroundingParser.IsValidAreaHint(scopeResolution.ExplicitArea)
+            ? scopeResolution.ExplicitArea
             : CompanionLocationGroundingParser.IsValidAreaHint(grounding.TypedArea)
                 ? grounding.TypedArea
                 : CompanionLocationGroundingParser.IsValidAreaHint(localDiscovery.LocalityHint)
                     ? localDiscovery.LocalityHint
                     : null;
+        var usePrimaryCoordinates = scopeResolution.SearchScope == RealWorldSearchScopeKind.DeviceLocation;
+        var deviceGrounding = scopeResolution.SecondaryDeviceGrounding;
 
         return new PlaceSearchLocationContext(
-            Source: grounding.Source,
-            Latitude: grounding.Latitude,
-            Longitude: grounding.Longitude,
-            RadiusMeters: grounding.RadiusMeters,
+            Source: scopeResolution.SearchScope == RealWorldSearchScopeKind.ExplicitArea
+                ? "explicit_area"
+                : grounding.Source,
+            Latitude: usePrimaryCoordinates ? grounding.Latitude : null,
+            Longitude: usePrimaryCoordinates ? grounding.Longitude : null,
+            RadiusMeters: usePrimaryCoordinates ? grounding.RadiusMeters : null,
             TypedArea: effectiveTypedArea,
-            LocalityLabel: grounding.LocalityLabel ?? localDiscovery.LocalityHint,
-            AccuracyBucket: grounding.AccuracyBucket,
-            CapturedAtUtc: grounding.CapturedAtUtc,
+            LocalityLabel: localDiscovery.LocalityHint
+                           ?? grounding.LocalityLabel
+                           ?? scopeResolution.ExplicitArea,
+            AccuracyBucket: usePrimaryCoordinates ? grounding.AccuracyBucket : null,
+            CapturedAtUtc: usePrimaryCoordinates ? grounding.CapturedAtUtc : null,
             PlannerSelectedDomain: plan.SelectedDomains.FirstOrDefault(),
             PlannerSelectedConcept: interpretation.CandidateConcepts.FirstOrDefault(),
             PlannerAuthoritative: plan.UseDirectPlacesExecution,
             HasNearMeSemantic: interpretation.HasNearMeLanguage,
             PlannerExecutionMode: plan.Mode,
-            PlannerMaxShortlist: maxShortlist);
+            PlannerMaxShortlist: maxShortlist,
+            SearchScope: scopeResolution.SearchScope switch
+            {
+                RealWorldSearchScopeKind.ExplicitArea => "explicit_area",
+                RealWorldSearchScopeKind.DeviceLocation => "device_location",
+                _ => "none"
+            },
+            DeviceLatitude: deviceGrounding.HasCoordinates ? deviceGrounding.Latitude : null,
+            DeviceLongitude: deviceGrounding.HasCoordinates ? deviceGrounding.Longitude : null,
+            DeviceRadiusMeters: deviceGrounding.HasCoordinates ? deviceGrounding.RadiusMeters : null,
+            DeviceLocalityLabel: deviceGrounding.LocalityLabel,
+            DeviceSource: deviceGrounding.HasCoordinates ? deviceGrounding.Source : null);
     }
 
     private static string ResolveCountryCode(IReadOnlyDictionary<string, string>? metadata)
@@ -484,6 +551,7 @@ public sealed class UserChatCompanionHandoffService(
     private static IReadOnlyDictionary<string, string> BuildCompanionMetadata(
         IReadOnlyDictionary<string, string>? metadata,
         CompanionLocationGrounding grounding,
+        RealWorldSearchScopeResolution scopeResolution,
         RealWorldIntentInterpretation interpretation,
         RealWorldExecutionPlan plan,
         LocalDiscoveryConstraintExtractionResult localDiscovery)
@@ -496,6 +564,12 @@ public sealed class UserChatCompanionHandoffService(
         result["real_world_execution_mode"] = plan.Mode.ToString();
         result["real_world_confidence"] = interpretation.Confidence.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
         result["real_world_candidate_domains"] = string.Join(',', plan.SelectedDomains.Select(x => x.ToString()));
+        result["real_world_search_scope"] = scopeResolution.SearchScope switch
+        {
+            RealWorldSearchScopeKind.ExplicitArea => "explicit_area",
+            RealWorldSearchScopeKind.DeviceLocation => "device_location",
+            _ => "none"
+        };
 
         result["companion_intent_family"] = FinancialCompanionIntent.LocalPlacesOutings.ToString();
         result["companion_primary_intent"] = FinancialCompanionIntent.LocalPlacesOutings.ToString();
@@ -543,6 +617,18 @@ public sealed class UserChatCompanionHandoffService(
                 grounding.CapturedAtUtc.Value.UtcDateTime.ToString("O");
         }
 
+        if (scopeResolution.SecondaryDeviceGrounding.HasCoordinates)
+        {
+            result["real_world_device_latitude"] =
+                scopeResolution.SecondaryDeviceGrounding.Latitude!.Value.ToString("0.#######", System.Globalization.CultureInfo.InvariantCulture);
+            result["real_world_device_longitude"] =
+                scopeResolution.SecondaryDeviceGrounding.Longitude!.Value.ToString("0.#######", System.Globalization.CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(scopeResolution.SecondaryDeviceGrounding.LocalityLabel))
+            {
+                result["real_world_device_locality_label"] = scopeResolution.SecondaryDeviceGrounding.LocalityLabel!;
+            }
+        }
+
         return result;
     }
 
@@ -550,13 +636,14 @@ public sealed class UserChatCompanionHandoffService(
         CompanionLocationGrounding grounding)
     {
         var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (grounding.HasTypedArea)
+        var source = grounding.Source?.Trim();
+        var isUserProvidedAreaSource = string.Equals(source, "typed_area", StringComparison.OrdinalIgnoreCase)
+                                       || string.Equals(source, "query_locality", StringComparison.OrdinalIgnoreCase)
+                                       || string.Equals(source, "conversation_explicit_area", StringComparison.OrdinalIgnoreCase)
+                                       || string.Equals(source, "explicit_area", StringComparison.OrdinalIgnoreCase);
+        if (grounding.HasTypedArea && isUserProvidedAreaSource)
         {
             updates["location_preference"] = grounding.TypedArea!;
-        }
-        else if (!string.IsNullOrWhiteSpace(grounding.LocalityLabel))
-        {
-            updates["location_preference"] = grounding.LocalityLabel!;
         }
 
         return updates;
@@ -584,6 +671,11 @@ public sealed class UserChatCompanionHandoffService(
         if (hasGroundingMetadata)
         {
             warnings.Add("real_world_grounding_payload_received");
+            if (!string.IsNullOrWhiteSpace(ReadMetadataValue(requestMetadata, CompanionLocationMetadataKeys.Latitude))
+                && !string.IsNullOrWhiteSpace(ReadMetadataValue(requestMetadata, CompanionLocationMetadataKeys.Longitude)))
+            {
+                warnings.Add("real_world_ephemeral_location_attached");
+            }
         }
 
         warnings.Add(grounding.HasCoordinates
@@ -641,6 +733,15 @@ public sealed class UserChatCompanionHandoffService(
         foreach (var reasonCode in plan.ReasonCodes)
         {
             warnings.Add($"real_world_plan_reason:{reasonCode}");
+            if (string.Equals(reasonCode, "real_world_exploratory_execution_enabled_by_context", StringComparison.Ordinal))
+            {
+                warnings.Add("real_world_exploratory_execution_enabled_by_context");
+            }
+
+            if (string.Equals(reasonCode, "real_world_clarify_preserved_due_to_missing_scope", StringComparison.Ordinal))
+            {
+                warnings.Add("real_world_clarify_preserved_due_to_missing_scope");
+            }
         }
 
         return warnings;
@@ -743,6 +844,11 @@ public sealed class UserChatCompanionHandoffService(
 
         if (grounding.HasTypedArea)
         {
+            if (string.Equals(grounding.Source, "query_locality", StringComparison.OrdinalIgnoreCase))
+            {
+                return "nearby_grounding_source:query_locality";
+            }
+
             return "nearby_grounding_source:typed_area";
         }
 
