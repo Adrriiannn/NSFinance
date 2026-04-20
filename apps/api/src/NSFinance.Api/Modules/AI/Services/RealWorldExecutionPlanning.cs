@@ -100,6 +100,13 @@ public sealed class ExploratoryDomainSelectionPolicy : IExploratoryDomainSelecti
                 continue;
             }
 
+            if (mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch
+                && ShouldSuppressForExploratoryFit(scoredDomain, selected.Count, signals))
+            {
+                reasonCodes.Add("real_world_exploratory_domain_fit_gate_applied");
+                continue;
+            }
+
             if (IsRedundantWithSelected(scoredDomain.Capability, selected))
             {
                 reasonCodes.Add("real_world_catalog_candidate_family_conflict_resolved");
@@ -139,6 +146,12 @@ public sealed class ExploratoryDomainSelectionPolicy : IExploratoryDomainSelecti
                 if (selected.Contains(scoredDomain.Capability.Domain)
                     || IsRedundantWithSelected(scoredDomain.Capability, selected))
                 {
+                    continue;
+                }
+
+                if (ShouldSuppressForExploratoryFit(scoredDomain, selected.Count, signals))
+                {
+                    reasonCodes.Add("real_world_exploratory_domain_fit_gate_applied");
                     continue;
                 }
 
@@ -361,6 +374,34 @@ public sealed class ExploratoryDomainSelectionPolicy : IExploratoryDomainSelecti
         return domain.ToString().ToLowerInvariant();
     }
 
+    private static bool ShouldSuppressForExploratoryFit(
+        ScoredDomain scoredDomain,
+        int selectedCount,
+        QuerySignals signals)
+    {
+        if (selectedCount == 0)
+        {
+            return false;
+        }
+
+        var minimumScore = signals.PrefersNightlife || signals.PrefersFamily ? 18 : 16;
+        if (selectedCount >= 2)
+        {
+            minimumScore += 4;
+        }
+
+        if (signals.PrefersNightlife
+            && !scoredDomain.Capability.SuitableNightlife
+            && scoredDomain.Capability.Domain is not RealWorldDiscoveryDomain.PubBar
+            && scoredDomain.Capability.Domain is not RealWorldDiscoveryDomain.NightlifeGeneral
+            && scoredDomain.Capability.Family != RealWorldDomainFamily.FoodDrink)
+        {
+            return true;
+        }
+
+        return scoredDomain.Score < minimumScore;
+    }
+
     private sealed record ScoredDomain(
         RealWorldDomainCapability Capability,
         int Score,
@@ -450,8 +491,12 @@ public sealed class ExploratoryDomainSelectionPolicy : IExploratoryDomainSelecti
 }
 
 public sealed class RealWorldExecutionModePlanner(
-    IExploratoryDomainSelectionPolicy exploratoryDomainSelectionPolicy) : IRealWorldExecutionModePlanner
+    IExploratoryDomainSelectionPolicy exploratoryDomainSelectionPolicy,
+    IRealWorldProductDomainEligibilityPolicy? productDomainEligibilityPolicy = null) : IRealWorldExecutionModePlanner
 {
+    private readonly IRealWorldProductDomainEligibilityPolicy commerceDomainEligibilityPolicy =
+        productDomainEligibilityPolicy ?? new RealWorldProductDomainEligibilityPolicy();
+
     public RealWorldExecutionPlan Plan(
         string userQuery,
         RealWorldIntentInterpretation interpretation,
@@ -603,6 +648,26 @@ public sealed class RealWorldExecutionModePlanner(
             reasonCodes.Add("real_world_planner_domains_backfilled");
         }
 
+        var commerceEligibility = commerceDomainEligibilityPolicy.Evaluate(
+            normalizedQuery,
+            effectiveInterpretation,
+            selectedDomains);
+        if (commerceEligibility.IsCommerceVendorRequest)
+        {
+            reasonCodes.UnionWith(commerceEligibility.ReasonCodes);
+            selectedDomains = ApplyCommerceDomainEligibility(
+                selectedDomains,
+                commerceEligibility,
+                maxDomains,
+                reasonCodes);
+        }
+
+        if (effectiveInterpretation.RecommendedExecutionMode == RealWorldExecutionMode.ExploratoryMultiDomainSearch
+            && selectedDomains.Count < maxDomains)
+        {
+            reasonCodes.Add("real_world_exploratory_domain_count_reduced_for_fit");
+        }
+
         var useDirectPlacesExecution = effectiveInterpretation.PlacesApplicable
                                        && effectiveInterpretation.RecommendedExecutionMode is
                                            RealWorldExecutionMode.FocusedPlaceSearch
@@ -619,6 +684,47 @@ public sealed class RealWorldExecutionModePlanner(
             SelectedDomains: selectedDomains,
             ClarificationPrompt: effectiveInterpretation.ClarificationPrompt,
             ReasonCodes: reasonCodes.ToArray());
+    }
+
+    private static IReadOnlyList<RealWorldDiscoveryDomain> ApplyCommerceDomainEligibility(
+        IReadOnlyList<RealWorldDiscoveryDomain> selectedDomains,
+        RealWorldCommerceEligibilityResult eligibility,
+        int maxDomains,
+        ISet<string> reasonCodes)
+    {
+        var allowedSet = eligibility.AllowedDomains.ToHashSet();
+        var preferredOrder = eligibility.PreferredDomains
+            .Select((domain, index) => new { domain, index })
+            .ToDictionary(static x => x.domain, static x => x.index);
+
+        var filtered = selectedDomains
+            .Where(allowedSet.Contains)
+            .Distinct()
+            .ToList();
+        foreach (var domain in filtered)
+        {
+            reasonCodes.Add($"real_world_commerce_domain_allowed:{domain.ToString().ToLowerInvariant()}");
+        }
+
+        foreach (var excluded in selectedDomains.Where(domain => !filtered.Contains(domain)))
+        {
+            reasonCodes.Add($"real_world_commerce_domain_excluded:{excluded.ToString().ToLowerInvariant()}");
+        }
+
+        if (filtered.Count == 0)
+        {
+            filtered = eligibility.PreferredDomains
+                .Distinct()
+                .Take(Math.Max(1, maxDomains))
+                .ToList();
+            reasonCodes.Add("real_world_commerce_domain_fallback_applied");
+        }
+
+        return filtered
+            .OrderBy(domain => preferredOrder.TryGetValue(domain, out var rank) ? rank : int.MaxValue)
+            .ThenBy(static domain => domain)
+            .Take(Math.Max(1, maxDomains))
+            .ToArray();
     }
 
     private static bool ShouldEnableExploratoryExecutionByContext(
@@ -753,8 +859,12 @@ public sealed class RealWorldExecutionModePlanner(
 
 public sealed class RealWorldPlacesExecutionService(
     IPlacesSearchService placesSearchService,
-    ILogger<RealWorldPlacesExecutionService> logger) : IRealWorldPlacesExecutionService
+    ILogger<RealWorldPlacesExecutionService> logger,
+    IRealWorldProductDomainEligibilityPolicy? productDomainEligibilityPolicy = null) : IRealWorldPlacesExecutionService
 {
+    private readonly IRealWorldProductDomainEligibilityPolicy commerceDomainEligibilityPolicy =
+        productDomainEligibilityPolicy ?? new RealWorldProductDomainEligibilityPolicy();
+
     public async Task<RealWorldPlacesExecutionResult> ExecuteAsync(
         RealWorldPlacesExecutionRequest request,
         CancellationToken cancellationToken)
@@ -768,7 +878,6 @@ public sealed class RealWorldPlacesExecutionService(
             .Distinct()
             .Take(maxDomains)
             .ToArray();
-        var groups = new List<RealWorldDomainPlacesGroup>(selectedDomains.Length);
         var warnings = new HashSet<string>(StringComparer.Ordinal)
         {
             "real_world_places_execution_started"
@@ -793,18 +902,56 @@ public sealed class RealWorldPlacesExecutionService(
             }
         }
 
-        var totalItems = 0;
-        var providerFailureCount = 0;
-        var requestFailureCount = 0;
-
-        foreach (var domain in selectedDomains)
+        var eligibilityInterpretation = BuildEligibilityInterpretation(request, selectedDomains);
+        var commerceEligibility = commerceDomainEligibilityPolicy.Evaluate(
+            request.UserQuery,
+            eligibilityInterpretation,
+            selectedDomains);
+        if (commerceEligibility.IsCommerceVendorRequest)
         {
-            if (totalItems >= maxTotal)
+            reasonCodes.UnionWith(commerceEligibility.ReasonCodes);
+            var allowed = selectedDomains
+                .Where(commerceEligibility.AllowedDomains.Contains)
+                .Distinct()
+                .ToArray();
+            foreach (var domain in allowed)
             {
-                break;
+                reasonCodes.Add($"real_world_commerce_domain_allowed:{ToReasonToken(domain)}");
             }
 
-            var query = BuildDomainAlignedQuery(request.UserQuery, domain, request.RetrievalPlan, reasonCodes);
+            foreach (var excluded in selectedDomains.Where(domain => !allowed.Contains(domain)))
+            {
+                reasonCodes.Add($"real_world_commerce_domain_excluded:{ToReasonToken(excluded)}");
+            }
+
+            if (allowed.Length > 0)
+            {
+                selectedDomains = allowed;
+            }
+
+            if ((request.LocationContext?.Latitude.HasValue == true && request.LocationContext.Longitude.HasValue)
+                && !(request.RetrievalPlan?.HasNearMeSemantic ?? false))
+            {
+                reasonCodes.Add("real_world_commerce_local_bias_enabled");
+            }
+        }
+
+        if (selectedDomains.Length > 1)
+        {
+            reasonCodes.Add("real_world_domain_retrieval_isolated:true");
+        }
+
+        var providerFailureCount = 0;
+        var requestFailureCount = 0;
+        var buckets = new List<DomainExecutionBucket>(selectedDomains.Length);
+        foreach (var domain in selectedDomains)
+        {
+            var query = BuildDomainAlignedQuery(
+                request.UserQuery,
+                domain,
+                request.RetrievalPlan,
+                commerceEligibility,
+                reasonCodes);
             var domainLocationContext = BuildDomainLocationContext(
                 request.LocationContext,
                 request,
@@ -816,7 +963,8 @@ public sealed class RealWorldPlacesExecutionService(
                 domainLocationContext,
                 cancellationToken);
             warnings.UnionWith(result.Warnings ?? []);
-            reasonCodes.Add($"real_world_places_provider_candidates:{domain.ToString().ToLowerInvariant()}:{result.Items.Count}");
+            reasonCodes.Add($"real_world_places_provider_candidates:{ToReasonToken(domain)}:{result.Items.Count}");
+            reasonCodes.Add($"real_world_places_results_returned:{ToReasonToken(domain)}:{result.Items.Count}");
 
             if (!result.Items.Any())
             {
@@ -838,38 +986,31 @@ public sealed class RealWorldPlacesExecutionService(
                 continue;
             }
 
-            var availableSlots = Math.Max(0, maxTotal - totalItems);
-            if (availableSlots == 0)
-            {
-                break;
-            }
-
-            var domainFilteredItems = ApplyDomainConsistencyFilter(
+            var filteredItems = ApplyDomainConsistencyFilter(
                 result.Items,
                 domain,
                 request.Mode,
+                request.RetrievalPlan,
                 reasonCodes);
-            var items = domainFilteredItems
-                .Take(Math.Min(maxPerDomain, availableSlots))
-                .ToArray();
-            totalItems += items.Length;
-            groups.Add(new RealWorldDomainPlacesGroup(
-                Domain: domain,
-                Label: domain.ToLabel(),
-                Items: items,
-                Warnings: result.Warnings ?? []));
-            reasonCodes.Add($"real_world_places_domain_results:{domain}:{items.Length}");
-            reasonCodes.Add($"real_world_places_results_returned:{domain.ToString().ToLowerInvariant()}:{result.Items.Count}");
-            reasonCodes.Add($"real_world_places_results_surfaced:{domain.ToString().ToLowerInvariant()}:{items.Length}");
-            if (items.Length < result.Items.Count)
+            if (filteredItems.Count < result.Items.Count)
             {
                 reasonCodes.Add("real_world_places_surface_quality_trim_applied");
             }
 
-            reasonCodes.Add($"real_world_places_surface_cap_reason:max_per_domain_{maxPerDomain}");
+            if (filteredItems.Count == 0)
+            {
+                reasonCodes.Add($"real_world_places_domain_no_results:{domain}");
+                continue;
+            }
+
+            buckets.Add(new DomainExecutionBucket(
+                Domain: domain,
+                Label: domain.ToLabel(),
+                Items: filteredItems,
+                Warnings: result.Warnings ?? []));
         }
 
-        if (groups.Count == 0)
+        if (buckets.Count == 0)
         {
             var scenario = requestFailureCount > 0
                 ? RealWorldFailureScenario.ProviderRequestFailure
@@ -885,6 +1026,52 @@ public sealed class RealWorldPlacesExecutionService(
                 FailureScenario: scenario,
                 ReasonCodes: reasonCodes.ToArray(),
                 Warnings: warnings.ToArray());
+        }
+
+        if (request.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch
+            && selectedDomains.Length <= 2
+            && maxPerDomain >= 4)
+        {
+            reasonCodes.Add("real_world_exploratory_per_domain_item_boost_applied");
+        }
+
+        var groups = ApplyCrossDomainDedupeAndPack(
+            buckets,
+            maxPerDomain,
+            maxTotal,
+            reasonCodes,
+            out var totalItems);
+        if (groups.Count == 0)
+        {
+            reasonCodes.Add($"real_world_places_failure:{RealWorldFailureScenario.NoMatchesFound}");
+            return new RealWorldPlacesExecutionResult(
+                Succeeded: false,
+                HasAnyResults: false,
+                IsPartial: false,
+                Groups: [],
+                FailureScenario: RealWorldFailureScenario.NoMatchesFound,
+                ReasonCodes: reasonCodes.ToArray(),
+                Warnings: warnings.ToArray());
+        }
+
+        foreach (var domain in selectedDomains)
+        {
+            var surfacedCount = groups
+                .Where(group => group.Domain == domain)
+                .SelectMany(group => group.Items)
+                .Count();
+            reasonCodes.Add($"real_world_places_domain_results:{domain}:{surfacedCount}");
+            reasonCodes.Add($"real_world_places_results_surfaced:{ToReasonToken(domain)}:{surfacedCount}");
+            if (surfacedCount > 0)
+            {
+                reasonCodes.Add($"real_world_places_surface_cap_reason:max_per_domain_{maxPerDomain}");
+            }
+
+            var sourceBucket = buckets.FirstOrDefault(bucket => bucket.Domain == domain);
+            if (sourceBucket is not null && surfacedCount < sourceBucket.Items.Count)
+            {
+                reasonCodes.Add("real_world_places_surface_quality_trim_applied");
+            }
         }
 
         var expectedGroups = Math.Min(selectedDomains.Length, maxDomains);
@@ -912,13 +1099,69 @@ public sealed class RealWorldPlacesExecutionService(
             Warnings: warnings.ToArray());
     }
 
+    private static RealWorldIntentInterpretation BuildEligibilityInterpretation(
+        RealWorldPlacesExecutionRequest request,
+        IReadOnlyList<RealWorldDiscoveryDomain> selectedDomains)
+    {
+        return new RealWorldIntentInterpretation(
+            IntentFamily: request.RetrievalPlan?.IntentFamily ?? RealWorldIntentFamily.Ambiguous,
+            RecommendedExecutionMode: request.Mode,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: false,
+            Exploratory: request.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: request.RetrievalPlan?.HasNearMeSemantic ?? false,
+            HasExplicitLocality: !string.IsNullOrWhiteSpace(request.LocationContext?.TypedArea),
+            Confidence: 0.8d,
+            CandidateDomains: selectedDomains,
+            ClarificationPrompt: null,
+            ReasonCodes: [],
+            Warnings: [])
+        {
+            CandidateConcepts = request.RetrievalPlan?.CanonicalConcepts ?? []
+        };
+    }
+
     private static string BuildDomainAlignedQuery(
         string userQuery,
         RealWorldDiscoveryDomain domain,
         RealWorldPlaceRetrievalPlan? retrievalPlan,
+        RealWorldCommerceEligibilityResult commerceEligibility,
         ISet<string> reasonCodes)
     {
+        if (commerceEligibility.IsCommerceVendorRequest
+            || retrievalPlan?.IntentFamily == RealWorldIntentFamily.CommerceDiscovery)
+        {
+            var queryFamilyToken = ToCommerceQueryFamilyToken(domain);
+            reasonCodes.Add($"real_world_retrieval_query_family:{queryFamilyToken}");
+            var productHint = ResolveCommerceProductHint(retrievalPlan, commerceEligibility, userQuery);
+            if (!string.IsNullOrWhiteSpace(productHint))
+            {
+                return queryFamilyToken switch
+                {
+                    "electronics_retail" => $"{productHint} electronics store video game store",
+                    "convenience_store" => $"{productHint} convenience store",
+                    "grocery_store" => $"{productHint} grocery store supermarket",
+                    "petrol_station" => $"{productHint} petrol station convenience store",
+                    "shopping_retail" => $"{productHint} shopping stores",
+                    _ => $"{productHint} stores"
+                };
+            }
+
+            return queryFamilyToken switch
+            {
+                "electronics_retail" => "electronics store video game store",
+                "convenience_store" => "convenience store",
+                "grocery_store" => "grocery store supermarket",
+                "petrol_station" => "petrol station convenience store",
+                "shopping_retail" => "shopping stores",
+                _ => "stores"
+            };
+        }
+
         var domainPhrase = domain.ToQueryPhrase();
+        reasonCodes.Add($"real_world_retrieval_query_family:{ToQueryFamilyToken(domain)}");
         if (retrievalPlan?.Authoritative == true)
         {
             reasonCodes.Add("real_world_retrieval_domain_aligned_query_used");
@@ -938,6 +1181,96 @@ public sealed class RealWorldPlacesExecutionService(
         return $"{userQuery.Trim()} {domainPhrase}".Trim();
     }
 
+    private static string ResolveCommerceProductHint(
+        RealWorldPlaceRetrievalPlan? retrievalPlan,
+        RealWorldCommerceEligibilityResult commerceEligibility,
+        string userQuery)
+    {
+        var candidate = retrievalPlan?.CommerceProductHints?.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
+                        ?? commerceEligibility.ProductHints.FirstOrDefault()
+                        ?? retrievalPlan?.CanonicalConcepts.FirstOrDefault(value =>
+                            value.Contains("ps5", StringComparison.OrdinalIgnoreCase)
+                            || value.Contains("xbox", StringComparison.OrdinalIgnoreCase)
+                            || value.Contains("playstation", StringComparison.OrdinalIgnoreCase)
+                            || value.Contains("red", StringComparison.OrdinalIgnoreCase)
+                            || value.Contains("drink", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            candidate = GuessProductHintFromQuery(userQuery);
+        }
+
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return string.Empty;
+        }
+
+        var normalized = candidate
+            .Trim()
+            .Replace('_', ' ')
+            .ToLowerInvariant();
+        return normalized.Length > 40 ? normalized[..40].TrimEnd() : normalized;
+    }
+
+    private static string GuessProductHintFromQuery(string userQuery)
+    {
+        if (string.IsNullOrWhiteSpace(userQuery))
+        {
+            return string.Empty;
+        }
+
+        var normalized = userQuery.Trim().ToLowerInvariant();
+        if (normalized.Contains("ps5", StringComparison.Ordinal))
+        {
+            return "ps5";
+        }
+
+        if (normalized.Contains("xbox", StringComparison.Ordinal))
+        {
+            return "xbox";
+        }
+
+        if (normalized.Contains("red bull", StringComparison.Ordinal)
+            || normalized.Contains("redbull", StringComparison.Ordinal))
+        {
+            return "red bull";
+        }
+
+        if (normalized.Contains("controller", StringComparison.Ordinal))
+        {
+            return "controller";
+        }
+
+        if (normalized.Contains("laptop", StringComparison.Ordinal))
+        {
+            return "laptop";
+        }
+
+        return string.Empty;
+    }
+
+    private static string ToCommerceQueryFamilyToken(RealWorldDiscoveryDomain domain)
+    {
+        return domain switch
+        {
+            RealWorldDiscoveryDomain.ElectronicsRetail => "electronics_retail",
+            RealWorldDiscoveryDomain.ConvenienceStore => "convenience_store",
+            RealWorldDiscoveryDomain.Grocery => "grocery_store",
+            RealWorldDiscoveryDomain.PetrolStation => "petrol_station",
+            RealWorldDiscoveryDomain.ShoppingGeneral => "shopping_retail",
+            _ => "general_retail"
+        };
+    }
+
+    private static string ToQueryFamilyToken(RealWorldDiscoveryDomain domain)
+    {
+        return domain.ToString().ToLowerInvariant();
+    }
+
+    private static string ToReasonToken(RealWorldDiscoveryDomain domain)
+    {
+        return domain.ToString().ToLowerInvariant();
+    }
+
     private static PlaceSearchLocationContext? BuildDomainLocationContext(
         PlaceSearchLocationContext? locationContext,
         RealWorldPlacesExecutionRequest request,
@@ -955,35 +1288,218 @@ public sealed class RealWorldPlacesExecutionService(
         {
             PlannerSelectedDomain = domain,
             PlannerSelectedConcept = concept,
+            PlannerIntentFamily = request.RetrievalPlan?.IntentFamily ?? locationContext.PlannerIntentFamily,
             PlannerAuthoritative = request.RetrievalPlan?.Authoritative ?? locationContext.PlannerAuthoritative,
             HasNearMeSemantic = request.RetrievalPlan?.HasNearMeSemantic ?? locationContext.HasNearMeSemantic,
+            ImplicitLocalBias = request.RetrievalPlan?.EnableImplicitLocalBias ?? locationContext.ImplicitLocalBias,
             PlannerExecutionMode = request.Mode,
             PlannerMaxShortlist = maxTotal
         };
+    }
+
+    private static IReadOnlyList<RealWorldDomainPlacesGroup> ApplyCrossDomainDedupeAndPack(
+        IReadOnlyList<DomainExecutionBucket> buckets,
+        int maxPerDomain,
+        int maxTotal,
+        ISet<string> reasonCodes,
+        out int totalItems)
+    {
+        totalItems = 0;
+        var winnerByPlaceId = new Dictionary<string, DomainWinner>(StringComparer.OrdinalIgnoreCase);
+        var contestedPlaceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var bucket in buckets)
+        {
+            for (var index = 0; index < bucket.Items.Count; index += 1)
+            {
+                var item = bucket.Items[index];
+                if (string.IsNullOrWhiteSpace(item.PlaceId))
+                {
+                    continue;
+                }
+
+                var score = ScoreDomainWinner(bucket.Domain, item, index);
+                if (winnerByPlaceId.TryGetValue(item.PlaceId, out var existing))
+                {
+                    contestedPlaceIds.Add(item.PlaceId);
+                    if (score > existing.Score)
+                    {
+                        winnerByPlaceId[item.PlaceId] = new DomainWinner(bucket.Domain, score);
+                    }
+                }
+                else
+                {
+                    winnerByPlaceId[item.PlaceId] = new DomainWinner(bucket.Domain, score);
+                }
+            }
+        }
+
+        if (contestedPlaceIds.Count > 0)
+        {
+            reasonCodes.Add("real_world_cross_domain_dedupe_applied");
+            foreach (var winnerDomain in contestedPlaceIds
+                         .Select(id => winnerByPlaceId[id].Domain)
+                         .Distinct())
+            {
+                reasonCodes.Add($"real_world_cross_domain_dedupe_winner:{ToReasonToken(winnerDomain)}");
+            }
+        }
+
+        var groups = new List<RealWorldDomainPlacesGroup>(buckets.Count);
+        foreach (var bucket in buckets)
+        {
+            if (totalItems >= maxTotal)
+            {
+                break;
+            }
+
+            var items = new List<PlaceSearchItem>(maxPerDomain);
+            foreach (var item in bucket.Items)
+            {
+                if (items.Count >= maxPerDomain || totalItems >= maxTotal)
+                {
+                    break;
+                }
+
+                if (string.IsNullOrWhiteSpace(item.PlaceId))
+                {
+                    continue;
+                }
+
+                if (winnerByPlaceId.TryGetValue(item.PlaceId, out var winner)
+                    && winner.Domain != bucket.Domain)
+                {
+                    continue;
+                }
+
+                if (items.Any(existing =>
+                        existing.PlaceId.Equals(item.PlaceId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                items.Add(item);
+                totalItems += 1;
+            }
+
+            if (items.Count == 0)
+            {
+                continue;
+            }
+
+            groups.Add(new RealWorldDomainPlacesGroup(
+                Domain: bucket.Domain,
+                Label: bucket.Label,
+                Items: items,
+                Warnings: bucket.Warnings));
+        }
+
+        return groups;
+    }
+
+    private static int ScoreDomainWinner(
+        RealWorldDiscoveryDomain domain,
+        PlaceSearchItem item,
+        int rankIndex)
+    {
+        var profile = GetDomainConsistencyProfile(domain, strictCommerce: false);
+        var compatibilityScore = ScoreDomainCompatibility(item, profile);
+        return (GetDomainPriority(domain) * 100) + (compatibilityScore * 10) - rankIndex;
+    }
+
+    private static int GetDomainPriority(RealWorldDiscoveryDomain domain)
+    {
+        return domain switch
+        {
+            RealWorldDiscoveryDomain.PubBar => 10,
+            RealWorldDiscoveryDomain.ElectronicsRetail => 10,
+            RealWorldDiscoveryDomain.ConvenienceStore => 10,
+            RealWorldDiscoveryDomain.Grocery => 10,
+            RealWorldDiscoveryDomain.Cafe => 9,
+            RealWorldDiscoveryDomain.Restaurant => 9,
+            RealWorldDiscoveryDomain.MovieTheater => 9,
+            RealWorldDiscoveryDomain.PetrolStation => 8,
+            RealWorldDiscoveryDomain.ShoppingGeneral => 7,
+            RealWorldDiscoveryDomain.NightlifeGeneral => 6,
+            RealWorldDiscoveryDomain.FoodDrinkGeneral => 6,
+            RealWorldDiscoveryDomain.EntertainmentGeneral => 6,
+            RealWorldDiscoveryDomain.CommerceGeneral => 5,
+            _ => 4
+        };
+    }
+
+    private static int ScoreDomainCompatibility(
+        PlaceSearchItem item,
+        DomainConsistencyProfile profile)
+    {
+        if (profile.PositiveHints.Count == 0 && profile.NegativeHints.Count == 0)
+        {
+            return 0;
+        }
+
+        var typeHaystacks = GetTypeHaystacks(item);
+        var textHaystacks = GetTextHaystacks(item);
+        var hasNegative = typeHaystacks.Any(value =>
+                              profile.NegativeHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)))
+                          || textHaystacks.Any(value =>
+                              profile.NegativeHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
+        if (hasNegative)
+        {
+            return -4;
+        }
+
+        var typeMatch = typeHaystacks.Any(value =>
+            profile.PositiveHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
+        var textMatch = textHaystacks.Any(value =>
+            profile.PositiveHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
+        if (typeMatch && textMatch)
+        {
+            return 5;
+        }
+
+        if (typeMatch)
+        {
+            return 4;
+        }
+
+        if (textMatch)
+        {
+            return 2;
+        }
+
+        return 0;
     }
 
     private static IReadOnlyList<PlaceSearchItem> ApplyDomainConsistencyFilter(
         IReadOnlyList<PlaceSearchItem> items,
         RealWorldDiscoveryDomain domain,
         RealWorldExecutionMode mode,
+        RealWorldPlaceRetrievalPlan? retrievalPlan,
         ISet<string> reasonCodes)
     {
-        if (mode != RealWorldExecutionMode.FocusedPlaceSearch || items.Count == 0)
+        var strictCommerce = retrievalPlan?.IntentFamily == RealWorldIntentFamily.CommerceDiscovery;
+        if (items.Count == 0
+            || (mode != RealWorldExecutionMode.FocusedPlaceSearch && !strictCommerce))
         {
             return items;
         }
 
-        var filters = GetDomainConsistencyHints(domain);
-        if (filters.Count == 0)
+        var profile = GetDomainConsistencyProfile(domain, strictCommerce);
+        if (profile.PositiveHints.Count == 0 && profile.NegativeHints.Count == 0)
         {
             return items;
         }
 
         var filtered = items
-            .Where(item => IsDomainCompatible(item, filters))
+            .Where(item => IsDomainCompatible(item, profile))
             .ToArray();
         if (filtered.Length == 0)
         {
+            if (strictCommerce)
+            {
+                reasonCodes.Add($"real_world_places_domain_filter_zero_matches:{ToReasonToken(domain)}");
+                return [];
+            }
+
             reasonCodes.Add("real_world_places_domain_filter_no_matches_fallback_unfiltered");
             return items;
         }
@@ -996,63 +1512,168 @@ public sealed class RealWorldPlacesExecutionService(
         return filtered;
     }
 
-    private static IReadOnlyList<string> GetDomainConsistencyHints(RealWorldDiscoveryDomain domain)
+    private static DomainConsistencyProfile GetDomainConsistencyProfile(
+        RealWorldDiscoveryDomain domain,
+        bool strictCommerce)
     {
+        var tourismExclusions = strictCommerce
+            ? new[]
+            {
+                "tourist_attraction",
+                "museum",
+                "park",
+                "zoo",
+                "cemetery",
+                "castle",
+                "historical",
+                "church"
+            }
+            : Array.Empty<string>();
         return domain switch
         {
-            RealWorldDiscoveryDomain.Cafe => ["cafe", "coffee"],
-            RealWorldDiscoveryDomain.Restaurant => ["restaurant", "food"],
-            RealWorldDiscoveryDomain.Takeaway => ["takeaway", "meal_takeaway", "fast_food", "food"],
-            RealWorldDiscoveryDomain.PubBar => ["pub", "bar", "night_club"],
-            RealWorldDiscoveryDomain.MovieTheater => ["movie_theater", "cinema", "movie", "film", "theater", "theatre"],
-            RealWorldDiscoveryDomain.ParkWalk => ["park", "hiking_area", "trail", "outdoor"],
-            RealWorldDiscoveryDomain.Playground => ["playground"],
-            RealWorldDiscoveryDomain.Pharmacy => ["pharmacy", "drugstore", "chemist"],
-            RealWorldDiscoveryDomain.PetrolStation => ["gas_station", "petrol", "fuel"],
-            RealWorldDiscoveryDomain.Gym => ["gym", "fitness"],
-            RealWorldDiscoveryDomain.ElectronicsRetail => ["electronics", "computer", "mobile_phone", "video_game"],
-            RealWorldDiscoveryDomain.ConvenienceStore => ["convenience", "store", "grocery"],
-            RealWorldDiscoveryDomain.Grocery => ["grocery", "supermarket"],
-            _ => []
+            RealWorldDiscoveryDomain.Cafe => new DomainConsistencyProfile(
+                PositiveHints: ["cafe", "coffee_shop", "coffee"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.Restaurant => new DomainConsistencyProfile(
+                PositiveHints: ["restaurant", "food"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.Takeaway => new DomainConsistencyProfile(
+                PositiveHints: ["takeaway", "meal_takeaway", "fast_food"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.PubBar => new DomainConsistencyProfile(
+                PositiveHints: ["pub", "bar", "night_club"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.NightlifeGeneral => new DomainConsistencyProfile(
+                PositiveHints: ["bar", "night_club", "pub"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.MovieTheater => new DomainConsistencyProfile(
+                PositiveHints: ["movie_theater", "cinema", "theater", "theatre"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.ParkWalk => new DomainConsistencyProfile(
+                PositiveHints: ["park", "hiking_area", "trail", "outdoor"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.Playground => new DomainConsistencyProfile(
+                PositiveHints: ["playground"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.Pharmacy => new DomainConsistencyProfile(
+                PositiveHints: ["pharmacy", "drugstore", "chemist"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.PetrolStation => new DomainConsistencyProfile(
+                PositiveHints: ["gas_station", "petrol", "fuel"],
+                NegativeHints: strictCommerce ? tourismExclusions : []),
+            RealWorldDiscoveryDomain.Gym => new DomainConsistencyProfile(
+                PositiveHints: ["gym", "fitness"],
+                NegativeHints: []),
+            RealWorldDiscoveryDomain.ElectronicsRetail => new DomainConsistencyProfile(
+                PositiveHints: ["electronics_store", "computer_store", "mobile_phone_store", "video_game_store", "electronics"],
+                NegativeHints: strictCommerce ? tourismExclusions : [],
+                RequireTypeMatch: strictCommerce),
+            RealWorldDiscoveryDomain.ConvenienceStore => new DomainConsistencyProfile(
+                PositiveHints: ["convenience_store", "grocery_store", "supermarket", "food_store"],
+                NegativeHints: strictCommerce ? tourismExclusions : [],
+                RequireTypeMatch: strictCommerce),
+            RealWorldDiscoveryDomain.Grocery => new DomainConsistencyProfile(
+                PositiveHints: ["supermarket", "grocery_store", "market", "food_store"],
+                NegativeHints: strictCommerce ? tourismExclusions : [],
+                RequireTypeMatch: strictCommerce),
+            RealWorldDiscoveryDomain.ShoppingGeneral => new DomainConsistencyProfile(
+                PositiveHints: ["store", "shopping_mall", "department_store"],
+                NegativeHints: strictCommerce ? tourismExclusions : []),
+            RealWorldDiscoveryDomain.CommerceGeneral => new DomainConsistencyProfile(
+                PositiveHints: ["store", "shopping_mall", "department_store", "market"],
+                NegativeHints: strictCommerce ? tourismExclusions : []),
+            _ => new DomainConsistencyProfile(PositiveHints: [], NegativeHints: [])
         };
     }
 
-    private static bool IsDomainCompatible(PlaceSearchItem item, IReadOnlyList<string> hints)
+    private static bool IsDomainCompatible(PlaceSearchItem item, DomainConsistencyProfile profile)
     {
-        if (hints.Count == 0)
+        if (profile.PositiveHints.Count == 0 && profile.NegativeHints.Count == 0)
         {
             return true;
         }
 
-        var haystacks = new List<string>(6);
+        var typeHaystacks = GetTypeHaystacks(item);
+        var textHaystacks = GetTextHaystacks(item);
+        var hasNegative = typeHaystacks.Any(value =>
+                              profile.NegativeHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)))
+                          || textHaystacks.Any(value =>
+                              profile.NegativeHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
+        if (hasNegative)
+        {
+            return false;
+        }
+
+        if (profile.PositiveHints.Count == 0)
+        {
+            return true;
+        }
+
+        var typeMatch = typeHaystacks.Any(value =>
+            profile.PositiveHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
+        var textMatch = textHaystacks.Any(value =>
+            profile.PositiveHints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
+        return profile.RequireTypeMatch
+            ? typeMatch
+            : typeMatch || textMatch;
+    }
+
+    private static IReadOnlyList<string> GetTypeHaystacks(PlaceSearchItem item)
+    {
+        var values = new List<string>(8);
         if (!string.IsNullOrWhiteSpace(item.PrimaryType))
         {
-            haystacks.Add(item.PrimaryType);
+            values.Add(item.PrimaryType!);
         }
 
         if (!string.IsNullOrWhiteSpace(item.PrimaryTypeDisplayName))
         {
-            haystacks.Add(item.PrimaryTypeDisplayName);
-        }
-
-        if (!string.IsNullOrWhiteSpace(item.Category))
-        {
-            haystacks.Add(item.Category);
-        }
-
-        if (!string.IsNullOrWhiteSpace(item.DisplayName))
-        {
-            haystacks.Add(item.DisplayName);
+            values.Add(item.PrimaryTypeDisplayName!);
         }
 
         if (item.Types is not null)
         {
-            haystacks.AddRange(item.Types.Where(static value => !string.IsNullOrWhiteSpace(value)));
+            values.AddRange(item.Types.Where(static value => !string.IsNullOrWhiteSpace(value)));
         }
 
-        return haystacks.Any(value =>
-            hints.Any(hint => value.Contains(hint, StringComparison.OrdinalIgnoreCase)));
+        return values;
     }
+
+    private static IReadOnlyList<string> GetTextHaystacks(PlaceSearchItem item)
+    {
+        var values = new List<string>(4);
+        if (!string.IsNullOrWhiteSpace(item.Category))
+        {
+            values.Add(item.Category!);
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.DisplayName))
+        {
+            values.Add(item.DisplayName!);
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.Name))
+        {
+            values.Add(item.Name);
+        }
+
+        return values;
+    }
+
+    private sealed record DomainExecutionBucket(
+        RealWorldDiscoveryDomain Domain,
+        string Label,
+        IReadOnlyList<PlaceSearchItem> Items,
+        IReadOnlyList<string> Warnings);
+
+    private sealed record DomainWinner(
+        RealWorldDiscoveryDomain Domain,
+        int Score);
+
+    private sealed record DomainConsistencyProfile(
+        IReadOnlyList<string> PositiveHints,
+        IReadOnlyList<string> NegativeHints,
+        bool RequireTypeMatch = false);
 }
 
 public sealed class RealWorldFailureMessageBuilder : IRealWorldFailureMessageBuilder

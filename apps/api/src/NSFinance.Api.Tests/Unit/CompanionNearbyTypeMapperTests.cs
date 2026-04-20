@@ -49,6 +49,27 @@ public sealed class CompanionNearbyTypeMapperTests
         Assert.Empty(result.IncludedTypes);
     }
 
+    [Fact]
+    public void Map_CommercialElectronicsPrompt_MapsToElectronicsStoreType()
+    {
+        var result = sut.Map(
+            "where can i buy a ps5",
+            BuildConstraints());
+
+        Assert.Contains("electronics_store", result.IncludedTypes);
+    }
+
+    [Fact]
+    public void Map_CommercialConveniencePrompt_MapsToConvenienceTypes()
+    {
+        var result = sut.Map(
+            "where can i get a redbull",
+            BuildConstraints());
+
+        Assert.Contains("convenience_store", result.IncludedTypes);
+        Assert.Contains("grocery_store", result.IncludedTypes);
+    }
+
     private static LocalDiscoveryConstraintExtractionResult BuildConstraints(
         IReadOnlyList<string>? placeTypeHints = null,
         IReadOnlyList<string>? audienceHints = null)

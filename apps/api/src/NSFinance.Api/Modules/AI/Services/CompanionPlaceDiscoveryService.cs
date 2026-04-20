@@ -593,6 +593,10 @@ public sealed class GooglePlacesCompanionSearchService(
         var rankingContext = BuildRankingContext(effectiveLocationContext, constraints);
         var hybridDecision = hybridRetrievalPolicy.Decide(locationContext, constraints);
         warnings.Add(hybridDecision.ReasonCode);
+        if (effectiveLocationContext?.ImplicitLocalBias == true)
+        {
+            warnings.Add("real_world_commerce_local_bias_enabled");
+        }
 
         var primaryQueryBuild = textQueryBuilder.Build(
             new CompanionPlacesTextQueryBuildRequest(
@@ -816,7 +820,7 @@ public sealed class GooglePlacesCompanionSearchService(
             RealWorldDiscoveryDomain.Gym => "gym",
             RealWorldDiscoveryDomain.ElectronicsRetail => "electronics_store",
             RealWorldDiscoveryDomain.ConvenienceStore => "convenience_store",
-            RealWorldDiscoveryDomain.Grocery => "supermarket",
+            RealWorldDiscoveryDomain.Grocery => "grocery_store",
             RealWorldDiscoveryDomain.OutdoorActivity => "tourist_attraction",
             RealWorldDiscoveryDomain.EntertainmentGeneral => "tourist_attraction",
             RealWorldDiscoveryDomain.NightlifeGeneral => "bar",
@@ -1107,7 +1111,9 @@ public sealed class GooglePlacesCompanionSearchService(
                             && locationContext?.Latitude.HasValue == true
                             && locationContext?.Longitude.HasValue == true;
         var applyDistanceRanking = isGpsGrounded
-                                   && (constraints.HasNearMeLanguage || locationContext?.HasNearMeSemantic == true);
+                                   && (constraints.HasNearMeLanguage
+                                       || locationContext?.HasNearMeSemantic == true
+                                       || locationContext?.ImplicitLocalBias == true);
 
         return new CompanionPlaceRankingContext(
             ApplyDistanceRanking: applyDistanceRanking,

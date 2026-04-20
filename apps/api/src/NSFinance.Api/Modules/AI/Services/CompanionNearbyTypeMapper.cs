@@ -30,7 +30,12 @@ public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
             ["performing_arts_theater"] = "performing_arts_theater",
             ["gas_station"] = "gas_station",
             ["pharmacy"] = "pharmacy",
-            ["gym"] = "gym"
+            ["gym"] = "gym",
+            ["electronics_store"] = "electronics_store",
+            ["convenience_store"] = "convenience_store",
+            ["grocery_store"] = "grocery_store",
+            ["supermarket"] = "grocery_store",
+            ["store"] = "store"
         };
 
     public CompanionNearbyTypeMappingResult Map(
@@ -94,6 +99,30 @@ public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
             else if (ContainsAnyPhrase(normalizedQuery, "restaurant", "dine", "food"))
             {
                 types.Add("restaurant");
+                reasons.Add("nearby_type_from_query_phrase");
+            }
+            else if (ContainsAnyPhrase(
+                         normalizedQuery,
+                         "ps5",
+                         "xbox",
+                         "playstation",
+                         "controller",
+                         "console",
+                         "electronics"))
+            {
+                types.Add("electronics_store");
+                reasons.Add("nearby_type_from_query_phrase");
+            }
+            else if (ContainsAnyPhrase(
+                         normalizedQuery,
+                         "red bull",
+                         "redbull",
+                         "energy drink",
+                         "snack",
+                         "snacks"))
+            {
+                types.Add("convenience_store");
+                types.Add("grocery_store");
                 reasons.Add("nearby_type_from_query_phrase");
             }
             else if (ContainsAnyPhrase(normalizedQuery, "fun", "things to do", "places to visit", "attraction"))

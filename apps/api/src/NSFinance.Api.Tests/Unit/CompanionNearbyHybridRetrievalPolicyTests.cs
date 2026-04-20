@@ -65,6 +65,24 @@ public sealed class CompanionNearbyHybridRetrievalPolicyTests
         Assert.Equal("places_retrieval:hybrid_applicable_gps_near_me", decision.ReasonCode);
     }
 
+    [Fact]
+    public void Decide_GpsWithCommerceImplicitLocalBias_UsesHybrid()
+    {
+        var decision = sut.Decide(
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 1500,
+                PlannerIntentFamily: RealWorldIntentFamily.CommerceDiscovery,
+                PlannerSelectedDomain: RealWorldDiscoveryDomain.ElectronicsRetail,
+                ImplicitLocalBias: true),
+            BuildConstraints(hasNearMeLanguage: false));
+
+        Assert.True(decision.UseHybridRetrieval);
+        Assert.Equal("places_retrieval:hybrid_applicable_gps_commerce_local_bias", decision.ReasonCode);
+    }
+
     private static LocalDiscoveryConstraintExtractionResult BuildConstraints(
         bool hasNearMeLanguage)
     {

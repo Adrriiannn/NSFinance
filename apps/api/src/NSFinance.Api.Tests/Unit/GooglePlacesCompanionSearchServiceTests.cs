@@ -91,6 +91,53 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_PlannerAuthoritativeCommerce_WithImplicitLocalBias_UsesHybridWithoutNearMePhrase()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("store-1")])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [BuildCandidate("store-2")])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "where can i buy a ps5",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000,
+                PlannerSelectedDomain: RealWorldDiscoveryDomain.ElectronicsRetail,
+                PlannerSelectedConcept: "ps5",
+                PlannerIntentFamily: RealWorldIntentFamily.CommerceDiscovery,
+                PlannerAuthoritative: true,
+                HasNearMeSemantic: false,
+                ImplicitLocalBias: true,
+                PlannerExecutionMode: RealWorldExecutionMode.FocusedPlaceSearch,
+                PlannerMaxShortlist: 8),
+            CancellationToken.None);
+
+        var textRequest = Assert.Single(discovery.Requests);
+        Assert.Equal("electronics stores", textRequest.Query);
+        Assert.Single(discovery.NearbyRequests);
+        Assert.Contains("places_retrieval:hybrid_applicable_gps_commerce_local_bias", result.Warnings ?? []);
+        Assert.Contains("real_world_commerce_local_bias_enabled", result.Warnings ?? []);
+    }
+
+    [Fact]
     public async Task SearchAsync_TypoPrompt_BuildsCleanSemanticTextQuery()
     {
         var discovery = new TrackingCompanionDiscoveryService(

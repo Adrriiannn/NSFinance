@@ -159,7 +159,20 @@ public sealed record RealWorldPlaceRetrievalPlan(
     RealWorldExecutionMode ExecutionMode,
     IReadOnlyList<RealWorldDiscoveryDomain> SelectedDomains,
     IReadOnlyList<string> CanonicalConcepts,
-    int RequestedShortlistSize);
+    int RequestedShortlistSize,
+    RealWorldIntentFamily IntentFamily = RealWorldIntentFamily.Ambiguous,
+    string? CommerceProductProfile = null,
+    IReadOnlyList<string>? CommerceProductHints = null,
+    bool EnableImplicitLocalBias = false);
+
+public sealed record RealWorldCommerceEligibilityResult(
+    bool IsCommerceVendorRequest,
+    string ProductProfile,
+    IReadOnlyList<string> ProductHints,
+    IReadOnlyList<RealWorldDiscoveryDomain> AllowedDomains,
+    IReadOnlyList<RealWorldDiscoveryDomain> PreferredDomains,
+    IReadOnlyList<RealWorldDiscoveryDomain> ExcludedDomains,
+    IReadOnlyList<string> ReasonCodes);
 
 public sealed record RealWorldDomainPlacesGroup(
     RealWorldDiscoveryDomain Domain,
@@ -250,6 +263,14 @@ public interface IExploratoryDomainSelectionPolicy
         RealWorldIntentInterpretation interpretation,
         string userQuery,
         int maxDomains);
+}
+
+public interface IRealWorldProductDomainEligibilityPolicy
+{
+    RealWorldCommerceEligibilityResult Evaluate(
+        string userQuery,
+        RealWorldIntentInterpretation interpretation,
+        IReadOnlyList<RealWorldDiscoveryDomain> candidateDomains);
 }
 
 public interface IRealWorldPlacesExecutionService

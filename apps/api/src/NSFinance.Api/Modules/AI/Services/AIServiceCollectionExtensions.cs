@@ -196,6 +196,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IRealWorldConceptNormalizationPolicy, RealWorldConceptNormalizationPolicy>();
         services.AddScoped<IRealWorldInterpretationValidationPolicy, RealWorldInterpretationValidationPolicy>();
         services.AddScoped<IRealWorldDomainCapabilityCatalog, RealWorldDomainCapabilityCatalog>();
+        services.AddScoped<IRealWorldProductDomainEligibilityPolicy, RealWorldProductDomainEligibilityPolicy>();
         services.AddScoped<IRealWorldIntentInterpreterPromptBuilder, RealWorldIntentInterpreterPromptBuilder>();
         services.AddScoped<IRealWorldIntentInterpreter, RealWorldIntentInterpreter>();
         services.AddScoped<IExploratoryDomainSelectionPolicy, ExploratoryDomainSelectionPolicy>();

@@ -155,19 +155,36 @@ public sealed class UserChatCompanionHandoffService(
         CancellationToken cancellationToken)
     {
         var maxTotalItems = 8;
-        var maxDomains = plan.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch ? 4 : plan.Mode == RealWorldExecutionMode.FocusedThemeSearch ? 2 : 1;
-        var maxItemsPerDomain = plan.Mode == RealWorldExecutionMode.FocusedPlaceSearch
-            ? maxTotalItems
+        var selectedDomainCount = Math.Max(1, plan.SelectedDomains.Count);
+        var maxDomains = plan.Mode == RealWorldExecutionMode.ExploratoryMultiDomainSearch
+            ? Math.Min(4, selectedDomainCount)
             : plan.Mode == RealWorldExecutionMode.FocusedThemeSearch
-                ? 4
-                : 2;
+                ? 2
+                : 1;
+        var enableImplicitLocalBias = interpretation.IntentFamily == RealWorldIntentFamily.CommerceDiscovery
+                                      && scopeResolution.EffectiveGrounding.HasCoordinates
+                                      && !interpretation.HasNearMeLanguage;
+        var maxItemsPerDomain = plan.Mode switch
+        {
+            RealWorldExecutionMode.FocusedPlaceSearch => maxTotalItems,
+            RealWorldExecutionMode.FocusedThemeSearch => 4,
+            RealWorldExecutionMode.ExploratoryMultiDomainSearch when maxDomains <= 2 => 4,
+            RealWorldExecutionMode.ExploratoryMultiDomainSearch when maxDomains == 3 => 3,
+            _ => 2
+        };
         var retrievalPlan = new RealWorldPlaceRetrievalPlan(
             Authoritative: plan.UseDirectPlacesExecution,
             HasNearMeSemantic: interpretation.HasNearMeLanguage,
             ExecutionMode: plan.Mode,
             SelectedDomains: plan.SelectedDomains,
             CanonicalConcepts: interpretation.CandidateConcepts,
-            RequestedShortlistSize: maxTotalItems);
+            RequestedShortlistSize: maxTotalItems,
+            IntentFamily: interpretation.IntentFamily,
+            CommerceProductProfile: interpretation.IntentFamily == RealWorldIntentFamily.CommerceDiscovery
+                ? "commerce_lookup"
+                : null,
+            CommerceProductHints: interpretation.CandidateConcepts,
+            EnableImplicitLocalBias: enableImplicitLocalBias);
         var locationContext = BuildPlaceSearchLocationContext(
             scopeResolution,
             plan,
@@ -470,8 +487,13 @@ public sealed class UserChatCompanionHandoffService(
             CapturedAtUtc: usePrimaryCoordinates ? grounding.CapturedAtUtc : null,
             PlannerSelectedDomain: plan.SelectedDomains.FirstOrDefault(),
             PlannerSelectedConcept: interpretation.CandidateConcepts.FirstOrDefault(),
+            PlannerIntentFamily: interpretation.IntentFamily,
             PlannerAuthoritative: plan.UseDirectPlacesExecution,
             HasNearMeSemantic: interpretation.HasNearMeLanguage,
+            ImplicitLocalBias: interpretation.IntentFamily == RealWorldIntentFamily.CommerceDiscovery
+                               && usePrimaryCoordinates
+                               && grounding.HasCoordinates
+                               && !interpretation.HasNearMeLanguage,
             PlannerExecutionMode: plan.Mode,
             PlannerMaxShortlist: maxShortlist,
             SearchScope: scopeResolution.SearchScope switch
@@ -741,6 +763,12 @@ public sealed class UserChatCompanionHandoffService(
             if (string.Equals(reasonCode, "real_world_clarify_preserved_due_to_missing_scope", StringComparison.Ordinal))
             {
                 warnings.Add("real_world_clarify_preserved_due_to_missing_scope");
+            }
+
+            if (reasonCode.StartsWith("real_world_commerce_", StringComparison.Ordinal)
+                || string.Equals(reasonCode, "real_world_exploratory_domain_count_reduced_for_fit", StringComparison.Ordinal))
+            {
+                warnings.Add(reasonCode);
             }
         }
 

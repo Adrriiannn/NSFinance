@@ -542,4 +542,113 @@ public sealed class RealWorldExecutionModePlannerTests
             domain => domainCatalog.TryGetDomain(domain, out var capability)
                       && capability.Family == RealWorldDomainFamily.FoodDrink);
     }
+
+    [Fact]
+    public void Plan_CommercePs5Request_ExcludesConvenienceStoreDomain()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.CommerceDiscovery,
+            RecommendedExecutionMode: RealWorldExecutionMode.FocusedThemeSearch,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: true,
+            Exploratory: false,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: false,
+            HasExplicitLocality: false,
+            Confidence: 0.86d,
+            CandidateDomains:
+            [
+                RealWorldDiscoveryDomain.ElectronicsRetail,
+                RealWorldDiscoveryDomain.ConvenienceStore,
+                RealWorldDiscoveryDomain.ShoppingGeneral
+            ],
+            ClarificationPrompt: null,
+            ReasonCodes: ["test"],
+            Warnings: []);
+
+        var plan = planner.Plan(
+            "where can i buy a ps5",
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: "gps",
+                Latitude: 53.35,
+                Longitude: -6.26,
+                RadiusMeters: 1500,
+                TypedArea: null,
+                LocalityLabel: "Dublin",
+                AccuracyBucket: "high",
+                CapturedAtUtc: DateTimeOffset.UtcNow),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.8d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: [],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: []));
+
+        Assert.Contains(RealWorldDiscoveryDomain.ElectronicsRetail, plan.SelectedDomains);
+        Assert.DoesNotContain(RealWorldDiscoveryDomain.ConvenienceStore, plan.SelectedDomains);
+        Assert.Contains("real_world_commerce_product_detected:electronics_console", plan.ReasonCodes);
+        Assert.Contains("real_world_commerce_domain_excluded:conveniencestore", plan.ReasonCodes);
+    }
+
+    [Fact]
+    public void Plan_ExploratoryDrinkingPrompt_ReducesWeakFillerDomains()
+    {
+        var interpretation = new RealWorldIntentInterpretation(
+            IntentFamily: RealWorldIntentFamily.ExploratoryAssistance,
+            RecommendedExecutionMode: RealWorldExecutionMode.ExploratoryMultiDomainSearch,
+            PlacesApplicable: true,
+            FinancialRelated: false,
+            RequiresLocation: true,
+            Exploratory: true,
+            ClarificationNeeded: false,
+            HasNearMeLanguage: false,
+            HasExplicitLocality: true,
+            Confidence: 0.88d,
+            CandidateDomains:
+            [
+                RealWorldDiscoveryDomain.PubBar,
+                RealWorldDiscoveryDomain.NightlifeGeneral,
+                RealWorldDiscoveryDomain.ParkWalk,
+                RealWorldDiscoveryDomain.Pharmacy
+            ],
+            ClarificationPrompt: null,
+            ReasonCodes: ["test"],
+            Warnings: []);
+
+        var plan = planner.Plan(
+            "where can i go drinking in dublin 2?",
+            interpretation,
+            grounding: new CompanionLocationGrounding(
+                Source: "query_locality",
+                Latitude: null,
+                Longitude: null,
+                RadiusMeters: null,
+                TypedArea: "Dublin 2",
+                LocalityLabel: "Dublin 2",
+                AccuracyBucket: null,
+                CapturedAtUtc: null),
+            localDiscovery: new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.9d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: true,
+                LocalityHint: "dublin 2",
+                PlaceTypeHints: ["bar"],
+                AudienceHints: [],
+                TimeHints: ["tonight"],
+                PreferenceHints: [],
+                ReasonCodes: []));
+
+        Assert.Contains(RealWorldDiscoveryDomain.PubBar, plan.SelectedDomains);
+        Assert.Contains(RealWorldDiscoveryDomain.NightlifeGeneral, plan.SelectedDomains);
+        Assert.True(plan.SelectedDomains.Count <= 2);
+        Assert.Contains("real_world_exploratory_domain_count_reduced_for_fit", plan.ReasonCodes);
+    }
 }

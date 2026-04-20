@@ -603,6 +603,144 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         Assert.Equal(0, companion.CallCount);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_CommercialPs5Request_UsesDomainCorrectCommerceRetrieval()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var places = new TrackingPlacesSearchService();
+        var sut = CreateSut(companion, aiClient, places);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "where can i buy a ps5",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-11",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "1500"
+                },
+                ClientRequestId: "req-11",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.True(places.CallCount >= 1);
+        Assert.Contains(places.Queries, query => query.Contains("electronics store", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(places.Queries, query => query.Contains("places to visit", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("real_world_commerce_product_detected:electronics_console", response.Warnings);
+        Assert.Contains("real_world_commerce_local_bias_enabled", response.Warnings);
+        Assert.Contains("real_world_retrieval_query_family:electronics_retail", response.Warnings);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CommercialRedBullRequest_UsesConvenienceStyleRetrieval()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var places = new TrackingPlacesSearchService();
+        var sut = CreateSut(companion, aiClient, places);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "where can i get a redbull",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-12",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.357123",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.44789",
+                    [CompanionLocationMetadataKeys.RadiusMeters] = "1500"
+                },
+                ClientRequestId: "req-12",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.True(places.CallCount >= 1);
+        Assert.Contains(
+            places.Queries,
+            query => query.Contains("convenience", StringComparison.OrdinalIgnoreCase)
+                     || query.Contains("grocery", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(places.Queries, query => query.Contains("places to visit", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("real_world_commerce_product_detected:convenience_snack", response.Warnings);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.StartsWith("real_world_retrieval_query_family:convenience_store", StringComparison.Ordinal)
+                       || warning.StartsWith("real_world_retrieval_query_family:grocery_store", StringComparison.Ordinal));
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ExploratoryDrinking_DedupesSiblingDomainsAndBoostsItems()
+    {
+        var companion = new TrackingCompanionService(
+            new FinancialCompanionResponse(
+                ReplyText: "unused",
+                Intent: FinancialCompanionIntent.LocalPlacesOutings,
+                ToolsUsed: [],
+                Warnings: [],
+                Succeeded: true,
+                FailureReason: null,
+                ModelUsed: "unused",
+                InputTokens: 0,
+                OutputTokens: 0));
+        var aiClient = new TrackingAIClient();
+        var places = new DomainAwarePlacesSearchService();
+        var sut = CreateSut(companion, aiClient, places);
+
+        var response = await sut.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "where can i go drinking in dublin 2?",
+                RecentTurns: [],
+                State: null,
+                CorrelationId: "corr-13",
+                Metadata: null,
+                ClientRequestId: "req-13",
+                UserId: Guid.NewGuid(),
+                UsePersistentMemory: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("real_world_cross_domain_dedupe_applied", response.Warnings);
+        Assert.Contains("real_world_cross_domain_dedupe_winner:pubbar", response.Warnings);
+        Assert.Equal(1, CountOccurrences(response.ReplyText, "Temple Bar Pub"));
+        Assert.DoesNotContain("Parks & Walks", response.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, aiClient.CallCount);
+        Assert.Equal(0, companion.CallCount);
+    }
+
     private static UserChatOrchestrator CreateSut(
         TrackingCompanionService companion,
         TrackingAIClient aiClient,
@@ -807,6 +945,8 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
     private sealed class TrackingPlacesSearchService : IPlacesSearchService
     {
         public int CallCount { get; private set; }
+        public List<string> Queries { get; } = [];
+        public List<PlaceSearchLocationContext?> LocationContexts { get; } = [];
 
         public Task<PlaceSearchResult> SearchAsync(
             string query,
@@ -816,6 +956,8 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             CallCount += 1;
+            Queries.Add(query);
+            LocationContexts.Add(locationContext);
 
             var normalized = query.ToLowerInvariant();
             var item = normalized switch
@@ -833,6 +975,17 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
                 var q when q.Contains("restaurant", StringComparison.Ordinal)
                     || q.Contains("food", StringComparison.Ordinal)
                     => BuildItem("restaurant-1", "Dockside Kitchen", "Restaurant"),
+                var q when q.Contains("electronics", StringComparison.Ordinal)
+                    || q.Contains("video game store", StringComparison.Ordinal)
+                    || q.Contains("xbox", StringComparison.Ordinal)
+                    || q.Contains("ps5", StringComparison.Ordinal)
+                    => BuildItem("electronics-1", "Tech Hub", "Electronics", "electronics_store"),
+                var q when q.Contains("convenience", StringComparison.Ordinal)
+                    || q.Contains("grocery", StringComparison.Ordinal)
+                    || q.Contains("red bull", StringComparison.Ordinal)
+                    => BuildItem("convenience-1", "Quick Mart", "Convenience Store", "convenience_store"),
+                var q when q.Contains("petrol station", StringComparison.Ordinal)
+                    => BuildItem("petrol-1", "Fuel Express", "Petrol Station", "gas_station"),
                 _ => BuildItem("park-1", "Canal Walk Park", "Park")
             };
 
@@ -845,11 +998,17 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
 
         private static PlaceSearchItem BuildItem(string id, string name, string category)
         {
+            return BuildItem(id, name, category, category.ToLowerInvariant().Replace(' ', '_'));
+        }
+
+        private static PlaceSearchItem BuildItem(string id, string name, string category, string primaryType)
+        {
             return new PlaceSearchItem(
                 PlaceId: id,
                 Name: name,
                 Category: category,
                 PriceLevel: "PRICE_LEVEL_MODERATE",
+                PrimaryType: primaryType,
                 ShortFormattedAddress: "Dublin",
                 Rating: 4.4,
                 UserRatingCount: 100,
@@ -914,6 +1073,78 @@ public sealed class UserChatOrchestratorCompanionHandoffTests
                         ProviderErrorCode: null),
                     Warnings: []));
         }
+    }
+
+    private sealed class DomainAwarePlacesSearchService : IPlacesSearchService
+    {
+        public Task<PlaceSearchResult> SearchAsync(
+            string query,
+            string country,
+            PlaceSearchLocationContext? locationContext,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var domain = locationContext?.PlannerSelectedDomain;
+            IReadOnlyList<PlaceSearchItem> items = domain switch
+            {
+                RealWorldDiscoveryDomain.PubBar =>
+                [
+                    BuildPlaceItem("temple-bar", "Temple Bar Pub", "Pub", "bar"),
+                    BuildPlaceItem("long-hall", "The Long Hall", "Pub", "bar"),
+                    BuildPlaceItem("palace-bar", "Palace Bar", "Pub", "bar"),
+                    BuildPlaceItem("merchant-inn", "Merchant Inn", "Pub", "bar")
+                ],
+                RealWorldDiscoveryDomain.NightlifeGeneral =>
+                [
+                    BuildPlaceItem("temple-bar", "Temple Bar Pub", "Nightlife", "bar"),
+                    BuildPlaceItem("club-noir", "Club Noir", "Nightlife", "night_club"),
+                    BuildPlaceItem("rooftop-late", "Rooftop Late", "Nightlife", "night_club"),
+                    BuildPlaceItem("electric-rooms", "Electric Rooms", "Nightlife", "night_club")
+                ],
+                _ =>
+                [
+                    BuildPlaceItem("generic-1", "Generic Place", "Place", "point_of_interest")
+                ]
+            };
+
+            return Task.FromResult(
+                new PlaceSearchResult(
+                    Items: items,
+                    Metadata: new PlaceSearchMetadata(
+                        UseCase: "companion_discovery",
+                        FromCache: false,
+                        RequestedCandidateCount: 8,
+                        ReturnedCandidateCount: items.Count,
+                        FieldMaskVariant: "companion_discovery",
+                        Elapsed: TimeSpan.FromMilliseconds(5),
+                        TimedOut: false,
+                        ProviderErrorCode: null),
+                    Warnings: []));
+        }
+    }
+
+    private static int CountOccurrences(string source, string fragment)
+    {
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(fragment))
+        {
+            return 0;
+        }
+
+        var index = 0;
+        var count = 0;
+        while (true)
+        {
+            index = source.IndexOf(fragment, index, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                break;
+            }
+
+            count += 1;
+            index += fragment.Length;
+        }
+
+        return count;
     }
 
     private static IReadOnlyList<PlaceSearchItem> BuildMovieItems(int count)

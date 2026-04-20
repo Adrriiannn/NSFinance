@@ -78,6 +78,38 @@ public sealed class CompanionPlacesRequestBuildersTests
     }
 
     [Fact]
+    public void BuildTextQuery_AuthoritativeElectronicsHint_DoesNotFallBackToTourismQuery()
+    {
+        var builder = new CompanionPlacesTextQueryBuilder(normalizer);
+        var constraints = new LocalDiscoveryConstraintExtractionResult(
+            IsLocalDiscoveryCandidate: true,
+            Confidence: 0.95d,
+            HasNearMeLanguage: false,
+            HasExplicitLocality: false,
+            LocalityHint: null,
+            PlaceTypeHints: ["electronics_store"],
+            AudienceHints: [],
+            TimeHints: [],
+            PreferenceHints: [],
+            ReasonCodes: ["real_world_retrieval_planner_constraints_applied"]);
+
+        var result = builder.Build(
+            new CompanionPlacesTextQueryBuildRequest(
+                UserQuery: "electronics stores",
+                Constraints: constraints,
+                LocationContext: new PlaceSearchLocationContext(
+                    Source: "gps",
+                    Latitude: 53.3570,
+                    Longitude: -6.4486,
+                    RadiusMeters: 2000),
+                IsGpsNearMe: false));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("electronics stores", result.Query);
+        Assert.DoesNotContain("places to visit", result.Query!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void BuildNearbyRequest_ValidInput_IsSanitizedAndClamped()
     {
         var builder = new CompanionPlacesNearbyRequestBuilder();

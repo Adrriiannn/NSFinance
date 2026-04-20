@@ -132,7 +132,16 @@ public sealed class CompanionPlacesTextQueryBuilder(
             ["performing_arts_theater"] = "theatres",
             ["gas_station"] = "petrol stations",
             ["pharmacy"] = "pharmacies",
-            ["gym"] = "gyms"
+            ["gym"] = "gyms",
+            ["electronics_store"] = "electronics stores",
+            ["video_game_store"] = "video game stores",
+            ["computer_store"] = "computer stores",
+            ["mobile_phone_store"] = "mobile phone stores",
+            ["convenience_store"] = "convenience stores",
+            ["grocery_store"] = "grocery stores",
+            ["supermarket"] = "supermarkets",
+            ["store"] = "stores",
+            ["shopping_mall"] = "shopping centers"
         };
 
     private static readonly HashSet<string> GenericLocalityStopWords =
@@ -284,6 +293,28 @@ public sealed class CompanionPlacesTextQueryBuilder(
             {
                 return "restaurants";
             }
+
+            if (words.Any(word => word is "ps5"
+                    or "xbox"
+                    or "playstation"
+                    or "controller"
+                    or "console"
+                    or "laptop"
+                    or "electronics"))
+            {
+                return "electronics stores";
+            }
+
+            if (words.Any(word => word is "redbull"
+                    or "red"
+                    or "bull"
+                    or "snack"
+                    or "snacks"
+                    or "energy"
+                    or "drink"))
+            {
+                return "convenience stores";
+            }
         }
 
         if (constraints.AudienceHints.Any(value => string.Equals(value, "kids", StringComparison.OrdinalIgnoreCase)))
@@ -296,7 +327,7 @@ public sealed class CompanionPlacesTextQueryBuilder(
             return "family friendly places";
         }
 
-        return constraints.IsLocalDiscoveryCandidate ? "places to visit" : "local places";
+        return "local places";
     }
 
     private static string ResolvePreferencePrefix(LocalDiscoveryConstraintExtractionResult constraints)
@@ -334,7 +365,7 @@ public sealed class CompanionPlacesTextQueryBuilder(
             return "family friendly places";
         }
 
-        return "places to visit";
+        return "local places";
     }
 
     private static string? ResolveLocalityCandidate(
@@ -469,6 +500,10 @@ public sealed class CompanionPlacesNearbyRequestBuilder : ICompanionPlacesNearby
         "playground",
         "performing_arts_theater",
         "restaurant",
+        "store",
+        "electronics_store",
+        "convenience_store",
+        "grocery_store",
         "tourist_attraction",
         "zoo"
     ];
