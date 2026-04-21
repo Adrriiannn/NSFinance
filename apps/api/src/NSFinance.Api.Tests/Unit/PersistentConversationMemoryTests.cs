@@ -537,20 +537,19 @@ public sealed class PersistentConversationMemoryTests
             CancellationToken.None);
 
         Assert.False(response.Succeeded);
-        Assert.Equal("persistent_context_build_failed", response.FailureReason);
+        Assert.Equal("explicit_fallback_blocked_in_production", response.FailureReason);
         Assert.Equal(ConversationTurnStatus.Failed, response.TurnStatus);
         Assert.Contains("explicit_fallback_blocked_in_production", response.Warnings);
 
         var turn = await dbContext.ConversationTurns
             .SingleAsync(x => x.Id == response.ConversationTurnId);
         Assert.Equal(ConversationTurnStatus.Failed, turn.Status);
-        Assert.Equal("persistent_context_build_failed", turn.FailureCode);
+        Assert.Equal("explicit_fallback_blocked_in_production", turn.FailureCode);
 
         var fallbackFailure = await dbContext.OperationalFailureRecords
-            .SingleAsync(x => x.FailureType == "chat_transient_fallback");
+            .SingleAsync(x => x.FailureType == "chat_persistent_context_build_failed");
         Assert.Equal(OperationalFailureArea.UserChat, fallbackFailure.Area);
-        Assert.Contains("summary_load_failed", fallbackFailure.DetailsJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("\"fallbackMode\":\"explicit\"", fallbackFailure.DetailsJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("summary_load_failed", fallbackFailure.Fingerprint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -570,24 +569,11 @@ public sealed class PersistentConversationMemoryTests
         await using var scope = services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var userId = await SeedUserAsync(dbContext, "chat-local-discovery-cancel");
-        var companion = new AlwaysSuccessFinancialCompanionService(
-            "1. Cafe One - nearby\n2. Cafe Two - open now");
-        var handoff = new UserChatCompanionHandoffService(
-            new LocalDiscoveryConstraintExtractor(),
-            new RealWorldConversationSearchContextService(),
-            new RealWorldSearchScopeResolver(),
-            scope.ServiceProvider.GetRequiredService<IRealWorldIntentInterpreter>(),
-            scope.ServiceProvider.GetRequiredService<IRealWorldExecutionModePlanner>(),
-            scope.ServiceProvider.GetRequiredService<IRealWorldPlacesExecutionService>(),
-            scope.ServiceProvider.GetRequiredService<IRealWorldFailureMessageBuilder>(),
-            companion,
-            NullLogger<UserChatCompanionHandoffService>.Instance);
         var orchestrator = BuildOrchestratorWithPersistentContextFailure(
             scope.ServiceProvider,
             dbContext,
             new OperationCanceledException("Persistent context cancelled during DB summary read."),
-            environmentName: "Production",
-            companionHandoffService: handoff);
+            environmentName: "Production");
 
         var response = await orchestrator.ExecuteAsync(
             new UserChatRequest(
@@ -609,12 +595,10 @@ public sealed class PersistentConversationMemoryTests
 
         Assert.True(response.Succeeded);
         Assert.Null(response.FailureReason);
-        Assert.Equal(0, companion.CallCount);
-        Assert.Contains("persistent_memory_fallback_to_transient", response.Warnings);
         Assert.Contains("persistent_context_failure:persistent_context_cancelled", response.Warnings);
-        Assert.Contains("persistent_context_optional_for_local_discovery", response.Warnings);
-        Assert.Contains("chat_path_companion_local_places", response.Warnings);
+        Assert.Contains("persistent_context_transient_fallback", response.Warnings);
         Assert.DoesNotContain("persistent_context_build_failed", response.Warnings);
+        Assert.DoesNotContain("transient_fallback_disabled", response.Warnings);
     }
 
     [Fact]
@@ -652,9 +636,8 @@ public sealed class PersistentConversationMemoryTests
             CancellationToken.None);
 
         Assert.False(response.Succeeded);
-        Assert.Equal("persistent_context_build_failed", response.FailureReason);
+        Assert.Equal("transient_fallback_disabled", response.FailureReason);
         Assert.Contains("transient_fallback_disabled", response.Warnings);
-        Assert.DoesNotContain("persistent_context_optional_for_local_discovery", response.Warnings);
     }
 
     [Fact]
@@ -698,16 +681,15 @@ public sealed class PersistentConversationMemoryTests
         var userId = await SeedUserAsync(dbContext, "chat-propagate-cancel");
         using var cts = new CancellationTokenSource();
 
-        var options = scope.ServiceProvider.GetRequiredService<IOptions<AIIntegrationOptions>>();
-        var orchestrator = new UserChatOrchestrator(
-            scope.ServiceProvider.GetRequiredService<IUserChatComplexityClassifier>(),
+        var orchestrator = new ConversationLayerOrchestrator(
             scope.ServiceProvider.GetRequiredService<IConversationContextService>(),
             scope.ServiceProvider.GetRequiredService<IAIModelRouter>(),
-            scope.ServiceProvider.GetRequiredService<IPromptBuilder>(),
-            scope.ServiceProvider.GetRequiredService<IUserChatResponseParser>(),
-            scope.ServiceProvider.GetRequiredService<IAIClient>(),
-            NullLogger<UserChatOrchestrator>.Instance,
-            options,
+            scope.ServiceProvider.GetRequiredService<IConversationBehaviorEngine>(),
+            scope.ServiceProvider.GetRequiredService<IModeRouter>(),
+            scope.ServiceProvider.GetRequiredService<IResponseComposer>(),
+            NullLogger<ConversationLayerOrchestrator>.Instance,
+            scope.ServiceProvider.GetRequiredService<IOptions<AIIntegrationOptions>>(),
+            scope.ServiceProvider.GetRequiredService<IChatTelemetry>(),
             new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
             new TestHostEnvironment("Development"),
             scope.ServiceProvider.GetRequiredService<IConversationThreadService>(),
@@ -716,7 +698,7 @@ public sealed class PersistentConversationMemoryTests
             scope.ServiceProvider.GetRequiredService<IConversationStateService>(),
             scope.ServiceProvider.GetRequiredService<IConversationSummaryService>(),
             new CancellingPersistentConversationContextService(cts),
-            companionHandoffService: null,
+            scope.ServiceProvider.GetRequiredService<IResultContextService>(),
             localDiscoveryConstraintExtractor: new LocalDiscoveryConstraintExtractor());
 
         var response = await orchestrator.ExecuteAsync(
@@ -785,8 +767,8 @@ public sealed class PersistentConversationMemoryTests
 
         Assert.True(first.Succeeded);
         Assert.True(second.Succeeded);
-        Assert.Contains("persistent_memory_fallback_to_transient", first.Warnings);
-        Assert.Contains("persistent_memory_fallback_to_transient", second.Warnings);
+        Assert.Contains("persistent_context_transient_fallback", first.Warnings);
+        Assert.Contains("persistent_context_transient_fallback", second.Warnings);
         Assert.NotNull(first.ConversationThreadId);
         Assert.Equal(first.ConversationThreadId, second.ConversationThreadId);
 
@@ -818,15 +800,23 @@ public sealed class PersistentConversationMemoryTests
             }
         });
 
-        var orchestrator = new UserChatOrchestrator(
-            new UserChatComplexityClassifier(),
-            new ConversationContextService(options, NullLogger<ConversationContextService>.Instance),
+        var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock"
+        });
+        await using var scope = services.CreateAsyncScope();
+
+        var orchestrator = new ConversationLayerOrchestrator(
+            scope.ServiceProvider.GetRequiredService<IConversationContextService>(),
             new AIModelRouter(options, NullLogger<AIModelRouter>.Instance),
-            new AIPromptBuilder(),
-            new UserChatResponseParser(),
-            new AlwaysSuccessAIClient(),
-            NullLogger<UserChatOrchestrator>.Instance,
+            scope.ServiceProvider.GetRequiredService<IConversationBehaviorEngine>(),
+            scope.ServiceProvider.GetRequiredService<IModeRouter>(),
+            scope.ServiceProvider.GetRequiredService<IResponseComposer>(),
+            NullLogger<ConversationLayerOrchestrator>.Instance,
             options,
+            scope.ServiceProvider.GetRequiredService<IChatTelemetry>(),
             new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
             new TestHostEnvironment("Development"));
 
@@ -923,23 +913,21 @@ public sealed class PersistentConversationMemoryTests
         return services.BuildServiceProvider();
     }
 
-    private static UserChatOrchestrator BuildOrchestratorWithPersistentContextFailure(
+    private static ConversationLayerOrchestrator BuildOrchestratorWithPersistentContextFailure(
         IServiceProvider provider,
         AppDbContext dbContext,
         Exception exception,
-        string environmentName,
-        IUserChatCompanionHandoffService? companionHandoffService = null)
+        string environmentName)
     {
-        var options = provider.GetRequiredService<IOptions<AIIntegrationOptions>>();
-        return new UserChatOrchestrator(
-            provider.GetRequiredService<IUserChatComplexityClassifier>(),
+        return new ConversationLayerOrchestrator(
             provider.GetRequiredService<IConversationContextService>(),
             provider.GetRequiredService<IAIModelRouter>(),
-            provider.GetRequiredService<IPromptBuilder>(),
-            provider.GetRequiredService<IUserChatResponseParser>(),
-            provider.GetRequiredService<IAIClient>(),
-            NullLogger<UserChatOrchestrator>.Instance,
-            options,
+            provider.GetRequiredService<IConversationBehaviorEngine>(),
+            provider.GetRequiredService<IModeRouter>(),
+            provider.GetRequiredService<IResponseComposer>(),
+            NullLogger<ConversationLayerOrchestrator>.Instance,
+            provider.GetRequiredService<IOptions<AIIntegrationOptions>>(),
+            provider.GetRequiredService<IChatTelemetry>(),
             new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
             new TestHostEnvironment(environmentName),
             provider.GetRequiredService<IConversationThreadService>(),
@@ -948,8 +936,8 @@ public sealed class PersistentConversationMemoryTests
             provider.GetRequiredService<IConversationStateService>(),
             provider.GetRequiredService<IConversationSummaryService>(),
             new ThrowingPersistentConversationContextService(exception),
-            companionHandoffService,
-            new LocalDiscoveryConstraintExtractor());
+            provider.GetRequiredService<IResultContextService>(),
+            provider.GetRequiredService<ILocalDiscoveryConstraintExtractor>());
     }
 
     private sealed class ThrowingPersistentConversationContextService(Exception exception) : IPersistentConversationContextService
@@ -972,29 +960,6 @@ public sealed class PersistentConversationMemoryTests
             = new Microsoft.Extensions.FileProviders.NullFileProvider();
     }
 
-    private sealed class AlwaysSuccessAIClient : IAIClient
-    {
-        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(
-                new AIResponse(
-                    Content: "{\"replyText\":\"ok\",\"warnings\":[],\"followUpIntentHints\":[],\"suggestedStructuredStateUpdates\":{},\"referencedContextSummary\":\"\"}",
-                    StructuredPayloadJson: null,
-                    FinishReason: "stop",
-                    Provider: "Mock",
-                    Model: route.Model,
-                    Deployment: route.Deployment,
-                    InputTokenEstimate: 10,
-                    OutputTokenEstimate: 10,
-                    LatencyMs: 1,
-                    WasMocked: true,
-                    RawDiagnostics: null,
-                    Succeeded: true,
-                    FailureReason: null));
-        }
-    }
-
     private sealed class CancellingPersistentConversationContextService(
         CancellationTokenSource cts) : IPersistentConversationContextService
     {
@@ -1007,28 +972,4 @@ public sealed class PersistentConversationMemoryTests
         }
     }
 
-    private sealed class AlwaysSuccessFinancialCompanionService(
-        string replyText) : IFinancialCompanionService
-    {
-        public int CallCount { get; private set; }
-
-        public Task<FinancialCompanionResponse> ExecuteAsync(
-            FinancialCompanionRequest request,
-            CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            CallCount += 1;
-            return Task.FromResult(
-                new FinancialCompanionResponse(
-                    ReplyText: replyText,
-                    Intent: FinancialCompanionIntent.LocalPlacesOutings,
-                    ToolsUsed: ["IPlacesSearchService"],
-                    Warnings: ["places_response_built_from_grounded_candidates"],
-                    Succeeded: true,
-                    FailureReason: null,
-                    ModelUsed: "places_grounded_response",
-                    InputTokens: 0,
-                    OutputTokens: 0));
-        }
-    }
 }

@@ -9,12 +9,24 @@ public sealed record MerchantInvestigationPromptInput(
     string CorrelationId,
     IReadOnlyDictionary<string, string>? Metadata = null);
 
-public sealed record UserChatPromptInput(
+public sealed record ConversationDecisionPromptInput(
     UserChatRequest ChatRequest,
     IReadOnlyList<AIMessage> ContextMessages,
     string? ContextSummary,
-    IReadOnlyDictionary<string, string> StructuredState,
-    UserChatComplexityEvaluation ComplexityEvaluation);
+    ConversationStateSnapshot State,
+    ResultContextSnapshot? ResultContext,
+    IReadOnlyDictionary<string, string> ClientMetadata,
+    IReadOnlyList<string> FailureHistory);
+
+public sealed record ResponseCompositionPromptInput(
+    ResponseCompositionRequest Request,
+    string CorrelationId);
+
+public sealed record ExplorationSubtypePromptInput(
+    UserChatRequest ChatRequest,
+    ConversationStateSnapshot State,
+    ResultContextSnapshot? ResultContext,
+    IReadOnlyDictionary<string, string> ClientMetadata);
 
 public sealed record PromptBuildResult(
     string? SystemInstructions,
@@ -22,8 +34,22 @@ public sealed record PromptBuildResult(
     string StructuredSchemaName,
     IReadOnlyList<string> ReasonCodes);
 
-public interface IPromptBuilder
+public interface IMerchantInvestigationPromptBuilder
 {
-    PromptBuildResult BuildMerchantInvestigationPrompt(MerchantInvestigationPromptInput input);
-    PromptBuildResult BuildUserChatPrompt(UserChatPromptInput input);
+    PromptBuildResult BuildPrompt(MerchantInvestigationPromptInput input);
+}
+
+public interface IConversationDecisionPromptBuilder
+{
+    PromptBuildResult BuildPrompt(ConversationDecisionPromptInput input);
+}
+
+public interface IResponseCompositionPromptBuilder
+{
+    PromptBuildResult BuildPrompt(ResponseCompositionPromptInput input);
+}
+
+public interface IExplorationSubtypePromptBuilder
+{
+    PromptBuildResult BuildPrompt(ExplorationSubtypePromptInput input);
 }

@@ -74,7 +74,7 @@ public sealed class RealWorldProductDomainEligibilityPolicy : IRealWorldProductD
     {
         var normalizedQuery = Normalize(userQuery);
         var isCommerceIntent = interpretation.IntentFamily == RealWorldIntentFamily.CommerceDiscovery
-                               || RealWorldDeterministicFallbackBuilder.IsExplicitVendorLookup(normalizedQuery);
+                               || IsExplicitVendorLookup(normalizedQuery);
         if (!isCommerceIntent)
         {
             return new RealWorldCommerceEligibilityResult(
@@ -215,5 +215,16 @@ public sealed class RealWorldProductDomainEligibilityPolicy : IRealWorldProductD
         var cleaned = value.Trim().ToLowerInvariant();
         cleaned = Regex.Replace(cleaned, @"[^\p{L}\p{N}\s'\-]", " ");
         return Regex.Replace(cleaned, "\\s+", " ").Trim();
+    }
+
+    private static bool IsExplicitVendorLookup(string normalizedQuery)
+    {
+        return normalizedQuery.Contains("where can i buy", StringComparison.Ordinal)
+               || normalizedQuery.Contains("where can i get", StringComparison.Ordinal)
+               || normalizedQuery.Contains("where to buy", StringComparison.Ordinal)
+               || normalizedQuery.Contains("where to get", StringComparison.Ordinal)
+               || normalizedQuery.Contains("shop for", StringComparison.Ordinal)
+               || normalizedQuery.Contains("pick up", StringComparison.Ordinal)
+               || normalizedQuery.Contains("purchase", StringComparison.Ordinal);
     }
 }

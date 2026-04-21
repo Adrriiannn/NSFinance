@@ -17,6 +17,7 @@ public class ConversationThread
     public ICollection<ConversationMessage> Messages { get; set; } = [];
     public ICollection<ConversationTurn> Turns { get; set; } = [];
     public ICollection<ConversationStateSnapshot> StateSnapshots { get; set; } = [];
+    public ICollection<ConversationResultContext> ResultContexts { get; set; } = [];
     public ICollection<ConversationSummary> Summaries { get; set; } = [];
     public ICollection<ConversationContextBuildLog> ContextBuildLogs { get; set; } = [];
 }

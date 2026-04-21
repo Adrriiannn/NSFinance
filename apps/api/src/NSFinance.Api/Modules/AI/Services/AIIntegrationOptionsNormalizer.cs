@@ -8,6 +8,8 @@ public static class AIIntegrationOptionsNormalizer
 
         options.Models ??= new AIModelNameOptions();
         options.Routing ??= new AIModelRoutingOptions();
+        options.Architecture ??= new ConversationArchitectureOptions();
+        options.Architecture.Tiers ??= new ConversationModelTierOptions();
         options.AzureOpenAI ??= new AzureOpenAIOptions();
 
         var providerToken = NormalizeNullable(options.Provider);
@@ -29,6 +31,10 @@ public static class AIIntegrationOptionsNormalizer
         options.Routing.FastDeploymentName = NormalizeOrEmpty(options.Routing.FastDeploymentName);
         options.Routing.HeavyModelName = NormalizeOrEmpty(options.Routing.HeavyModelName);
         options.Routing.HeavyDeploymentName = NormalizeOrEmpty(options.Routing.HeavyDeploymentName);
+        options.Architecture.Tiers.L1DecisionModelName = NormalizeOrEmpty(options.Architecture.Tiers.L1DecisionModelName);
+        options.Architecture.Tiers.L1DecisionDeploymentName = NormalizeOrEmpty(options.Architecture.Tiers.L1DecisionDeploymentName);
+        options.Architecture.Tiers.L2CompositionModelName = NormalizeOrEmpty(options.Architecture.Tiers.L2CompositionModelName);
+        options.Architecture.Tiers.L2CompositionDeploymentName = NormalizeOrEmpty(options.Architecture.Tiers.L2CompositionDeploymentName);
         var fastAliasProvided = !string.IsNullOrWhiteSpace(options.Models.Fast);
         var heavyAliasProvided = !string.IsNullOrWhiteSpace(options.Models.Heavy);
 
@@ -80,6 +86,26 @@ public static class AIIntegrationOptionsNormalizer
             && !string.IsNullOrWhiteSpace(options.Routing.HeavyDeploymentName))
         {
             options.Routing.HeavyModelEnabled = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L1DecisionModelName))
+        {
+            options.Architecture.Tiers.L1DecisionModelName = options.Routing.HeavyModelName;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L1DecisionDeploymentName))
+        {
+            options.Architecture.Tiers.L1DecisionDeploymentName = options.Routing.HeavyDeploymentName;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L2CompositionModelName))
+        {
+            options.Architecture.Tiers.L2CompositionModelName = options.Routing.FastModelName;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L2CompositionDeploymentName))
+        {
+            options.Architecture.Tiers.L2CompositionDeploymentName = options.Routing.FastDeploymentName;
         }
 
         if (options.ProviderKind == AIProviderKind.AzureOpenAI && !options.UseMockProvider)

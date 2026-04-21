@@ -7,7 +7,7 @@ namespace NSFinance.Api.Modules.AI.Services;
 public sealed class MerchantInvestigationOrchestrator(
     MerchantDescriptorNormalizer merchantDescriptorNormalizer,
     IAIModelRouter modelRouter,
-    IPromptBuilder promptBuilder,
+    IMerchantInvestigationPromptBuilder promptBuilder,
     IAIClient aiClient,
     IMerchantInvestigationResponseParser responseParser,
     IMerchantInvestigationResultCache resultCache,
@@ -43,7 +43,7 @@ public sealed class MerchantInvestigationOrchestrator(
             return cachedResult;
         }
 
-        var prompt = promptBuilder.BuildMerchantInvestigationPrompt(
+        var prompt = promptBuilder.BuildPrompt(
             new MerchantInvestigationPromptInput(
                 RawDescriptor: sanitizedDescriptor,
                 NormalizedDescriptor: normalizedDescriptor,

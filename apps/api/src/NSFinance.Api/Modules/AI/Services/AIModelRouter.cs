@@ -32,11 +32,13 @@ public sealed class AIModelRouter(
                     taskType,
                     requestedClass);
 
+                var heavyNames = ResolveRouteNames(config, taskType, AIModelClass.HeavyReasoning);
+
                 return new AIModelRoute(
                     taskType,
                     AIModelClass.HeavyReasoning,
-                    routing.HeavyModelName,
-                    routing.HeavyDeploymentName,
+                    heavyNames.Model,
+                    heavyNames.Deployment,
                     IsFallback: false,
                     Reason: "heavy_model_disabled_fail_fast",
                     Notes: ["heavy_model_disabled"]);
@@ -47,13 +49,15 @@ public sealed class AIModelRouter(
                 taskType,
                 requestedClass,
                 AIModelClass.Fast,
-                routing.HeavyModelFallbackPolicy);
+                config.Routing.HeavyModelFallbackPolicy);
+
+            var fastNames = ResolveRouteNames(config, taskType, AIModelClass.Fast);
 
             return new AIModelRoute(
                 taskType,
                 AIModelClass.Fast,
-                routing.FastModelName,
-                routing.FastDeploymentName,
+                fastNames.Model,
+                fastNames.Deployment,
                 IsFallback: true,
                 Reason: "heavy_model_disabled_fallback_to_fast",
                 Notes: BuildNotes("heavy_model_disabled", "fallback_to_fast", complexityHint));
@@ -61,21 +65,23 @@ public sealed class AIModelRouter(
 
         if (wantsHeavy)
         {
+            var heavyNames = ResolveRouteNames(config, taskType, AIModelClass.HeavyReasoning);
             return new AIModelRoute(
                 taskType,
                 AIModelClass.HeavyReasoning,
-                routing.HeavyModelName,
-                routing.HeavyDeploymentName,
+                heavyNames.Model,
+                heavyNames.Deployment,
                 IsFallback: false,
                 Reason: "heavy_reasoning_route",
                 Notes: BuildNotes(complexityHint));
         }
 
+        var fastRoute = ResolveRouteNames(config, taskType, AIModelClass.Fast);
         return new AIModelRoute(
             taskType,
             AIModelClass.Fast,
-            routing.FastModelName,
-            routing.FastDeploymentName,
+            fastRoute.Model,
+            fastRoute.Deployment,
             IsFallback: false,
             Reason: "fast_route",
             Notes: BuildNotes(complexityHint));
@@ -88,8 +94,34 @@ public sealed class AIModelRouter(
             AITaskType.MerchantInvestigation => AIModelClass.HeavyReasoning,
             AITaskType.UserChatComplex => AIModelClass.HeavyReasoning,
             AITaskType.FinancialReasoning => AIModelClass.HeavyReasoning,
+            AITaskType.ConversationDecision => AIModelClass.HeavyReasoning,
+            AITaskType.ResponseComposition => AIModelClass.Fast,
             _ => AIModelClass.Fast
         };
+    }
+
+    private static (string Model, string Deployment) ResolveRouteNames(
+        AIIntegrationOptions config,
+        AITaskType taskType,
+        AIModelClass modelClass)
+    {
+        if (taskType == AITaskType.ConversationDecision && modelClass == AIModelClass.HeavyReasoning)
+        {
+            return (
+                config.Architecture.Tiers.L1DecisionModelName,
+                config.Architecture.Tiers.L1DecisionDeploymentName);
+        }
+
+        if (taskType == AITaskType.ResponseComposition && modelClass == AIModelClass.Fast)
+        {
+            return (
+                config.Architecture.Tiers.L2CompositionModelName,
+                config.Architecture.Tiers.L2CompositionDeploymentName);
+        }
+
+        return modelClass == AIModelClass.HeavyReasoning
+            ? (config.Routing.HeavyModelName, config.Routing.HeavyDeploymentName)
+            : (config.Routing.FastModelName, config.Routing.FastDeploymentName);
     }
 
     private static IReadOnlyList<string> BuildNotes(params string?[] values)

@@ -12,7 +12,9 @@ public enum AITaskType
     UserChatSimple = 1,
     UserChatComplex = 2,
     FinancialReasoning = 3,
-    Other = 4
+    Other = 4,
+    ConversationDecision = 5,
+    ResponseComposition = 6
 }
 
 public enum AIModelClass

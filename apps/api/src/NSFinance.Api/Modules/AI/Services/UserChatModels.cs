@@ -17,7 +17,26 @@ public sealed record ConversationStateSnapshot(
     string? BudgetPreference,
     string? LocationPreference,
     string? MerchantInvestigationSubject,
-    IReadOnlyList<string> RecentConclusions);
+    IReadOnlyList<string> RecentConclusions,
+    int SchemaVersion = 2,
+    ConversationMode? ActiveMode = ConversationMode.Conversation,
+    ConversationMode? ModeCandidate = ConversationMode.Conversation,
+    ConversationReadinessLevel ReadinessLevel = ConversationReadinessLevel.R0_Unknown,
+    string? InferredIntent = null,
+    IReadOnlyList<string>? MissingConstraints = null,
+    ConversationSignals? ConversationSignals = null,
+    string? LastClarificationPrompt = null,
+    IReadOnlyList<string>? LastSuggestedOptions = null,
+    IReadOnlyList<ConversationSuggestedEntity>? LastSuggestedEntities = null,
+    string? SelectedEntityId = null,
+    string? LastExecutionFingerprint = null,
+    string? TopicStatus = null,
+    string? TransitionIntent = null,
+    double? Confidence = null,
+    bool NeedsFollowUp = false,
+    FollowUpBindingType FollowUpBindingType = FollowUpBindingType.None,
+    ConversationResultContextReference? ResultContextRef = null,
+    ConversationLoopGuards? LoopGuards = null);
 
 public sealed record UserChatRequest(
     string UserMessage,

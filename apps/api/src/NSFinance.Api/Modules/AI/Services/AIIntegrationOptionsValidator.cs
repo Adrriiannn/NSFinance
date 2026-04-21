@@ -45,6 +45,16 @@ public sealed class AIIntegrationOptionsValidator : IValidateOptions<AIIntegrati
             errors.Add("AI configuration misconfiguration: UseMockProvider=false requires Provider=AzureOpenAI.");
         }
 
+        if (options.Architecture.ResultContextActiveMinutes <= 0)
+        {
+            errors.Add("AI Architecture misconfiguration: Architecture:ResultContextActiveMinutes must be > 0.");
+        }
+
+        if (options.Architecture.ResultContextPersistedHours <= 0)
+        {
+            errors.Add("AI Architecture misconfiguration: Architecture:ResultContextPersistedHours must be > 0.");
+        }
+
         if (provider != AIProviderKind.AzureOpenAI)
         {
             return errors.Count == 0
@@ -75,6 +85,26 @@ public sealed class AIIntegrationOptionsValidator : IValidateOptions<AIIntegrati
         if (string.IsNullOrWhiteSpace(options.Routing.HeavyDeploymentName))
         {
             errors.Add("AI Routing misconfiguration: Routing:HeavyDeploymentName is required for AzureOpenAI provider.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L1DecisionModelName))
+        {
+            errors.Add("AI Architecture misconfiguration: Architecture:Tiers:L1DecisionModelName is required for AzureOpenAI provider.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L1DecisionDeploymentName))
+        {
+            errors.Add("AI Architecture misconfiguration: Architecture:Tiers:L1DecisionDeploymentName is required for AzureOpenAI provider.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L2CompositionModelName))
+        {
+            errors.Add("AI Architecture misconfiguration: Architecture:Tiers:L2CompositionModelName is required for AzureOpenAI provider.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L2CompositionDeploymentName))
+        {
+            errors.Add("AI Architecture misconfiguration: Architecture:Tiers:L2CompositionDeploymentName is required for AzureOpenAI provider.");
         }
 
         if (IsLegacyRoutingValue(options.Routing.FastModelName))

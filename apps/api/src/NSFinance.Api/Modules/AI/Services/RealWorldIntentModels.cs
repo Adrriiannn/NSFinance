@@ -59,25 +59,6 @@ public enum RealWorldDomainFamily
     Meta = 6
 }
 
-public enum RealWorldFailureScenario
-{
-    MissingLocation = 0,
-    LocationDeniedOpenSettings = 1,
-    ProviderRequestFailure = 2,
-    ProviderUnavailable = 3,
-    NoMatchesFound = 4,
-    ClarificationNeeded = 5,
-    DomainNotActionable = 6,
-    ExploratoryPartialResults = 7,
-    InternalRoutingConflict = 8
-}
-
-public enum RealWorldInterpretationSource
-{
-    AiPrimary = 0,
-    DeterministicFallback = 1
-}
-
 public sealed record RealWorldIntentInterpretation(
     RealWorldIntentFamily IntentFamily,
     RealWorldExecutionMode RecommendedExecutionMode,
@@ -95,21 +76,7 @@ public sealed record RealWorldIntentInterpretation(
     IReadOnlyList<string> Warnings)
 {
     public IReadOnlyList<string> CandidateConcepts { get; init; } = [];
-
-    public RealWorldInterpretationSource InterpretationSource { get; init; } =
-        RealWorldInterpretationSource.DeterministicFallback;
 }
-
-public sealed record RealWorldExecutionPlan(
-    RealWorldExecutionMode Mode,
-    RealWorldIntentFamily IntentFamily,
-    bool ShouldHandoffToCompanion,
-    bool ShouldUsePlaces,
-    bool UseDirectPlacesExecution,
-    bool RequiresLocationGrounding,
-    IReadOnlyList<RealWorldDiscoveryDomain> SelectedDomains,
-    string? ClarificationPrompt,
-    IReadOnlyList<string> ReasonCodes);
 
 public sealed record RealWorldDomainCapability(
     RealWorldDiscoveryDomain Domain,
@@ -138,33 +105,6 @@ public sealed record RealWorldDomainCapability(
     bool ExploratoryFallbackEligible,
     bool IsGeneric);
 
-public sealed record RealWorldDomainSelectionResult(
-    IReadOnlyList<RealWorldDiscoveryDomain> SelectedDomains,
-    IReadOnlyList<string> ReasonCodes);
-
-public sealed record RealWorldPlacesExecutionRequest(
-    string UserQuery,
-    string CountryCode,
-    PlaceSearchLocationContext? LocationContext,
-    IReadOnlyList<RealWorldDiscoveryDomain> Domains,
-    int MaxDomains,
-    int MaxItemsPerDomain,
-    int MaxTotalItems,
-    RealWorldExecutionMode Mode,
-    RealWorldPlaceRetrievalPlan? RetrievalPlan = null);
-
-public sealed record RealWorldPlaceRetrievalPlan(
-    bool Authoritative,
-    bool HasNearMeSemantic,
-    RealWorldExecutionMode ExecutionMode,
-    IReadOnlyList<RealWorldDiscoveryDomain> SelectedDomains,
-    IReadOnlyList<string> CanonicalConcepts,
-    int RequestedShortlistSize,
-    RealWorldIntentFamily IntentFamily = RealWorldIntentFamily.Ambiguous,
-    string? CommerceProductProfile = null,
-    IReadOnlyList<string>? CommerceProductHints = null,
-    bool EnableImplicitLocalBias = false);
-
 public sealed record RealWorldCommerceEligibilityResult(
     bool IsCommerceVendorRequest,
     string ProductProfile,
@@ -174,95 +114,11 @@ public sealed record RealWorldCommerceEligibilityResult(
     IReadOnlyList<RealWorldDiscoveryDomain> ExcludedDomains,
     IReadOnlyList<string> ReasonCodes);
 
-public sealed record RealWorldDomainPlacesGroup(
-    RealWorldDiscoveryDomain Domain,
-    string Label,
-    IReadOnlyList<PlaceSearchItem> Items,
-    IReadOnlyList<string> Warnings);
-
-public sealed record RealWorldPlacesExecutionResult(
-    bool Succeeded,
-    bool HasAnyResults,
-    bool IsPartial,
-    IReadOnlyList<RealWorldDomainPlacesGroup> Groups,
-    RealWorldFailureScenario? FailureScenario,
-    IReadOnlyList<string> ReasonCodes,
-    IReadOnlyList<string> Warnings);
-
-public sealed record RealWorldFailureMessage(
-    string ReplyText,
-    IReadOnlyList<string> Warnings,
-    IReadOnlyList<string> FollowUpIntentHints);
-
-public interface IRealWorldIntentInterpreter
-{
-    Task<RealWorldIntentInterpretation> InterpretAsync(
-        UserChatRequest request,
-        CompanionLocationGrounding grounding,
-        LocalDiscoveryConstraintExtractionResult localDiscovery,
-        CancellationToken cancellationToken);
-}
-
-public interface IRealWorldDeterministicFallbackBuilder
-{
-    RealWorldIntentInterpretation BuildSeed(
-        string userMessage,
-        LocalDiscoveryConstraintExtractionResult localDiscovery);
-
-    RealWorldIntentInterpretation BuildFallback(
-        string userMessage,
-        LocalDiscoveryConstraintExtractionResult localDiscovery);
-}
-
-public interface IRealWorldFinancialGuardrailPolicy
-{
-    bool ShouldForceFinancialGuidance(string userMessage, out string reasonCode);
-}
-
-public interface IRealWorldInterpretationValidationPolicy
-{
-    RealWorldIntentInterpretation ValidateAndNormalize(
-        string userMessage,
-        CompanionLocationGrounding grounding,
-        LocalDiscoveryConstraintExtractionResult localDiscovery,
-        RealWorldIntentInterpretation aiInterpretation,
-        RealWorldIntentInterpretation deterministicFallback);
-}
-
-public sealed record RealWorldConceptNormalizationResult(
-    IReadOnlyList<string> NormalizedConcepts,
-    IReadOnlyList<RealWorldDiscoveryDomain> MappedDomains,
-    IReadOnlyList<string> ReasonCodes);
-
-public interface IRealWorldConceptNormalizationPolicy
-{
-    RealWorldConceptNormalizationResult Normalize(
-        IReadOnlyList<string> candidateConcepts,
-        IReadOnlyList<RealWorldDiscoveryDomain> candidateDomains);
-}
-
-public interface IRealWorldExecutionModePlanner
-{
-    RealWorldExecutionPlan Plan(
-        string userQuery,
-        RealWorldIntentInterpretation interpretation,
-        CompanionLocationGrounding grounding,
-        LocalDiscoveryConstraintExtractionResult localDiscovery);
-}
-
 public interface IRealWorldDomainCapabilityCatalog
 {
     IReadOnlyList<RealWorldDomainCapability> GetDomains();
 
     bool TryGetDomain(RealWorldDiscoveryDomain domain, out RealWorldDomainCapability capability);
-}
-
-public interface IExploratoryDomainSelectionPolicy
-{
-    RealWorldDomainSelectionResult Select(
-        RealWorldIntentInterpretation interpretation,
-        string userQuery,
-        int maxDomains);
 }
 
 public interface IRealWorldProductDomainEligibilityPolicy
@@ -271,21 +127,6 @@ public interface IRealWorldProductDomainEligibilityPolicy
         string userQuery,
         RealWorldIntentInterpretation interpretation,
         IReadOnlyList<RealWorldDiscoveryDomain> candidateDomains);
-}
-
-public interface IRealWorldPlacesExecutionService
-{
-    Task<RealWorldPlacesExecutionResult> ExecuteAsync(
-        RealWorldPlacesExecutionRequest request,
-        CancellationToken cancellationToken);
-}
-
-public interface IRealWorldFailureMessageBuilder
-{
-    RealWorldFailureMessage Build(
-        RealWorldFailureScenario scenario,
-        bool exploratory,
-        string? clarificationPrompt = null);
 }
 
 public static class RealWorldDomainMetadata
@@ -349,17 +190,5 @@ public static class RealWorldDomainMetadata
             _ => "places"
         };
     }
-}
-
-public static class RealWorldInterpreterFallbackReasonCodes
-{
-    public const string Prefix = "real_world_interpreter_fallback:";
-    public const string AiUnavailable = Prefix + "ai_unavailable";
-    public const string AiCallFailed = Prefix + "ai_call_failed";
-    public const string InvalidPayload = Prefix + "invalid_payload";
-    public const string UnknownVocabulary = Prefix + "unknown_vocabulary";
-    public const string LowConfidence = Prefix + "low_confidence";
-    public const string ValidationInconsistent = Prefix + "validation_inconsistent";
-    public const string PlannerDowngrade = Prefix + "planner_downgrade";
 }
 

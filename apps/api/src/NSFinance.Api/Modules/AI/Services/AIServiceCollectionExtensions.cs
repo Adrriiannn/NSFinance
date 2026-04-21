@@ -17,48 +17,6 @@ public static class AIServiceCollectionExtensions
 
         services.AddOptions<AIIntegrationOptions>()
             .ValidateOnStart();
-        services.AddOptions<CompanionAISettingsOptions>()
-            .Bind(configuration.GetSection(CompanionAISettingsOptions.SectionName))
-            .Validate(
-                options => options.MaxTokensPerResponse > 0,
-                "CompanionAI max tokens must be > 0")
-            .Validate(
-                options => options.MaxTurnsPerSession > 0,
-                "CompanionAI max turns must be > 0")
-            .Validate(
-                options => options.DailySoftCapPerUser > 0,
-                "CompanionAI daily soft cap must be > 0")
-            .ValidateOnStart();
-        services.AddOptions<CompanionOrchestrationOptions>()
-            .Bind(configuration.GetSection(CompanionOrchestrationOptions.SectionName))
-            .Validate(
-                options => options.MaxToolCallsPerRequest > 0,
-                "Companion orchestration max tool calls must be > 0")
-            .Validate(
-                options => options.MaxContextKeys > 0,
-                "Companion orchestration max context keys must be > 0")
-            .Validate(
-                options => options.MaxSerializedContextChars > 1_000,
-                "Companion orchestration max serialized context chars must be > 1000")
-            .Validate(
-                options => options.MaxSpendDomains > 0,
-                "Companion orchestration max spend domains must be > 0")
-            .Validate(
-                options => options.MaxRecurringItems > 0,
-                "Companion orchestration max recurring items must be > 0")
-            .Validate(
-                options => options.MaxTransactionRows > 0,
-                "Companion orchestration max transaction rows must be > 0")
-            .Validate(
-                options => options.MaxPlaceItems > 0,
-                "Companion orchestration max place items must be > 0")
-            .Validate(
-                options => options.MaxSummaryTextLength >= 60,
-                "Companion orchestration max summary text length must be >= 60")
-            .Validate(
-                options => options.MaxSecondaryOptionalTools >= 0,
-                "Companion orchestration max secondary optional tools must be >= 0")
-            .ValidateOnStart();
         services.AddOptions<CompanionProfileLifecycleOptions>()
             .Bind(configuration.GetSection(CompanionProfileLifecycleOptions.SectionName))
             .Validate(
@@ -157,7 +115,7 @@ public static class AIServiceCollectionExtensions
         services.AddSingleton<IGooglePlacesCache, InMemoryGooglePlacesCache>();
         services.AddSingleton<IGooglePlacesCacheKeyBuilder, GooglePlacesCacheKeyBuilder>();
         services.AddSingleton<IGooglePlacesFieldMaskProvider, GooglePlacesFieldMaskProvider>();
-        services.AddSingleton<IRealWorldConversationSearchContextService, RealWorldConversationSearchContextService>();
+        services.AddSingleton<IChatTelemetry, ChatTelemetry>();
 
         services.AddScoped<IAIProviderTransport, MockAIProviderTransport>();
         services.AddScoped<IAIProviderTransport, AzureOpenAIProviderTransport>();
@@ -165,8 +123,25 @@ public static class AIServiceCollectionExtensions
 
         services.AddScoped<IAIClient, AIClient>();
         services.AddScoped<IAIModelRouter, AIModelRouter>();
-        services.AddScoped<IUserChatComplexityClassifier, UserChatComplexityClassifier>();
         services.AddScoped<IConversationContextService, ConversationContextService>();
+        services.AddScoped<IConversationBehaviorEngine, ConversationBehaviorEngine>();
+        services.AddScoped<IConversationDecisionEngine, ConversationDecisionEngine>();
+        services.AddScoped<IModeRouter, ModeRouter>();
+        services.AddScoped<IReadinessTransitionPolicy, ReadinessTransitionPolicy>();
+        services.AddScoped<IFollowUpBindingPolicy, FollowUpBindingPolicy>();
+        services.AddScoped<IContradictionResolutionPolicy, ContradictionResolutionPolicy>();
+        services.AddScoped<IResultContextService, ResultContextService>();
+        services.AddScoped<IResponseComposer, ResponseComposer>();
+        services.AddScoped<IConversationDecisionPromptBuilder, ConversationDecisionPromptBuilder>();
+        services.AddScoped<IExplorationSubtypePromptBuilder, ExplorationSubtypePromptBuilder>();
+        services.AddScoped<IResponseCompositionPromptBuilder, ResponseCompositionPromptBuilder>();
+        services.AddScoped<IMerchantInvestigationPromptBuilder, MerchantInvestigationPromptBuilder>();
+        services.AddScoped<IConversationDecisionParser, ConversationDecisionParser>();
+        services.AddScoped<IExplorationSubtypeDecisionParser, ExplorationSubtypeDecisionParser>();
+        services.AddScoped<IConversationModeHandler, StructuredExplorationHandler>();
+        services.AddScoped<IConversationModeHandler, OpenExplorationHandler>();
+        services.AddScoped<IConversationModeHandler, FinancialModeHandler>();
+        services.AddScoped<IConversationModeHandler, GeneralKnowledgeModeHandler>();
         services.AddScoped<IConversationThreadService, ConversationThreadService>();
         services.AddScoped<IConversationTurnService, ConversationTurnService>();
         services.AddScoped<IConversationMessageService, ConversationMessageService>();
@@ -191,19 +166,8 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IMerchantPlaceLookupService, MerchantPlaceLookupService>();
         services.AddScoped<ILocalDiscoveryConstraintExtractor, LocalDiscoveryConstraintExtractor>();
         services.AddScoped<ILocalDiscoveryQueryShaper, LocalDiscoveryQueryShaper>();
-        services.AddScoped<IRealWorldDeterministicFallbackBuilder, RealWorldDeterministicFallbackBuilder>();
-        services.AddScoped<IRealWorldFinancialGuardrailPolicy, RealWorldFinancialGuardrailPolicy>();
-        services.AddScoped<IRealWorldConceptNormalizationPolicy, RealWorldConceptNormalizationPolicy>();
-        services.AddScoped<IRealWorldInterpretationValidationPolicy, RealWorldInterpretationValidationPolicy>();
         services.AddScoped<IRealWorldDomainCapabilityCatalog, RealWorldDomainCapabilityCatalog>();
         services.AddScoped<IRealWorldProductDomainEligibilityPolicy, RealWorldProductDomainEligibilityPolicy>();
-        services.AddScoped<IRealWorldIntentInterpreterPromptBuilder, RealWorldIntentInterpreterPromptBuilder>();
-        services.AddScoped<IRealWorldIntentInterpreter, RealWorldIntentInterpreter>();
-        services.AddScoped<IExploratoryDomainSelectionPolicy, ExploratoryDomainSelectionPolicy>();
-        services.AddScoped<IRealWorldExecutionModePlanner, RealWorldExecutionModePlanner>();
-        services.AddScoped<IRealWorldPlacesExecutionService, RealWorldPlacesExecutionService>();
-        services.AddScoped<IRealWorldFailureMessageBuilder, RealWorldFailureMessageBuilder>();
-        services.AddScoped<IRealWorldSearchScopeResolver, RealWorldSearchScopeResolver>();
         services.AddScoped<ICompanionLocalityResolutionService, CompanionLocalityResolutionService>();
         services.AddScoped<ICompanionPlacesVocabularyNormalizer, CompanionPlacesVocabularyNormalizer>();
         services.AddScoped<ICompanionPlacesTextQueryBuilder, CompanionPlacesTextQueryBuilder>();
@@ -214,21 +178,6 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IPlacesSearchService, GooglePlacesCompanionSearchService>();
         services.AddScoped<IPlaceDetailsService, GooglePlacesPlaceDetailsService>();
         services.AddScoped<IReviewInsightsService, NullReviewInsightsService>();
-        services.AddScoped<ICompanionIntentNormalizer, CompanionIntentNormalizer>();
-        services.AddScoped<ICompanionIntentSignalExtractor, CompanionIntentSignalExtractor>();
-        services.AddScoped<ICompanionIntentScorer, CompanionIntentScorer>();
-        services.AddScoped<ICompanionIntentResolutionPolicy, CompanionIntentResolutionPolicy>();
-        services.AddScoped<ICompanionIntentRouter, CompanionIntentRouter>();
-        services.AddScoped<ICompanionIntentToolPolicyProvider, CompanionIntentToolPolicyProvider>();
-        services.AddScoped<ICompanionMixedIntentMergePolicy, CompanionMixedIntentMergePolicy>();
-        services.AddScoped<ICompanionExecutionPlanBuilder, CompanionExecutionPlanBuilder>();
-        services.AddScoped<ICompanionContextShaper, CompanionContextShaper>();
-        services.AddScoped<ICompanionToolExecutor, CompanionToolExecutor>();
-        services.AddScoped<ICompanionInsufficiencyEvaluator, CompanionInsufficiencyEvaluator>();
-        services.AddScoped<ICompanionEvidenceBuilder, CompanionEvidenceBuilder>();
-        services.AddScoped<ICompanionAssemblyResultBuilder, CompanionAssemblyResultBuilder>();
-        services.AddScoped<ICompanionPlacesResponseBuilder, CompanionPlacesResponseBuilder>();
-        services.AddScoped<IFinancialCompanionContextAssembler, FinancialCompanionContextAssembler>();
         services.AddScoped<ICompanionProfileBaselineBuilder, CompanionProfileBaselineBuilder>();
         services.AddScoped<IInsightInvalidationHintBuilder, InsightInvalidationHintBuilder>();
         services.AddScoped<IInsightFreshnessEvaluator, InsightFreshnessEvaluator>();
@@ -258,13 +207,10 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IAdviceSummaryBuilder, AdviceSummaryBuilder>();
         services.AddScoped<IAdvicePacketBuilder, AdvicePacketBuilder>();
         services.AddScoped<IFinancialAdviceDecisionService, FinancialAdviceDecisionService>();
-        services.AddScoped<IFinancialCompanionService, FinancialCompanionService>();
-        services.AddScoped<IPromptBuilder, AIPromptBuilder>();
         services.AddScoped<IMerchantInvestigationResponseParser, MerchantInvestigationResponseParser>();
         services.AddScoped<IUserChatResponseParser, UserChatResponseParser>();
         services.AddScoped<IMerchantInvestigationOrchestrator, MerchantInvestigationOrchestrator>();
-        services.AddScoped<IUserChatCompanionHandoffService, UserChatCompanionHandoffService>();
-        services.AddScoped<IUserChatOrchestrator, UserChatOrchestrator>();
+        services.AddScoped<IUserChatOrchestrator, ConversationLayerOrchestrator>();
 
         // Keep existing merchant resolution seam intact while allowing provider swap via AI options.
         services.AddScoped<IMerchantInvestigationService, AIBackedMerchantInvestigationService>();

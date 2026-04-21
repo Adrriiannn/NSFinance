@@ -1,20 +1,20 @@
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Hosting;
-using NSFinance.Api.Persistence.Entities;
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
-public sealed class UserChatOrchestrator(
-    IUserChatComplexityClassifier complexityClassifier,
+public sealed class ConversationLayerOrchestrator(
     IConversationContextService contextService,
     IAIModelRouter modelRouter,
-    IPromptBuilder promptBuilder,
-    IUserChatResponseParser responseParser,
-    IAIClient aiClient,
-    ILogger<UserChatOrchestrator> logger,
+    IConversationBehaviorEngine behaviorEngine,
+    IModeRouter modeRouter,
+    IResponseComposer responseComposer,
+    ILogger<ConversationLayerOrchestrator> logger,
     IOptions<AIIntegrationOptions> options,
+    IChatTelemetry telemetry,
     IOperationalFailureRecorder? failureRecorder = null,
     IHostEnvironment? hostEnvironment = null,
     IConversationThreadService? conversationThreadService = null,
@@ -23,7 +23,7 @@ public sealed class UserChatOrchestrator(
     IConversationStateService? conversationStateService = null,
     IConversationSummaryService? conversationSummaryService = null,
     IPersistentConversationContextService? persistentConversationContextService = null,
-    IUserChatCompanionHandoffService? companionHandoffService = null,
+    IResultContextService? resultContextService = null,
     ILocalDiscoveryConstraintExtractor? localDiscoveryConstraintExtractor = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
@@ -32,20 +32,12 @@ public sealed class UserChatOrchestrator(
         cancellationToken.ThrowIfCancellationRequested();
         ValidateUserMessage(request.UserMessage, options.Value.ChatTurns.MaxUserMessageChars);
 
-        var complexity = complexityClassifier.Evaluate(request);
-        var taskType = complexity.Complexity == UserChatComplexity.Complex
-            ? AITaskType.UserChatComplex
-            : AITaskType.UserChatSimple;
+        var primaryRoute = modelRouter.Resolve(
+            AITaskType.ConversationDecision,
+            AIModelClass.HeavyReasoning,
+            complexityHint: "conversation_first");
 
-        var preferredModelClass = complexity.Complexity == UserChatComplexity.Complex
-            ? AIModelClass.HeavyReasoning
-            : AIModelClass.Fast;
-
-        var route = modelRouter.Resolve(
-            taskType,
-            preferredModelClass,
-            complexityHint: string.Join(',', complexity.ReasonCodes));
-
+        var workingRequest = request;
         var warnings = new List<string>();
         var conversationThreadId = request.ConversationThreadId;
         Guid? conversationTurnId = null;
@@ -56,8 +48,8 @@ public sealed class UserChatOrchestrator(
             warnings.Add("persistent_memory_unavailable_transient");
             await RecordTransientFallbackEventAsync(
                 request,
-                taskType,
-                route,
+                AITaskType.ConversationDecision,
+                primaryRoute,
                 conversationThreadId,
                 conversationTurnId,
                 reasonCategory: "persistent_memory_unavailable",
@@ -70,7 +62,7 @@ public sealed class UserChatOrchestrator(
             {
                 return BuildFailedTurnResponse(
                     "Persistent memory was requested but is not available for this request.",
-                    route,
+                    primaryRoute,
                     warnings.Append("persistent_memory_required_unavailable").ToArray(),
                     "persistent_memory_required_unavailable",
                     conversationThreadId,
@@ -85,11 +77,22 @@ public sealed class UserChatOrchestrator(
         string? contextSummary;
         IReadOnlyDictionary<string, string> structuredState;
         IReadOnlyList<string> contextReasonCodes;
+        var effectiveState = NormalizeIncomingState(request.State);
+        var resultContextReadResult = new ResultContextReadResult(
+            ActiveResultContext: null,
+            BindingClassification: ResultContextBindingClassification.None,
+            UsedClientResultSetId: false,
+            ExpiredBindingCleared: false,
+            ReasonCodes: []);
 
         if (canUsePersistentMemory)
         {
             var persistentUserId = request.UserId!.Value;
             conversationThreadId = await EnsureConversationThreadAsync(request, cancellationToken);
+            workingRequest = request with
+            {
+                ConversationThreadId = conversationThreadId
+            };
             var persistentThreadId = conversationThreadId.Value;
             var clientRequestId = ResolveClientRequestId(request, options.Value.ChatTurns.MaxClientRequestIdLength);
             var turnStart = await conversationTurnService!.StartOrGetAsync(
@@ -97,8 +100,8 @@ public sealed class UserChatOrchestrator(
                 persistentThreadId,
                 clientRequestId,
                 request.CorrelationId,
-                taskType,
-                route.ModelClass,
+                AITaskType.ConversationDecision,
+                primaryRoute.ModelClass,
                 cancellationToken);
 
             conversationTurnId = turnStart.Turn.Id;
@@ -131,8 +134,8 @@ public sealed class UserChatOrchestrator(
             try
             {
                 var userMessage = await PersistUserTurnContextAsync(
-                    request,
-                    taskType,
+                    workingRequest,
+                    AITaskType.ConversationDecision,
                     persistentThreadId,
                     activeTurn.Id,
                     cancellationToken);
@@ -145,9 +148,9 @@ public sealed class UserChatOrchestrator(
                     cancellationToken)).Turn;
 
                 var persistentContextResult = await TryBuildPersistentContextAsync(
-                    request,
-                    taskType,
-                    route,
+                    workingRequest,
+                    AITaskType.ConversationDecision,
+                    primaryRoute,
                     persistentThreadId,
                     activeTurn.Id,
                     warnings,
@@ -179,6 +182,24 @@ public sealed class UserChatOrchestrator(
                     persistentContextResult.ContextSource!,
                     persistentContextResult.EstimatedTokens,
                     cancellationToken)).Turn;
+
+                var persistedState = await conversationStateService!.GetLatestStateAsync(
+                    persistentUserId,
+                    persistentThreadId,
+                    cancellationToken);
+                effectiveState = persistedState?.State ?? effectiveState;
+
+                if (resultContextService is not null)
+                {
+                    resultContextReadResult = await resultContextService.ReadAsync(
+                        new ResultContextReadRequest(
+                            UserId: persistentUserId,
+                            ConversationThreadId: persistentThreadId,
+                            State: effectiveState,
+                            ClientMetadata: workingRequest.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                            UserMessage: workingRequest.UserMessage),
+                        cancellationToken);
+                }
             }
             catch (OperationCanceledException ex)
             {
@@ -207,7 +228,7 @@ public sealed class UserChatOrchestrator(
 
                 return BuildFailedTurnResponse(
                     "Chat request was cancelled before completion.",
-                    route,
+                    primaryRoute,
                     warnings.Append("request_cancelled").ToArray(),
                     "request_cancelled",
                     conversationThreadId,
@@ -243,14 +264,14 @@ public sealed class UserChatOrchestrator(
 
                 logger.LogError(
                     ex,
-                    "Chat turn setup failed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId}",
+                    "Conversation-first turn setup failed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId}",
                     request.CorrelationId,
                     conversationThreadId,
                     activeTurn.Id);
 
                 return BuildFailedTurnResponse(
                     "I couldn't prepare the conversation context safely.",
-                    route,
+                    primaryRoute,
                     warnings.Append("turn_setup_failed").ToArray(),
                     "turn_setup_failed",
                     conversationThreadId,
@@ -262,107 +283,31 @@ public sealed class UserChatOrchestrator(
         }
         else
         {
-            (contextMessages, contextSummary, structuredState, contextReasonCodes) = BuildTransientContext(request, taskType);
-        }
-
-        var companionHandoffResponse = await TryExecuteCompanionHandoffAsync(
-            request,
-            taskType,
-            route,
-            warnings,
-            contextSummary,
-            canUsePersistentMemory,
-            conversationThreadId,
-            conversationTurnId,
-            cancellationToken);
-        if (companionHandoffResponse is not null)
-        {
-            return companionHandoffResponse;
-        }
-
-        var prompt = promptBuilder.BuildUserChatPrompt(
-            new UserChatPromptInput(
-                ChatRequest: request,
-                ContextMessages: contextMessages,
-                ContextSummary: contextSummary,
-                StructuredState: structuredState,
-                ComplexityEvaluation: complexity));
-
-        if (route.Reason == "heavy_model_disabled_fail_fast")
-        {
-            if (failureRecorder is not null)
-            {
-                await failureRecorder.RecordAsync(
-                    new OperationalFailureRecordInput(
-                        OperationalFailureArea.UserChat,
-                        OperationalFailureSeverity.Warning,
-                        "chat_heavy_model_unavailable",
-                        "chat_heavy_model_unavailable",
-                        request.CorrelationId,
-                        conversationTurnId?.ToString("N"),
-                        "Heavy model unavailable for complex chat request.",
-                        null),
-                    cancellationToken);
-            }
-
-            if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
-            {
-                var persistentUserId = request.UserId.Value;
-                var persistentThreadId = conversationThreadId.Value;
-                var persistentTurnId = conversationTurnId.Value;
-                await conversationTurnService!.MarkFailedAsync(
-                    persistentUserId,
-                    persistentThreadId,
-                    persistentTurnId,
-                    "heavy_model_unavailable",
-                    "Heavy model unavailable and fail-fast policy configured.",
-                    cancellationToken);
-            }
-
-            return new UserChatResponse(
-                ReplyText: "I can't process that complex request right now because the heavy model is unavailable.",
-                ModelUsed: route.Model,
-                ReasoningClass: route.ModelClass,
-                SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                ReferencedContextSummary: contextSummary,
-                Warnings: warnings.Concat(["heavy_model_unavailable"]).ToArray(),
-                FollowUpIntentHints: ["retry_shorter_question"],
-                Succeeded: false,
-                FailureReason: "heavy_model_unavailable",
-                ConversationThreadId: conversationThreadId,
-                ConversationTurnId: conversationTurnId,
-                TurnStatus: canUsePersistentMemory ? ConversationTurnStatus.Failed : null);
+            (contextMessages, contextSummary, structuredState, contextReasonCodes) = BuildTransientContext(request);
         }
 
         if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
         {
-            var persistentUserId = request.UserId.Value;
-            var persistentThreadId = conversationThreadId.Value;
-            var persistentTurnId = conversationTurnId.Value;
             await conversationTurnService!.MarkAIInProgressAsync(
-                persistentUserId,
-                persistentThreadId,
-                persistentTurnId,
-                route,
+                request.UserId.Value,
+                conversationThreadId.Value,
+                conversationTurnId.Value,
+                primaryRoute,
                 cancellationToken);
         }
 
-        var aiRequest = AIRequest.Create(
-            taskType: taskType,
-            preferredModelClass: route.ModelClass,
-            messages: prompt.Messages,
-            correlationId: request.CorrelationId,
-            systemInstructions: prompt.SystemInstructions,
-            structuredOutputSchemaName: prompt.StructuredSchemaName,
-            temperature: complexity.Complexity == UserChatComplexity.Complex ? 0.2d : 0.1d,
-            maxOutputTokens: complexity.Complexity == UserChatComplexity.Complex ? 1200 : 600,
-            metadata: request.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
-
-        AIResponse response;
-        var stopwatch = Stopwatch.StartNew();
+        var executionStopwatch = Stopwatch.StartNew();
+        OrchestratedConversationResult executionResult;
         try
         {
-            response = await aiClient.SendAsync(aiRequest, route, cancellationToken);
+            executionResult = await ExecuteConversationPathAsync(
+                workingRequest,
+                contextMessages,
+                contextSummary,
+                effectiveState,
+                resultContextReadResult,
+                warnings,
+                cancellationToken);
         }
         catch (OperationCanceledException ex)
         {
@@ -372,8 +317,8 @@ public sealed class UserChatOrchestrator(
                     new OperationalFailureRecordInput(
                         OperationalFailureArea.UserChat,
                         OperationalFailureSeverity.Warning,
-                        "chat_ai_call_cancelled",
-                        $"chat_ai_call_cancelled:{route.ModelClass}:{route.Deployment}",
+                        "chat_turn_cancelled_during_execution",
+                        $"chat_turn_cancelled_during_execution:{conversationThreadId?.ToString("N") ?? "no_thread"}",
                         request.CorrelationId,
                         conversationTurnId?.ToString("N"),
                         ex.Message,
@@ -383,13 +328,10 @@ public sealed class UserChatOrchestrator(
 
             if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
             {
-                var persistentUserId = request.UserId.Value;
-                var persistentThreadId = conversationThreadId.Value;
-                var persistentTurnId = conversationTurnId.Value;
                 await conversationTurnService!.MarkCancelledAsync(
-                    persistentUserId,
-                    persistentThreadId,
-                    persistentTurnId,
+                    request.UserId.Value,
+                    conversationThreadId.Value,
+                    conversationTurnId.Value,
                     "request_cancelled",
                     ex.Message,
                     CancellationToken.None);
@@ -397,7 +339,7 @@ public sealed class UserChatOrchestrator(
 
             return BuildFailedTurnResponse(
                 "Chat request was cancelled before completion.",
-                route,
+                primaryRoute,
                 warnings.Append("request_cancelled").ToArray(),
                 "request_cancelled",
                 conversationThreadId,
@@ -407,75 +349,79 @@ public sealed class UserChatOrchestrator(
                 isTurnInProgress: false,
                 contextSummary: contextSummary);
         }
+        catch (Exception ex)
+        {
+            if (failureRecorder is not null)
+            {
+                await failureRecorder.RecordAsync(
+                    new OperationalFailureRecordInput(
+                        OperationalFailureArea.UserChat,
+                        OperationalFailureSeverity.Error,
+                        "chat_conversation_first_execution_failed",
+                        $"chat_conversation_first_execution_failed:{conversationThreadId?.ToString("N") ?? "no_thread"}",
+                        request.CorrelationId,
+                        conversationTurnId?.ToString("N"),
+                        ex.Message,
+                        null),
+                    CancellationToken.None);
+            }
+
+            if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
+            {
+                await conversationTurnService!.MarkFailedAsync(
+                    request.UserId.Value,
+                    conversationThreadId.Value,
+                    conversationTurnId.Value,
+                    "conversation_first_execution_failed",
+                    ex.Message,
+                    CancellationToken.None);
+            }
+
+            logger.LogError(
+                ex,
+                "Conversation-first execution failed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId}",
+                request.CorrelationId,
+                conversationThreadId,
+                conversationTurnId);
+
+            return BuildFailedTurnResponse(
+                "I couldn't complete that turn safely.",
+                primaryRoute,
+                warnings.Append("conversation_first_execution_failed").ToArray(),
+                "conversation_first_execution_failed",
+                conversationThreadId,
+                conversationTurnId,
+                ConversationTurnStatus.Failed,
+                isDuplicateRequest: false,
+                isTurnInProgress: false,
+                contextSummary: contextSummary);
+        }
         finally
         {
-            stopwatch.Stop();
+            executionStopwatch.Stop();
         }
-
-        responseParser.TryParse(response, route, out var parsedResponse, out var reasonCodes);
-        warnings.AddRange(parsedResponse.Warnings);
-        logger.LogInformation(
-            "User chat parse diagnostics correlationId={CorrelationId} providerSucceeded={ProviderSucceeded} parserSucceeded={ParserSucceeded} contentLength={ContentLength} structuredPayloadLength={StructuredPayloadLength} reasonCodes={ReasonCodes}",
-            request.CorrelationId,
-            response.Succeeded,
-            parsedResponse.Succeeded,
-            response.Content?.Length ?? 0,
-            response.StructuredPayloadJson?.Length ?? 0,
-            string.Join(',', reasonCodes));
 
         if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
         {
             var persistentUserId = request.UserId.Value;
             var persistentThreadId = conversationThreadId.Value;
             var persistentTurnId = conversationTurnId.Value;
-            if (!response.Succeeded || !parsedResponse.Succeeded)
+
+            if (!executionResult.Response.Succeeded)
             {
-                var failureCode = ResolveFailureCode(response, parsedResponse);
-                var failureReason = parsedResponse.FailureReason ?? response.FailureReason ?? "ai_response_failed";
-                var isTimeout = IsTimeoutFailure(failureReason);
-                if (failureRecorder is not null)
-                {
-                    await failureRecorder.RecordAsync(
-                        new OperationalFailureRecordInput(
-                            OperationalFailureArea.UserChat,
-                            isTimeout ? OperationalFailureSeverity.Warning : OperationalFailureSeverity.Error,
-                            isTimeout ? "chat_ai_timeout" : "chat_ai_response_failed",
-                            $"{(isTimeout ? "chat_ai_timeout" : "chat_ai_response_failed")}:{route.ModelClass}:{route.Deployment}",
-                            request.CorrelationId,
-                            conversationTurnId?.ToString("N"),
-                            failureReason,
-                            null),
-                        cancellationToken);
-                }
+                await conversationTurnService!.MarkFailedAsync(
+                    persistentUserId,
+                    persistentThreadId,
+                    persistentTurnId,
+                    executionResult.Response.FailureReason ?? "conversation_first_response_failed",
+                    executionResult.Response.ReplyText,
+                    cancellationToken);
 
-                if (isTimeout)
+                return executionResult.Response with
                 {
-                    await conversationTurnService!.MarkTimedOutAsync(
-                        persistentUserId,
-                        persistentThreadId,
-                        persistentTurnId,
-                        failureCode,
-                        failureReason,
-                        cancellationToken);
-                }
-                else
-                {
-                    await conversationTurnService!.MarkFailedAsync(
-                        persistentUserId,
-                        persistentThreadId,
-                        persistentTurnId,
-                        failureCode,
-                        failureReason,
-                        cancellationToken);
-                }
-
-                return parsedResponse with
-                {
-                    ReferencedContextSummary = contextSummary,
-                    Warnings = warnings.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                     ConversationThreadId = conversationThreadId,
                     ConversationTurnId = conversationTurnId,
-                    TurnStatus = isTimeout ? ConversationTurnStatus.TimedOut : ConversationTurnStatus.Failed
+                    TurnStatus = ConversationTurnStatus.Failed
                 };
             }
 
@@ -483,7 +429,7 @@ public sealed class UserChatOrchestrator(
                 persistentUserId,
                 persistentThreadId,
                 persistentTurnId,
-                stopwatch.ElapsedMilliseconds,
+                executionStopwatch.ElapsedMilliseconds,
                 cancellationToken);
 
             try
@@ -491,10 +437,11 @@ public sealed class UserChatOrchestrator(
                 await PersistAssistantTurnContextAsync(
                     persistentUserId,
                     persistentThreadId,
-                    taskType,
-                    route,
+                    AITaskType.ResponseComposition,
+                    executionResult.AssistantRoute,
                     persistentTurnId,
-                    parsedResponse,
+                    executionResult.Response,
+                    executionResult.State,
                     cancellationToken);
             }
             catch (Exception ex)
@@ -524,15 +471,15 @@ public sealed class UserChatOrchestrator(
 
                 logger.LogError(
                     ex,
-                    "Assistant turn persistence failed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId}",
+                    "Conversation-first assistant persistence failed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId}",
                     request.CorrelationId,
                     conversationThreadId,
                     conversationTurnId);
 
                 return BuildFailedTurnResponse(
                     "I generated a response but couldn't persist it safely. Please retry.",
-                    route,
-                    warnings.Append("assistant_persistence_failed").ToArray(),
+                    executionResult.AssistantRoute,
+                    executionResult.Response.Warnings.Append("assistant_persistence_failed").ToArray(),
                     "assistant_persistence_failed",
                     conversationThreadId,
                     conversationTurnId,
@@ -549,170 +496,300 @@ public sealed class UserChatOrchestrator(
                 cancellationToken);
         }
 
-        logger.LogInformation(
-            "User chat orchestrated path=generic_ai correlationId={CorrelationId} complexity={Complexity} task={TaskType} model={Model} deployment={Deployment} succeeded={Succeeded} contextReasonCodes={ContextReasonCodes} reasonCodes={ReasonCodes}",
-            request.CorrelationId,
-            complexity.Complexity,
-            taskType,
-            route.Model,
-            route.Deployment,
-            parsedResponse.Succeeded,
-            string.Join(',', contextReasonCodes),
-            string.Join(',', reasonCodes));
+        await telemetry.TrackAsync(
+            "chat.turn.contract_compat",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["threadId"] = conversationThreadId?.ToString("N"),
+                ["turnId"] = conversationTurnId?.ToString("N"),
+                ["succeeded"] = executionResult.Response.Succeeded,
+                ["model"] = executionResult.Response.ModelUsed,
+                ["reasoningClass"] = executionResult.Response.ReasoningClass.ToString()
+            },
+            cancellationToken);
 
-        return parsedResponse with
+        logger.LogInformation(
+            "Conversation-first user chat completed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} succeeded={Succeeded} model={Model} contextReasonCodes={ContextReasonCodes} warnings={Warnings}",
+            request.CorrelationId,
+            conversationThreadId,
+            conversationTurnId,
+            executionResult.Response.Succeeded,
+            executionResult.Response.ModelUsed,
+            string.Join(',', contextReasonCodes),
+            string.Join(',', executionResult.Response.Warnings));
+
+        return executionResult.Response with
         {
-            ReferencedContextSummary = contextSummary,
-            Warnings = warnings.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
             ConversationThreadId = conversationThreadId,
             ConversationTurnId = conversationTurnId,
             TurnStatus = canUsePersistentMemory ? ConversationTurnStatus.Completed : null
         };
     }
 
-    private async Task<UserChatResponse?> TryExecuteCompanionHandoffAsync(
+    private async Task<OrchestratedConversationResult> ExecuteConversationPathAsync(
         UserChatRequest request,
-        AITaskType taskType,
-        AIModelRoute route,
-        IReadOnlyList<string> existingWarnings,
+        IReadOnlyList<AIMessage> contextMessages,
         string? contextSummary,
-        bool canUsePersistentMemory,
-        Guid? conversationThreadId,
-        Guid? conversationTurnId,
+        ConversationStateSnapshot effectiveState,
+        ResultContextReadResult resultContextReadResult,
+        IReadOnlyList<string> existingWarnings,
         CancellationToken cancellationToken)
     {
-        if (companionHandoffService is null)
-        {
-            return null;
-        }
-
-        var sessionId = conversationThreadId?.ToString("N") ?? request.CorrelationId;
-        var companionResponse = await companionHandoffService.TryExecuteAsync(
-            request,
-            route,
-            sessionId,
+        var clientMetadata = request.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var behavior = await behaviorEngine.EvaluateAsync(
+            new ConversationBehaviorRequest(
+                Request: request,
+                ContextMessages: contextMessages,
+                ContextSummary: contextSummary,
+                EffectiveState: effectiveState,
+                ResultContext: resultContextReadResult.ActiveResultContext,
+                ResultContextReadResult: resultContextReadResult,
+                ClientMetadata: clientMetadata,
+                FailureHistory: [],
+                CancellationToken: cancellationToken),
             cancellationToken);
-        if (companionResponse is null)
+
+        var currentResultContext = resultContextReadResult.ActiveResultContext;
+        var behaviorState = behavior.State;
+
+        if (resultContextService is not null
+            && request.UserId.HasValue
+            && request.ConversationThreadId.HasValue
+            && currentResultContext is not null
+            && !string.IsNullOrWhiteSpace(behaviorState.SelectedEntityId))
         {
-            return null;
+            var selectedEntityUpdate = await resultContextService.TrySelectEntityAsync(
+                request.UserId.Value,
+                request.ConversationThreadId.Value,
+                currentResultContext.ResultSetId,
+                behaviorState.SelectedEntityId,
+                cancellationToken);
+            if (selectedEntityUpdate is not null)
+            {
+                currentResultContext = selectedEntityUpdate.Snapshot;
+                behaviorState = behaviorState with
+                {
+                    SelectedEntityId = selectedEntityUpdate.Snapshot.SelectedEntityId,
+                    ResultContextRef = selectedEntityUpdate.Reference
+                };
+                behavior = behavior with
+                {
+                    State = behaviorState
+                };
+            }
         }
 
-        var merged = companionResponse with
+        if (behavior.StayInDirectMode)
         {
-            ReferencedContextSummary = contextSummary,
-            Warnings = existingWarnings
-                .Concat(companionResponse.Warnings)
+            var compositionRequest = behavior.CompositionRequest ?? new ResponseCompositionRequest(
+                ResponseType: ResponseCompositionType.Fallback,
+                ToneDirective: ResponseToneDirective.Neutral,
+                Strategy: behavior.StrategyDecision.Strategy,
+                Mode: ConversationMode.Conversation,
+                ReadinessLevel: behavior.State.ReadinessLevel,
+                UserMessage: request.UserMessage,
+                GroundedData: new GroundedDataEnvelope([], [], behavior.Warnings),
+                Constraints: behavior.State.Constraints,
+                MissingConstraints: behavior.State.MissingConstraints ?? [],
+                MaxLengthHint: 420,
+                ClarificationQuestion: behavior.State.LastClarificationPrompt,
+                SuggestedOptions: behavior.State.LastSuggestedOptions);
+
+            var composed = await responseComposer.ComposeAsync(
+                compositionRequest,
+                request.CorrelationId,
+                cancellationToken);
+
+            var reply = new UserChatResponse(
+                ReplyText: composed.ReplyText,
+                ModelUsed: composed.ModelUsed,
+                ReasoningClass: composed.ReasoningClass,
+                SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                    behavior.State,
+                    currentResultContext,
+                    behavior.StrategyDecision,
+                    behavior.StrategyDecision.SuggestedOptions,
+                    composed.SuggestedStructuredStateUpdates,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)),
+                ReferencedContextSummary: contextSummary,
+                Warnings: existingWarnings
+                    .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(behavior.Warnings)
+                    .Concat(composed.Warnings)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                FollowUpIntentHints: composed.FollowUpIntentHints
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                Succeeded: true,
+                FailureReason: null);
+
+            return new OrchestratedConversationResult(
+                Response: reply,
+                State: behavior.State,
+                AssistantRoute: new AIModelRoute(
+                    TaskType: AITaskType.ResponseComposition,
+                    ModelClass: composed.ReasoningClass,
+                    Model: composed.ModelUsed,
+                    Deployment: composed.DeploymentUsed,
+                    IsFallback: composed.ModelUsed.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
+                    Reason: "direct_mode_response",
+                    Notes: []));
+        }
+
+        await telemetry.TrackAsync(
+            "chat.turn.mode_handoff",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["mode"] = behavior.TargetMode.ToString(),
+                ["explorationSubtype"] = behavior.ExplorationSubtypeDecision?.Subtype.ToString(),
+                ["readiness"] = behavior.StrategyDecision.Readiness.To.ToString()
+            },
+            cancellationToken);
+
+        var modeResult = await modeRouter.RouteAsync(
+            new ConversationModeRequest(
+                Request: request,
+                ContextMessages: contextMessages,
+                ContextSummary: contextSummary,
+                State: behaviorState,
+                ResultContext: currentResultContext,
+                StrategyDecision: behavior.StrategyDecision,
+                ExplorationSubtypeDecision: behavior.ExplorationSubtypeDecision,
+                ClientMetadata: clientMetadata),
+            cancellationToken);
+
+        var finalState = modeResult.State;
+        currentResultContext = modeResult.ResultContext ?? currentResultContext;
+
+        if (!modeResult.Succeeded)
+        {
+            var failureResponse = new UserChatResponse(
+                ReplyText: "I couldn't complete that mode transition safely.",
+                ModelUsed: "deterministic-mode-failure",
+                ReasoningClass: AIModelClass.Fast,
+                SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ReferencedContextSummary: contextSummary,
+                Warnings: existingWarnings
+                    .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(behavior.Warnings)
+                    .Concat(modeResult.Warnings)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                FollowUpIntentHints: modeResult.FollowUpIntentHints,
+                Succeeded: false,
+                FailureReason: modeResult.FailureReason ?? "mode_execution_failed");
+
+            return new OrchestratedConversationResult(
+                Response: failureResponse,
+                State: finalState,
+                AssistantRoute: new AIModelRoute(
+                    TaskType: AITaskType.Other,
+                    ModelClass: AIModelClass.Fast,
+                    Model: "deterministic-mode-failure",
+                    Deployment: "deterministic-mode-failure",
+                    IsFallback: true,
+                    Reason: "mode_execution_failed",
+                    Notes: []));
+        }
+
+        if (!string.IsNullOrWhiteSpace(modeResult.DeterministicReplyText))
+        {
+            var reply = new UserChatResponse(
+                ReplyText: modeResult.DeterministicReplyText!,
+                ModelUsed: "deterministic-mode-handler",
+                ReasoningClass: AIModelClass.Fast,
+                SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                    finalState,
+                    currentResultContext,
+                    behavior.StrategyDecision,
+                    finalState.LastSuggestedOptions,
+                    modeResult.SuggestedStructuredStateUpdates,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)),
+                ReferencedContextSummary: contextSummary,
+                Warnings: existingWarnings
+                    .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(behavior.Warnings)
+                    .Concat(modeResult.Warnings)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                FollowUpIntentHints: modeResult.FollowUpIntentHints
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                Succeeded: true,
+                FailureReason: null);
+
+            return new OrchestratedConversationResult(
+                Response: reply,
+                State: finalState,
+                AssistantRoute: new AIModelRoute(
+                    TaskType: AITaskType.ResponseComposition,
+                    ModelClass: AIModelClass.Fast,
+                    Model: "deterministic-mode-handler",
+                    Deployment: "deterministic-mode-handler",
+                    IsFallback: true,
+                    Reason: "mode_handler_deterministic_response",
+                    Notes: []));
+        }
+
+        var routedCompositionRequest = modeResult.CompositionRequest ?? new ResponseCompositionRequest(
+            ResponseType: ResponseCompositionType.Fallback,
+            ToneDirective: ResponseToneDirective.Neutral,
+            Strategy: behavior.StrategyDecision.Strategy,
+            Mode: behavior.TargetMode,
+            ReadinessLevel: finalState.ReadinessLevel,
+            UserMessage: request.UserMessage,
+            GroundedData: new GroundedDataEnvelope([], [], modeResult.Warnings),
+            Constraints: finalState.Constraints,
+            MissingConstraints: finalState.MissingConstraints ?? [],
+            MaxLengthHint: 420,
+            ClarificationQuestion: finalState.LastClarificationPrompt,
+            SuggestedOptions: finalState.LastSuggestedOptions);
+
+        var routedComposition = await responseComposer.ComposeAsync(
+            routedCompositionRequest,
+            request.CorrelationId,
+            cancellationToken);
+
+        var routedReply = new UserChatResponse(
+            ReplyText: routedComposition.ReplyText,
+            ModelUsed: routedComposition.ModelUsed,
+            ReasoningClass: routedComposition.ReasoningClass,
+            SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                finalState,
+                currentResultContext,
+                behavior.StrategyDecision,
+                finalState.LastSuggestedOptions,
+                modeResult.SuggestedStructuredStateUpdates,
+                routedComposition.SuggestedStructuredStateUpdates),
+            ReferencedContextSummary: contextSummary,
+            Warnings: existingWarnings
+                .Concat(resultContextReadResult.ReasonCodes)
+                .Concat(behavior.Warnings)
+                .Concat(modeResult.Warnings)
+                .Concat(routedComposition.Warnings)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
-            ConversationThreadId = conversationThreadId,
-            ConversationTurnId = conversationTurnId
-        };
+            FollowUpIntentHints: modeResult.FollowUpIntentHints
+                .Concat(routedComposition.FollowUpIntentHints)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            Succeeded: true,
+            FailureReason: null);
 
-        logger.LogInformation(
-            "User chat companion handoff completed correlationId={CorrelationId} succeeded={Succeeded} model={Model} warnings={Warnings}",
-            request.CorrelationId,
-            merged.Succeeded,
-            merged.ModelUsed,
-            string.Join(',', merged.Warnings));
-
-        if (!canUsePersistentMemory
-            || !request.UserId.HasValue
-            || !conversationThreadId.HasValue
-            || !conversationTurnId.HasValue)
-        {
-            return merged;
-        }
-
-        var persistentUserId = request.UserId.Value;
-        var persistentThreadId = conversationThreadId.Value;
-        var persistentTurnId = conversationTurnId.Value;
-        var companionRoute = route with
-        {
-            Model = string.IsNullOrWhiteSpace(merged.ModelUsed) ? route.Model : merged.ModelUsed,
-            Deployment = string.IsNullOrWhiteSpace(merged.ModelUsed) ? route.Deployment : merged.ModelUsed,
-            Reason = "companion_handoff_local_places"
-        };
-
-        await conversationTurnService!.MarkAIInProgressAsync(
-            persistentUserId,
-            persistentThreadId,
-            persistentTurnId,
-            companionRoute,
-            cancellationToken);
-
-        if (!merged.Succeeded)
-        {
-            await conversationTurnService.MarkFailedAsync(
-                persistentUserId,
-                persistentThreadId,
-                persistentTurnId,
-                merged.FailureReason ?? "companion_handoff_failed",
-                merged.ReplyText,
-                cancellationToken);
-
-            return merged with
-            {
-                TurnStatus = ConversationTurnStatus.Failed
-            };
-        }
-
-        await conversationTurnService.MarkAICompletedAsync(
-            persistentUserId,
-            persistentThreadId,
-            persistentTurnId,
-            responseLatencyMs: 0,
-            cancellationToken);
-
-        try
-        {
-            await PersistAssistantTurnContextAsync(
-                persistentUserId,
-                persistentThreadId,
-                taskType,
-                companionRoute,
-                persistentTurnId,
-                merged,
-                cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            await conversationTurnService.MarkFailedAsync(
-                persistentUserId,
-                persistentThreadId,
-                persistentTurnId,
-                "assistant_persistence_failed",
-                ex.Message,
-                CancellationToken.None);
-            logger.LogError(
-                ex,
-                "Assistant persistence failed after companion handoff correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId}",
-                request.CorrelationId,
-                persistentThreadId,
-                persistentTurnId);
-
-            return BuildFailedTurnResponse(
-                "I prepared a grounded response but couldn't persist it safely. Please retry.",
-                companionRoute,
-                merged.Warnings.Append("assistant_persistence_failed").ToArray(),
-                "assistant_persistence_failed",
-                conversationThreadId,
-                conversationTurnId,
-                ConversationTurnStatus.Failed,
-                isDuplicateRequest: false,
-                isTurnInProgress: false,
-                contextSummary: contextSummary);
-        }
-
-        await conversationTurnService.MarkCompletedAsync(
-            persistentUserId,
-            persistentThreadId,
-            persistentTurnId,
-            cancellationToken);
-
-        return merged with
-        {
-            TurnStatus = ConversationTurnStatus.Completed
-        };
+        return new OrchestratedConversationResult(
+            Response: routedReply,
+            State: finalState,
+            AssistantRoute: new AIModelRoute(
+                TaskType: AITaskType.ResponseComposition,
+                ModelClass: routedComposition.ReasoningClass,
+                Model: routedComposition.ModelUsed,
+                Deployment: routedComposition.DeploymentUsed,
+                IsFallback: routedComposition.ModelUsed.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
+                Reason: "mode_handler_response",
+                Notes: []));
     }
 
     private bool CanUsePersistentMemory(UserChatRequest request)
@@ -789,6 +866,7 @@ public sealed class UserChatOrchestrator(
         AIModelRoute route,
         Guid conversationTurnId,
         UserChatResponse response,
+        ConversationStateSnapshot state,
         CancellationToken cancellationToken)
     {
         if (response.Succeeded && !string.IsNullOrWhiteSpace(response.ReplyText))
@@ -800,7 +878,7 @@ public sealed class UserChatOrchestrator(
                     Role: ConversationMessageRole.Assistant,
                     Content: response.ReplyText,
                     ConversationTurnId: conversationTurnId,
-                    Topic: null,
+                    Topic: state.ActiveTopic,
                     IsResolved: false,
                     WasTrimEligible: true,
                     WasSummaryDerived: false,
@@ -817,15 +895,12 @@ public sealed class UserChatOrchestrator(
                 cancellationToken);
         }
 
-        if (response.SuggestedStructuredStateUpdates.Count > 0)
-        {
-            await conversationStateService!.MergeStateUpdatesAsync(
-                userId,
-                conversationThreadId,
-                response.SuggestedStructuredStateUpdates,
-                ConversationStateSnapshotReason.AssistantTurn,
-                cancellationToken);
-        }
+        await conversationStateService!.SaveSnapshotAsync(
+            userId,
+            conversationThreadId,
+            state,
+            ConversationStateSnapshotReason.AssistantTurn,
+            cancellationToken);
 
         try
         {
@@ -877,7 +952,7 @@ public sealed class UserChatOrchestrator(
                 cancellationToken);
             stopwatch.Stop();
             logger.LogInformation(
-                "Persistent context build succeeded correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} elapsedMs={ElapsedMs} estimatedTokens={EstimatedTokens}",
+                "Persistent conversation context built correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} elapsedMs={ElapsedMs} estimatedTokens={EstimatedTokens}",
                 request.CorrelationId,
                 conversationThreadId,
                 conversationTurnId,
@@ -937,40 +1012,33 @@ public sealed class UserChatOrchestrator(
                     reasonCategory,
                     fallbackPolicy.DenyReason ?? "none");
 
-                await RecordTransientFallbackEventAsync(
-                    request,
-                    taskType,
-                    route,
-                    conversationThreadId,
-                    conversationTurnId,
-                    reasonCategory,
-                    fallbackPolicy.Mode,
-                    fallbackPolicy.AllowedByConfig,
-                    ex,
-                    cancellationToken);
+                if (failureRecorder is not null)
+                {
+                    await failureRecorder.RecordAsync(
+                        new OperationalFailureRecordInput(
+                            OperationalFailureArea.UserChat,
+                            OperationalFailureSeverity.Error,
+                            "chat_persistent_context_build_failed",
+                            $"chat_persistent_context_build_failed:{reasonCategory}:{conversationThreadId:N}",
+                            request.CorrelationId,
+                            conversationTurnId.ToString("N"),
+                            ex.Message,
+                            null),
+                        CancellationToken.None);
+                }
 
-                return ContextBuildResult.Failure(BuildFailedTurnResponse(
-                    "I couldn't build context safely for this request.",
-                    route,
-                    warnings.Append("persistent_context_build_failed").Append(fallbackPolicy.DenyReason ?? "transient_fallback_denied").ToArray(),
-                    "persistent_context_build_failed",
-                    conversationThreadId,
-                    conversationTurnId,
-                    ConversationTurnStatus.Failed,
-                    isDuplicateRequest: false,
-                    isTurnInProgress: false));
+                return ContextBuildResult.Failure(
+                    BuildFailedTurnResponse(
+                        "I couldn't load the conversation context safely.",
+                        route,
+                        warnings.Append(fallbackPolicy.DenyReason ?? "persistent_context_unavailable").ToArray(),
+                        fallbackPolicy.DenyReason ?? "persistent_context_unavailable",
+                        conversationThreadId,
+                        conversationTurnId,
+                        ConversationTurnStatus.Failed,
+                        isDuplicateRequest: false,
+                        isTurnInProgress: false));
             }
-
-            logger.LogWarning(
-                ex,
-                "Persistent context build failed; transient fallback allowed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} reason={ReasonCategory} mode={FallbackMode}",
-                request.CorrelationId,
-                conversationThreadId,
-                conversationTurnId,
-                reasonCategory,
-                fallbackPolicy.Mode);
-            warnings.Add("persistent_memory_fallback_to_transient");
-            warnings.Add(reasonCategory);
 
             await RecordTransientFallbackEventAsync(
                 request,
@@ -984,12 +1052,9 @@ public sealed class UserChatOrchestrator(
                 ex,
                 cancellationToken);
 
-            if (fallbackPolicy.Mode == "local_discovery_nonessential_context")
-            {
-                warnings.Add("persistent_context_optional_for_local_discovery");
-            }
+            var transient = BuildTransientContext(request);
+            warnings.Add("persistent_context_transient_fallback");
 
-            var transient = BuildTransientContext(request, taskType);
             return ContextBuildResult.Success(
                 transient.ContextMessages,
                 transient.ContextSummary,
@@ -1170,7 +1235,9 @@ public sealed class UserChatOrchestrator(
                 return new UserChatResponse(
                     ReplyText: assistant.Content,
                     ModelUsed: turn.ModelUsed ?? options.Value.Routing.FastModelName,
-                    ReasoningClass: Enum.TryParse<AIModelClass>(turn.ModelClass, out var parsedModelClass) ? parsedModelClass : AIModelClass.Fast,
+                    ReasoningClass: Enum.TryParse<AIModelClass>(turn.ModelClass, out var parsedModelClass)
+                        ? parsedModelClass
+                        : AIModelClass.Fast,
                     SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                     ReferencedContextSummary: null,
                     Warnings: duplicateWarnings,
@@ -1194,7 +1261,14 @@ public sealed class UserChatOrchestrator(
         {
             return BuildFailedTurnResponse(
                 "Your previous request is still being processed.",
-                new AIModelRoute(AITaskType.Other, AIModelClass.Fast, options.Value.Routing.FastModelName, options.Value.Routing.FastDeploymentName, true, "duplicate_in_progress", []),
+                new AIModelRoute(
+                    AITaskType.Other,
+                    AIModelClass.Fast,
+                    options.Value.Routing.FastModelName,
+                    options.Value.Routing.FastDeploymentName,
+                    true,
+                    "duplicate_in_progress",
+                    []),
                 duplicateWarnings.Append("turn_in_progress").ToArray(),
                 "turn_in_progress",
                 conversationThreadId,
@@ -1206,7 +1280,14 @@ public sealed class UserChatOrchestrator(
 
         return BuildFailedTurnResponse(
             "Your previous request did not complete successfully. Please retry with a new request id.",
-            new AIModelRoute(AITaskType.Other, AIModelClass.Fast, options.Value.Routing.FastModelName, options.Value.Routing.FastDeploymentName, true, "duplicate_terminal", []),
+            new AIModelRoute(
+                AITaskType.Other,
+                AIModelClass.Fast,
+                options.Value.Routing.FastModelName,
+                options.Value.Routing.FastDeploymentName,
+                true,
+                "duplicate_terminal",
+                []),
             duplicateWarnings.Append("duplicate_terminal_turn").ToArray(),
             turn.FailureCode ?? "duplicate_terminal_turn",
             conversationThreadId,
@@ -1271,28 +1352,6 @@ public sealed class UserChatOrchestrator(
         }
     }
 
-    private static string ResolveFailureCode(AIResponse response, UserChatResponse parsed)
-    {
-        var failure = parsed.FailureReason ?? response.FailureReason ?? "ai_response_failed";
-        if (failure.Contains("timeout", StringComparison.OrdinalIgnoreCase))
-        {
-            return "ai_timeout";
-        }
-
-        if (failure.Contains("cancel", StringComparison.OrdinalIgnoreCase))
-        {
-            return "ai_cancelled";
-        }
-
-        return failure.Length <= 80 ? failure : failure[..80];
-    }
-
-    private static bool IsTimeoutFailure(string? failureReason)
-    {
-        return !string.IsNullOrWhiteSpace(failureReason)
-               && failureReason.Contains("timeout", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static int EstimateTokens(IReadOnlyList<AIMessage> messages)
     {
         var charCount = messages.Sum(x => x.Content.Length);
@@ -1300,24 +1359,127 @@ public sealed class UserChatOrchestrator(
     }
 
     private (IReadOnlyList<AIMessage> ContextMessages, string? ContextSummary, IReadOnlyDictionary<string, string> StructuredState, IReadOnlyList<string> ReasonCodes)
-        BuildTransientContext(UserChatRequest request, AITaskType taskType)
+        BuildTransientContext(UserChatRequest request)
     {
         var context = contextService.BuildContext(
             new ConversationContextBuildRequest(
-                TaskType: taskType,
+                TaskType: AITaskType.ConversationDecision,
                 RecentTurns: request.RecentTurns,
                 State: request.State,
-                CurrentUserMessage: request.UserMessage,
+                CurrentUserMessage: null,
                 CorrelationId: request.CorrelationId));
 
-        var messages = new List<AIMessage>(context.IncludedTurns.Count + 1);
+        var messages = new List<AIMessage>(context.IncludedTurns.Count);
         messages.AddRange(context.IncludedTurns.Select(turn => new AIMessage(turn.Role, turn.Content, turn.TimestampUtc)));
-        if (!string.IsNullOrWhiteSpace(request.UserMessage))
+        return (messages, context.ContextSummary, context.StructuredState, context.ReasonCodes);
+    }
+
+    private static ConversationStateSnapshot NormalizeIncomingState(ConversationStateSnapshot? state)
+    {
+        if (state is not null)
         {
-            messages.Add(AIMessage.User(request.UserMessage.Trim()));
+            return state with
+            {
+                Constraints = new Dictionary<string, string>(state.Constraints, StringComparer.OrdinalIgnoreCase),
+                Summaries = state.Summaries?.ToArray() ?? [],
+                RecentConclusions = state.RecentConclusions?.ToArray() ?? [],
+                MissingConstraints = state.MissingConstraints?.ToArray() ?? [],
+                LastSuggestedOptions = state.LastSuggestedOptions?.ToArray() ?? [],
+                LastSuggestedEntities = state.LastSuggestedEntities?.ToArray() ?? [],
+                LoopGuards = state.LoopGuards ?? new ConversationLoopGuards()
+            };
         }
 
-        return (messages, context.ContextSummary, context.StructuredState, context.ReasonCodes);
+        return new ConversationStateSnapshot(
+            ActiveTopic: null,
+            UserIntent: null,
+            Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            Summaries: [],
+            BudgetPreference: null,
+            LocationPreference: null,
+            MerchantInvestigationSubject: null,
+            RecentConclusions: []);
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildSuggestedStateUpdates(
+        ConversationStateSnapshot state,
+        ResultContextSnapshot? resultContext,
+        ConversationTurnStrategyDecision strategyDecision,
+        IReadOnlyList<string>? suggestedOptions,
+        IReadOnlyDictionary<string, string> primaryUpdates,
+        IReadOnlyDictionary<string, string> secondaryUpdates)
+    {
+        var updates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (state.ActiveMode.HasValue)
+        {
+            updates["active_mode"] = state.ActiveMode.Value.ToString();
+        }
+
+        if (state.ModeCandidate.HasValue)
+        {
+            updates["mode_candidate"] = state.ModeCandidate.Value.ToString();
+        }
+
+        updates["readiness_level"] = state.ReadinessLevel.ToString();
+        updates["needs_follow_up"] = state.NeedsFollowUp ? "true" : "false";
+        updates["follow_up_binding_type"] = state.FollowUpBindingType.ToString();
+        updates["strategy"] = strategyDecision.Strategy.ToString();
+        updates["strategy_confidence"] = strategyDecision.Confidence.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture);
+
+        if (!string.IsNullOrWhiteSpace(state.InferredIntent))
+        {
+            updates["inferred_intent"] = state.InferredIntent;
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.TransitionIntent))
+        {
+            updates["transition_intent"] = state.TransitionIntent;
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.LastClarificationPrompt))
+        {
+            updates["last_clarification_prompt"] = state.LastClarificationPrompt;
+        }
+
+        if (state.MissingConstraints is { Count: > 0 })
+        {
+            updates["missing_constraints"] = string.Join('|', state.MissingConstraints);
+        }
+
+        if ((suggestedOptions?.Count ?? 0) > 0)
+        {
+            updates["suggested_options"] = string.Join('|', suggestedOptions!);
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.SelectedEntityId))
+        {
+            updates["selected_entity_id"] = state.SelectedEntityId;
+        }
+
+        if (resultContext?.ResultSetId is Guid resultSetId)
+        {
+            updates["active_result_set_id"] = resultSetId.ToString("D");
+        }
+
+        MergeUpdates(updates, primaryUpdates);
+        MergeUpdates(updates, secondaryUpdates);
+        return updates;
+    }
+
+    private static void MergeUpdates(
+        IDictionary<string, string> target,
+        IReadOnlyDictionary<string, string> source)
+    {
+        foreach (var pair in source)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value))
+            {
+                continue;
+            }
+
+            target[pair.Key.Trim()] = pair.Value.Trim();
+        }
     }
 
     private sealed record ContextBuildResult(
@@ -1342,4 +1504,9 @@ public sealed class UserChatOrchestrator(
         public static ContextBuildResult Failure(UserChatResponse response)
             => new(false, response, null, null, null, null, null, 0);
     }
+
+    private sealed record OrchestratedConversationResult(
+        UserChatResponse Response,
+        ConversationStateSnapshot State,
+        AIModelRoute AssistantRoute);
 }

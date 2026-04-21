@@ -15,6 +15,7 @@ public sealed class AIIntegrationOptions
     public AIExecutionOptions Execution { get; set; } = new();
     public ConversationMemoryOptions Memory { get; set; } = new();
     public ChatTurnOptions ChatTurns { get; set; } = new();
+    public ConversationArchitectureOptions Architecture { get; set; } = new();
     public AzureOpenAIOptions AzureOpenAI { get; set; } = new();
     public MockAIProviderOptions Mock { get; set; } = new();
 
@@ -132,4 +133,22 @@ public sealed class ChatTurnOptions
     public bool AllowExplicitTransientFallbackInProduction { get; set; }
     public bool AllowImplicitTransientFallbackInProduction { get; set; }
     public bool RequirePersistentMemoryWhenRequested { get; set; }
+}
+
+public sealed class ConversationArchitectureOptions
+{
+    public bool ConversationFirstEnabled { get; set; } = true;
+    public bool ShadowDecisionValidationEnabled { get; set; }
+    public bool EmitTelemetryEvents { get; set; } = true;
+    public int ResultContextActiveMinutes { get; set; } = 45;
+    public int ResultContextPersistedHours { get; set; } = 24;
+    public ConversationModelTierOptions Tiers { get; set; } = new();
+}
+
+public sealed class ConversationModelTierOptions
+{
+    public string L1DecisionModelName { get; set; } = string.Empty;
+    public string L1DecisionDeploymentName { get; set; } = string.Empty;
+    public string L2CompositionModelName { get; set; } = string.Empty;
+    public string L2CompositionDeploymentName { get; set; } = string.Empty;
 }

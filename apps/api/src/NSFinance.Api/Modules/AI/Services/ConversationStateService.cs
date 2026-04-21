@@ -33,7 +33,7 @@ public sealed class ConversationStateService(
             return null;
         }
 
-        var state = DeserializeState(persisted.StateJson);
+        var state = NormalizeState(DeserializeState(persisted.StateJson));
         return new PersistedConversationState(state, persisted.StateVersion, persisted.CreatedUtc);
     }
 
@@ -75,15 +75,7 @@ public sealed class ConversationStateService(
         CancellationToken cancellationToken)
     {
         var latest = await GetLatestStateAsync(userId, conversationThreadId, cancellationToken);
-        var baseState = latest?.State ?? new ConversationStateSnapshot(
-            ActiveTopic: null,
-            UserIntent: null,
-            Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            Summaries: [],
-            BudgetPreference: null,
-            LocationPreference: null,
-            MerchantInvestigationSubject: null,
-            RecentConclusions: []);
+        var baseState = latest?.State ?? CreateDefaultState();
 
         var merged = MergeState(baseState, updates, options.Value.Memory);
         return await SaveSnapshotAsync(userId, conversationThreadId, merged, reason, cancellationToken);
@@ -103,6 +95,24 @@ public sealed class ConversationStateService(
         string? budgetPreference = baseState.BudgetPreference;
         string? locationPreference = baseState.LocationPreference;
         string? merchantSubject = baseState.MerchantInvestigationSubject;
+        var schemaVersion = Math.Max(2, baseState.SchemaVersion);
+        var activeMode = baseState.ActiveMode;
+        var modeCandidate = baseState.ModeCandidate;
+        var readinessLevel = baseState.ReadinessLevel;
+        var inferredIntent = baseState.InferredIntent;
+        var missingConstraints = (baseState.MissingConstraints ?? []).ToList();
+        var conversationSignals = baseState.ConversationSignals;
+        var lastClarificationPrompt = baseState.LastClarificationPrompt;
+        var lastSuggestedOptions = (baseState.LastSuggestedOptions ?? []).ToList();
+        var selectedEntityId = baseState.SelectedEntityId;
+        var lastExecutionFingerprint = baseState.LastExecutionFingerprint;
+        var topicStatus = baseState.TopicStatus;
+        var transitionIntent = baseState.TransitionIntent;
+        var confidence = baseState.Confidence;
+        var needsFollowUp = baseState.NeedsFollowUp;
+        var followUpBindingType = baseState.FollowUpBindingType;
+        var resultContextRef = baseState.ResultContextRef;
+        var loopGuards = baseState.LoopGuards ?? new ConversationLoopGuards();
 
         foreach (var kvp in updates)
         {
@@ -149,6 +159,99 @@ public sealed class ConversationStateService(
             {
                 summaries = value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
             }
+            else if (key.Equals("active_mode", StringComparison.OrdinalIgnoreCase)
+                     && Enum.TryParse<ConversationMode>(value, true, out var parsedActiveMode))
+            {
+                activeMode = parsedActiveMode;
+            }
+            else if (key.Equals("mode_candidate", StringComparison.OrdinalIgnoreCase)
+                     && Enum.TryParse<ConversationMode>(value, true, out var parsedModeCandidate))
+            {
+                modeCandidate = parsedModeCandidate;
+            }
+            else if (key.Equals("readiness_level", StringComparison.OrdinalIgnoreCase)
+                     && Enum.TryParse<ConversationReadinessLevel>(value, true, out var parsedReadiness))
+            {
+                readinessLevel = parsedReadiness;
+            }
+            else if (key.Equals("inferred_intent", StringComparison.OrdinalIgnoreCase))
+            {
+                inferredIntent = value;
+            }
+            else if (key.Equals("missing_constraints", StringComparison.OrdinalIgnoreCase))
+            {
+                missingConstraints = value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            }
+            else if (key.Equals("last_clarification_prompt", StringComparison.OrdinalIgnoreCase))
+            {
+                lastClarificationPrompt = value;
+            }
+            else if (key.Equals("last_suggested_options", StringComparison.OrdinalIgnoreCase))
+            {
+                lastSuggestedOptions = value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            }
+            else if (key.Equals("selected_entity_id", StringComparison.OrdinalIgnoreCase))
+            {
+                selectedEntityId = value;
+            }
+            else if (key.Equals("last_execution_fingerprint", StringComparison.OrdinalIgnoreCase))
+            {
+                lastExecutionFingerprint = value;
+            }
+            else if (key.Equals("topic_status", StringComparison.OrdinalIgnoreCase))
+            {
+                topicStatus = value;
+            }
+            else if (key.Equals("transition_intent", StringComparison.OrdinalIgnoreCase))
+            {
+                transitionIntent = value;
+            }
+            else if (key.Equals("confidence", StringComparison.OrdinalIgnoreCase)
+                     && double.TryParse(value, out var parsedConfidence))
+            {
+                confidence = parsedConfidence;
+            }
+            else if (key.Equals("needs_follow_up", StringComparison.OrdinalIgnoreCase)
+                     && bool.TryParse(value, out var parsedNeedsFollowUp))
+            {
+                needsFollowUp = parsedNeedsFollowUp;
+            }
+            else if (key.Equals("follow_up_binding_type", StringComparison.OrdinalIgnoreCase)
+                     && Enum.TryParse<FollowUpBindingType>(value, true, out var parsedBindingType))
+            {
+                followUpBindingType = parsedBindingType;
+            }
+            else if (key.Equals("result_context_active_result_set_id", StringComparison.OrdinalIgnoreCase)
+                     && Guid.TryParse(value, out var resultSetId))
+            {
+                resultContextRef = (resultContextRef ?? new ConversationResultContextReference(null, null, null, null)) with
+                {
+                    ActiveResultSetId = resultSetId
+                };
+            }
+            else if (key.Equals("result_context_branch_root_result_set_id", StringComparison.OrdinalIgnoreCase)
+                     && Guid.TryParse(value, out var branchRootId))
+            {
+                resultContextRef = (resultContextRef ?? new ConversationResultContextReference(null, null, null, null)) with
+                {
+                    BranchRootResultSetId = branchRootId
+                };
+            }
+            else if (key.Equals("loop_guard_same_clarification_count", StringComparison.OrdinalIgnoreCase)
+                     && int.TryParse(value, out var clarificationCount))
+            {
+                loopGuards = loopGuards with
+                {
+                    SameClarificationIntentCount = clarificationCount
+                };
+            }
+            else if (key.Equals("loop_guard_last_clarification_fingerprint", StringComparison.OrdinalIgnoreCase))
+            {
+                loopGuards = loopGuards with
+                {
+                    LastClarificationFingerprint = value
+                };
+            }
         }
 
         return NormalizeState(new ConversationStateSnapshot(
@@ -159,7 +262,26 @@ public sealed class ConversationStateService(
             BudgetPreference: budgetPreference,
             LocationPreference: locationPreference,
             MerchantInvestigationSubject: merchantSubject,
-            RecentConclusions: conclusions.Take(8).ToArray()));
+            RecentConclusions: conclusions.Take(8).ToArray(),
+            SchemaVersion: schemaVersion,
+            ActiveMode: activeMode,
+            ModeCandidate: modeCandidate,
+            ReadinessLevel: readinessLevel,
+            InferredIntent: inferredIntent,
+            MissingConstraints: missingConstraints,
+            ConversationSignals: conversationSignals,
+            LastClarificationPrompt: lastClarificationPrompt,
+            LastSuggestedOptions: lastSuggestedOptions,
+            LastSuggestedEntities: baseState.LastSuggestedEntities,
+            SelectedEntityId: selectedEntityId,
+            LastExecutionFingerprint: lastExecutionFingerprint,
+            TopicStatus: topicStatus,
+            TransitionIntent: transitionIntent,
+            Confidence: confidence,
+            NeedsFollowUp: needsFollowUp,
+            FollowUpBindingType: followUpBindingType,
+            ResultContextRef: resultContextRef,
+            LoopGuards: loopGuards));
     }
 
     private static string SerializeState(ConversationStateSnapshot state)
@@ -168,13 +290,16 @@ public sealed class ConversationStateService(
     private static ConversationStateSnapshot DeserializeState(string stateJson)
     {
         return JsonSerializer.Deserialize<ConversationStateSnapshot>(stateJson, JsonOptions)
-            ?? new ConversationStateSnapshot(null, null, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), [], null, null, null, []);
+            ?? CreateDefaultState();
     }
 
     private static ConversationStateSnapshot NormalizeState(ConversationStateSnapshot snapshot)
     {
         var constraints = snapshot.Constraints
             .Where(x => !string.IsNullOrWhiteSpace(x.Key) && !string.IsNullOrWhiteSpace(x.Value))
+            .Where(x => !x.Key.Contains("chat_location_latitude", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !x.Key.Contains("chat_location_longitude", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !x.Key.Contains("chat_location_captured_at_utc", StringComparison.OrdinalIgnoreCase))
             .ToDictionary(x => x.Key.Trim(), x => x.Value.Trim(), StringComparer.OrdinalIgnoreCase);
 
         var summaries = snapshot.Summaries
@@ -189,6 +314,34 @@ public sealed class ConversationStateService(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var missingConstraints = (snapshot.MissingConstraints ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var lastSuggestedOptions = (snapshot.LastSuggestedOptions ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var lastSuggestedEntities = (snapshot.LastSuggestedEntities ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x.EntityId) && !string.IsNullOrWhiteSpace(x.Label))
+            .GroupBy(x => x.EntityId, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.OrderBy(entity => entity.Rank).First())
+            .ToArray();
+
+        ConversationResultContextReference? resultContextRef = snapshot.ResultContextRef;
+        if (resultContextRef?.ExpiresUtc is DateTime expiresUtc && expiresUtc <= DateTime.UtcNow)
+        {
+            resultContextRef = null;
+        }
+
+        double? confidence = snapshot.Confidence.HasValue
+            ? Math.Round(Math.Clamp(snapshot.Confidence.Value, 0d, 1d), 4, MidpointRounding.AwayFromZero)
+            : null;
+
         return new ConversationStateSnapshot(
             ActiveTopic: string.IsNullOrWhiteSpace(snapshot.ActiveTopic) ? null : snapshot.ActiveTopic.Trim(),
             UserIntent: string.IsNullOrWhiteSpace(snapshot.UserIntent) ? null : snapshot.UserIntent.Trim(),
@@ -197,7 +350,58 @@ public sealed class ConversationStateService(
             BudgetPreference: string.IsNullOrWhiteSpace(snapshot.BudgetPreference) ? null : snapshot.BudgetPreference.Trim(),
             LocationPreference: string.IsNullOrWhiteSpace(snapshot.LocationPreference) ? null : snapshot.LocationPreference.Trim(),
             MerchantInvestigationSubject: string.IsNullOrWhiteSpace(snapshot.MerchantInvestigationSubject) ? null : snapshot.MerchantInvestigationSubject.Trim(),
-            RecentConclusions: conclusions);
+            RecentConclusions: conclusions,
+            SchemaVersion: Math.Max(2, snapshot.SchemaVersion),
+            ActiveMode: snapshot.ActiveMode ?? ConversationMode.Conversation,
+            ModeCandidate: snapshot.ModeCandidate ?? ConversationMode.Conversation,
+            ReadinessLevel: snapshot.ReadinessLevel,
+            InferredIntent: string.IsNullOrWhiteSpace(snapshot.InferredIntent) ? null : snapshot.InferredIntent.Trim(),
+            MissingConstraints: missingConstraints,
+            ConversationSignals: snapshot.ConversationSignals,
+            LastClarificationPrompt: string.IsNullOrWhiteSpace(snapshot.LastClarificationPrompt) ? null : snapshot.LastClarificationPrompt.Trim(),
+            LastSuggestedOptions: lastSuggestedOptions,
+            LastSuggestedEntities: lastSuggestedEntities,
+            SelectedEntityId: string.IsNullOrWhiteSpace(snapshot.SelectedEntityId) ? null : snapshot.SelectedEntityId.Trim(),
+            LastExecutionFingerprint: string.IsNullOrWhiteSpace(snapshot.LastExecutionFingerprint) ? null : snapshot.LastExecutionFingerprint.Trim(),
+            TopicStatus: string.IsNullOrWhiteSpace(snapshot.TopicStatus) ? null : snapshot.TopicStatus.Trim(),
+            TransitionIntent: string.IsNullOrWhiteSpace(snapshot.TransitionIntent) ? null : snapshot.TransitionIntent.Trim(),
+            Confidence: confidence,
+            NeedsFollowUp: snapshot.NeedsFollowUp,
+            FollowUpBindingType: snapshot.FollowUpBindingType,
+            ResultContextRef: resultContextRef,
+            LoopGuards: snapshot.LoopGuards ?? new ConversationLoopGuards());
+    }
+
+    private static ConversationStateSnapshot CreateDefaultState()
+    {
+        return new ConversationStateSnapshot(
+            ActiveTopic: null,
+            UserIntent: null,
+            Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            Summaries: [],
+            BudgetPreference: null,
+            LocationPreference: null,
+            MerchantInvestigationSubject: null,
+            RecentConclusions: [],
+            SchemaVersion: 2,
+            ActiveMode: ConversationMode.Conversation,
+            ModeCandidate: ConversationMode.Conversation,
+            ReadinessLevel: ConversationReadinessLevel.R0_Unknown,
+            InferredIntent: null,
+            MissingConstraints: [],
+            ConversationSignals: null,
+            LastClarificationPrompt: null,
+            LastSuggestedOptions: [],
+            LastSuggestedEntities: [],
+            SelectedEntityId: null,
+            LastExecutionFingerprint: null,
+            TopicStatus: null,
+            TransitionIntent: null,
+            Confidence: null,
+            NeedsFollowUp: false,
+            FollowUpBindingType: FollowUpBindingType.None,
+            ResultContextRef: null,
+            LoopGuards: new ConversationLoopGuards());
     }
 
     private async Task EnsureThreadOwnershipAsync(Guid userId, Guid conversationThreadId, CancellationToken cancellationToken)

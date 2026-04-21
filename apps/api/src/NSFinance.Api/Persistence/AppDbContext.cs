@@ -56,6 +56,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ConversationTurn> ConversationTurns => Set<ConversationTurn>();
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
     public DbSet<ConversationStateSnapshot> ConversationStateSnapshots => Set<ConversationStateSnapshot>();
+    public DbSet<ConversationResultContext> ConversationResultContexts => Set<ConversationResultContext>();
     public DbSet<ConversationSummary> ConversationSummaries => Set<ConversationSummary>();
     public DbSet<ConversationContextBuildLog> ConversationContextBuildLogs => Set<ConversationContextBuildLog>();
     public DbSet<ExpenseTrackerEntry> ExpenseTrackerEntries => Set<ExpenseTrackerEntry>();

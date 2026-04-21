@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Persistence.Entities;
@@ -23,18 +24,24 @@ internal sealed class MockAIProviderTransport(
         cancellationToken.ThrowIfCancellationRequested();
 
         var scenario = ResolveScenario(request, options.Value.Mock);
-        var payload = scenario switch
+        var payload = request.StructuredOutputSchemaName switch
         {
-            MockAIScenario.MerchantStrongCandidate => BuildMerchantStrongCandidate(request),
-            MockAIScenario.MerchantAmbiguousCandidates => BuildMerchantAmbiguousCandidates(request),
-            MockAIScenario.MerchantInsufficientEvidence => BuildMerchantInsufficientEvidence(request),
-            MockAIScenario.MerchantConflictingCandidates => BuildMerchantConflictingCandidates(request),
-            MockAIScenario.MerchantMalformedOutput => "{\"summary\":{\"overallConfidence\":0.8,\"recommendation\":\"accept_candidate\"}",
-            MockAIScenario.MerchantDangerousAliasProposal => BuildMerchantDangerousAliasProposal(request),
-            MockAIScenario.MerchantNarrowUseWeakOfficial => BuildMerchantNarrowUseWeakOfficial(request),
-            MockAIScenario.MerchantIntermediaryMarketplace => BuildMerchantIntermediaryMarketplace(request),
-            MockAIScenario.UserChatComplex => BuildComplexChatResponse(),
-            _ => BuildSimpleChatResponse()
+            "conversation_turn_strategy_decision_v1" => BuildConversationDecisionResponse(request),
+            "exploration_subtype_decision_v1" => BuildExplorationSubtypeDecisionResponse(request),
+            "response_composition_output_v1" => BuildResponseCompositionResponse(request),
+            _ => scenario switch
+            {
+                MockAIScenario.MerchantStrongCandidate => BuildMerchantStrongCandidate(request),
+                MockAIScenario.MerchantAmbiguousCandidates => BuildMerchantAmbiguousCandidates(request),
+                MockAIScenario.MerchantInsufficientEvidence => BuildMerchantInsufficientEvidence(request),
+                MockAIScenario.MerchantConflictingCandidates => BuildMerchantConflictingCandidates(request),
+                MockAIScenario.MerchantMalformedOutput => "{\"summary\":{\"overallConfidence\":0.8,\"recommendation\":\"accept_candidate\"}",
+                MockAIScenario.MerchantDangerousAliasProposal => BuildMerchantDangerousAliasProposal(request),
+                MockAIScenario.MerchantNarrowUseWeakOfficial => BuildMerchantNarrowUseWeakOfficial(request),
+                MockAIScenario.MerchantIntermediaryMarketplace => BuildMerchantIntermediaryMarketplace(request),
+                MockAIScenario.UserChatComplex => BuildComplexChatResponse(),
+                _ => BuildSimpleChatResponse()
+            }
         };
 
         logger.LogDebug(
@@ -488,5 +495,281 @@ internal sealed class MockAIProviderTransport(
             FollowUpIntentHints: ["scenario_compare", "budget_refinement"]);
 
         return JsonSerializer.Serialize(response, SerializerOptions);
+    }
+
+    private static string BuildConversationDecisionResponse(AIRequest request)
+    {
+        var userMessage = ExtractLatestUserMessage(request).ToLowerInvariant();
+
+        if (ContainsAny(userMessage, "restaurant", "restaurants", "cafe", "cafes", "park", "parks", "museum", "museums")
+            && ContainsAny(userMessage, "near me", "nearby", "open now", "in ", "around "))
+        {
+            return Serialize(new
+            {
+                strategy = "ToolReadyHandoff",
+                modeCandidate = "Exploration",
+                readiness = new { from = "R1_Vague", to = "R4_ToolReady" },
+                confidence = 0.89,
+                followUpBindingType = "None",
+                clarificationQuestion = (string?)null,
+                suggestedOptions = Array.Empty<string>(),
+                toolExecutionPermission = "EligibleIfGuardPasses",
+                reasonCodes = new[] { "mock_structured_exploration_ready" }
+            });
+        }
+
+        if (ContainsAny(userMessage, "quiet", "safe", "view", "walk", "beach"))
+        {
+            return Serialize(new
+            {
+                strategy = "GeneralGuidance",
+                modeCandidate = "Exploration",
+                readiness = new { from = "R1_Vague", to = "R2_DirectionKnown" },
+                confidence = 0.82,
+                followUpBindingType = "None",
+                clarificationQuestion = (string?)null,
+                suggestedOptions = new[] { "Ask for a shortlist", "Add an area", "Keep it exploratory" },
+                toolExecutionPermission = "Forbidden",
+                reasonCodes = new[] { "mock_open_exploration" }
+            });
+        }
+
+        if (ContainsAny(userMessage, "budget", "spending", "subscriptions", "afford", "expense", "save"))
+        {
+            return Serialize(new
+            {
+                strategy = "SuggestAndClarify",
+                modeCandidate = "Conversation",
+                readiness = new { from = "R0_Unknown", to = "R1_Vague" },
+                confidence = 0.80,
+                followUpBindingType = "None",
+                clarificationQuestion = "Do you want to focus on subscriptions, overall spending, or a specific budget concern?",
+                suggestedOptions = new[] { "Review subscriptions", "Look at spending trends", "Set a budget goal" },
+                toolExecutionPermission = "Forbidden",
+                reasonCodes = new[] { "mock_financial_validation" }
+            });
+        }
+
+        if (StartsWithAny(userMessage, "what ", "when ", "where ", "who ", "how "))
+        {
+            return Serialize(new
+            {
+                strategy = "DirectAnswer",
+                modeCandidate = "GeneralKnowledge",
+                readiness = new { from = "R0_Unknown", to = "R1_Vague" },
+                confidence = 0.76,
+                followUpBindingType = "None",
+                clarificationQuestion = (string?)null,
+                suggestedOptions = Array.Empty<string>(),
+                toolExecutionPermission = "Forbidden",
+                reasonCodes = new[] { "mock_general_knowledge" }
+            });
+        }
+
+        return Serialize(new
+        {
+            strategy = "SuggestAndClarify",
+            modeCandidate = "Conversation",
+            readiness = new { from = "R0_Unknown", to = "R1_Vague" },
+            confidence = 0.60,
+            followUpBindingType = "None",
+            clarificationQuestion = "What would be most useful to narrow down first?",
+            suggestedOptions = new[] { "Clarify the goal", "Share a constraint", "Ask for general guidance" },
+            toolExecutionPermission = "Forbidden",
+            reasonCodes = new[] { "mock_default_conversation" }
+        });
+    }
+
+    private static string BuildExplorationSubtypeDecisionResponse(AIRequest request)
+    {
+        var userMessage = ExtractLatestUserMessage(request).ToLowerInvariant();
+        var isStructured = ContainsAny(userMessage, "restaurant", "restaurants", "cafe", "cafes", "park", "parks", "museum", "museums")
+                           && ContainsAny(userMessage, "near me", "nearby", "open now", "in ", "around ");
+
+        if (isStructured)
+        {
+            return Serialize(new
+            {
+                subtype = "Structured",
+                confidence = 0.87,
+                toolPathEligible = true,
+                primaryWhy = "The request is a concrete place search with actionable filters.",
+                missingConstraints = Array.Empty<string>(),
+                reasonCodes = new[] { "mock_structured_subtype" }
+            });
+        }
+
+        return Serialize(new
+        {
+            subtype = "Open",
+            confidence = 0.83,
+            toolPathEligible = false,
+            primaryWhy = "The request is atmospheric or experiential rather than a concrete place search.",
+            missingConstraints = new[] { "location_or_area" },
+            reasonCodes = new[] { "mock_open_subtype" }
+        });
+    }
+
+    private static string BuildResponseCompositionResponse(AIRequest request)
+    {
+        var compositionRequest = ExtractResponseCompositionRequest(request);
+        var suggestedUpdates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (compositionRequest is null)
+        {
+            return JsonSerializer.Serialize(
+                new UserChatStructuredResponse(
+                    ReplyText: "I can help from here. Tell me which detail you want to refine next.",
+                    ReferencedContextSummary: "Mock response composition fallback.",
+                    SuggestedStructuredStateUpdates: suggestedUpdates,
+                    Warnings: [],
+                    FollowUpIntentHints: ["clarify_intent"]),
+                SerializerOptions);
+        }
+
+        suggestedUpdates["mode"] = compositionRequest.Mode.ToString();
+        suggestedUpdates["readiness"] = compositionRequest.ReadinessLevel.ToString();
+
+        var replyText = compositionRequest.ResponseType switch
+        {
+            ResponseCompositionType.Clarify => BuildClarificationReply(compositionRequest),
+            ResponseCompositionType.Placeholder => "I can help with that, and the next step is to choose which angle you want to focus on first.",
+            ResponseCompositionType.ResultSummary => BuildResultSummaryReply(compositionRequest),
+            ResponseCompositionType.Direct => "Here is the concise answer based on what you asked.",
+            ResponseCompositionType.Suggest => BuildSuggestionReply(compositionRequest),
+            _ => "I can still help from here without taking action yet."
+        };
+
+        var response = new UserChatStructuredResponse(
+            ReplyText: replyText,
+            ReferencedContextSummary: "Mock response composition output.",
+            SuggestedStructuredStateUpdates: suggestedUpdates,
+            Warnings: compositionRequest.GroundedData.Warnings,
+            FollowUpIntentHints: compositionRequest.MissingConstraints.Count > 0
+                ? ["clarify_intent"]
+                : ["continue_conversation"]);
+
+        return JsonSerializer.Serialize(response, SerializerOptions);
+    }
+
+    private static string BuildClarificationReply(ResponseCompositionRequest request)
+    {
+        var options = request.SuggestedOptions is { Count: > 0 }
+            ? $" Options: {string.Join("; ", request.SuggestedOptions.Take(3))}."
+            : string.Empty;
+        return $"{request.ClarificationQuestion ?? "Could you clarify what you want to focus on?"}{options}";
+    }
+
+    private static string BuildResultSummaryReply(ResponseCompositionRequest request)
+    {
+        if (request.GroundedData.Entities.Count == 0)
+        {
+            return "I checked the grounded options, but I need one more detail to sharpen the shortlist.";
+        }
+
+        var shortlist = string.Join(
+            "; ",
+            request.GroundedData.Entities
+                .Take(3)
+                .Select(entity => entity.Label));
+        return $"Here are a few grounded options to start with: {shortlist}.";
+    }
+
+    private static string BuildSuggestionReply(ResponseCompositionRequest request)
+    {
+        if (request.GroundedData.SummaryFacts.Count > 0)
+        {
+            var first = request.GroundedData.SummaryFacts[0];
+            return $"{first.Label}: {first.Value}";
+        }
+
+        if (request.SuggestedOptions is { Count: > 0 })
+        {
+            return $"A good next step is to choose one of these directions: {string.Join("; ", request.SuggestedOptions.Take(3))}.";
+        }
+
+        return "A good next step is to make the request a little more concrete.";
+    }
+
+    private static ResponseCompositionRequest? ExtractResponseCompositionRequest(AIRequest request)
+    {
+        var prompt = request.Messages.LastOrDefault(message => message.Role == AIMessageRole.User)?.Content;
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(
+            prompt,
+            @"RequestJson:\s*(\{.*\})\s*Return strict JSON only",
+            RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<ResponseCompositionRequest>(match.Groups[1].Value, SerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string ExtractLatestUserMessage(AIRequest request)
+    {
+        foreach (var message in request.Messages.Reverse())
+        {
+            var content = message.Content ?? string.Empty;
+            var latestUserMessage = ExtractPromptLineValue(content, "LatestUserMessage:");
+            if (!string.IsNullOrWhiteSpace(latestUserMessage))
+            {
+                return latestUserMessage;
+            }
+
+            var directUserMessage = ExtractPromptLineValue(content, "UserMessage:");
+            if (!string.IsNullOrWhiteSpace(directUserMessage))
+            {
+                return directUserMessage;
+            }
+
+            if (message.Role == AIMessageRole.User && !string.IsNullOrWhiteSpace(content))
+            {
+                return content.Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string? ExtractPromptLineValue(string content, string prefix)
+    {
+        var lines = content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var line in lines)
+        {
+            if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return line[prefix.Length..].Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static bool ContainsAny(string value, params string[] tokens)
+    {
+        return tokens.Any(token => value.Contains(token, StringComparison.Ordinal));
+    }
+
+    private static bool StartsWithAny(string value, params string[] tokens)
+    {
+        return tokens.Any(token => value.StartsWith(token, StringComparison.Ordinal));
+    }
+
+    private static string Serialize<T>(T payload)
+    {
+        return JsonSerializer.Serialize(payload, SerializerOptions);
     }
 }
