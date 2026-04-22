@@ -757,7 +757,7 @@ public sealed class AIIntegrationLayerTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_ReturnsStructuredResponse_FromMockProvider()
+    public async Task ConversationLayerOrchestrator_ReturnsStructuredResponse_FromMockProvider()
     {
         var services = BuildServiceProvider(new Dictionary<string, string?>
         {

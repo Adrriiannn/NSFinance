@@ -180,7 +180,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_UsesPersistentMemory_WhenEnabled()
+    public async Task ConversationLayerOrchestrator_UsesPersistentMemory_WhenEnabled()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -241,7 +241,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_DedupesCompletedTurn_ByClientRequestId()
+    public async Task ConversationLayerOrchestrator_DedupesCompletedTurn_ByClientRequestId()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -301,7 +301,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_DuplicateWhileInProgress_ReturnsTurnInProgress()
+    public async Task ConversationLayerOrchestrator_DuplicateWhileInProgress_ReturnsTurnInProgress()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -502,7 +502,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_BlocksExplicitTransientFallbackInProduction_WhenNotAllowed()
+    public async Task ConversationLayerOrchestrator_BlocksExplicitTransientFallbackInProduction_WhenNotAllowed()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -553,7 +553,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_AllowsLocalDiscoveryContinuation_WhenPersistentContextCancelled_AndFallbackDisabled()
+    public async Task ConversationLayerOrchestrator_AllowsLocalDiscoveryContinuation_WhenPersistentContextCancelled_AndFallbackDisabled()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -602,7 +602,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_DeniesNonLocalDiscoveryFallback_WhenPersistentContextCancelled_AndFallbackDisabled()
+    public async Task ConversationLayerOrchestrator_DeniesNonLocalDiscoveryFallback_WhenPersistentContextCancelled_AndFallbackDisabled()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -666,7 +666,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_PropagatesRequestCancellation_FromPersistentContextBuild()
+    public async Task ConversationLayerOrchestrator_PropagatesRequestCancellation_FromPersistentContextBuild()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -719,7 +719,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_RecordsRepeatedTransientFallbacksPerThread_WhenAllowed()
+    public async Task ConversationLayerOrchestrator_RecordsRepeatedTransientFallbacksPerThread_WhenAllowed()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -788,7 +788,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task UserChatOrchestrator_FailsFastWhenPersistentMemoryRequiredButUnavailable()
+    public async Task ConversationLayerOrchestrator_FailsFastWhenPersistentMemoryRequiredButUnavailable()
     {
         await using var dbContext = CreateDbContext();
         var userId = await SeedUserAsync(dbContext, "chat-required-persistent");
