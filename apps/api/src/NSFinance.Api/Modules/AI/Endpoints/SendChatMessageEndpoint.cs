@@ -83,7 +83,9 @@ public static class SendChatMessageEndpoint
 
         var fallbackUsed = result.Warnings.Any(warning =>
             warning.Contains("fallback", StringComparison.OrdinalIgnoreCase)
-            || warning.Contains("persistent_memory_unavailable", StringComparison.OrdinalIgnoreCase));
+            || warning.Contains("persistent_memory_unavailable", StringComparison.OrdinalIgnoreCase)
+            || warning.Contains("structured_parse_failed", StringComparison.OrdinalIgnoreCase)
+            || warning.Contains("recovery", StringComparison.OrdinalIgnoreCase));
 
         var response = new SendChatMessageResponse(
             ConversationThreadId: result.ConversationThreadId,

@@ -126,6 +126,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IConversationContextService, ConversationContextService>();
         services.AddScoped<IConversationBehaviorEngine, ConversationBehaviorEngine>();
         services.AddScoped<IConversationDecisionEngine, ConversationDecisionEngine>();
+        services.AddScoped<IDeterministicConversationDecisionBuilder, DeterministicConversationDecisionBuilder>();
         services.AddScoped<IConversationModelRoutingPolicy, ConversationModelRoutingPolicy>();
         services.AddScoped<IModeRouter, ModeRouter>();
         services.AddScoped<IReadinessTransitionPolicy, ReadinessTransitionPolicy>();

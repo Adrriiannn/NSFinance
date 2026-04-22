@@ -161,7 +161,6 @@ public sealed class ConversationArchitectureGuardTests
         var order = new List<string>();
         var orchestrator = new ConversationLayerOrchestrator(
             contextService: new StubConversationContextService(),
-            modelRouter: new StubModelRouter(),
             behaviorEngine: new StubBehaviorEngine(order),
             modeRouter: new TrackingModeRouter(order),
             responseComposer: new StubResponseComposer(order),
@@ -205,7 +204,6 @@ public sealed class ConversationArchitectureGuardTests
         var telemetry = new RecordingChatTelemetry();
         var orchestrator = new ConversationLayerOrchestrator(
             contextService: new StubConversationContextService(),
-            modelRouter: new StubModelRouter(),
             behaviorEngine: new StubBehaviorEngine(order),
             modeRouter: new TrackingModeRouter(order),
             responseComposer: new StubResponseComposer(order),
@@ -245,6 +243,12 @@ public sealed class ConversationArchitectureGuardTests
         Assert.Equal(0, summary["heavyModelCallCount"]);
         Assert.Equal(2, summary["fastModelCallCount"]);
         Assert.Equal(true, summary["usedDeterministicPath"]);
+
+        var latency = telemetry.Single("chat.turn.latency_budget");
+        Assert.True(Convert.ToInt64(latency["setupDurationMs"]!) >= 0);
+        Assert.True(Convert.ToInt64(latency["behaviorDurationMs"]!) >= 0);
+        Assert.True(Convert.ToInt64(latency["responseCompositionDurationMs"]!) >= 0);
+        Assert.True(Convert.ToInt64(latency["totalDurationMs"]!) >= 0);
     }
 
     [Fact]
@@ -643,7 +647,9 @@ public sealed class ConversationArchitectureGuardTests
                     DeploymentUsed: "stub-deployment",
                     ReasoningClass: AIModelClass.Fast,
                     UsedDeterministicPath: false,
+                    FallbackUsed: false,
                     SelectionReason: "stub_response_composition",
+                    RecoveryReason: null,
                     Warnings: [],
                     FollowUpIntentHints: []));
         }

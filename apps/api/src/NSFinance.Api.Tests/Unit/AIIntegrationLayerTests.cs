@@ -405,11 +405,12 @@ public sealed class AIIntegrationLayerTests
             FailureReason: null);
         var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []);
 
-        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes);
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes, out var failureReason);
 
         Assert.True(ok);
         Assert.True(parsed.Succeeded);
         Assert.Equal("Hello from Azure.", parsed.ReplyText);
+        Assert.Null(failureReason);
         Assert.Contains("structured_reply_text_recovered_from_alias", reasonCodes);
     }
 
@@ -439,11 +440,12 @@ public sealed class AIIntegrationLayerTests
             FailureReason: null);
         var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []);
 
-        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes);
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes, out var failureReason);
 
         Assert.False(ok);
         Assert.False(parsed.Succeeded);
         Assert.Equal("structured_reply_text_missing", parsed.FailureReason);
+        Assert.Equal("structured_reply_text_missing", failureReason);
         Assert.Contains("structured_reply_text_missing", reasonCodes);
     }
 

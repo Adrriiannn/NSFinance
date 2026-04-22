@@ -5,6 +5,9 @@ import { Platform } from "react-native";
 
 type TokenResolver = () => string | null;
 type UnauthorizedHandler = () => Promise<string | null>;
+type ApiRequestOptions = {
+  timeoutMs?: number;
+};
 
 let tokenResolver: TokenResolver = () => null;
 let unauthorizedHandler: UnauthorizedHandler | null = null;
@@ -62,7 +65,11 @@ function isAuthRoute(path: string): boolean {
   return path === "/api/auth/register" || path === "/api/auth/login";
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(
+  path: string,
+  init?: RequestInit,
+  options?: ApiRequestOptions
+): Promise<T> {
   const requestUrl = resolveApiRequestUrl(path);
 
   if (authApiRouteDiagnostics.enabled && isAuthRoute(path)) {
@@ -83,7 +90,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
       ...(init?.headers ?? {})
     };
 
-    const timeoutController = createAbortController(apiConfig.timeoutMs);
+    const timeoutController = createAbortController(options?.timeoutMs ?? apiConfig.timeoutMs);
     try {
       return await fetch(requestUrl, {
         ...init,

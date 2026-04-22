@@ -683,7 +683,6 @@ public sealed class PersistentConversationMemoryTests
 
         var orchestrator = new ConversationLayerOrchestrator(
             scope.ServiceProvider.GetRequiredService<IConversationContextService>(),
-            scope.ServiceProvider.GetRequiredService<IAIModelRouter>(),
             scope.ServiceProvider.GetRequiredService<IConversationBehaviorEngine>(),
             scope.ServiceProvider.GetRequiredService<IModeRouter>(),
             scope.ServiceProvider.GetRequiredService<IResponseComposer>(),
@@ -810,7 +809,6 @@ public sealed class PersistentConversationMemoryTests
 
         var orchestrator = new ConversationLayerOrchestrator(
             scope.ServiceProvider.GetRequiredService<IConversationContextService>(),
-            new AIModelRouter(options, NullLogger<AIModelRouter>.Instance),
             scope.ServiceProvider.GetRequiredService<IConversationBehaviorEngine>(),
             scope.ServiceProvider.GetRequiredService<IModeRouter>(),
             scope.ServiceProvider.GetRequiredService<IResponseComposer>(),
@@ -921,7 +919,6 @@ public sealed class PersistentConversationMemoryTests
     {
         return new ConversationLayerOrchestrator(
             provider.GetRequiredService<IConversationContextService>(),
-            provider.GetRequiredService<IAIModelRouter>(),
             provider.GetRequiredService<IConversationBehaviorEngine>(),
             provider.GetRequiredService<IModeRouter>(),
             provider.GetRequiredService<IResponseComposer>(),

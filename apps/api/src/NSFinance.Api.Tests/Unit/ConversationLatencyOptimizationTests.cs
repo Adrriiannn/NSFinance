@@ -22,6 +22,24 @@ public sealed class ConversationLatencyOptimizationTests
     }
 
     [Fact]
+    public void ConversationModelRoutingPolicy_UsesDeterministicPrimary_ForStructuredFollowUpBoundToResults()
+    {
+        var policy = new ConversationModelRoutingPolicy();
+        var state = CreateDefaultState();
+        var resultContext = CreateResultContextSnapshot(ExplorationSubtype.Structured);
+
+        var selection = policy.SelectPrimaryDecision(
+            BuildBehaviorRequest("Do they have parking?", state, resultContext),
+            ConversationSignalAnalyzer.Analyze("Do they have parking?"),
+            FollowUpBindingType.BindPrior,
+            state);
+
+        Assert.Equal(ConversationModelSelectionKind.Deterministic, selection.SelectionKind);
+        Assert.Equal("structured_followup_deterministic", selection.SelectionReason);
+        Assert.Null(selection.ModelClass);
+    }
+
+    [Fact]
     public void ConversationModelRoutingPolicy_UsesHeavyPrimary_WithJustification_ForOpenExploration()
     {
         var policy = new ConversationModelRoutingPolicy();
@@ -149,18 +167,18 @@ public sealed class ConversationLatencyOptimizationTests
                 "Do they have parking?",
                 CreateDefaultState(),
                 resultContext,
-                ResultContextBindingClassification.None),
+                ResultContextBindingClassification.BindPrior),
             CancellationToken.None);
 
-        Assert.Equal(1, decisionEngine.PrimaryDecisionModelInvocationCount);
+        Assert.Equal(0, decisionEngine.PrimaryDecisionModelInvocationCount);
         Assert.Equal(0, decisionEngine.SubtypeDecisionCallCount);
         Assert.NotNull(result.ExplorationSubtypeDecision);
         Assert.Equal(ExplorationSubtype.Structured, result.ExplorationSubtypeDecision!.Subtype);
-        Assert.Equal(ConversationModelSelectionKind.Fast, result.PrimaryDecisionModelSelection.SelectionKind);
+        Assert.Equal(ConversationModelSelectionKind.Deterministic, result.PrimaryDecisionModelSelection.SelectionKind);
 
         var resolutionEvent = telemetry.Single("chat.turn.exploration_subtype_resolution");
         Assert.Equal("result_context_structured_fast_path", resolutionEvent["resolutionSource"]);
-        Assert.Equal(1, resolutionEvent["decisionModelCallCount"]);
+        Assert.Equal(0, resolutionEvent["decisionModelCallCount"]);
     }
 
     [Fact]
@@ -215,6 +233,7 @@ public sealed class ConversationLatencyOptimizationTests
                     PrimaryWhy: "stub-structured",
                     MissingConstraints: [],
                     ReasonCodes: ["stub_structured"])),
+            new DeterministicConversationDecisionBuilder(),
             new StaticModelRouter(),
             new StaticAIClient(),
             telemetry,
@@ -263,6 +282,7 @@ public sealed class ConversationLatencyOptimizationTests
                     PrimaryWhy: "stub-structured",
                     MissingConstraints: [],
                     ReasonCodes: ["stub_structured"])),
+            new DeterministicConversationDecisionBuilder(),
             new StaticModelRouter(),
             aiClient,
             telemetry,
@@ -282,6 +302,124 @@ public sealed class ConversationLatencyOptimizationTests
         Assert.False(evaluation.UsedModelInvocation);
         Assert.Empty(telemetry.ByName("chat.model.invocation"));
         Assert.Single(telemetry.ByName("chat.model.selection"));
+    }
+
+    [Fact]
+    public async Task ConversationDecisionEngine_BuildsDeterministicPrimaryDecision_WithoutFallbackRecoveryReasonCodes()
+    {
+        var telemetry = new RecordingTelemetry();
+        var engine = new ConversationDecisionEngine(
+            new StubConversationDecisionPromptBuilder(),
+            new StubExplorationSubtypePromptBuilder(),
+            new StaticConversationDecisionParser(CreateExplorationDecision()),
+            new StaticExplorationSubtypeDecisionParser(
+                new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.84d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "stub-structured",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"])),
+            new DeterministicConversationDecisionBuilder(),
+            new StaticModelRouter(),
+            new StaticAIClient(),
+            telemetry,
+            NullLogger<ConversationDecisionEngine>.Instance);
+
+        var evaluation = await engine.EvaluateAsync(
+            BuildBehaviorRequest("coffee shops near me", CreateDefaultState()),
+            new ConversationModelSelectionPlan(
+                SelectionKind: ConversationModelSelectionKind.Deterministic,
+                ModelClass: null,
+                SelectionReason: "structured_search_deterministic",
+                EscalationJustification: null,
+                CouldAvoidEscalation: false,
+                ReasonCodes: ["structured_search_deterministic"]),
+            CancellationToken.None);
+
+        Assert.Contains("deterministic_primary", evaluation.Decision.ReasonCodes);
+        Assert.DoesNotContain("fallback_decision_recovery", evaluation.Decision.ReasonCodes);
+        Assert.Equal(ConversationBehaviorStrategy.ToolReadyHandoff, evaluation.Decision.Strategy);
+    }
+
+    [Fact]
+    public async Task ResponseComposer_UsesSafeDeterministicFallback_WhenStructuredParseFails()
+    {
+        var telemetry = new RecordingTelemetry();
+        var composer = new ResponseComposer(
+            new StubResponseCompositionPromptBuilder(),
+            new UserChatResponseParser(),
+            new StaticModelRouter(),
+            new StaticResponseAIClient(
+                """
+                {
+                  "warnings": ["model_internal_warning"],
+                  "suggestedStructuredStateUpdates": { "mode": "exploration" }
+                }
+                """),
+            telemetry,
+            NullLogger<ResponseComposer>.Instance);
+
+        var result = await composer.ComposeAsync(
+            CreateResponseCompositionRequest(ResponseCompositionType.ResultSummary),
+            "corr-response-fallback",
+            CancellationToken.None);
+
+        Assert.True(result.UsedDeterministicPath);
+        Assert.True(result.FallbackUsed);
+        Assert.Equal("response_composition_safe_fallback", result.SelectionReason);
+        Assert.Equal("structured_reply_text_missing", result.RecoveryReason);
+        Assert.Contains("structured_parse_failed", result.Warnings);
+        Assert.Contains("response_composition_safe_fallback", result.Warnings);
+        Assert.DoesNotContain("\"warnings\"", result.ReplyText, StringComparison.OrdinalIgnoreCase);
+
+        var fallbackEvent = telemetry.Single("chat.response.fallback");
+        Assert.Equal("structured_reply_text_missing", fallbackEvent["failureReason"]);
+
+        var selectionEvent = telemetry.ByName("chat.response.selection").Single();
+        Assert.Equal(true, selectionEvent["fallbackUsed"]);
+        Assert.Equal("response_composition_safe_fallback", selectionEvent["selectionReason"]);
+    }
+
+    [Fact]
+    public void UserChatResponseParser_RejectsObjectShapedReplyAlias()
+    {
+        var parser = new UserChatResponseParser();
+        var payload = """
+            {
+              "reply": { "text": "This should not leak." }
+            }
+            """;
+        var response = new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "AzureOpenAI",
+            Model: "gpt-4.1",
+            Deployment: "gpt-4.1",
+            InputTokenEstimate: 8,
+            OutputTokenEstimate: 16,
+            LatencyMs: 50,
+            WasMocked: false,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+        var route = new AIModelRoute(
+            AITaskType.ResponseComposition,
+            AIModelClass.Fast,
+            "gpt-4.1",
+            "gpt-4.1",
+            false,
+            "fast_route",
+            []);
+
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes, out var failureReason);
+
+        Assert.False(ok);
+        Assert.False(parsed.Succeeded);
+        Assert.Equal("structured_reply_text_missing", failureReason);
+        Assert.Equal("I couldn't generate a response.", parsed.ReplyText);
+        Assert.Contains("structured_reply_text_missing", reasonCodes);
     }
 
     private static ConversationBehaviorEngine CreateBehaviorEngine(
@@ -415,6 +553,23 @@ public sealed class ConversationLatencyOptimizationTests
             IsActiveWindowExpired: false);
     }
 
+    private static ResponseCompositionRequest CreateResponseCompositionRequest(ResponseCompositionType responseType)
+    {
+        return new ResponseCompositionRequest(
+            ResponseType: responseType,
+            ToneDirective: ResponseToneDirective.Neutral,
+            Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+            Mode: ConversationMode.Exploration,
+            ReadinessLevel: ConversationReadinessLevel.R4_ToolReady,
+            UserMessage: "coffee shops near me",
+            GroundedData: new GroundedDataEnvelope([], [], []),
+            Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            MissingConstraints: [],
+            MaxLengthHint: 500,
+            ClarificationQuestion: null,
+            SuggestedOptions: []);
+    }
+
     private sealed class CountingDecisionEngine(
         ConversationTurnStrategyDecision decision,
         ExplorationSubtypeDecision subtypeDecision) : IConversationDecisionEngine
@@ -508,6 +663,27 @@ public sealed class ConversationLatencyOptimizationTests
         }
     }
 
+    private sealed class StaticResponseAIClient(string payload) : IAIClient
+    {
+        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new AIResponse(
+                Content: payload,
+                StructuredPayloadJson: payload,
+                FinishReason: "stop",
+                Provider: "stub",
+                Model: route.Model,
+                Deployment: route.Deployment,
+                InputTokenEstimate: 1,
+                OutputTokenEstimate: 1,
+                LatencyMs: 1,
+                WasMocked: true,
+                RawDiagnostics: null,
+                Succeeded: true,
+                FailureReason: null));
+        }
+    }
+
     private sealed class StaticModelRouter : IAIModelRouter
     {
         public AIModelRoute Resolve(AITaskType taskType, AIModelClass preferredModelClass, string? complexityHint = null)
@@ -544,6 +720,18 @@ public sealed class ConversationLatencyOptimizationTests
                 Messages: [AIMessage.User("stub-subtype")],
                 StructuredSchemaName: "stub",
                 ReasonCodes: ["stub_prompt"]);
+        }
+    }
+
+    private sealed class StubResponseCompositionPromptBuilder : IResponseCompositionPromptBuilder
+    {
+        public PromptBuildResult BuildPrompt(ResponseCompositionPromptInput input)
+        {
+            return new PromptBuildResult(
+                SystemInstructions: "Return structured chat output.",
+                Messages: [AIMessage.User(input.Request.UserMessage)],
+                StructuredSchemaName: "user_chat_response",
+                ReasonCodes: ["stub_response_prompt"]);
         }
     }
 

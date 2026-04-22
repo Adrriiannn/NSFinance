@@ -274,7 +274,9 @@ public sealed record ResponseCompositionResult(
     string DeploymentUsed,
     AIModelClass ReasoningClass,
     bool UsedDeterministicPath,
+    bool FallbackUsed,
     string SelectionReason,
+    string? RecoveryReason,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> FollowUpIntentHints);
 

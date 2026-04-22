@@ -726,7 +726,7 @@ public sealed class ExplorationSubtypeDecisionPolicy : IExplorationSubtypeDecisi
         }
 
         if (ConversationPolicyHelpers.HasStrongOpenExplorationIntent(extraction, signals)
-            && !HasOperationalRefinementCue(normalized))
+            && !ConversationPolicyHelpers.HasOperationalStructuredFollowUpCue(normalized))
         {
             reasonCodes.Add("exploration_subtype_open_fast_path");
             return new ExplorationSubtypeResolutionPlan(
@@ -866,19 +866,7 @@ public sealed class ExplorationSubtypeDecisionPolicy : IExplorationSubtypeDecisi
 
     private static bool HasOperationalRefinementCue(string normalized)
     {
-        return ContainsAny(
-            normalized,
-            "parking",
-            "open now",
-            "closer",
-            "closest",
-            "distance",
-            "rating",
-            "reviews",
-            "wheelchair",
-            "accessible",
-            "delivery",
-            "takeaway");
+        return ConversationPolicyHelpers.HasOperationalStructuredFollowUpCue(normalized);
     }
 
     private static string? ReadExplorationSubtypeConstraint(ConversationStateSnapshot state)
@@ -1192,6 +1180,53 @@ internal static class ConversationPolicyHelpers
                && !ShouldPreferExperientialOpen(extraction, signals)
             ? ExplorationSubtype.Structured
             : ExplorationSubtype.Open;
+    }
+
+    public static bool HasOperationalStructuredFollowUpCue(string normalized)
+    {
+        return ContainsAny(
+            normalized,
+            "parking",
+            "open now",
+            "closer",
+            "closest",
+            "distance",
+            "rating",
+            "reviews",
+            "wheelchair",
+            "accessible",
+            "delivery",
+            "takeaway");
+    }
+
+    public static bool HasDeterministicStructuredFollowUpIntent(
+        ResultContextSnapshot? resultContext,
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ConversationSignals signals,
+        string normalized)
+    {
+        if (resultContext?.SourceMode != ConversationMode.Exploration
+            || resultContext.SourceSubtype != ExplorationSubtype.Structured
+            || ShouldPreferExperientialOpen(extraction, signals))
+        {
+            return false;
+        }
+
+        if (signals.HasComparisonSignal || signals.HasResultReferenceSignal)
+        {
+            return true;
+        }
+
+        if (HasOperationalStructuredFollowUpCue(normalized))
+        {
+            return true;
+        }
+
+        return signals.HasBranchingSignal
+               && (extraction.HasExplicitLocality
+                   || extraction.HasNearMeLanguage
+                   || extraction.TimeHints.Count > 0
+                   || extraction.PlaceTypeHints.Count > 0);
     }
 
     public static ExplorationSubtypeDecision BuildFallbackExplorationSubtypeDecision(string userMessage)

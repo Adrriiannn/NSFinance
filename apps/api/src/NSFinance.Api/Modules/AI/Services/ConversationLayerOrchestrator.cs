@@ -8,7 +8,6 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed class ConversationLayerOrchestrator(
     IConversationContextService contextService,
-    IAIModelRouter modelRouter,
     IConversationBehaviorEngine behaviorEngine,
     IModeRouter modeRouter,
     IResponseComposer responseComposer,
@@ -32,10 +31,9 @@ public sealed class ConversationLayerOrchestrator(
         cancellationToken.ThrowIfCancellationRequested();
         ValidateUserMessage(request.UserMessage, options.Value.ChatTurns.MaxUserMessageChars);
 
-        var primaryRoute = modelRouter.Resolve(
-            AITaskType.ConversationDecision,
-            AIModelClass.Any,
-            complexityHint: "conversation_first");
+        var totalStopwatch = Stopwatch.StartNew();
+        var setupStopwatch = Stopwatch.StartNew();
+        var lifecycleRoute = CreateOrchestrationLifecycleRoute();
 
         var workingRequest = request;
         var warnings = new List<string>();
@@ -49,7 +47,7 @@ public sealed class ConversationLayerOrchestrator(
             await RecordTransientFallbackEventAsync(
                 request,
                 AITaskType.ConversationDecision,
-                primaryRoute,
+                lifecycleRoute,
                 conversationThreadId,
                 conversationTurnId,
                 reasonCategory: "persistent_memory_unavailable",
@@ -62,7 +60,7 @@ public sealed class ConversationLayerOrchestrator(
             {
                 return BuildFailedTurnResponse(
                     "Persistent memory was requested but is not available for this request.",
-                    primaryRoute,
+                    lifecycleRoute,
                     warnings.Append("persistent_memory_required_unavailable").ToArray(),
                     "persistent_memory_required_unavailable",
                     conversationThreadId,
@@ -101,7 +99,7 @@ public sealed class ConversationLayerOrchestrator(
                 clientRequestId,
                 request.CorrelationId,
                 AITaskType.ConversationDecision,
-                primaryRoute.ModelClass,
+                lifecycleRoute.ModelClass,
                 cancellationToken);
 
             conversationTurnId = turnStart.Turn.Id;
@@ -150,7 +148,7 @@ public sealed class ConversationLayerOrchestrator(
                 var persistentContextResult = await TryBuildPersistentContextAsync(
                     workingRequest,
                     AITaskType.ConversationDecision,
-                    primaryRoute,
+                    lifecycleRoute,
                     persistentThreadId,
                     activeTurn.Id,
                     warnings,
@@ -228,7 +226,7 @@ public sealed class ConversationLayerOrchestrator(
 
                 return BuildFailedTurnResponse(
                     "Chat request was cancelled before completion.",
-                    primaryRoute,
+                    lifecycleRoute,
                     warnings.Append("request_cancelled").ToArray(),
                     "request_cancelled",
                     conversationThreadId,
@@ -271,7 +269,7 @@ public sealed class ConversationLayerOrchestrator(
 
                 return BuildFailedTurnResponse(
                     "I couldn't prepare the conversation context safely.",
-                    primaryRoute,
+                    lifecycleRoute,
                     warnings.Append("turn_setup_failed").ToArray(),
                     "turn_setup_failed",
                     conversationThreadId,
@@ -286,13 +284,15 @@ public sealed class ConversationLayerOrchestrator(
             (contextMessages, contextSummary, structuredState, contextReasonCodes) = BuildTransientContext(request);
         }
 
+        setupStopwatch.Stop();
+
         if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
         {
             await conversationTurnService!.MarkAIInProgressAsync(
                 request.UserId.Value,
                 conversationThreadId.Value,
                 conversationTurnId.Value,
-                primaryRoute,
+                lifecycleRoute,
                 cancellationToken);
         }
 
@@ -339,7 +339,7 @@ public sealed class ConversationLayerOrchestrator(
 
             return BuildFailedTurnResponse(
                 "Chat request was cancelled before completion.",
-                primaryRoute,
+                lifecycleRoute,
                 warnings.Append("request_cancelled").ToArray(),
                 "request_cancelled",
                 conversationThreadId,
@@ -386,7 +386,7 @@ public sealed class ConversationLayerOrchestrator(
 
             return BuildFailedTurnResponse(
                 "I couldn't complete that turn safely.",
-                primaryRoute,
+                lifecycleRoute,
                 warnings.Append("conversation_first_execution_failed").ToArray(),
                 "conversation_first_execution_failed",
                 conversationThreadId,
@@ -401,6 +401,7 @@ public sealed class ConversationLayerOrchestrator(
             executionStopwatch.Stop();
         }
 
+        long persistenceDurationMs = 0;
         if (canUsePersistentMemory && request.UserId.HasValue && conversationThreadId.HasValue && conversationTurnId.HasValue)
         {
             var persistentUserId = request.UserId.Value;
@@ -424,6 +425,14 @@ public sealed class ConversationLayerOrchestrator(
                     TurnStatus = ConversationTurnStatus.Failed
                 };
             }
+
+            var persistenceStopwatch = Stopwatch.StartNew();
+            await conversationTurnService!.ApplyResolvedRouteAsync(
+                persistentUserId,
+                persistentThreadId,
+                persistentTurnId,
+                executionResult.AssistantRoute,
+                cancellationToken);
 
             await conversationTurnService!.MarkAICompletedAsync(
                 persistentUserId,
@@ -494,6 +503,8 @@ public sealed class ConversationLayerOrchestrator(
                 persistentThreadId,
                 persistentTurnId,
                 cancellationToken);
+            persistenceStopwatch.Stop();
+            persistenceDurationMs = persistenceStopwatch.ElapsedMilliseconds;
         }
 
         await telemetry.TrackAsync(
@@ -527,6 +538,23 @@ public sealed class ConversationLayerOrchestrator(
             },
             cancellationToken);
 
+        await telemetry.TrackAsync(
+            "chat.turn.latency_budget",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["threadId"] = conversationThreadId?.ToString("N"),
+                ["turnId"] = conversationTurnId?.ToString("N"),
+                ["setupDurationMs"] = setupStopwatch.ElapsedMilliseconds,
+                ["behaviorDurationMs"] = executionResult.BehaviorDurationMs,
+                ["modeExecutionDurationMs"] = executionResult.ModeExecutionDurationMs,
+                ["responseCompositionDurationMs"] = executionResult.ResponseCompositionDurationMs,
+                ["executionDurationMs"] = executionStopwatch.ElapsedMilliseconds,
+                ["persistenceDurationMs"] = persistenceDurationMs,
+                ["totalDurationMs"] = totalStopwatch.ElapsedMilliseconds
+            },
+            cancellationToken);
+
         logger.LogInformation(
             "Conversation-first user chat completed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} succeeded={Succeeded} model={Model} contextReasonCodes={ContextReasonCodes} warnings={Warnings}",
             request.CorrelationId,
@@ -555,6 +583,7 @@ public sealed class ConversationLayerOrchestrator(
         CancellationToken cancellationToken)
     {
         var clientMetadata = request.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var behaviorStopwatch = Stopwatch.StartNew();
         var behavior = await behaviorEngine.EvaluateAsync(
             new ConversationBehaviorRequest(
                 Request: request,
@@ -567,9 +596,12 @@ public sealed class ConversationLayerOrchestrator(
                 FailureHistory: [],
                 CancellationToken: cancellationToken),
             cancellationToken);
+        behaviorStopwatch.Stop();
 
         var currentResultContext = resultContextReadResult.ActiveResultContext;
         var behaviorState = behavior.State;
+        long modeExecutionDurationMs = 0;
+        long responseCompositionDurationMs = 0;
 
         if (behaviorState.FollowUpBindingType is FollowUpBindingType.None or FollowUpBindingType.NewTopic)
         {
@@ -619,10 +651,13 @@ public sealed class ConversationLayerOrchestrator(
                 ClarificationQuestion: behavior.State.LastClarificationPrompt,
                 SuggestedOptions: behavior.State.LastSuggestedOptions);
 
+            var responseCompositionStopwatch = Stopwatch.StartNew();
             var composed = await responseComposer.ComposeAsync(
                 compositionRequest,
                 request.CorrelationId,
                 cancellationToken);
+            responseCompositionStopwatch.Stop();
+            responseCompositionDurationMs = responseCompositionStopwatch.ElapsedMilliseconds;
 
             var reply = new UserChatResponse(
                 ReplyText: composed.ReplyText,
@@ -665,6 +700,9 @@ public sealed class ConversationLayerOrchestrator(
                 UsedDeterministicPath: behavior.PrimaryDecisionModelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
                                        || behavior.ExplorationSubtypeModelSelection?.SelectionKind == ConversationModelSelectionKind.Deterministic
                                        || composed.UsedDeterministicPath,
+                BehaviorDurationMs: behaviorStopwatch.ElapsedMilliseconds,
+                ModeExecutionDurationMs: modeExecutionDurationMs,
+                ResponseCompositionDurationMs: responseCompositionDurationMs,
                 SelectionReasons: BuildSelectionReasons(
                     behavior.PrimaryDecisionModelSelection.SelectionReason,
                     behavior.ExplorationSubtypeModelSelection?.SelectionReason,
@@ -685,6 +723,7 @@ public sealed class ConversationLayerOrchestrator(
             },
             cancellationToken);
 
+        var modeExecutionStopwatch = Stopwatch.StartNew();
         var modeResult = await modeRouter.RouteAsync(
             new ConversationModeRequest(
                 Request: request,
@@ -696,6 +735,8 @@ public sealed class ConversationLayerOrchestrator(
                 ExplorationSubtypeDecision: behavior.ExplorationSubtypeDecision,
                 ClientMetadata: clientMetadata),
             cancellationToken);
+        modeExecutionStopwatch.Stop();
+        modeExecutionDurationMs = modeExecutionStopwatch.ElapsedMilliseconds;
 
         var finalState = modeResult.State;
         currentResultContext = modeResult.ResultContext ?? currentResultContext;
@@ -733,6 +774,9 @@ public sealed class ConversationLayerOrchestrator(
                 HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
                 FastModelCallCount: behavior.FastDecisionModelCallCount,
                 UsedDeterministicPath: true,
+                BehaviorDurationMs: behaviorStopwatch.ElapsedMilliseconds,
+                ModeExecutionDurationMs: modeExecutionDurationMs,
+                ResponseCompositionDurationMs: responseCompositionDurationMs,
                 SelectionReasons: BuildSelectionReasons(
                     behavior.PrimaryDecisionModelSelection.SelectionReason,
                     behavior.ExplorationSubtypeModelSelection?.SelectionReason,
@@ -783,6 +827,9 @@ public sealed class ConversationLayerOrchestrator(
                 HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
                 FastModelCallCount: behavior.FastDecisionModelCallCount,
                 UsedDeterministicPath: true,
+                BehaviorDurationMs: behaviorStopwatch.ElapsedMilliseconds,
+                ModeExecutionDurationMs: modeExecutionDurationMs,
+                ResponseCompositionDurationMs: responseCompositionDurationMs,
                 SelectionReasons: BuildSelectionReasons(
                     behavior.PrimaryDecisionModelSelection.SelectionReason,
                     behavior.ExplorationSubtypeModelSelection?.SelectionReason,
@@ -806,10 +853,13 @@ public sealed class ConversationLayerOrchestrator(
             ClarificationQuestion: finalState.LastClarificationPrompt,
             SuggestedOptions: finalState.LastSuggestedOptions);
 
+        var routedCompositionStopwatch = Stopwatch.StartNew();
         var routedComposition = await responseComposer.ComposeAsync(
             routedCompositionRequest,
             request.CorrelationId,
             cancellationToken);
+        routedCompositionStopwatch.Stop();
+        responseCompositionDurationMs = routedCompositionStopwatch.ElapsedMilliseconds;
 
         var routedReply = new UserChatResponse(
             ReplyText: routedComposition.ReplyText,
@@ -854,6 +904,9 @@ public sealed class ConversationLayerOrchestrator(
             UsedDeterministicPath: behavior.PrimaryDecisionModelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
                                    || behavior.ExplorationSubtypeModelSelection?.SelectionKind == ConversationModelSelectionKind.Deterministic
                                    || routedComposition.UsedDeterministicPath,
+            BehaviorDurationMs: behaviorStopwatch.ElapsedMilliseconds,
+            ModeExecutionDurationMs: modeExecutionDurationMs,
+            ResponseCompositionDurationMs: responseCompositionDurationMs,
             SelectionReasons: BuildSelectionReasons(
                 behavior.PrimaryDecisionModelSelection.SelectionReason,
                 behavior.ExplorationSubtypeModelSelection?.SelectionReason,
@@ -1397,6 +1450,18 @@ public sealed class ConversationLayerOrchestrator(
             IsTurnInProgress: isTurnInProgress);
     }
 
+    private static AIModelRoute CreateOrchestrationLifecycleRoute()
+    {
+        return new AIModelRoute(
+            TaskType: AITaskType.Other,
+            ModelClass: AIModelClass.Fast,
+            Model: "conversation-orchestrator-lifecycle",
+            Deployment: "conversation-orchestrator-lifecycle",
+            IsFallback: true,
+            Reason: "orchestrator_lifecycle",
+            Notes: ["model_neutral"]);
+    }
+
     private static string ResolveClientRequestId(UserChatRequest request, int maxLength)
     {
         var raw = string.IsNullOrWhiteSpace(request.ClientRequestId)
@@ -1602,6 +1667,9 @@ public sealed class ConversationLayerOrchestrator(
         int HeavyModelCallCount,
         int FastModelCallCount,
         bool UsedDeterministicPath,
+        long BehaviorDurationMs,
+        long ModeExecutionDurationMs,
+        long ResponseCompositionDurationMs,
         IReadOnlyList<string> SelectionReasons,
         IReadOnlyList<string> EscalationJustifications);
 }

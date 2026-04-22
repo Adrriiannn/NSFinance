@@ -383,6 +383,7 @@ public sealed class ConversationRemediationPolicyTests
             new StubExplorationSubtypePromptBuilder(),
             new FailingConversationDecisionParser(),
             new FailingExplorationSubtypeDecisionParser(),
+            new DeterministicConversationDecisionBuilder(),
             new StubModelRouter(),
             new StubAIClient(),
             new NoOpChatTelemetry(),

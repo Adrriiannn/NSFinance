@@ -28,6 +28,20 @@ public sealed class ConversationModelRoutingPolicy : IConversationModelRoutingPo
         var normalized = (request.Request.UserMessage ?? string.Empty).Trim().ToLowerInvariant();
         var reasonCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        if (HasDeterministicStructuredFollowUp(
+                request.ResultContext,
+                bindingType,
+                extraction,
+                signals,
+                normalized))
+        {
+            reasonCodes.Add("model_selection_structured_followup_deterministic");
+            return BuildDeterministicPlan(
+                "structured_followup_deterministic",
+                null,
+                reasonCodes);
+        }
+
         if (HasStructuredFollowUp(request.ResultContext, bindingType, extraction, signals))
         {
             reasonCodes.Add("model_selection_structured_followup_fast");
@@ -184,6 +198,23 @@ public sealed class ConversationModelRoutingPolicy : IConversationModelRoutingPo
                    or FollowUpBindingType.Refine
                    or FollowUpBindingType.NewBranch
                && !ConversationPolicyHelpers.ShouldPreferExperientialOpen(extraction, signals);
+    }
+
+    private static bool HasDeterministicStructuredFollowUp(
+        ResultContextSnapshot? resultContext,
+        FollowUpBindingType bindingType,
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ConversationSignals signals,
+        string normalized)
+    {
+        return (bindingType is FollowUpBindingType.BindPrior
+                   or FollowUpBindingType.Refine
+                   or FollowUpBindingType.NewBranch)
+               && ConversationPolicyHelpers.HasDeterministicStructuredFollowUpIntent(
+                   resultContext,
+                   extraction,
+                   signals,
+                   normalized);
     }
 
     private static bool ShouldEscalatePrimaryToHeavy(

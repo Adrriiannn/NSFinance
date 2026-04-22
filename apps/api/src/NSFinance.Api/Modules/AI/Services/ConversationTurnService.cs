@@ -188,6 +188,16 @@ public sealed class ConversationTurnService(
             cancellationToken);
     }
 
+    public Task<ConversationTurnTransitionResult> ApplyResolvedRouteAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        AIModelRoute route,
+        CancellationToken cancellationToken)
+    {
+        return UpdateRouteAsync(userId, conversationThreadId, turnId, route, cancellationToken);
+    }
+
     public Task<ConversationTurnTransitionResult> MarkPersistedAssistantTurnAsync(
         Guid userId,
         Guid conversationThreadId,
@@ -352,6 +362,34 @@ public sealed class ConversationTurnService(
             targetStatus);
 
         return new ConversationTurnTransitionResult(turn, previousStatus, turn.Status);
+    }
+
+    private async Task<ConversationTurnTransitionResult> UpdateRouteAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        AIModelRoute route,
+        CancellationToken cancellationToken)
+    {
+        await EnsureThreadOwnershipAsync(userId, conversationThreadId, cancellationToken);
+
+        var turn = await dbContext.ConversationTurns
+            .SingleOrDefaultAsync(
+                x => x.Id == turnId && x.ConversationThreadId == conversationThreadId,
+                cancellationToken);
+
+        if (turn is null)
+        {
+            throw new InvalidOperationException("Conversation turn not found.");
+        }
+
+        turn.ModelClass = route.ModelClass.ToString();
+        turn.ModelUsed = route.Model;
+        turn.ModelDeployment = route.Deployment;
+        turn.UpdatedUtc = DateTime.UtcNow;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return new ConversationTurnTransitionResult(turn, turn.Status, turn.Status);
     }
 
     private static bool IsTerminal(ConversationTurnStatus status)

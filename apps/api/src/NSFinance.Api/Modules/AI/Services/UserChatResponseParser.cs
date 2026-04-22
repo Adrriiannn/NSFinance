@@ -11,7 +11,12 @@ public sealed record UserChatStructuredResponse(
 
 public interface IUserChatResponseParser
 {
-    bool TryParse(AIResponse response, AIModelRoute route, out UserChatResponse parsedResponse, out IReadOnlyList<string> reasonCodes);
+    bool TryParse(
+        AIResponse response,
+        AIModelRoute route,
+        out UserChatResponse parsedResponse,
+        out IReadOnlyList<string> reasonCodes,
+        out string? failureReason);
 }
 
 public interface IConversationDecisionParser
@@ -42,8 +47,14 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
         PropertyNameCaseInsensitive = true
     };
 
-    public bool TryParse(AIResponse response, AIModelRoute route, out UserChatResponse parsedResponse, out IReadOnlyList<string> reasonCodes)
+    public bool TryParse(
+        AIResponse response,
+        AIModelRoute route,
+        out UserChatResponse parsedResponse,
+        out IReadOnlyList<string> reasonCodes,
+        out string? failureReason)
     {
+        failureReason = null;
         var localReasonCodes = new List<string>();
 
         if (!response.Succeeded)
@@ -59,6 +70,7 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
                 Succeeded: false,
                 FailureReason: response.FailureReason ?? "ai_request_failed");
             reasonCodes = ["ai_response_failed"];
+            failureReason = response.FailureReason ?? "ai_request_failed";
             return false;
         }
 
@@ -76,6 +88,7 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
                 Succeeded: false,
                 FailureReason: "empty_payload");
             reasonCodes = ["empty_payload"];
+            failureReason = "empty_payload";
             return false;
         }
 
@@ -93,20 +106,20 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
 
         if (structured is null)
         {
-            localReasonCodes.Add("fallback_to_raw_content");
-            var rawContent = (response.Content ?? string.Empty).Trim();
+            localReasonCodes.Add("structured_parse_failed");
             parsedResponse = new UserChatResponse(
-                ReplyText: rawContent.Length == 0 ? "I couldn't generate a response." : rawContent,
+                ReplyText: "I couldn't generate a response.",
                 ModelUsed: response.Model,
                 ReasoningClass: route.ModelClass,
                 SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 ReferencedContextSummary: null,
                 Warnings: ["structured_parse_failed"],
                 FollowUpIntentHints: [],
-                Succeeded: rawContent.Length > 0,
-                FailureReason: rawContent.Length > 0 ? null : "structured_parse_failed");
+                Succeeded: false,
+                FailureReason: "structured_parse_failed");
             reasonCodes = localReasonCodes;
-            return rawContent.Length > 0;
+            failureReason = "structured_parse_failed";
+            return false;
         }
 
         var resolvedReplyText = ResolveReplyText(structured, parsedDocument?.RootElement);
@@ -124,6 +137,7 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
                 Succeeded: false,
                 FailureReason: "structured_reply_text_missing");
             reasonCodes = localReasonCodes;
+            failureReason = "structured_reply_text_missing";
             return false;
         }
 
@@ -195,15 +209,6 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
                 value = property.Value.GetString();
                 return true;
             }
-
-            if (property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
-            {
-                value = property.Value.GetRawText();
-                return true;
-            }
-
-            value = property.Value.ToString();
-            return true;
         }
 
         return false;

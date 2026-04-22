@@ -104,6 +104,13 @@ public interface IConversationTurnService
         AIModelRoute route,
         CancellationToken cancellationToken);
 
+    Task<ConversationTurnTransitionResult> ApplyResolvedRouteAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        Guid turnId,
+        AIModelRoute route,
+        CancellationToken cancellationToken);
+
     Task<ConversationTurnTransitionResult> MarkAICompletedAsync(
         Guid userId,
         Guid conversationThreadId,

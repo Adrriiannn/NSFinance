@@ -20,6 +20,7 @@ public sealed class ConversationDecisionEngine(
     IExplorationSubtypePromptBuilder explorationSubtypePromptBuilder,
     IConversationDecisionParser decisionParser,
     IExplorationSubtypeDecisionParser explorationSubtypeDecisionParser,
+    IDeterministicConversationDecisionBuilder deterministicDecisionBuilder,
     IAIModelRouter modelRouter,
     IAIClient aiClient,
     IChatTelemetry telemetry,
@@ -35,13 +36,7 @@ public sealed class ConversationDecisionEngine(
         if (modelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
             || modelSelection.ModelClass is null)
         {
-            var baseDecision = BuildFallbackDecision(request);
-            var deterministicDecision = baseDecision with
-            {
-                ReasonCodes = CombineReasonCodes(
-                    baseDecision.ReasonCodes,
-                    modelSelection.ReasonCodes)
-            };
+            var deterministicDecision = deterministicDecisionBuilder.BuildPrimaryDecision(request, modelSelection);
 
             await TrackSelectionAsync(
                 request.Request.CorrelationId,
@@ -133,7 +128,7 @@ public sealed class ConversationDecisionEngine(
             },
             cancellationToken);
 
-        var baseFallbackDecision = BuildFallbackDecision(request);
+        var baseFallbackDecision = BuildRecoveryFallbackDecision(request);
         var fallbackDecision = baseFallbackDecision with
         {
             ReasonCodes = CombineReasonCodes(
@@ -322,7 +317,7 @@ public sealed class ConversationDecisionEngine(
             .ToArray();
     }
 
-    private static ConversationTurnStrategyDecision BuildFallbackDecision(ConversationBehaviorRequest request)
+    private static ConversationTurnStrategyDecision BuildRecoveryFallbackDecision(ConversationBehaviorRequest request)
     {
         var signals = ConversationSignalAnalyzer.Analyze(request.Request.UserMessage);
         var currentReadiness = request.EffectiveState.ReadinessLevel;
@@ -356,7 +351,7 @@ public sealed class ConversationDecisionEngine(
                     : ToolExecutionPermission.Forbidden,
                 ReasonCodes:
                 [
-                    "fallback_decision",
+                    "fallback_decision_recovery",
                     "fallback_exploration_signal"
                 ]);
         }
@@ -379,7 +374,7 @@ public sealed class ConversationDecisionEngine(
                 ToolExecutionPermission: ToolExecutionPermission.Forbidden,
                 ReasonCodes:
                 [
-                    "fallback_decision",
+                    "fallback_decision_recovery",
                     "fallback_financial_validation_required"
                 ]);
         }
@@ -399,7 +394,7 @@ public sealed class ConversationDecisionEngine(
                 ToolExecutionPermission: ToolExecutionPermission.Forbidden,
                 ReasonCodes:
                 [
-                    "fallback_decision",
+                    "fallback_decision_recovery",
                     "fallback_factual_complete"
                 ]);
         }
@@ -419,7 +414,7 @@ public sealed class ConversationDecisionEngine(
             ToolExecutionPermission: ToolExecutionPermission.Forbidden,
             ReasonCodes:
             [
-                "fallback_decision",
+                "fallback_decision_recovery",
                 "fallback_general_guidance"
             ]);
     }
@@ -456,16 +451,15 @@ public sealed class ResponseComposer(
         if (ShouldUseDeterministicTemplate(request))
         {
             var deterministic = BuildDeterministicResponse(request);
-            await telemetry.TrackAsync(
-                "chat.response.selection",
-                new Dictionary<string, object?>
-                {
-                    ["correlationId"] = correlationId,
-                    ["selectionKind"] = ConversationModelSelectionKind.Deterministic.ToString(),
-                    ["selectionReason"] = deterministic.SelectionReason,
-                    ["usedModelInvocation"] = false,
-                    ["responseType"] = request.ResponseType.ToString()
-                },
+            await TrackResponseSelectionAsync(
+                correlationId,
+                request.ResponseType,
+                ConversationModelSelectionKind.Deterministic,
+                deterministic.SelectionReason,
+                usedModelInvocation: false,
+                deterministic.FallbackUsed,
+                deterministic.RecoveryReason,
+                deterministic.Warnings,
                 cancellationToken);
             return deterministic;
         }
@@ -503,36 +497,108 @@ public sealed class ResponseComposer(
             route,
             cancellationToken);
 
-        if (userChatResponseParser.TryParse(response, route, out var parsedResponse, out _)
+        if (userChatResponseParser.TryParse(
+                response,
+                route,
+                out var parsedResponse,
+                out var parserReasonCodes,
+                out var parseFailureReason)
             && parsedResponse.Succeeded)
         {
-            return new ResponseCompositionResult(
+            var success = new ResponseCompositionResult(
                 ReplyText: parsedResponse.ReplyText,
                 SuggestedStructuredStateUpdates: parsedResponse.SuggestedStructuredStateUpdates,
                 ModelUsed: parsedResponse.ModelUsed,
                 DeploymentUsed: route.Deployment,
                 ReasoningClass: parsedResponse.ReasoningClass,
                 UsedDeterministicPath: false,
+                FallbackUsed: false,
                 SelectionReason: "response_composition_fast",
+                RecoveryReason: null,
                 Warnings: parsedResponse.Warnings,
                 FollowUpIntentHints: parsedResponse.FollowUpIntentHints);
+
+            await TrackResponseSelectionAsync(
+                correlationId,
+                request.ResponseType,
+                ConversationModelSelectionKind.Fast,
+                success.SelectionReason,
+                usedModelInvocation: true,
+                success.FallbackUsed,
+                success.RecoveryReason,
+                parserReasonCodes,
+                cancellationToken);
+
+            return success;
         }
 
         logger.LogWarning(
-            "Response composition fallback correlationId={CorrelationId} responseType={ResponseType}",
+            "Response composition safe fallback correlationId={CorrelationId} responseType={ResponseType} failureReason={FailureReason}",
             correlationId,
-            request.ResponseType);
+            request.ResponseType,
+            parseFailureReason ?? "structured_parse_failed");
         await telemetry.TrackAsync(
             "chat.response.fallback",
             new Dictionary<string, object?>
             {
                 ["correlationId"] = correlationId,
                 ["stage"] = "response_composer",
-                ["responseType"] = request.ResponseType.ToString()
+                ["responseType"] = request.ResponseType.ToString(),
+                ["failureReason"] = parseFailureReason ?? "structured_parse_failed",
+                ["parserReasonCodes"] = parserReasonCodes.ToArray()
             },
             cancellationToken);
 
-        return BuildDeterministicResponse(request);
+        var recovered = BuildDeterministicResponse(
+            request,
+            selectionReason: "response_composition_safe_fallback",
+            fallbackUsed: true,
+            recoveryReason: parseFailureReason ?? "structured_parse_failed",
+            warnings:
+            [
+                "structured_parse_failed",
+                "response_composition_safe_fallback"
+            ]);
+
+        await TrackResponseSelectionAsync(
+            correlationId,
+            request.ResponseType,
+            ConversationModelSelectionKind.Deterministic,
+            recovered.SelectionReason,
+            usedModelInvocation: true,
+            recovered.FallbackUsed,
+            recovered.RecoveryReason,
+            recovered.Warnings,
+            cancellationToken);
+
+        return recovered;
+    }
+
+    private async Task TrackResponseSelectionAsync(
+        string correlationId,
+        ResponseCompositionType responseType,
+        ConversationModelSelectionKind selectionKind,
+        string selectionReason,
+        bool usedModelInvocation,
+        bool fallbackUsed,
+        string? recoveryReason,
+        IReadOnlyList<string> reasonCodes,
+        CancellationToken cancellationToken)
+    {
+        await telemetry.TrackAsync(
+            "chat.response.selection",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = correlationId,
+                ["selectionKind"] = selectionKind.ToString(),
+                ["selectionReason"] = selectionReason,
+                ["usedModelInvocation"] = usedModelInvocation,
+                ["fallbackUsed"] = fallbackUsed,
+                ["recoveryReason"] = recoveryReason,
+                ["responseType"] = responseType.ToString(),
+                ["reasonCodes"] = reasonCodes.ToArray()
+            },
+            cancellationToken);
     }
 
     private static bool ShouldUseDeterministicTemplate(ResponseCompositionRequest request)
@@ -541,7 +607,12 @@ public sealed class ResponseComposer(
                || (request.ResponseType == ResponseCompositionType.Clarify && request.GroundedData.Entities.Count == 0);
     }
 
-    private static ResponseCompositionResult BuildDeterministicResponse(ResponseCompositionRequest request)
+    private static ResponseCompositionResult BuildDeterministicResponse(
+        ResponseCompositionRequest request,
+        string selectionReason = "deterministic_template",
+        bool fallbackUsed = false,
+        string? recoveryReason = null,
+        IReadOnlyList<string>? warnings = null)
     {
         var missing = request.MissingConstraints.Count > 0
             ? $" I still need: {string.Join(", ", request.MissingConstraints)}."
@@ -565,8 +636,10 @@ public sealed class ResponseComposer(
             DeploymentUsed: "deterministic-response-composer",
             ReasoningClass: AIModelClass.Fast,
             UsedDeterministicPath: true,
-            SelectionReason: "deterministic_template",
-            Warnings: [],
+            FallbackUsed: fallbackUsed,
+            SelectionReason: selectionReason,
+            RecoveryReason: recoveryReason,
+            Warnings: warnings ?? [],
             FollowUpIntentHints: request.MissingConstraints.Count > 0
                 ? ["clarify_intent"]
                 : []);
