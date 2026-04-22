@@ -252,6 +252,117 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task ConversationLayerOrchestrator_CountsResponseModelInvocation_WhenDeterministicRecoveryProducesFinalReply()
+    {
+        var order = new List<string>();
+        var telemetry = new RecordingChatTelemetry();
+        var orchestrator = new ConversationLayerOrchestrator(
+            contextService: new StubConversationContextService(),
+            behaviorEngine: new StubBehaviorEngine(order),
+            modeRouter: new TrackingModeRouter(order),
+            responseComposer: new RecoveringResponseComposer(order),
+            logger: NullLogger<ConversationLayerOrchestrator>.Instance,
+            options: Options.Create(new AIIntegrationOptions
+            {
+                ChatTurns = new ChatTurnOptions
+                {
+                    MaxUserMessageChars = 4000,
+                    MaxClientRequestIdLength = 128
+                },
+                Architecture = new ConversationArchitectureOptions
+                {
+                    EmitTelemetryEvents = true
+                }
+            }),
+            telemetry: telemetry);
+
+        var response = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "quiet place for a walk",
+                RecentTurns: [],
+                State: CreateDefaultState(),
+                CorrelationId: "corr-recovery-summary",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ClientRequestId: "client-recovery-summary",
+                UserId: null,
+                ConversationThreadId: null,
+                UsePersistentMemory: false,
+                AllowTransientFallbackOnPersistentFailure: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+
+        var summary = telemetry.Single("chat.turn.model_usage_summary");
+        Assert.Equal(2, summary["totalModelCallCount"]);
+        Assert.Equal(2, summary["fastModelCallCount"]);
+        Assert.Equal(true, summary["usedDeterministicPath"]);
+        Assert.Equal(true, summary["usedDeterministicRecovery"]);
+        Assert.Equal(true, summary["responseUsedModelInvocation"]);
+        Assert.Equal(true, summary["responseFallbackUsed"]);
+        Assert.Equal("structured_parse_failed", summary["responseRecoveryReason"]);
+        Assert.Equal("response_composition_safe_fallback", summary["responseSelectionReason"]);
+    }
+
+    [Fact]
+    public async Task ConversationLayerOrchestrator_ReturnsGroundedShortlist_WhenStructuredResultSummaryRecoveryRuns()
+    {
+        var order = new List<string>();
+        var telemetry = new RecordingChatTelemetry();
+        var orchestrator = new ConversationLayerOrchestrator(
+            contextService: new StubConversationContextService(),
+            behaviorEngine: new StubBehaviorEngine(order),
+            modeRouter: new StructuredResultSummaryModeRouter(order),
+            responseComposer: new ResponseComposer(
+                new ResponseCompositionPromptBuilder(),
+                new UserChatResponseParser(),
+                new StaticResponseCompositionModelRouter(),
+                new InvalidStructuredResponseAIClient(),
+                telemetry,
+                NullLogger<ResponseComposer>.Instance),
+            logger: NullLogger<ConversationLayerOrchestrator>.Instance,
+            options: Options.Create(new AIIntegrationOptions
+            {
+                ChatTurns = new ChatTurnOptions
+                {
+                    MaxUserMessageChars = 4000,
+                    MaxClientRequestIdLength = 128
+                },
+                Architecture = new ConversationArchitectureOptions
+                {
+                    EmitTelemetryEvents = true
+                }
+            }),
+            telemetry: telemetry);
+
+        var response = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "coffee shops near me",
+                RecentTurns: [],
+                State: CreateDefaultState(),
+                CorrelationId: "corr-structured-recovery",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ClientRequestId: "client-structured-recovery",
+                UserId: null,
+                ConversationThreadId: null,
+                UsePersistentMemory: false,
+                AllowTransientFallbackOnPersistentFailure: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Contains("Here are a few grounded options to start with:", response.ReplyText);
+        Assert.Contains("1. Bean Room - cafe, rating 4.6, open now", response.ReplyText);
+        Assert.Contains("2. Roast House - cafe, rating 4.4, Dublin 2", response.ReplyText);
+        Assert.Contains("structured_parse_failed", response.Warnings);
+        Assert.Contains("response_composition_safe_fallback", response.Warnings);
+
+        var summary = telemetry.Single("chat.turn.model_usage_summary");
+        Assert.Equal(2, summary["totalModelCallCount"]);
+        Assert.Equal(2, summary["fastModelCallCount"]);
+        Assert.Equal(true, summary["responseUsedModelInvocation"]);
+        Assert.Equal(true, summary["responseFallbackUsed"]);
+    }
+
+    [Fact]
     public void FollowUpBindingPolicy_DoesNotCarryStaleBindingWithoutEvidence()
     {
         var policy = new FollowUpBindingPolicy();
@@ -630,6 +741,54 @@ public sealed class ConversationArchitectureGuardTests
         }
     }
 
+    private sealed class StructuredResultSummaryModeRouter(ICollection<string> order) : IModeRouter
+    {
+        public Task<ConversationModeExecutionResult> RouteAsync(
+            ConversationModeRequest request,
+            CancellationToken cancellationToken)
+        {
+            order.Add("mode");
+
+            return Task.FromResult(
+                new ConversationModeExecutionResult(
+                    CompositionRequest: new ResponseCompositionRequest(
+                        ResponseType: ResponseCompositionType.ResultSummary,
+                        ToneDirective: ResponseToneDirective.Neutral,
+                        Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                        Mode: ConversationMode.Exploration,
+                        ReadinessLevel: ConversationReadinessLevel.R4_ToolReady,
+                        UserMessage: request.Request.UserMessage,
+                        GroundedData: new GroundedDataEnvelope(
+                            Entities:
+                            [
+                                new ConversationSuggestedEntity("cafe-1", "Bean Room", 1),
+                                new ConversationSuggestedEntity("cafe-2", "Roast House", 2)
+                            ],
+                            SummaryFacts:
+                            [
+                                new GroundedDataPoint("Bean Room", "cafe, rating 4.6, open now"),
+                                new GroundedDataPoint("Roast House", "cafe, rating 4.4, Dublin 2")
+                            ],
+                            Warnings: []),
+                        Constraints: request.State.Constraints,
+                        MissingConstraints: [],
+                        MaxLengthHint: 400,
+                        ClarificationQuestion: null,
+                        SuggestedOptions: ["Refine the shortlist", "Compare options"]),
+                    DeterministicReplyText: null,
+                    SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    State: request.State with
+                    {
+                        ActiveMode = ConversationMode.Exploration,
+                        ReadinessLevel = ConversationReadinessLevel.R4_ToolReady
+                    },
+                    ResultContext: null,
+                    Warnings: [],
+                    FollowUpIntentHints: [],
+                    Succeeded: true));
+        }
+    }
+
     private sealed class StubResponseComposer(ICollection<string> order) : IResponseComposer
     {
         public Task<ResponseCompositionResult> ComposeAsync(
@@ -646,12 +805,83 @@ public sealed class ConversationArchitectureGuardTests
                     ModelUsed: "stub-model",
                     DeploymentUsed: "stub-deployment",
                     ReasoningClass: AIModelClass.Fast,
+                    UsedModelInvocation: true,
                     UsedDeterministicPath: false,
                     FallbackUsed: false,
                     SelectionReason: "stub_response_composition",
                     RecoveryReason: null,
                     Warnings: [],
                     FollowUpIntentHints: []));
+        }
+    }
+
+    private sealed class RecoveringResponseComposer(ICollection<string> order) : IResponseComposer
+    {
+        public Task<ResponseCompositionResult> ComposeAsync(
+            ResponseCompositionRequest request,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            order.Add("compose");
+
+            return Task.FromResult(
+                new ResponseCompositionResult(
+                    ReplyText: "Here are a few grounded options to start with:\n1. Example Place",
+                    SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    ModelUsed: "deterministic-response-composer",
+                    DeploymentUsed: "deterministic-response-composer",
+                    ReasoningClass: AIModelClass.Fast,
+                    UsedModelInvocation: true,
+                    UsedDeterministicPath: true,
+                    FallbackUsed: true,
+                    SelectionReason: "response_composition_safe_fallback",
+                    RecoveryReason: "structured_parse_failed",
+                    Warnings: ["structured_parse_failed", "response_composition_safe_fallback"],
+                    FollowUpIntentHints: ["compare_options"]));
+        }
+    }
+
+    private sealed class StaticResponseCompositionModelRouter : IAIModelRouter
+    {
+        public AIModelRoute Resolve(AITaskType taskType, AIModelClass desiredClass, string? complexityHint = null)
+        {
+            return new AIModelRoute(
+                taskType,
+                AIModelClass.Fast,
+                "gpt-4.1",
+                "gpt-4.1",
+                false,
+                "test_fast_route",
+                []);
+        }
+    }
+
+    private sealed class InvalidStructuredResponseAIClient : IAIClient
+    {
+        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
+        {
+            const string payload = """
+                {
+                  "warnings": ["model_internal_warning"],
+                  "suggestedStructuredStateUpdates": { "mode": "exploration" }
+                }
+                """;
+
+            return Task.FromResult(
+                new AIResponse(
+                    Content: payload,
+                    StructuredPayloadJson: payload,
+                    FinishReason: "stop",
+                    Provider: "stub",
+                    Model: route.Model,
+                    Deployment: route.Deployment,
+                    InputTokenEstimate: 12,
+                    OutputTokenEstimate: 30,
+                    LatencyMs: 20,
+                    WasMocked: true,
+                    RawDiagnostics: null,
+                    Succeeded: true,
+                    FailureReason: null));
         }
     }
 }

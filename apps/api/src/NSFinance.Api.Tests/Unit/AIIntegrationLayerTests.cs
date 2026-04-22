@@ -415,6 +415,116 @@ public sealed class AIIntegrationLayerTests
     }
 
     [Fact]
+    public void UserChatResponseParser_RecoversStructuredJson_FromMarkdownFence()
+    {
+        var parser = new UserChatResponseParser();
+        var payload = """
+            ```json
+            {
+              "replyText": "Here are a few nearby options.",
+              "warnings": [],
+              "followUpIntentHints": ["compare_options"]
+            }
+            ```
+            """;
+        var response = new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "AzureOpenAI",
+            Model: "gpt-4.1",
+            Deployment: "gpt-4.1",
+            InputTokenEstimate: 12,
+            OutputTokenEstimate: 28,
+            LatencyMs: 100,
+            WasMocked: false,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+        var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []);
+
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes, out var failureReason);
+
+        Assert.True(ok);
+        Assert.True(parsed.Succeeded);
+        Assert.Equal("Here are a few nearby options.", parsed.ReplyText);
+        Assert.Null(failureReason);
+        Assert.Contains("structured_payload_recovered_from_markdown_fence", reasonCodes);
+    }
+
+    [Fact]
+    public void UserChatResponseParser_RecoversStructuredJson_FromWrappedText()
+    {
+        var parser = new UserChatResponseParser();
+        var payload = """
+            I used the requested schema below.
+            {
+              "replyText": "Top shortlist recovered safely.",
+              "warnings": [],
+              "followUpIntentHints": ["refine_place_preferences"]
+            }
+            Thanks.
+            """;
+        var response = new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "AzureOpenAI",
+            Model: "gpt-4.1",
+            Deployment: "gpt-4.1",
+            InputTokenEstimate: 12,
+            OutputTokenEstimate: 28,
+            LatencyMs: 100,
+            WasMocked: false,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+        var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []);
+
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes, out var failureReason);
+
+        Assert.True(ok);
+        Assert.True(parsed.Succeeded);
+        Assert.Equal("Top shortlist recovered safely.", parsed.ReplyText);
+        Assert.Null(failureReason);
+        Assert.Contains("structured_payload_recovered_from_wrapper_text", reasonCodes);
+    }
+
+    [Fact]
+    public void UserChatResponseParser_FailsSafely_ForMalformedWrappedPayload()
+    {
+        var parser = new UserChatResponseParser();
+        var payload = """
+            Here is the output:
+            { "replyText": "Broken", "warnings": [ }
+            """;
+        var response = new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "AzureOpenAI",
+            Model: "gpt-4.1",
+            Deployment: "gpt-4.1",
+            InputTokenEstimate: 12,
+            OutputTokenEstimate: 28,
+            LatencyMs: 100,
+            WasMocked: false,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+        var route = new AIModelRoute(AITaskType.UserChatSimple, AIModelClass.Fast, "gpt-4.1", "gpt-4.1", false, "fast_route", []);
+
+        var ok = parser.TryParse(response, route, out var parsed, out var reasonCodes, out var failureReason);
+
+        Assert.False(ok);
+        Assert.False(parsed.Succeeded);
+        Assert.Equal("structured_parse_failed", failureReason);
+        Assert.Equal("I couldn't generate a response.", parsed.ReplyText);
+        Assert.Contains("structured_parse_failed", reasonCodes);
+        Assert.DoesNotContain("\"replyText\"", parsed.ReplyText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void UserChatResponseParser_Fails_WhenStructuredReplyTextMissing()
     {
         var parser = new UserChatResponseParser();

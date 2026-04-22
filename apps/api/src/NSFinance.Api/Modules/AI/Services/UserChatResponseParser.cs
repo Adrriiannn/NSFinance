@@ -74,8 +74,8 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
             return false;
         }
 
-        var payload = response.StructuredPayloadJson ?? response.Content;
-        if (string.IsNullOrWhiteSpace(payload))
+        var payloadCandidates = EnumeratePayloadCandidates(response).ToArray();
+        if (payloadCandidates.Length == 0)
         {
             parsedResponse = new UserChatResponse(
                 ReplyText: "I couldn't generate a response.",
@@ -92,16 +92,21 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
             return false;
         }
 
-        JsonDocument? parsedDocument = null;
-        UserChatStructuredResponse? structured;
-        try
+        UserChatStructuredResponse? structured = null;
+        JsonElement? parsedRoot = null;
+        foreach (var candidate in payloadCandidates)
         {
-            parsedDocument = JsonDocument.Parse(payload);
-            structured = JsonSerializer.Deserialize<UserChatStructuredResponse>(payload, SerializerOptions);
-        }
-        catch (JsonException)
-        {
-            structured = null;
+            if (!TryParseStructuredPayloadCandidate(
+                    candidate,
+                    out structured,
+                    out parsedRoot,
+                    out var recoveryReasonCodes))
+            {
+                continue;
+            }
+
+            localReasonCodes.AddRange(recoveryReasonCodes);
+            break;
         }
 
         if (structured is null)
@@ -122,7 +127,7 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
             return false;
         }
 
-        var resolvedReplyText = ResolveReplyText(structured, parsedDocument?.RootElement);
+        var resolvedReplyText = ResolveReplyText(structured, parsedRoot);
         if (string.IsNullOrWhiteSpace(resolvedReplyText))
         {
             localReasonCodes.Add("structured_reply_text_missing");
@@ -163,6 +168,209 @@ public sealed class UserChatResponseParser : IUserChatResponseParser
 
         reasonCodes = localReasonCodes;
         return true;
+    }
+
+    private static IEnumerable<string> EnumeratePayloadCandidates(AIResponse response)
+    {
+        if (!string.IsNullOrWhiteSpace(response.StructuredPayloadJson))
+        {
+            yield return response.StructuredPayloadJson!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.Content)
+            && !string.Equals(response.Content, response.StructuredPayloadJson, StringComparison.Ordinal))
+        {
+            yield return response.Content;
+        }
+    }
+
+    private static bool TryParseStructuredPayloadCandidate(
+        string payload,
+        out UserChatStructuredResponse? structured,
+        out JsonElement? parsedRoot,
+        out IReadOnlyList<string> recoveryReasonCodes)
+    {
+        var localReasonCodes = new List<string>();
+
+        if (TryParseStructuredPayload(payload, out structured, out parsedRoot))
+        {
+            recoveryReasonCodes = localReasonCodes;
+            return true;
+        }
+
+        if (TryStripMarkdownFence(payload, out var unfenced)
+            && TryParseStructuredPayload(unfenced, out structured, out parsedRoot))
+        {
+            localReasonCodes.Add("structured_payload_recovered_from_markdown_fence");
+            recoveryReasonCodes = localReasonCodes;
+            return true;
+        }
+
+        foreach (var extracted in EnumerateJsonObjectCandidates(payload))
+        {
+            if (!TryParseStructuredPayload(extracted, out structured, out parsedRoot))
+            {
+                continue;
+            }
+
+            localReasonCodes.Add("structured_payload_recovered_from_wrapper_text");
+            recoveryReasonCodes = localReasonCodes;
+            return true;
+        }
+
+        if (TryStripMarkdownFence(payload, out unfenced))
+        {
+            foreach (var extracted in EnumerateJsonObjectCandidates(unfenced))
+            {
+                if (!TryParseStructuredPayload(extracted, out structured, out parsedRoot))
+                {
+                    continue;
+                }
+
+                localReasonCodes.Add("structured_payload_recovered_from_markdown_fence");
+                localReasonCodes.Add("structured_payload_recovered_from_wrapper_text");
+                recoveryReasonCodes = localReasonCodes;
+                return true;
+            }
+        }
+
+        structured = null;
+        parsedRoot = null;
+        recoveryReasonCodes = localReasonCodes;
+        return false;
+    }
+
+    private static bool TryParseStructuredPayload(
+        string payload,
+        out UserChatStructuredResponse? structured,
+        out JsonElement? parsedRoot)
+    {
+        structured = null;
+        parsedRoot = null;
+
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            structured = JsonSerializer.Deserialize<UserChatStructuredResponse>(payload, SerializerOptions);
+            if (structured is null)
+            {
+                return false;
+            }
+
+            parsedRoot = document.RootElement.Clone();
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryStripMarkdownFence(string payload, out string unfenced)
+    {
+        unfenced = string.Empty;
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return false;
+        }
+
+        var trimmed = payload.Trim();
+        if (!trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var firstLineBreak = trimmed.IndexOf('\n');
+        if (firstLineBreak < 0)
+        {
+            return false;
+        }
+
+        var closingFence = trimmed.LastIndexOf("```", StringComparison.Ordinal);
+        if (closingFence <= firstLineBreak)
+        {
+            return false;
+        }
+
+        unfenced = trimmed[(firstLineBreak + 1)..closingFence].Trim();
+        return !string.IsNullOrWhiteSpace(unfenced);
+    }
+
+    private static IEnumerable<string> EnumerateJsonObjectCandidates(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            yield break;
+        }
+
+        var text = payload.Trim();
+        for (var start = 0; start < text.Length; start++)
+        {
+            if (text[start] != '{')
+            {
+                continue;
+            }
+
+            var depth = 0;
+            var inString = false;
+            var escapeNext = false;
+            for (var index = start; index < text.Length; index++)
+            {
+                var ch = text[index];
+                if (escapeNext)
+                {
+                    escapeNext = false;
+                    continue;
+                }
+
+                if (ch == '\\' && inString)
+                {
+                    escapeNext = true;
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    inString = !inString;
+                    continue;
+                }
+
+                if (inString)
+                {
+                    continue;
+                }
+
+                if (ch == '{')
+                {
+                    depth++;
+                    continue;
+                }
+
+                if (ch != '}')
+                {
+                    continue;
+                }
+
+                depth--;
+                if (depth != 0)
+                {
+                    continue;
+                }
+
+                yield return text[start..(index + 1)];
+                break;
+            }
+        }
     }
 
     private static string? ResolveReplyText(UserChatStructuredResponse structured, JsonElement? root)

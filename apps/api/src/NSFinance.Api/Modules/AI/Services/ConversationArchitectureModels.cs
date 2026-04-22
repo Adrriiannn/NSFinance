@@ -273,6 +273,7 @@ public sealed record ResponseCompositionResult(
     string ModelUsed,
     string DeploymentUsed,
     AIModelClass ReasoningClass,
+    bool UsedModelInvocation,
     bool UsedDeterministicPath,
     bool FallbackUsed,
     string SelectionReason,

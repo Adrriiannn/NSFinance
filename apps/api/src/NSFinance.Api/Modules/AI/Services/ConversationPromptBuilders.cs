@@ -299,6 +299,7 @@ Return strict JSON only with this exact top-level shape:
 Rules:
 - replyText must always be meaningful and non-empty.
 - Do not add fields outside the schema.
+- Do not wrap the JSON in markdown fences or explanatory prose.
 - Ground suggestions in the provided constraints and groundedData only.
 - If missingConstraints has values, make the answer conversational and investigative rather than conclusive.";
 

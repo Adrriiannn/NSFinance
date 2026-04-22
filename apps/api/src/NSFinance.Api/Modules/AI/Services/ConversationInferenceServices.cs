@@ -511,6 +511,7 @@ public sealed class ResponseComposer(
                 ModelUsed: parsedResponse.ModelUsed,
                 DeploymentUsed: route.Deployment,
                 ReasoningClass: parsedResponse.ReasoningClass,
+                UsedModelInvocation: true,
                 UsedDeterministicPath: false,
                 FallbackUsed: false,
                 SelectionReason: "response_composition_fast",
@@ -553,6 +554,7 @@ public sealed class ResponseComposer(
             request,
             selectionReason: "response_composition_safe_fallback",
             fallbackUsed: true,
+            usedModelInvocation: true,
             recoveryReason: parseFailureReason ?? "structured_parse_failed",
             warnings:
             [
@@ -611,6 +613,7 @@ public sealed class ResponseComposer(
         ResponseCompositionRequest request,
         string selectionReason = "deterministic_template",
         bool fallbackUsed = false,
+        bool usedModelInvocation = false,
         string? recoveryReason = null,
         IReadOnlyList<string>? warnings = null)
     {
@@ -629,20 +632,87 @@ public sealed class ResponseComposer(
             _ => "Here’s the next helpful step based on what you shared." + missing + options
         };
 
+        if (request.ResponseType == ResponseCompositionType.ResultSummary)
+        {
+            replyText = BuildResultSummaryFallbackReply(request);
+        }
+
+        replyText = replyText.Replace("Hereâ€™s", "Here's", StringComparison.Ordinal);
+
         return new ResponseCompositionResult(
             ReplyText: replyText.Trim(),
             SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             ModelUsed: "deterministic-response-composer",
             DeploymentUsed: "deterministic-response-composer",
             ReasoningClass: AIModelClass.Fast,
+            UsedModelInvocation: usedModelInvocation,
             UsedDeterministicPath: true,
             FallbackUsed: fallbackUsed,
             SelectionReason: selectionReason,
             RecoveryReason: recoveryReason,
             Warnings: warnings ?? [],
-            FollowUpIntentHints: request.MissingConstraints.Count > 0
-                ? ["clarify_intent"]
-                : []);
+            FollowUpIntentHints: BuildDeterministicFollowUpHints(request));
+    }
+
+    private static IReadOnlyList<string> BuildDeterministicFollowUpHints(ResponseCompositionRequest request)
+    {
+        if (request.ResponseType == ResponseCompositionType.ResultSummary
+            && request.GroundedData.Entities.Count > 0)
+        {
+            return ["refine_place_preferences", "compare_options"];
+        }
+
+        return request.MissingConstraints.Count > 0
+            ? ["clarify_intent"]
+            : [];
+    }
+
+    private static string BuildResultSummaryFallbackReply(ResponseCompositionRequest request)
+    {
+        if (request.GroundedData.Entities.Count == 0)
+        {
+            var options = request.SuggestedOptions is { Count: > 0 }
+                ? $" You can refine by {string.Join(", ", request.SuggestedOptions.Take(3)).ToLowerInvariant()}."
+                : string.Empty;
+            return "I found grounded results, but I need one more detail to shape a clean shortlist." + options;
+        }
+
+        var factLookup = request.GroundedData.SummaryFacts
+            .Where(fact => !string.IsNullOrWhiteSpace(fact.Label) && !string.IsNullOrWhiteSpace(fact.Value))
+            .GroupBy(fact => fact.Label.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Value.Trim(), StringComparer.OrdinalIgnoreCase);
+
+        var shortlistLines = request.GroundedData.Entities
+            .OrderBy(entity => entity.Rank)
+            .Take(5)
+            .Select(entity => BuildResultSummaryLine(entity, factLookup))
+            .ToArray();
+
+        var intro = shortlistLines.Length == 1
+            ? "Here is a grounded option to start with:"
+            : "Here are a few grounded options to start with:";
+        var closingLine = request.SuggestedOptions is { Count: > 0 }
+            ? $"Next step: {string.Join(" or ", request.SuggestedOptions.Take(2)).ToLowerInvariant()}."
+            : null;
+
+        return string.Join(
+            Environment.NewLine,
+            new[] { intro }
+                .Concat(shortlistLines)
+                .Concat(closingLine is null ? [] : [string.Empty, closingLine]));
+    }
+
+    private static string BuildResultSummaryLine(
+        ConversationSuggestedEntity entity,
+        IReadOnlyDictionary<string, string> factLookup)
+    {
+        var line = $"{entity.Rank}. {entity.Label}";
+        if (factLookup.TryGetValue(entity.Label, out var fact) && !string.IsNullOrWhiteSpace(fact))
+        {
+            line += $" - {fact}";
+        }
+
+        return line;
     }
 }
 

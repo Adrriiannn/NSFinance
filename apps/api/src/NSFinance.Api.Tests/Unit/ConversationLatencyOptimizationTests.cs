@@ -361,16 +361,36 @@ public sealed class ConversationLatencyOptimizationTests
             NullLogger<ResponseComposer>.Instance);
 
         var result = await composer.ComposeAsync(
-            CreateResponseCompositionRequest(ResponseCompositionType.ResultSummary),
+            CreateResponseCompositionRequest(
+                ResponseCompositionType.ResultSummary,
+                new GroundedDataEnvelope(
+                    Entities:
+                    [
+                        new ConversationSuggestedEntity("cafe-1", "Bean Room", 1),
+                        new ConversationSuggestedEntity("cafe-2", "Roast House", 2),
+                        new ConversationSuggestedEntity("cafe-3", "Morning Cup", 3)
+                    ],
+                    SummaryFacts:
+                    [
+                        new GroundedDataPoint("Bean Room", "cafe, rating 4.6, open now"),
+                        new GroundedDataPoint("Roast House", "cafe, rating 4.4, Dublin 2"),
+                        new GroundedDataPoint("Morning Cup", "cafe, rating 4.3")
+                    ],
+                    Warnings: [])),
             "corr-response-fallback",
             CancellationToken.None);
 
         Assert.True(result.UsedDeterministicPath);
         Assert.True(result.FallbackUsed);
+        Assert.True(result.UsedModelInvocation);
         Assert.Equal("response_composition_safe_fallback", result.SelectionReason);
         Assert.Equal("structured_reply_text_missing", result.RecoveryReason);
         Assert.Contains("structured_parse_failed", result.Warnings);
         Assert.Contains("response_composition_safe_fallback", result.Warnings);
+        Assert.Contains("Here are a few grounded options to start with:", result.ReplyText);
+        Assert.Contains("1. Bean Room - cafe, rating 4.6, open now", result.ReplyText);
+        Assert.Contains("2. Roast House - cafe, rating 4.4, Dublin 2", result.ReplyText);
+        Assert.DoesNotContain("Here's the next helpful step", result.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\"warnings\"", result.ReplyText, StringComparison.OrdinalIgnoreCase);
 
         var fallbackEvent = telemetry.Single("chat.response.fallback");
@@ -379,6 +399,34 @@ public sealed class ConversationLatencyOptimizationTests
         var selectionEvent = telemetry.ByName("chat.response.selection").Single();
         Assert.Equal(true, selectionEvent["fallbackUsed"]);
         Assert.Equal("response_composition_safe_fallback", selectionEvent["selectionReason"]);
+        Assert.Equal(true, selectionEvent["usedModelInvocation"]);
+    }
+
+    [Fact]
+    public async Task ResponseComposer_UsesGracefulDeterministicFallback_WhenResultSummaryHasNoEntities()
+    {
+        var composer = new ResponseComposer(
+            new StubResponseCompositionPromptBuilder(),
+            new UserChatResponseParser(),
+            new StaticModelRouter(),
+            new StaticResponseAIClient(
+                """
+                {
+                  "warnings": ["model_internal_warning"]
+                }
+                """),
+            new RecordingTelemetry(),
+            NullLogger<ResponseComposer>.Instance);
+
+        var result = await composer.ComposeAsync(
+            CreateResponseCompositionRequest(ResponseCompositionType.ResultSummary),
+            "corr-empty-result-summary",
+            CancellationToken.None);
+
+        Assert.True(result.UsedDeterministicPath);
+        Assert.True(result.FallbackUsed);
+        Assert.Contains("I found grounded results, but I need one more detail to shape a clean shortlist.", result.ReplyText);
+        Assert.DoesNotContain("\"warnings\"", result.ReplyText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -553,7 +601,9 @@ public sealed class ConversationLatencyOptimizationTests
             IsActiveWindowExpired: false);
     }
 
-    private static ResponseCompositionRequest CreateResponseCompositionRequest(ResponseCompositionType responseType)
+    private static ResponseCompositionRequest CreateResponseCompositionRequest(
+        ResponseCompositionType responseType,
+        GroundedDataEnvelope? groundedData = null)
     {
         return new ResponseCompositionRequest(
             ResponseType: responseType,
@@ -562,7 +612,7 @@ public sealed class ConversationLatencyOptimizationTests
             Mode: ConversationMode.Exploration,
             ReadinessLevel: ConversationReadinessLevel.R4_ToolReady,
             UserMessage: "coffee shops near me",
-            GroundedData: new GroundedDataEnvelope([], [], []),
+            GroundedData: groundedData ?? new GroundedDataEnvelope([], [], []),
             Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             MissingConstraints: [],
             MaxLengthHint: 500,
