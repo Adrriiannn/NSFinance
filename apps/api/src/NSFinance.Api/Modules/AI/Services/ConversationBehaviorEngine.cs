@@ -12,6 +12,9 @@ public sealed class ConversationBehaviorEngine(
     IReadinessTransitionPolicy readinessTransitionPolicy,
     IFollowUpBindingPolicy followUpBindingPolicy,
     IContradictionResolutionPolicy contradictionResolutionPolicy,
+    IFinancialActivationPolicy financialActivationPolicy,
+    IExplorationSubtypeDecisionPolicy explorationSubtypeDecisionPolicy,
+    IToolGuardWarningPolicy toolGuardWarningPolicy,
     IChatTelemetry telemetry) : IConversationBehaviorEngine
 {
     public async Task<ConversationBehaviorResult> EvaluateAsync(
@@ -19,6 +22,7 @@ public sealed class ConversationBehaviorEngine(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var signals = ConversationSignalAnalyzer.Analyze(request.Request.UserMessage);
 
         var resultContextReadResult = request.ResultContextReadResult
                                       ?? new ResultContextReadResult(
@@ -35,7 +39,9 @@ public sealed class ConversationBehaviorEngine(
         var contradictionResolved = contradictionResolutionPolicy.Apply(
             request.EffectiveState,
             request.Request.UserMessage,
-            binding.BindingType);
+            binding.BindingType,
+            signals);
+        var effectiveBindingType = contradictionResolved.BindingTypeOverride ?? binding.BindingType;
 
         var effectiveState = contradictionResolved.State;
         var rawDecision = await decisionEngine.EvaluateAsync(
@@ -45,45 +51,54 @@ public sealed class ConversationBehaviorEngine(
             },
             cancellationToken);
 
-        var signals = ConversationSignalAnalyzer.Analyze(request.Request.UserMessage);
         var normalizedDecision = EnforceBehaviorRules(rawDecision, signals, effectiveState);
+        var financiallyGuardedDecision = financialActivationPolicy.Apply(
+            normalizedDecision,
+            effectiveState,
+            signals);
         ExplorationSubtypeDecision? explorationSubtypeDecision = null;
-        if (normalizedDecision.ModeCandidate == ConversationMode.Exploration)
+        if (financiallyGuardedDecision.ModeCandidate == ConversationMode.Exploration)
         {
-            explorationSubtypeDecision = await decisionEngine.DetermineExplorationSubtypeAsync(
+            var rawExplorationSubtypeDecision = await decisionEngine.DetermineExplorationSubtypeAsync(
                 new ConversationModeRequest(
                     Request: request.Request,
                     ContextMessages: request.ContextMessages,
                     ContextSummary: request.ContextSummary,
                     State: effectiveState,
                     ResultContext: request.ResultContext,
-                    StrategyDecision: normalizedDecision,
+                    StrategyDecision: financiallyGuardedDecision,
                     ExplorationSubtypeDecision: null,
                     ClientMetadata: request.ClientMetadata),
                 cancellationToken);
+            explorationSubtypeDecision = explorationSubtypeDecisionPolicy.Normalize(
+                request.Request.UserMessage,
+                effectiveState,
+                rawExplorationSubtypeDecision);
         }
 
-        if (normalizedDecision.ModeCandidate == ConversationMode.Exploration
+        var finalModeCandidateDecision = financiallyGuardedDecision;
+
+        if (finalModeCandidateDecision.ModeCandidate == ConversationMode.Exploration
             && explorationSubtypeDecision?.Subtype == ExplorationSubtype.Structured
             && CompanionLocationGroundingParser.RequiresCurrentLocation(request.Request.UserMessage))
         {
             var grounding = CompanionLocationGroundingParser.Parse(request.ClientMetadata, effectiveState);
             if (!grounding.HasCoordinates && !grounding.HasTypedArea)
             {
-                normalizedDecision = normalizedDecision with
+                finalModeCandidateDecision = finalModeCandidateDecision with
                 {
                     Strategy = ConversationBehaviorStrategy.SuggestAndClarify,
-                    Readiness = normalizedDecision.Readiness with
+                    Readiness = finalModeCandidateDecision.Readiness with
                     {
                         To = ConversationReadinessLevel.R3_StructuredIncomplete
                     },
                     ToolExecutionPermission = ToolExecutionPermission.Forbidden,
-                    ClarificationQuestion = normalizedDecision.ClarificationQuestion
+                    ClarificationQuestion = finalModeCandidateDecision.ClarificationQuestion
                                             ?? "I can search once you share an area or allow location access.",
-                    SuggestedOptions = normalizedDecision.SuggestedOptions.Count > 0
-                        ? normalizedDecision.SuggestedOptions
+                    SuggestedOptions = finalModeCandidateDecision.SuggestedOptions.Count > 0
+                        ? finalModeCandidateDecision.SuggestedOptions
                         : ["Share an area", "Enable location", "Keep it exploratory"],
-                    ReasonCodes = normalizedDecision.ReasonCodes
+                    ReasonCodes = finalModeCandidateDecision.ReasonCodes
                         .Concat(["behavior_guard_near_me_requires_location_evidence"])
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToArray()
@@ -93,14 +108,14 @@ public sealed class ConversationBehaviorEngine(
 
         var guardedReadiness = readinessTransitionPolicy.Apply(
             effectiveState,
-            normalizedDecision,
+            finalModeCandidateDecision,
             explorationSubtypeDecision);
-        var finalDecision = normalizedDecision with
+        var finalDecision = finalModeCandidateDecision with
         {
             Readiness = guardedReadiness.Transition,
             ToolExecutionPermission = guardedReadiness.ToolExecutionPermission,
-            FollowUpBindingType = binding.BindingType,
-            ReasonCodes = normalizedDecision.ReasonCodes
+            FollowUpBindingType = effectiveBindingType,
+            ReasonCodes = finalModeCandidateDecision.ReasonCodes
                 .Concat(binding.ReasonCodes)
                 .Concat(contradictionResolved.ReasonCodes)
                 .Concat(guardedReadiness.ReasonCodes)
@@ -119,21 +134,21 @@ public sealed class ConversationBehaviorEngine(
             ConversationSignals = signals,
             LastClarificationPrompt = finalDecision.ClarificationQuestion,
             LastSuggestedOptions = finalDecision.SuggestedOptions,
-            SelectedEntityId = finalDecision.FollowUpBindingType == FollowUpBindingType.NewTopic
+            SelectedEntityId = finalDecision.FollowUpBindingType is FollowUpBindingType.None or FollowUpBindingType.NewTopic
                 ? null
-                : binding.SelectedEntityId,
-            TransitionIntent = ResolveTransitionIntent(finalDecision),
+                : binding.SelectedEntityId ?? effectiveState.SelectedEntityId,
+            TransitionIntent = ResolveTransitionIntent(finalDecision, effectiveState, signals),
             Confidence = finalDecision.Confidence,
             NeedsFollowUp = finalDecision.Readiness.To <= ConversationReadinessLevel.R3_StructuredIncomplete,
             FollowUpBindingType = finalDecision.FollowUpBindingType,
-            ResultContextRef = finalDecision.FollowUpBindingType == FollowUpBindingType.NewTopic
+            ResultContextRef = finalDecision.FollowUpBindingType is FollowUpBindingType.None or FollowUpBindingType.NewTopic
                 ? null
-                : resultContextReadResult.ActiveResultContext?.ResultSetId is Guid activeResultSetId
+                : binding.ActiveResultSetId is Guid activeResultSetId
                 ? new ConversationResultContextReference(
                     ActiveResultSetId: activeResultSetId,
-                    BranchRootResultSetId: resultContextReadResult.ActiveResultContext!.BranchRootResultSetId,
-                    ActiveUntilUtc: resultContextReadResult.ActiveResultContext.ActiveUntilUtc,
-                    ExpiresUtc: resultContextReadResult.ActiveResultContext.ExpiresUtc)
+                    BranchRootResultSetId: resultContextReadResult.ActiveResultContext?.BranchRootResultSetId,
+                    ActiveUntilUtc: resultContextReadResult.ActiveResultContext?.ActiveUntilUtc,
+                    ExpiresUtc: resultContextReadResult.ActiveResultContext?.ExpiresUtc)
                 : effectiveState.ResultContextRef,
             LoopGuards = UpdateLoopGuards(effectiveState.LoopGuards, finalDecision)
         };
@@ -142,11 +157,9 @@ public sealed class ConversationBehaviorEngine(
         var compositionRequest = routeToModeHandler
             ? null
             : BuildDirectModeCompositionRequest(request.Request.UserMessage, finalDecision, finalState);
-        var warnings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (guardedReadiness.ToolExecutionPermission == ToolExecutionPermission.Forbidden)
-        {
-            warnings.Add("chat.tool.guard_blocked");
-        }
+        var warnings = new HashSet<string>(
+            toolGuardWarningPolicy.Determine(finalDecision, explorationSubtypeDecision),
+            StringComparer.OrdinalIgnoreCase);
 
         await telemetry.TrackAsync(
             "chat.turn.strategy_selected",
@@ -360,15 +373,40 @@ public sealed class ConversationBehaviorEngine(
         return [];
     }
 
-    private static string ResolveTransitionIntent(ConversationTurnStrategyDecision decision)
+    private static string ResolveTransitionIntent(
+        ConversationTurnStrategyDecision decision,
+        ConversationStateSnapshot state,
+        ConversationSignals signals)
     {
+        if (decision.FollowUpBindingType == FollowUpBindingType.NewTopic)
+        {
+            return ConversationTransitionIntents.TopicSwitch;
+        }
+
+        if (decision.FollowUpBindingType == FollowUpBindingType.NewBranch)
+        {
+            return ConversationTransitionIntents.NewBranch;
+        }
+
+        if (decision.FollowUpBindingType == FollowUpBindingType.Refine)
+        {
+            return ConversationTransitionIntents.RefineCurrentBranch;
+        }
+
         return decision.Strategy switch
         {
-            ConversationBehaviorStrategy.ToolReadyHandoff => "tool_ready_handoff",
-            ConversationBehaviorStrategy.ConfirmAndTransition => "confirm_and_transition",
-            ConversationBehaviorStrategy.FinancialPlaceholderTransition => "financial_transition",
-            ConversationBehaviorStrategy.RefinePriorResultSet => "refine_prior_results",
-            _ => "direct_mode"
+            ConversationBehaviorStrategy.ToolReadyHandoff => ConversationTransitionIntents.ToolReadyHandoff,
+            ConversationBehaviorStrategy.ConfirmAndTransition => ConversationTransitionIntents.ConfirmAndTransition,
+            ConversationBehaviorStrategy.FinancialPlaceholderTransition => ConversationTransitionIntents.FinancialTransition,
+            ConversationBehaviorStrategy.RefinePriorResultSet => ConversationTransitionIntents.RefinePriorResults,
+            _ when decision.ModeCandidate == ConversationMode.Conversation
+                   && signals.HasFinancialSignal
+                   && decision.Strategy is ConversationBehaviorStrategy.AcknowledgeAndGuide
+                       or ConversationBehaviorStrategy.SuggestAndClarify
+                => ConversationTransitionIntents.FinancialValidationPending,
+            _ when !string.IsNullOrWhiteSpace(state.TransitionIntent)
+                => state.TransitionIntent!,
+            _ => ConversationTransitionIntents.DirectMode
         };
     }
 

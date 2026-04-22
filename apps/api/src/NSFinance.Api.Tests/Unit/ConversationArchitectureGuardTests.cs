@@ -277,6 +277,9 @@ public sealed class ConversationArchitectureGuardTests
             new ReadinessTransitionPolicy(),
             new FollowUpBindingPolicy(),
             new ContradictionResolutionPolicy(),
+            new FinancialActivationPolicy(),
+            new ExplorationSubtypeDecisionPolicy(),
+            new ToolGuardWarningPolicy(),
             new NoOpChatTelemetry());
     }
 

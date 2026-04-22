@@ -80,6 +80,39 @@ public enum ResultContextBindingClassification
     NewTopic = 4
 }
 
+public static class ConversationConstraintKeys
+{
+    public const string SemanticFamily = "semantic_family";
+    public const string ExplorationSubtype = "exploration_subtype";
+    public const string ExplorationArea = "exploration_area";
+    public const string ExplorationPlaceTypes = "exploration_place_types";
+    public const string ExplorationPreferences = "exploration_preferences";
+    public const string ExplorationTime = "exploration_time";
+    public const string FinancialFocus = "financial_focus";
+}
+
+public static class ConversationSemanticFamilies
+{
+    public const string Conversation = "conversation";
+    public const string Exploration = "exploration";
+    public const string Financial = "financial";
+    public const string GeneralKnowledge = "general_knowledge";
+}
+
+public static class ConversationTransitionIntents
+{
+    public const string DirectMode = "direct_mode";
+    public const string ToolReadyHandoff = "tool_ready_handoff";
+    public const string ConfirmAndTransition = "confirm_and_transition";
+    public const string FinancialTransition = "financial_transition";
+    public const string FinancialValidationPending = "financial_validation_pending";
+    public const string RefinePriorResults = "refine_prior_results";
+    public const string RefineCurrentBranch = "refine_current_branch";
+    public const string NewBranch = "new_branch";
+    public const string TopicSwitch = "topic_switch";
+    public const string Correction = "correction";
+}
+
 public sealed record ReadinessTransition(
     ConversationReadinessLevel From,
     ConversationReadinessLevel To);
@@ -113,7 +146,15 @@ public sealed record ConversationSignals(
     bool HasFactualQuestion,
     bool HasCompleteQuestion,
     bool HasConcretePlaceSignal = false,
-    bool HasExplicitLocation = false);
+    bool HasExplicitLocation = false,
+    bool HasExplicitConfirmation = false,
+    bool HasFinancialFocusSelection = false,
+    bool HasAtmosphericExplorationIntent = false,
+    bool HasSafetyExplorationIntent = false,
+    bool HasStructuredExplorationIntent = false,
+    bool HasResultReferenceSignal = false,
+    bool HasBranchingSignal = false,
+    bool HasComparisonSignal = false);
 
 public sealed record ConversationLoopGuards(
     int SameClarificationIntentCount = 0,

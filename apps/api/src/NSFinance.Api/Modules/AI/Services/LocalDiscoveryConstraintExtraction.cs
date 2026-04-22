@@ -83,6 +83,7 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["museums"] = "museum",
             ["playground"] = "playground",
             ["playgrounds"] = "playground",
+            ["beach"] = "beach",
             ["park"] = "park",
             ["parks"] = "park",
             ["attraction"] = "tourist_attraction",
@@ -93,6 +94,7 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["theatre"] = "performing_arts_theater",
             ["theater"] = "performing_arts_theater",
             ["pub"] = "bar",
+            ["pubs"] = "bar",
             ["bar"] = "bar",
             ["petrol"] = "gas_station",
             ["fuel"] = "gas_station",
@@ -124,6 +126,10 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["indoor"] = "indoor",
             ["outdoor"] = "outdoor",
             ["quiet"] = "quiet",
+            ["calm"] = "quiet",
+            ["lively"] = "lively",
+            ["safe"] = "safe",
+            ["scenic"] = "scenic",
             ["dog"] = "dog_friendly",
             ["friendly"] = "friendly"
         };

@@ -132,7 +132,7 @@ public sealed class ConversationDecisionPromptBuilder : IConversationDecisionPro
             Investigation Mode applies at readiness R0_Unknown through R2_DirectionKnown.
             Tools are forbidden below R4_ToolReady under all circumstances.
             Open exploration must not imply live web research or structured search by default.
-            Financial mode must not activate from vague input; it requires guided conversational validation.
+            Financial mode must not activate from vague input or single-turn eagerness; it requires a guided validation thread and explicit user confirmation or clearly engaged focus selection.
             DirectAnswer is forbidden at R0_Unknown and R1_Vague unless the question is purely factual and complete.
             SuggestAndClarify is the default at R1_Vague and R2_DirectionKnown when intent is inferred but incomplete.
             AcknowledgeAndGuide must be used for emotionally framed or subjective inputs.
@@ -195,7 +195,7 @@ public sealed class ConversationDecisionPromptBuilder : IConversationDecisionPro
         sb.AppendLine("Rules:");
         sb.AppendLine("- Never make tools eligible below R4_ToolReady.");
         sb.AppendLine("- Use Conversation as modeCandidate until the user is ready for a clear handoff.");
-        sb.AppendLine("- Use Financial only after guided validation for vague financial concerns.");
+        sb.AppendLine("- Use Financial only after guided validation and a confirmed or clearly engaged financial focus.");
         sb.AppendLine("- Use Exploration only when the request is truly exploration-oriented.");
         sb.AppendLine("- Prefer one strategic question at most.");
         return sb.ToString();
@@ -224,6 +224,7 @@ public sealed class ExplorationSubtypePromptBuilder : IExplorationSubtypePromptB
             Structured exploration is only for explicit place/domain searches with concrete filters.
             Open exploration is for experiential, atmospheric, vague, or safety-oriented exploration.
             Open exploration must not default to structured search.
+            Concrete nouns alone are not enough to force structured exploration if the user's real goal is vibe-first or contextual.
             Return strict JSON only.
             """;
 
@@ -244,6 +245,7 @@ Return strict JSON only with this exact shape:
 Rules:
 - Structured requires explicit place/domain/location constraints.
 - Open is for experiential, atmospheric, quiet/safe/vibe-driven requests.
+- Concrete nouns by themselves do not force structured exploration.
 - In phase 1, open exploration never has a tool path.";
 
         return new PromptBuildResult(

@@ -272,32 +272,7 @@ public sealed class ConversationDecisionEngine(
 
     private static ExplorationSubtypeDecision BuildFallbackExplorationSubtypeDecision(string userMessage)
     {
-        var normalized = (userMessage ?? string.Empty).Trim().ToLowerInvariant();
-        var structured = normalized.Contains("near me", StringComparison.Ordinal)
-                         || normalized.Contains("open now", StringComparison.Ordinal)
-                         || normalized.Contains("restaurant", StringComparison.Ordinal)
-                         || normalized.Contains("park", StringComparison.Ordinal)
-                         || normalized.Contains("cafe", StringComparison.Ordinal)
-                         || normalized.Contains("museum", StringComparison.Ordinal);
-
-        if (structured)
-        {
-            return new ExplorationSubtypeDecision(
-                Subtype: ExplorationSubtype.Structured,
-                Confidence: 0.73d,
-                ToolPathEligible: true,
-                PrimaryWhy: "The request includes a concrete place/domain search pattern.",
-                MissingConstraints: [],
-                ReasonCodes: ["fallback_exploration_subtype_structured"]);
-        }
-
-        return new ExplorationSubtypeDecision(
-            Subtype: ExplorationSubtype.Open,
-            Confidence: 0.78d,
-            ToolPathEligible: false,
-            PrimaryWhy: "The request is experiential or atmospheric rather than a concrete place search.",
-            MissingConstraints: ["location_or_area"],
-            ReasonCodes: ["fallback_exploration_subtype_open"]);
+        return ConversationPolicyHelpers.BuildFallbackExplorationSubtypeDecision(userMessage);
     }
 }
 
@@ -427,13 +402,21 @@ public static class ConversationSignalAnalyzer
     public static ConversationSignals Analyze(string? userMessage)
     {
         var normalized = (userMessage ?? string.Empty).Trim().ToLowerInvariant();
+        var extraction = ConversationPolicyHelpers.ExtractLocalDiscovery(userMessage);
+        var hasFinancialFocusSelection = ConversationPolicyHelpers.ResolveFinancialFocus(normalized) is not null
+                                         && (ContainsAny(normalized, "review", "look at", "focus on", "show me", "help me", "yes", "please")
+                                             || normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length <= 3);
         var hasFinancialSignal = ContainsAny(normalized, "budget", "subscriptions", "spending", "spend", "afford", "expense", "save");
-        var hasExplorationSignal = ContainsAny(normalized, "near me", "nearby", "park", "restaurant", "cafe", "walk", "beach", "view", "quiet place", "nice place");
-        var hasConcretePlaceSignal = ContainsAny(normalized, "restaurant", "restaurants", "cafe", "cafes", "park", "parks", "museum", "museums", "playground", "beach");
-        var hasExplicitLocation = ContainsAny(normalized, "near me", "nearby", "in ", "around ", "open now");
+        var hasExplorationSignal = extraction.IsLocalDiscoveryCandidate
+                                   || ContainsAny(normalized, "walk", "beach", "view", "quiet place", "nice place", "lighting", "late walk");
+        var hasConcretePlaceSignal = extraction.PlaceTypeHints.Count > 0
+                                     || ContainsAny(normalized, "beach", "waterfront");
+        var hasExplicitLocation = extraction.HasNearMeLanguage
+                                  || extraction.HasExplicitLocality
+                                  || extraction.TimeHints.Count > 0;
         var hasEmotionalFraming = ContainsAny(normalized, "i think", "i feel", "i'm worried", "i am worried", "stressed", "overwhelmed", "too high");
         var hasSubjectiveLanguage = ContainsAny(normalized, "nice", "quiet", "safe", "good", "better", "best", "feel");
-        var hasCorrectionSignal = ContainsAny(normalized, "actually", "instead", "not", "wrong");
+        var hasCorrectionSignal = ContainsAny(normalized, "actually", "instead", "not", "wrong", "forget", "change of plan");
         var hasTopicSwitchSignal = ContainsAny(normalized, "new topic", "something else", "different question");
         var hasFactualQuestion = normalized.StartsWith("what ", StringComparison.Ordinal)
                                  || normalized.StartsWith("when ", StringComparison.Ordinal)
@@ -442,6 +425,38 @@ public static class ConversationSignalAnalyzer
                                  || normalized.StartsWith("how ", StringComparison.Ordinal);
         var hasCompleteQuestion = normalized.EndsWith("?", StringComparison.Ordinal)
                                   || normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length >= 5;
+        var hasExplicitConfirmation = normalized is "yes" or "yeah" or "yep" or "sure"
+                                      || ContainsAny(normalized, "yes ", "go ahead", "please do", "let's do that", "sounds good", "do that");
+        var hasAtmosphericExplorationIntent = ContainsAny(
+            normalized,
+            "quiet",
+            "calm",
+            "safe",
+            "lighting",
+            "late walk",
+            "beach view",
+            "view",
+            "vibe",
+            "atmosphere");
+        var hasSafetyExplorationIntent = ContainsAny(normalized, "safe", "lighting", "well lit", "late walk", "night");
+        var hasStructuredExplorationIntent = ConversationPolicyHelpers.HasStrongStructuredExplorationIntent(extraction, new ConversationSignals(
+            HasEmotionalFraming: hasEmotionalFraming,
+            HasSubjectiveLanguage: hasSubjectiveLanguage,
+            HasCorrectionSignal: hasCorrectionSignal,
+            HasTopicSwitchSignal: hasTopicSwitchSignal,
+            HasFinancialSignal: hasFinancialSignal,
+            HasExplorationSignal: hasExplorationSignal,
+            HasFactualQuestion: hasFactualQuestion,
+            HasCompleteQuestion: hasCompleteQuestion,
+            HasConcretePlaceSignal: hasConcretePlaceSignal,
+            HasExplicitLocation: hasExplicitLocation,
+            HasExplicitConfirmation: hasExplicitConfirmation,
+            HasFinancialFocusSelection: hasFinancialFocusSelection,
+            HasAtmosphericExplorationIntent: hasAtmosphericExplorationIntent,
+            HasSafetyExplorationIntent: hasSafetyExplorationIntent));
+        var hasResultReferenceSignal = ContainsAny(normalized, "that one", "those", "them", "they", "the first", "the second", "this list", "that list");
+        var hasBranchingSignal = ContainsAny(normalized, "instead", "what about", "another", "rather than");
+        var hasComparisonSignal = ContainsAny(normalized, "compare", "versus", "vs", "against", "first list");
 
         return new ConversationSignals(
             HasEmotionalFraming: hasEmotionalFraming,
@@ -453,7 +468,15 @@ public static class ConversationSignalAnalyzer
             HasFactualQuestion: hasFactualQuestion,
             HasCompleteQuestion: hasCompleteQuestion,
             HasConcretePlaceSignal: hasConcretePlaceSignal,
-            HasExplicitLocation: hasExplicitLocation);
+            HasExplicitLocation: hasExplicitLocation,
+            HasExplicitConfirmation: hasExplicitConfirmation,
+            HasFinancialFocusSelection: hasFinancialFocusSelection,
+            HasAtmosphericExplorationIntent: hasAtmosphericExplorationIntent,
+            HasSafetyExplorationIntent: hasSafetyExplorationIntent,
+            HasStructuredExplorationIntent: hasStructuredExplorationIntent,
+            HasResultReferenceSignal: hasResultReferenceSignal,
+            HasBranchingSignal: hasBranchingSignal,
+            HasComparisonSignal: hasComparisonSignal);
     }
 
     private static bool ContainsAny(string source, params string[] values)

@@ -130,6 +130,9 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IReadinessTransitionPolicy, ReadinessTransitionPolicy>();
         services.AddScoped<IFollowUpBindingPolicy, FollowUpBindingPolicy>();
         services.AddScoped<IContradictionResolutionPolicy, ContradictionResolutionPolicy>();
+        services.AddScoped<IFinancialActivationPolicy, FinancialActivationPolicy>();
+        services.AddScoped<IExplorationSubtypeDecisionPolicy, ExplorationSubtypeDecisionPolicy>();
+        services.AddScoped<IToolGuardWarningPolicy, ToolGuardWarningPolicy>();
         services.AddScoped<IResultContextService, ResultContextService>();
         services.AddScoped<IResponseComposer, ResponseComposer>();
         services.AddScoped<IConversationDecisionPromptBuilder, ConversationDecisionPromptBuilder>();

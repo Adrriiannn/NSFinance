@@ -553,6 +553,11 @@ public sealed class ConversationLayerOrchestrator(
         var currentResultContext = resultContextReadResult.ActiveResultContext;
         var behaviorState = behavior.State;
 
+        if (behaviorState.FollowUpBindingType is FollowUpBindingType.None or FollowUpBindingType.NewTopic)
+        {
+            currentResultContext = null;
+        }
+
         if (resultContextService is not null
             && request.UserId.HasValue
             && request.ConversationThreadId.HasValue

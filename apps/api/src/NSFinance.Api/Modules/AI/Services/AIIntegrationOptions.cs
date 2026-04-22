@@ -137,8 +137,6 @@ public sealed class ChatTurnOptions
 
 public sealed class ConversationArchitectureOptions
 {
-    public bool ConversationFirstEnabled { get; set; } = true;
-    public bool ShadowDecisionValidationEnabled { get; set; }
     public bool EmitTelemetryEvents { get; set; } = true;
     public int ResultContextActiveMinutes { get; set; } = 45;
     public int ResultContextPersistedHours { get; set; } = 24;
