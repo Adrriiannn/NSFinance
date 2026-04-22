@@ -79,6 +79,14 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["cafe"] = "cafe",
             ["cafes"] = "cafe",
             ["coffee"] = "cafe",
+            ["shop"] = "store",
+            ["shops"] = "store",
+            ["store"] = "store",
+            ["stores"] = "store",
+            ["supermarket"] = "supermarket",
+            ["supermarkets"] = "supermarket",
+            ["grocery"] = "supermarket",
+            ["groceries"] = "supermarket",
             ["museum"] = "museum",
             ["museums"] = "museum",
             ["playground"] = "playground",
@@ -100,8 +108,10 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["fuel"] = "gas_station",
             ["gas"] = "gas_station",
             ["pharmacy"] = "pharmacy",
+            ["pharmacies"] = "pharmacy",
             ["chemist"] = "pharmacy",
             ["gym"] = "gym",
+            ["gyms"] = "gym",
             ["fitness"] = "gym"
         };
 

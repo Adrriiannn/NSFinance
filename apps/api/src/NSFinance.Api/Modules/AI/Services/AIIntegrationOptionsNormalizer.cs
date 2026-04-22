@@ -90,12 +90,12 @@ public static class AIIntegrationOptionsNormalizer
 
         if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L1DecisionModelName))
         {
-            options.Architecture.Tiers.L1DecisionModelName = options.Routing.HeavyModelName;
+            options.Architecture.Tiers.L1DecisionModelName = options.Routing.FastModelName;
         }
 
         if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L1DecisionDeploymentName))
         {
-            options.Architecture.Tiers.L1DecisionDeploymentName = options.Routing.HeavyDeploymentName;
+            options.Architecture.Tiers.L1DecisionDeploymentName = options.Routing.FastDeploymentName;
         }
 
         if (string.IsNullOrWhiteSpace(options.Architecture.Tiers.L2CompositionModelName))

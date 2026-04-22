@@ -9,6 +9,7 @@ public interface IConversationBehaviorEngine
 
 public sealed class ConversationBehaviorEngine(
     IConversationDecisionEngine decisionEngine,
+    IConversationModelRoutingPolicy modelRoutingPolicy,
     IReadinessTransitionPolicy readinessTransitionPolicy,
     IFollowUpBindingPolicy followUpBindingPolicy,
     IContradictionResolutionPolicy contradictionResolutionPolicy,
@@ -44,12 +45,22 @@ public sealed class ConversationBehaviorEngine(
         var effectiveBindingType = contradictionResolved.BindingTypeOverride ?? binding.BindingType;
 
         var effectiveState = contradictionResolved.State;
-        var rawDecision = await decisionEngine.EvaluateAsync(
+        var primaryDecisionSelection = modelRoutingPolicy.SelectPrimaryDecision(
             request with
             {
                 EffectiveState = effectiveState
             },
+            signals,
+            effectiveBindingType,
+            effectiveState);
+        var primaryDecisionEvaluation = await decisionEngine.EvaluateAsync(
+            request with
+            {
+                EffectiveState = effectiveState
+            },
+            primaryDecisionSelection,
             cancellationToken);
+        var rawDecision = primaryDecisionEvaluation.Decision;
 
         var normalizedDecision = EnforceBehaviorRules(rawDecision, signals, effectiveState);
         var financiallyGuardedDecision = financialActivationPolicy.Apply(
@@ -57,23 +68,116 @@ public sealed class ConversationBehaviorEngine(
             effectiveState,
             signals);
         ExplorationSubtypeDecision? explorationSubtypeDecision = null;
+        ConversationModelSelectionPlan? explorationSubtypeModelSelection = null;
+        var explorationSubtypeResolutionSource = "not_applicable";
+        var decisionModelInvocationCount = primaryDecisionEvaluation.UsedModelInvocation ? 1 : 0;
+        var heavyDecisionModelCallCount = primaryDecisionEvaluation.UsedModelInvocation
+                                          && primaryDecisionEvaluation.ModelSelection.SelectionKind == ConversationModelSelectionKind.HeavyReasoning
+            ? 1
+            : 0;
+        var fastDecisionModelCallCount = primaryDecisionEvaluation.UsedModelInvocation
+                                         && primaryDecisionEvaluation.ModelSelection.SelectionKind == ConversationModelSelectionKind.Fast
+            ? 1
+            : 0;
         if (financiallyGuardedDecision.ModeCandidate == ConversationMode.Exploration)
         {
-            var rawExplorationSubtypeDecision = await decisionEngine.DetermineExplorationSubtypeAsync(
-                new ConversationModeRequest(
-                    Request: request.Request,
-                    ContextMessages: request.ContextMessages,
-                    ContextSummary: request.ContextSummary,
-                    State: effectiveState,
-                    ResultContext: request.ResultContext,
-                    StrategyDecision: financiallyGuardedDecision,
-                    ExplorationSubtypeDecision: null,
-                    ClientMetadata: request.ClientMetadata),
-                cancellationToken);
-            explorationSubtypeDecision = explorationSubtypeDecisionPolicy.Normalize(
+            var resolutionPlan = explorationSubtypeDecisionPolicy.DetermineResolution(
                 request.Request.UserMessage,
                 effectiveState,
-                rawExplorationSubtypeDecision);
+                request.ResultContext,
+                effectiveBindingType,
+                financiallyGuardedDecision);
+            explorationSubtypeResolutionSource = resolutionPlan.ResolutionSource;
+
+            if (!resolutionPlan.RequiresModelReasoning)
+            {
+                explorationSubtypeDecision = resolutionPlan.Decision;
+                explorationSubtypeModelSelection = modelRoutingPolicy.SelectExplorationSubtype(
+                    new ConversationModeRequest(
+                        Request: request.Request,
+                        ContextMessages: request.ContextMessages,
+                        ContextSummary: request.ContextSummary,
+                        State: effectiveState,
+                        ResultContext: request.ResultContext,
+                        StrategyDecision: financiallyGuardedDecision,
+                        ExplorationSubtypeDecision: resolutionPlan.Decision,
+                        ClientMetadata: request.ClientMetadata),
+                    signals,
+                    resolutionPlan,
+                    primaryDecisionEvaluation.ModelSelection);
+            }
+            else
+            {
+                explorationSubtypeModelSelection = modelRoutingPolicy.SelectExplorationSubtype(
+                    new ConversationModeRequest(
+                        Request: request.Request,
+                        ContextMessages: request.ContextMessages,
+                        ContextSummary: request.ContextSummary,
+                        State: effectiveState,
+                        ResultContext: request.ResultContext,
+                        StrategyDecision: financiallyGuardedDecision,
+                        ExplorationSubtypeDecision: null,
+                        ClientMetadata: request.ClientMetadata),
+                    signals,
+                    resolutionPlan,
+                    primaryDecisionEvaluation.ModelSelection);
+                var subtypeEvaluation = await decisionEngine.DetermineExplorationSubtypeAsync(
+                    new ConversationModeRequest(
+                        Request: request.Request,
+                        ContextMessages: request.ContextMessages,
+                        ContextSummary: request.ContextSummary,
+                        State: effectiveState,
+                        ResultContext: request.ResultContext,
+                        StrategyDecision: financiallyGuardedDecision,
+                        ExplorationSubtypeDecision: null,
+                        ClientMetadata: request.ClientMetadata),
+                    explorationSubtypeModelSelection,
+                    cancellationToken);
+                explorationSubtypeDecision = explorationSubtypeDecisionPolicy.Normalize(
+                    request.Request.UserMessage,
+                    effectiveState,
+                    subtypeEvaluation.Decision);
+                explorationSubtypeResolutionSource = subtypeEvaluation.Decision.ReasonCodes.Any(
+                    static code => code.StartsWith("fallback_exploration_subtype_", StringComparison.OrdinalIgnoreCase))
+                    ? "model_fallback"
+                    : subtypeEvaluation.ModelSelection.SelectionKind == ConversationModelSelectionKind.HeavyReasoning
+                        ? "model_heavy"
+                        : "model_fast";
+                if (subtypeEvaluation.UsedModelInvocation)
+                {
+                    decisionModelInvocationCount += 1;
+                }
+
+                if (subtypeEvaluation.UsedModelInvocation
+                    && subtypeEvaluation.ModelSelection.SelectionKind == ConversationModelSelectionKind.HeavyReasoning)
+                {
+                    heavyDecisionModelCallCount += 1;
+                }
+                else if (subtypeEvaluation.UsedModelInvocation
+                         && subtypeEvaluation.ModelSelection.SelectionKind == ConversationModelSelectionKind.Fast)
+                {
+                    fastDecisionModelCallCount += 1;
+                }
+            }
+
+            await telemetry.TrackAsync(
+                "chat.turn.exploration_subtype_resolution",
+                new Dictionary<string, object?>
+                {
+                    ["correlationId"] = request.Request.CorrelationId,
+                    ["resolutionSource"] = explorationSubtypeResolutionSource,
+                    ["usedModelReasoning"] = explorationSubtypeModelSelection?.SelectionKind != ConversationModelSelectionKind.Deterministic
+                                             && resolutionPlan.RequiresModelReasoning,
+                    ["heavySubtypeCallSkipped"] = explorationSubtypeModelSelection?.SelectionKind != ConversationModelSelectionKind.HeavyReasoning,
+                    ["decisionModelCallCount"] = decisionModelInvocationCount,
+                    ["subtypeSelectionKind"] = explorationSubtypeModelSelection?.SelectionKind.ToString(),
+                    ["subtypeSelectionReason"] = explorationSubtypeModelSelection?.SelectionReason,
+                    ["bindingType"] = effectiveBindingType.ToString(),
+                    ["hasActiveResultContext"] = request.ResultContext is not null,
+                    ["subtype"] = explorationSubtypeDecision?.Subtype.ToString(),
+                    ["reasonCodes"] = (explorationSubtypeDecision?.ReasonCodes ?? resolutionPlan.ReasonCodes).ToArray()
+                },
+                cancellationToken);
         }
 
         var finalModeCandidateDecision = financiallyGuardedDecision;
@@ -169,7 +273,16 @@ public sealed class ConversationBehaviorEngine(
                 ["strategy"] = finalDecision.Strategy.ToString(),
                 ["modeCandidate"] = finalDecision.ModeCandidate.ToString(),
                 ["readinessFrom"] = finalDecision.Readiness.From.ToString(),
-                ["readinessTo"] = finalDecision.Readiness.To.ToString()
+                ["readinessTo"] = finalDecision.Readiness.To.ToString(),
+                ["explorationSubtypeResolutionSource"] = explorationSubtypeResolutionSource,
+                ["decisionModelCallCount"] = decisionModelInvocationCount,
+                ["heavyDecisionModelCallCount"] = heavyDecisionModelCallCount,
+                ["fastDecisionModelCallCount"] = fastDecisionModelCallCount,
+                ["primaryDecisionSelectionKind"] = primaryDecisionEvaluation.ModelSelection.SelectionKind.ToString(),
+                ["primaryDecisionSelectionReason"] = primaryDecisionEvaluation.ModelSelection.SelectionReason,
+                ["primaryDecisionEscalationJustification"] = primaryDecisionEvaluation.ModelSelection.EscalationJustification,
+                ["subtypeSelectionKind"] = explorationSubtypeModelSelection?.SelectionKind.ToString(),
+                ["subtypeSelectionReason"] = explorationSubtypeModelSelection?.SelectionReason
             },
             cancellationToken);
 
@@ -181,6 +294,11 @@ public sealed class ConversationBehaviorEngine(
             TargetMode: routeToModeHandler ? finalDecision.ModeCandidate : ConversationMode.Conversation,
             ExplorationSubtypeDecision: explorationSubtypeDecision,
             CompositionRequest: compositionRequest,
+            PrimaryDecisionModelSelection: primaryDecisionEvaluation.ModelSelection,
+            ExplorationSubtypeModelSelection: explorationSubtypeModelSelection,
+            DecisionModelCallCount: decisionModelInvocationCount,
+            HeavyDecisionModelCallCount: heavyDecisionModelCallCount,
+            FastDecisionModelCallCount: fastDecisionModelCallCount,
             ReasonCodes: finalDecision.ReasonCodes,
             Warnings: warnings.ToArray());
     }

@@ -639,6 +639,13 @@ public sealed class FinancialActivationPolicy : IFinancialActivationPolicy
 
 public interface IExplorationSubtypeDecisionPolicy
 {
+    ExplorationSubtypeResolutionPlan DetermineResolution(
+        string userMessage,
+        ConversationStateSnapshot state,
+        ResultContextSnapshot? resultContext,
+        FollowUpBindingType bindingType,
+        ConversationTurnStrategyDecision strategyDecision);
+
     ExplorationSubtypeDecision Normalize(
         string userMessage,
         ConversationStateSnapshot state,
@@ -647,6 +654,112 @@ public interface IExplorationSubtypeDecisionPolicy
 
 public sealed class ExplorationSubtypeDecisionPolicy : IExplorationSubtypeDecisionPolicy
 {
+    public ExplorationSubtypeResolutionPlan DetermineResolution(
+        string userMessage,
+        ConversationStateSnapshot state,
+        ResultContextSnapshot? resultContext,
+        FollowUpBindingType bindingType,
+        ConversationTurnStrategyDecision strategyDecision)
+    {
+        var normalized = (userMessage ?? string.Empty).Trim().ToLowerInvariant();
+        var signals = ConversationSignalAnalyzer.Analyze(userMessage);
+        var extraction = ConversationPolicyHelpers.ExtractLocalDiscovery(userMessage);
+        var reasonCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (HasStructuredFollowUpContext(resultContext, bindingType)
+            && !ConversationPolicyHelpers.ShouldPreferExperientialOpen(extraction, signals))
+        {
+            reasonCodes.Add("exploration_subtype_followup_structured_fast_path");
+            if (signals.HasComparisonSignal || signals.HasResultReferenceSignal)
+            {
+                reasonCodes.Add("exploration_subtype_followup_reference_signal");
+            }
+
+            if (bindingType is FollowUpBindingType.Refine or FollowUpBindingType.NewBranch)
+            {
+                reasonCodes.Add("exploration_subtype_followup_branch_or_refine");
+            }
+
+            return new ExplorationSubtypeResolutionPlan(
+                RequiresModelReasoning: false,
+                Decision: BuildDeterministicDecision(
+                    subtype: ExplorationSubtype.Structured,
+                    confidence: 0.93d,
+                    source: "result_context_structured_fast_path",
+                    extraction: extraction,
+                    existingDecision: null,
+                    additionalReasonCodes: reasonCodes),
+                ResolutionSource: "result_context_structured_fast_path",
+                ReasonCodes: reasonCodes.ToArray());
+        }
+
+        if (ConversationPolicyHelpers.HasConcreteStructuredSearchFrame(extraction, signals)
+            && !ConversationPolicyHelpers.ShouldPreferExperientialOpen(extraction, signals))
+        {
+            reasonCodes.Add("exploration_subtype_structured_fast_path");
+            if (extraction.PlaceTypeHints.Count > 0)
+            {
+                reasonCodes.Add("exploration_subtype_fast_path_place_type");
+            }
+
+            if (extraction.HasNearMeLanguage || extraction.HasExplicitLocality)
+            {
+                reasonCodes.Add("exploration_subtype_fast_path_location_frame");
+            }
+
+            if (extraction.TimeHints.Count > 0)
+            {
+                reasonCodes.Add("exploration_subtype_fast_path_operational_filter");
+            }
+
+            return new ExplorationSubtypeResolutionPlan(
+                RequiresModelReasoning: false,
+                Decision: BuildDeterministicDecision(
+                    subtype: ExplorationSubtype.Structured,
+                    confidence: 0.91d,
+                    source: "structured_fast_path",
+                    extraction: extraction,
+                    existingDecision: null,
+                    additionalReasonCodes: reasonCodes),
+                ResolutionSource: "structured_fast_path",
+                ReasonCodes: reasonCodes.ToArray());
+        }
+
+        if (ConversationPolicyHelpers.HasStrongOpenExplorationIntent(extraction, signals)
+            && !HasOperationalRefinementCue(normalized))
+        {
+            reasonCodes.Add("exploration_subtype_open_fast_path");
+            return new ExplorationSubtypeResolutionPlan(
+                RequiresModelReasoning: false,
+                Decision: BuildDeterministicDecision(
+                    subtype: ExplorationSubtype.Open,
+                    confidence: 0.89d,
+                    source: "open_fast_path",
+                    extraction: extraction,
+                    existingDecision: null,
+                    additionalReasonCodes: reasonCodes),
+                ResolutionSource: "open_fast_path",
+                ReasonCodes: reasonCodes.ToArray());
+        }
+
+        reasonCodes.Add("exploration_subtype_heavy_model_required");
+        if (!string.IsNullOrWhiteSpace(ReadExplorationSubtypeConstraint(state)))
+        {
+            reasonCodes.Add("exploration_subtype_existing_state_insufficient");
+        }
+
+        if (resultContext is not null)
+        {
+            reasonCodes.Add("exploration_subtype_active_result_context_present");
+        }
+
+        return new ExplorationSubtypeResolutionPlan(
+            RequiresModelReasoning: true,
+            Decision: null,
+            ResolutionSource: "model_heavy_required",
+            ReasonCodes: reasonCodes.ToArray());
+    }
+
     public ExplorationSubtypeDecision Normalize(
         string userMessage,
         ConversationStateSnapshot state,
@@ -654,41 +767,131 @@ public sealed class ExplorationSubtypeDecisionPolicy : IExplorationSubtypeDecisi
     {
         var signals = ConversationSignalAnalyzer.Analyze(userMessage);
         var extraction = ConversationPolicyHelpers.ExtractLocalDiscovery(userMessage);
-        var reasonCodes = new HashSet<string>(decision.ReasonCodes, StringComparer.OrdinalIgnoreCase);
-        var targetSubtype = ConversationPolicyHelpers.ResolveExplorationSubtype(extraction, signals);
-        var missingConstraints = decision.MissingConstraints.ToList();
-        var primaryWhy = decision.PrimaryWhy;
-        var toolPathEligible = targetSubtype == ExplorationSubtype.Structured;
+        var targetSubtype = decision.Subtype;
 
-        if (targetSubtype == ExplorationSubtype.Open)
+        if (ConversationPolicyHelpers.HasConcreteStructuredSearchFrame(extraction, signals)
+            && !ConversationPolicyHelpers.ShouldPreferExperientialOpen(extraction, signals))
         {
-            primaryWhy = "The request is still vibe-first, safety-oriented, or exploratory rather than a concrete place search.";
-            if (!missingConstraints.Contains("location_or_area", StringComparer.OrdinalIgnoreCase)
-                && !extraction.HasNearMeLanguage
-                && !extraction.HasExplicitLocality)
-            {
-                missingConstraints.Add("location_or_area");
-            }
-
-            reasonCodes.Add("exploration_subtype_vibe_first_open");
+            targetSubtype = ExplorationSubtype.Structured;
         }
-        else
+        else if (ConversationPolicyHelpers.HasStrongOpenExplorationIntent(extraction, signals))
         {
-            primaryWhy = "The request includes a concrete place/domain search with operational filters or locality evidence.";
+            targetSubtype = ExplorationSubtype.Open;
+        }
+        else if (decision.Subtype == ExplorationSubtype.None)
+        {
+            targetSubtype = ConversationPolicyHelpers.ResolveExplorationSubtype(extraction, signals);
+        }
+
+        var source = decision.ReasonCodes.Any(
+            static code => code.StartsWith("fallback_exploration_subtype_", StringComparison.OrdinalIgnoreCase))
+            ? "model_fallback"
+            : "model_heavy";
+
+        return BuildDeterministicDecision(
+            targetSubtype,
+            decision.Confidence,
+            source,
+            extraction,
+            decision,
+            []);
+    }
+
+    private static ExplorationSubtypeDecision BuildDeterministicDecision(
+        ExplorationSubtype subtype,
+        double confidence,
+        string source,
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ExplorationSubtypeDecision? existingDecision,
+        IEnumerable<string> additionalReasonCodes)
+    {
+        var reasonCodes = new HashSet<string>(
+            (existingDecision?.ReasonCodes ?? [])
+            .Concat(additionalReasonCodes),
+            StringComparer.OrdinalIgnoreCase);
+        var missingConstraints = existingDecision?.MissingConstraints.ToList() ?? [];
+        var boundedConfidence = Math.Round(
+            Math.Clamp(confidence, 0.55d, 0.97d),
+            4,
+            MidpointRounding.AwayFromZero);
+
+        if (subtype == ExplorationSubtype.Structured)
+        {
             missingConstraints.RemoveAll(static item => string.Equals(item, "location_or_area", StringComparison.OrdinalIgnoreCase));
             reasonCodes.Add("exploration_subtype_structured_evidence");
+            reasonCodes.Add($"exploration_subtype_resolution_source_{source}");
+
+            return new ExplorationSubtypeDecision(
+                Subtype: ExplorationSubtype.Structured,
+                Confidence: boundedConfidence,
+                ToolPathEligible: true,
+                PrimaryWhy: "The request is acting like a concrete local search with clear place, area, or operational framing.",
+                MissingConstraints: missingConstraints
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                ReasonCodes: reasonCodes.ToArray());
         }
 
-        return decision with
+        if (!missingConstraints.Contains("location_or_area", StringComparer.OrdinalIgnoreCase)
+            && !extraction.HasNearMeLanguage
+            && !extraction.HasExplicitLocality)
         {
-            Subtype = targetSubtype,
-            ToolPathEligible = toolPathEligible,
-            PrimaryWhy = primaryWhy,
-            MissingConstraints = missingConstraints
+            missingConstraints.Add("location_or_area");
+        }
+
+        reasonCodes.Add("exploration_subtype_vibe_first_open");
+        reasonCodes.Add($"exploration_subtype_resolution_source_{source}");
+
+        return new ExplorationSubtypeDecision(
+            Subtype: ExplorationSubtype.Open,
+            Confidence: boundedConfidence,
+            ToolPathEligible: false,
+            PrimaryWhy: "The request is still experiential, atmospheric, safety-oriented, or context-first rather than a concrete place lookup.",
+            MissingConstraints: missingConstraints
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
-            ReasonCodes = reasonCodes.ToArray()
-        };
+            ReasonCodes: reasonCodes.ToArray());
+    }
+
+    private static bool HasStructuredFollowUpContext(
+        ResultContextSnapshot? resultContext,
+        FollowUpBindingType bindingType)
+    {
+        return resultContext?.SourceMode == ConversationMode.Exploration
+               && resultContext.SourceSubtype == ExplorationSubtype.Structured
+               && bindingType is FollowUpBindingType.BindPrior
+                   or FollowUpBindingType.Refine
+                   or FollowUpBindingType.NewBranch;
+    }
+
+    private static bool HasOperationalRefinementCue(string normalized)
+    {
+        return ContainsAny(
+            normalized,
+            "parking",
+            "open now",
+            "closer",
+            "closest",
+            "distance",
+            "rating",
+            "reviews",
+            "wheelchair",
+            "accessible",
+            "delivery",
+            "takeaway");
+    }
+
+    private static string? ReadExplorationSubtypeConstraint(ConversationStateSnapshot state)
+    {
+        return state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationSubtype, out var subtype)
+            && !string.IsNullOrWhiteSpace(subtype)
+            ? subtype.Trim()
+            : null;
+    }
+
+    private static bool ContainsAny(string source, params string[] values)
+    {
+        return values.Any(value => source.Contains(value, StringComparison.Ordinal));
     }
 }
 
@@ -933,6 +1136,13 @@ internal static class ConversationPolicyHelpers
         LocalDiscoveryConstraintExtractionResult extraction,
         ConversationSignals signals)
     {
+        return HasConcreteStructuredSearchFrame(extraction, signals);
+    }
+
+    public static bool HasConcreteStructuredSearchFrame(
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ConversationSignals signals)
+    {
         return (extraction.PlaceTypeHints.Count > 0 || signals.HasConcretePlaceSignal)
                && (extraction.HasNearMeLanguage
                    || extraction.HasExplicitLocality
@@ -954,12 +1164,32 @@ internal static class ConversationPolicyHelpers
                    && extraction.TimeHints.Count == 0);
     }
 
+    public static bool ShouldPreferExperientialOpen(
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ConversationSignals signals)
+    {
+        return HasAtmosphericExplorationIntent(extraction, signals)
+               && !HasConcreteStructuredSearchFrame(extraction, signals);
+    }
+
+    public static bool HasStrongOpenExplorationIntent(
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ConversationSignals signals)
+    {
+        return ShouldPreferExperientialOpen(extraction, signals)
+               || (signals.HasExplorationSignal
+                   && extraction.PlaceTypeHints.Count == 0
+                   && !extraction.HasNearMeLanguage
+                   && !extraction.HasExplicitLocality
+                   && extraction.TimeHints.Count == 0);
+    }
+
     public static ExplorationSubtype ResolveExplorationSubtype(
         LocalDiscoveryConstraintExtractionResult extraction,
         ConversationSignals signals)
     {
-        return HasStrongStructuredExplorationIntent(extraction, signals)
-               && !HasAtmosphericExplorationIntent(extraction, signals)
+        return HasConcreteStructuredSearchFrame(extraction, signals)
+               && !ShouldPreferExperientialOpen(extraction, signals)
             ? ExplorationSubtype.Structured
             : ExplorationSubtype.Open;
     }

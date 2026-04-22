@@ -4,12 +4,14 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public interface IConversationDecisionEngine
 {
-    Task<ConversationTurnStrategyDecision> EvaluateAsync(
+    Task<ConversationDecisionEvaluationResult> EvaluateAsync(
         ConversationBehaviorRequest request,
+        ConversationModelSelectionPlan modelSelection,
         CancellationToken cancellationToken);
 
-    Task<ExplorationSubtypeDecision> DetermineExplorationSubtypeAsync(
+    Task<ExplorationSubtypeEvaluationResult> DetermineExplorationSubtypeAsync(
         ConversationModeRequest request,
+        ConversationModelSelectionPlan modelSelection,
         CancellationToken cancellationToken);
 }
 
@@ -23,15 +25,42 @@ public sealed class ConversationDecisionEngine(
     IChatTelemetry telemetry,
     ILogger<ConversationDecisionEngine> logger) : IConversationDecisionEngine
 {
-    public async Task<ConversationTurnStrategyDecision> EvaluateAsync(
+    public async Task<ConversationDecisionEvaluationResult> EvaluateAsync(
         ConversationBehaviorRequest request,
+        ConversationModelSelectionPlan modelSelection,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (modelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
+            || modelSelection.ModelClass is null)
+        {
+            var baseDecision = BuildFallbackDecision(request);
+            var deterministicDecision = baseDecision with
+            {
+                ReasonCodes = CombineReasonCodes(
+                    baseDecision.ReasonCodes,
+                    modelSelection.ReasonCodes)
+            };
+
+            await TrackSelectionAsync(
+                request.Request.CorrelationId,
+                "conversation_behavior_primary",
+                modelSelection,
+                route: null,
+                usedModelInvocation: false,
+                cancellationToken);
+
+            return new ConversationDecisionEvaluationResult(
+                Decision: deterministicDecision,
+                ModelSelection: modelSelection,
+                Route: null,
+                UsedModelInvocation: false);
+        }
+
         var route = modelRouter.Resolve(
             AITaskType.ConversationDecision,
-            AIModelClass.HeavyReasoning,
+            modelSelection.ModelClass.Value,
             complexityHint: request.EffectiveState.ReadinessLevel.ToString());
         var prompt = decisionPromptBuilder.BuildPrompt(
             new ConversationDecisionPromptInput(
@@ -43,11 +72,17 @@ public sealed class ConversationDecisionEngine(
                 ClientMetadata: request.ClientMetadata,
                 FailureHistory: request.FailureHistory));
 
-        await TrackInvocationAsync("chat.model.invocation", route, request.Request.CorrelationId, cancellationToken);
+        await TrackSelectionAsync(
+            route,
+            request.Request.CorrelationId,
+            "conversation_behavior_primary",
+            modelSelection,
+            usedModelInvocation: true,
+            cancellationToken);
         var response = await aiClient.SendAsync(
             AIRequest.Create(
                 taskType: AITaskType.ConversationDecision,
-                preferredModelClass: AIModelClass.HeavyReasoning,
+                preferredModelClass: modelSelection.ModelClass.Value,
                 messages: prompt.Messages,
                 correlationId: request.Request.CorrelationId,
                 systemInstructions: prompt.SystemInstructions,
@@ -67,41 +102,88 @@ public sealed class ConversationDecisionEngine(
                 out var failureReason)
             && parsedDecision is not null)
         {
-            return parsedDecision with
-            {
-                ReasonCodes = parsedDecision.ReasonCodes
-                    .Concat(reasonCodes)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray()
-            };
+            return new ConversationDecisionEvaluationResult(
+                Decision: parsedDecision with
+                {
+                    ReasonCodes = CombineReasonCodes(
+                        parsedDecision.ReasonCodes,
+                        reasonCodes,
+                        modelSelection.ReasonCodes)
+                },
+                ModelSelection: modelSelection,
+                Route: route,
+                UsedModelInvocation: true);
         }
 
         logger.LogWarning(
-            "Conversation decision parse fallback correlationId={CorrelationId} failureReason={FailureReason}",
+            "Conversation decision parse fallback correlationId={CorrelationId} failureReason={FailureReason} selectionKind={SelectionKind} selectionReason={SelectionReason}",
             request.Request.CorrelationId,
-            failureReason ?? "unknown");
+            failureReason ?? "unknown",
+            modelSelection.SelectionKind,
+            modelSelection.SelectionReason);
         await telemetry.TrackAsync(
             "chat.response.fallback",
             new Dictionary<string, object?>
             {
                 ["correlationId"] = request.Request.CorrelationId,
                 ["failureReason"] = failureReason,
-                ["stage"] = "conversation_decision"
+                ["stage"] = "conversation_decision",
+                ["selectionKind"] = modelSelection.SelectionKind.ToString(),
+                ["selectionReason"] = modelSelection.SelectionReason
             },
             cancellationToken);
 
-        return BuildFallbackDecision(request);
+        var baseFallbackDecision = BuildFallbackDecision(request);
+        var fallbackDecision = baseFallbackDecision with
+        {
+            ReasonCodes = CombineReasonCodes(
+                baseFallbackDecision.ReasonCodes,
+                modelSelection.ReasonCodes)
+        };
+
+        return new ConversationDecisionEvaluationResult(
+            Decision: fallbackDecision,
+            ModelSelection: modelSelection,
+            Route: route,
+            UsedModelInvocation: true);
     }
 
-    public async Task<ExplorationSubtypeDecision> DetermineExplorationSubtypeAsync(
+    public async Task<ExplorationSubtypeEvaluationResult> DetermineExplorationSubtypeAsync(
         ConversationModeRequest request,
+        ConversationModelSelectionPlan modelSelection,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (modelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
+            || modelSelection.ModelClass is null)
+        {
+            var baseDecision = BuildFallbackExplorationSubtypeDecision(request.Request.UserMessage);
+            var deterministicDecision = baseDecision with
+            {
+                ReasonCodes = CombineReasonCodes(
+                    baseDecision.ReasonCodes,
+                    modelSelection.ReasonCodes)
+            };
+
+            await TrackSelectionAsync(
+                request.Request.CorrelationId,
+                "exploration_subtype",
+                modelSelection,
+                route: null,
+                usedModelInvocation: false,
+                cancellationToken);
+
+            return new ExplorationSubtypeEvaluationResult(
+                Decision: deterministicDecision,
+                ModelSelection: modelSelection,
+                Route: null,
+                UsedModelInvocation: false);
+        }
+
         var route = modelRouter.Resolve(
             AITaskType.ConversationDecision,
-            AIModelClass.HeavyReasoning,
+            modelSelection.ModelClass.Value,
             complexityHint: "exploration_subtype");
         var prompt = explorationSubtypePromptBuilder.BuildPrompt(
             new ExplorationSubtypePromptInput(
@@ -110,11 +192,17 @@ public sealed class ConversationDecisionEngine(
                 ResultContext: request.ResultContext,
                 ClientMetadata: request.ClientMetadata));
 
-        await TrackInvocationAsync("chat.model.invocation", route, request.Request.CorrelationId, cancellationToken);
+        await TrackSelectionAsync(
+            route,
+            request.Request.CorrelationId,
+            "exploration_subtype",
+            modelSelection,
+            usedModelInvocation: true,
+            cancellationToken);
         var response = await aiClient.SendAsync(
             AIRequest.Create(
                 taskType: AITaskType.ConversationDecision,
-                preferredModelClass: AIModelClass.HeavyReasoning,
+                preferredModelClass: modelSelection.ModelClass.Value,
                 messages: prompt.Messages,
                 correlationId: request.Request.CorrelationId,
                 systemInstructions: prompt.SystemInstructions,
@@ -133,39 +221,105 @@ public sealed class ConversationDecisionEngine(
                 out var failureReason)
             && parsedDecision is not null)
         {
-            return parsedDecision with
-            {
-                ReasonCodes = parsedDecision.ReasonCodes
-                    .Concat(reasonCodes)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray()
-            };
+            return new ExplorationSubtypeEvaluationResult(
+                Decision: parsedDecision with
+                {
+                    ReasonCodes = CombineReasonCodes(
+                        parsedDecision.ReasonCodes,
+                        reasonCodes,
+                        modelSelection.ReasonCodes)
+                },
+                ModelSelection: modelSelection,
+                Route: route,
+                UsedModelInvocation: true);
         }
 
         logger.LogWarning(
-            "Exploration subtype parse fallback correlationId={CorrelationId} failureReason={FailureReason}",
+            "Exploration subtype parse fallback correlationId={CorrelationId} failureReason={FailureReason} selectionKind={SelectionKind} selectionReason={SelectionReason}",
             request.Request.CorrelationId,
-            failureReason ?? "unknown");
-        return BuildFallbackExplorationSubtypeDecision(request.Request.UserMessage);
+            failureReason ?? "unknown",
+            modelSelection.SelectionKind,
+            modelSelection.SelectionReason);
+
+        var baseFallbackDecision = BuildFallbackExplorationSubtypeDecision(request.Request.UserMessage);
+        var fallbackDecision = baseFallbackDecision with
+        {
+            ReasonCodes = CombineReasonCodes(
+                baseFallbackDecision.ReasonCodes,
+                modelSelection.ReasonCodes)
+        };
+
+        return new ExplorationSubtypeEvaluationResult(
+            Decision: fallbackDecision,
+            ModelSelection: modelSelection,
+            Route: route,
+            UsedModelInvocation: true);
     }
 
-    private async Task TrackInvocationAsync(
-        string eventName,
+    private async Task TrackSelectionAsync(
         AIModelRoute route,
         string correlationId,
+        string invocationStage,
+        ConversationModelSelectionPlan modelSelection,
+        bool usedModelInvocation,
         CancellationToken cancellationToken)
     {
         await telemetry.TrackAsync(
-            eventName,
+            "chat.model.invocation",
             new Dictionary<string, object?>
             {
                 ["correlationId"] = correlationId,
                 ["taskType"] = route.TaskType.ToString(),
                 ["modelClass"] = route.ModelClass.ToString(),
                 ["model"] = route.Model,
-                ["deployment"] = route.Deployment
+                ["deployment"] = route.Deployment,
+                ["invocationStage"] = invocationStage,
+                ["routeReason"] = route.Reason,
+                ["routeNotes"] = route.Notes.ToArray(),
+                ["selectionKind"] = modelSelection.SelectionKind.ToString(),
+                ["selectionReason"] = modelSelection.SelectionReason,
+                ["escalationJustification"] = modelSelection.EscalationJustification,
+                ["couldAvoidEscalation"] = modelSelection.CouldAvoidEscalation,
+                ["selectionReasonCodes"] = modelSelection.ReasonCodes.ToArray(),
+                ["usedModelInvocation"] = usedModelInvocation
             },
             cancellationToken);
+    }
+
+    private async Task TrackSelectionAsync(
+        string correlationId,
+        string invocationStage,
+        ConversationModelSelectionPlan modelSelection,
+        AIModelRoute? route,
+        bool usedModelInvocation,
+        CancellationToken cancellationToken)
+    {
+        await telemetry.TrackAsync(
+            "chat.model.selection",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = correlationId,
+                ["invocationStage"] = invocationStage,
+                ["selectionKind"] = modelSelection.SelectionKind.ToString(),
+                ["selectionReason"] = modelSelection.SelectionReason,
+                ["escalationJustification"] = modelSelection.EscalationJustification,
+                ["couldAvoidEscalation"] = modelSelection.CouldAvoidEscalation,
+                ["selectionReasonCodes"] = modelSelection.ReasonCodes.ToArray(),
+                ["usedModelInvocation"] = usedModelInvocation,
+                ["routeReason"] = route?.Reason,
+                ["routeModelClass"] = route?.ModelClass.ToString(),
+                ["routeModel"] = route?.Model,
+                ["routeDeployment"] = route?.Deployment
+            },
+            cancellationToken);
+    }
+
+    private static IReadOnlyList<string> CombineReasonCodes(params IReadOnlyList<string>[] reasonCodeSets)
+    {
+        return reasonCodeSets
+            .SelectMany(static codes => codes)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static ConversationTurnStrategyDecision BuildFallbackDecision(ConversationBehaviorRequest request)
@@ -301,7 +455,19 @@ public sealed class ResponseComposer(
 
         if (ShouldUseDeterministicTemplate(request))
         {
-            return BuildDeterministicResponse(request);
+            var deterministic = BuildDeterministicResponse(request);
+            await telemetry.TrackAsync(
+                "chat.response.selection",
+                new Dictionary<string, object?>
+                {
+                    ["correlationId"] = correlationId,
+                    ["selectionKind"] = ConversationModelSelectionKind.Deterministic.ToString(),
+                    ["selectionReason"] = deterministic.SelectionReason,
+                    ["usedModelInvocation"] = false,
+                    ["responseType"] = request.ResponseType.ToString()
+                },
+                cancellationToken);
+            return deterministic;
         }
 
         var route = modelRouter.Resolve(AITaskType.ResponseComposition, AIModelClass.Fast, request.ResponseType.ToString());
@@ -314,7 +480,13 @@ public sealed class ResponseComposer(
                 ["taskType"] = route.TaskType.ToString(),
                 ["modelClass"] = route.ModelClass.ToString(),
                 ["model"] = route.Model,
-                ["deployment"] = route.Deployment
+                ["deployment"] = route.Deployment,
+                ["invocationStage"] = "response_composition",
+                ["routeReason"] = route.Reason,
+                ["routeNotes"] = route.Notes.ToArray(),
+                ["selectionKind"] = ConversationModelSelectionKind.Fast.ToString(),
+                ["selectionReason"] = "response_composition_fast",
+                ["usedModelInvocation"] = true
             },
             cancellationToken);
 
@@ -340,6 +512,8 @@ public sealed class ResponseComposer(
                 ModelUsed: parsedResponse.ModelUsed,
                 DeploymentUsed: route.Deployment,
                 ReasoningClass: parsedResponse.ReasoningClass,
+                UsedDeterministicPath: false,
+                SelectionReason: "response_composition_fast",
                 Warnings: parsedResponse.Warnings,
                 FollowUpIntentHints: parsedResponse.FollowUpIntentHints);
         }
@@ -390,6 +564,8 @@ public sealed class ResponseComposer(
             ModelUsed: "deterministic-response-composer",
             DeploymentUsed: "deterministic-response-composer",
             ReasoningClass: AIModelClass.Fast,
+            UsedDeterministicPath: true,
+            SelectionReason: "deterministic_template",
             Warnings: [],
             FollowUpIntentHints: request.MissingConstraints.Count > 0
                 ? ["clarify_intent"]

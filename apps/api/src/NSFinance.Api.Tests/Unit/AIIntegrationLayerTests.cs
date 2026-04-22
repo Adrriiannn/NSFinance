@@ -148,6 +148,43 @@ public sealed class AIIntegrationLayerTests
     }
 
     [Fact]
+    public void ModelRouter_DefaultsConversationDecisionToFastL1Route()
+    {
+        var router = CreateRouter(options =>
+        {
+            options.Architecture.Tiers.L1DecisionModelName = "gpt-4.1";
+            options.Architecture.Tiers.L1DecisionDeploymentName = "gpt-4.1";
+        });
+
+        var route = router.Resolve(AITaskType.ConversationDecision, AIModelClass.Any, "conversation_first");
+
+        Assert.Equal(AIModelClass.Fast, route.ModelClass);
+        Assert.Equal("gpt-4.1", route.Model);
+        Assert.Equal("gpt-4.1", route.Deployment);
+    }
+
+    [Fact]
+    public void AIIntegrationOptionsNormalizer_DefaultsL1DecisionTierToFastRoute()
+    {
+        var options = new AIIntegrationOptions
+        {
+            Routing = new AIModelRoutingOptions
+            {
+                FastModelName = "gpt-4.1",
+                FastDeploymentName = "gpt-4.1",
+                HeavyModelName = "gpt-5-chat",
+                HeavyDeploymentName = "gpt-5-chat",
+                HeavyModelEnabled = true
+            }
+        };
+
+        AIIntegrationOptionsNormalizer.Normalize(options);
+
+        Assert.Equal("gpt-4.1", options.Architecture.Tiers.L1DecisionModelName);
+        Assert.Equal("gpt-4.1", options.Architecture.Tiers.L1DecisionDeploymentName);
+    }
+
+    [Fact]
     public void ModelRouter_FallsBackToFast_WhenHeavyDisabledAndFallbackEnabled()
     {
         var router = CreateRouter(options =>

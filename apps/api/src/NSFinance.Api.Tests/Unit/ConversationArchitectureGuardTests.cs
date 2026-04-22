@@ -199,6 +199,55 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task ConversationLayerOrchestrator_EmitsPerTurnModelUsageSummary()
+    {
+        var order = new List<string>();
+        var telemetry = new RecordingChatTelemetry();
+        var orchestrator = new ConversationLayerOrchestrator(
+            contextService: new StubConversationContextService(),
+            modelRouter: new StubModelRouter(),
+            behaviorEngine: new StubBehaviorEngine(order),
+            modeRouter: new TrackingModeRouter(order),
+            responseComposer: new StubResponseComposer(order),
+            logger: NullLogger<ConversationLayerOrchestrator>.Instance,
+            options: Options.Create(new AIIntegrationOptions
+            {
+                ChatTurns = new ChatTurnOptions
+                {
+                    MaxUserMessageChars = 4000,
+                    MaxClientRequestIdLength = 128
+                },
+                Architecture = new ConversationArchitectureOptions
+                {
+                    EmitTelemetryEvents = true
+                }
+            }),
+            telemetry: telemetry);
+
+        var response = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "quiet place for a walk",
+                RecentTurns: [],
+                State: CreateDefaultState(),
+                CorrelationId: "corr-model-summary",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ClientRequestId: "client-model-summary",
+                UserId: null,
+                ConversationThreadId: null,
+                UsePersistentMemory: false,
+                AllowTransientFallbackOnPersistentFailure: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+
+        var summary = telemetry.Single("chat.turn.model_usage_summary");
+        Assert.Equal(2, summary["totalModelCallCount"]);
+        Assert.Equal(0, summary["heavyModelCallCount"]);
+        Assert.Equal(2, summary["fastModelCallCount"]);
+        Assert.Equal(true, summary["usedDeterministicPath"]);
+    }
+
+    [Fact]
     public void FollowUpBindingPolicy_DoesNotCarryStaleBindingWithoutEvidence()
     {
         var policy = new FollowUpBindingPolicy();
@@ -274,6 +323,7 @@ public sealed class ConversationArchitectureGuardTests
     {
         return new ConversationBehaviorEngine(
             new StubDecisionEngine(decision, explorationSubtypeDecision),
+            new ConversationModelRoutingPolicy(),
             new ReadinessTransitionPolicy(),
             new FollowUpBindingPolicy(),
             new ContradictionResolutionPolicy(),
@@ -307,30 +357,60 @@ public sealed class ConversationArchitectureGuardTests
         }
     }
 
+    private sealed class RecordingChatTelemetry : IChatTelemetry
+    {
+        private readonly List<(string Name, IReadOnlyDictionary<string, object?> Properties)> events = [];
+
+        public Task TrackAsync(
+            string eventName,
+            IReadOnlyDictionary<string, object?> properties,
+            CancellationToken cancellationToken)
+        {
+            events.Add((eventName, new Dictionary<string, object?>(properties)));
+            return Task.CompletedTask;
+        }
+
+        public IReadOnlyDictionary<string, object?> Single(string eventName)
+        {
+            return events.Single(evt => string.Equals(evt.Name, eventName, StringComparison.Ordinal)).Properties;
+        }
+    }
+
     private sealed class StubDecisionEngine(
         ConversationTurnStrategyDecision decision,
         ExplorationSubtypeDecision? explorationSubtypeDecision) : IConversationDecisionEngine
     {
-        public Task<ConversationTurnStrategyDecision> EvaluateAsync(
+        public Task<ConversationDecisionEvaluationResult> EvaluateAsync(
             ConversationBehaviorRequest request,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(decision);
-        }
-
-        public Task<ExplorationSubtypeDecision> DetermineExplorationSubtypeAsync(
-            ConversationModeRequest request,
+            ConversationModelSelectionPlan modelSelection,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(
-                explorationSubtypeDecision
-                ?? new ExplorationSubtypeDecision(
-                    Subtype: ExplorationSubtype.Open,
-                    Confidence: 0.50d,
-                    ToolPathEligible: false,
-                    PrimaryWhy: "Stub fallback.",
-                    MissingConstraints: [],
-                    ReasonCodes: ["stub_default_subtype"]));
+                new ConversationDecisionEvaluationResult(
+                    Decision: decision,
+                    ModelSelection: modelSelection,
+                    Route: null,
+                    UsedModelInvocation: false));
+        }
+
+        public Task<ExplorationSubtypeEvaluationResult> DetermineExplorationSubtypeAsync(
+            ConversationModeRequest request,
+            ConversationModelSelectionPlan modelSelection,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(
+                new ExplorationSubtypeEvaluationResult(
+                    Decision: explorationSubtypeDecision
+                              ?? new ExplorationSubtypeDecision(
+                                  Subtype: ExplorationSubtype.Open,
+                                  Confidence: 0.50d,
+                                  ToolPathEligible: false,
+                                  PrimaryWhy: "Stub fallback.",
+                                  MissingConstraints: [],
+                                  ReasonCodes: ["stub_default_subtype"]),
+                    ModelSelection: modelSelection,
+                    Route: null,
+                    UsedModelInvocation: false));
         }
     }
 
@@ -488,6 +568,23 @@ public sealed class ConversationArchitectureGuardTests
                         MissingConstraints: [],
                         ReasonCodes: ["stub_open"]),
                     CompositionRequest: null,
+                    PrimaryDecisionModelSelection: new ConversationModelSelectionPlan(
+                        SelectionKind: ConversationModelSelectionKind.Fast,
+                        ModelClass: AIModelClass.Fast,
+                        SelectionReason: "stub_primary_fast",
+                        EscalationJustification: null,
+                        CouldAvoidEscalation: false,
+                        ReasonCodes: ["stub_primary_fast"]),
+                    ExplorationSubtypeModelSelection: new ConversationModelSelectionPlan(
+                        SelectionKind: ConversationModelSelectionKind.Deterministic,
+                        ModelClass: null,
+                        SelectionReason: "stub_subtype_deterministic",
+                        EscalationJustification: null,
+                        CouldAvoidEscalation: false,
+                        ReasonCodes: ["stub_subtype_deterministic"]),
+                    DecisionModelCallCount: 1,
+                    HeavyDecisionModelCallCount: 0,
+                    FastDecisionModelCallCount: 1,
                     ReasonCodes: ["stub_behavior"],
                     Warnings: []));
         }
@@ -545,6 +642,8 @@ public sealed class ConversationArchitectureGuardTests
                     ModelUsed: "stub-model",
                     DeploymentUsed: "stub-deployment",
                     ReasoningClass: AIModelClass.Fast,
+                    UsedDeterministicPath: false,
+                    SelectionReason: "stub_response_composition",
                     Warnings: [],
                     FollowUpIntentHints: []));
         }

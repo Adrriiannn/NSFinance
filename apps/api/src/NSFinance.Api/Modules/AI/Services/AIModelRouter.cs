@@ -94,7 +94,7 @@ public sealed class AIModelRouter(
             AITaskType.MerchantInvestigation => AIModelClass.HeavyReasoning,
             AITaskType.UserChatComplex => AIModelClass.HeavyReasoning,
             AITaskType.FinancialReasoning => AIModelClass.HeavyReasoning,
-            AITaskType.ConversationDecision => AIModelClass.HeavyReasoning,
+            AITaskType.ConversationDecision => AIModelClass.Fast,
             AITaskType.ResponseComposition => AIModelClass.Fast,
             _ => AIModelClass.Fast
         };
@@ -105,7 +105,7 @@ public sealed class AIModelRouter(
         AITaskType taskType,
         AIModelClass modelClass)
     {
-        if (taskType == AITaskType.ConversationDecision && modelClass == AIModelClass.HeavyReasoning)
+        if (taskType == AITaskType.ConversationDecision && modelClass == AIModelClass.Fast)
         {
             return (
                 config.Architecture.Tiers.L1DecisionModelName,

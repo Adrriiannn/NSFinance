@@ -34,7 +34,7 @@ public sealed class ConversationLayerOrchestrator(
 
         var primaryRoute = modelRouter.Resolve(
             AITaskType.ConversationDecision,
-            AIModelClass.HeavyReasoning,
+            AIModelClass.Any,
             complexityHint: "conversation_first");
 
         var workingRequest = request;
@@ -509,6 +509,24 @@ public sealed class ConversationLayerOrchestrator(
             },
             cancellationToken);
 
+        await telemetry.TrackAsync(
+            "chat.turn.model_usage_summary",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["threadId"] = conversationThreadId?.ToString("N"),
+                ["turnId"] = conversationTurnId?.ToString("N"),
+                ["totalModelCallCount"] = executionResult.TotalModelCallCount,
+                ["heavyModelCallCount"] = executionResult.HeavyModelCallCount,
+                ["fastModelCallCount"] = executionResult.FastModelCallCount,
+                ["usedDeterministicPath"] = executionResult.UsedDeterministicPath,
+                ["selectionReasons"] = executionResult.SelectionReasons.ToArray(),
+                ["escalationJustifications"] = executionResult.EscalationJustifications.ToArray(),
+                ["responseModel"] = executionResult.Response.ModelUsed,
+                ["responseReasoningClass"] = executionResult.Response.ReasoningClass.ToString()
+            },
+            cancellationToken);
+
         logger.LogInformation(
             "Conversation-first user chat completed correlationId={CorrelationId} threadId={ThreadId} turnId={TurnId} succeeded={Succeeded} model={Model} contextReasonCodes={ContextReasonCodes} warnings={Warnings}",
             request.CorrelationId,
@@ -640,7 +658,20 @@ public sealed class ConversationLayerOrchestrator(
                     Deployment: composed.DeploymentUsed,
                     IsFallback: composed.ModelUsed.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
                     Reason: "direct_mode_response",
-                    Notes: []));
+                    Notes: []),
+                TotalModelCallCount: behavior.DecisionModelCallCount + (composed.UsedDeterministicPath ? 0 : 1),
+                HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
+                FastModelCallCount: behavior.FastDecisionModelCallCount + (composed.UsedDeterministicPath ? 0 : 1),
+                UsedDeterministicPath: behavior.PrimaryDecisionModelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
+                                       || behavior.ExplorationSubtypeModelSelection?.SelectionKind == ConversationModelSelectionKind.Deterministic
+                                       || composed.UsedDeterministicPath,
+                SelectionReasons: BuildSelectionReasons(
+                    behavior.PrimaryDecisionModelSelection.SelectionReason,
+                    behavior.ExplorationSubtypeModelSelection?.SelectionReason,
+                    composed.SelectionReason),
+                EscalationJustifications: BuildEscalationJustifications(
+                    behavior.PrimaryDecisionModelSelection.EscalationJustification,
+                    behavior.ExplorationSubtypeModelSelection?.EscalationJustification));
         }
 
         await telemetry.TrackAsync(
@@ -697,7 +728,18 @@ public sealed class ConversationLayerOrchestrator(
                     Deployment: "deterministic-mode-failure",
                     IsFallback: true,
                     Reason: "mode_execution_failed",
-                    Notes: []));
+                    Notes: []),
+                TotalModelCallCount: behavior.DecisionModelCallCount,
+                HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
+                FastModelCallCount: behavior.FastDecisionModelCallCount,
+                UsedDeterministicPath: true,
+                SelectionReasons: BuildSelectionReasons(
+                    behavior.PrimaryDecisionModelSelection.SelectionReason,
+                    behavior.ExplorationSubtypeModelSelection?.SelectionReason,
+                    "mode_execution_failed_deterministic"),
+                EscalationJustifications: BuildEscalationJustifications(
+                    behavior.PrimaryDecisionModelSelection.EscalationJustification,
+                    behavior.ExplorationSubtypeModelSelection?.EscalationJustification));
         }
 
         if (!string.IsNullOrWhiteSpace(modeResult.DeterministicReplyText))
@@ -736,7 +778,18 @@ public sealed class ConversationLayerOrchestrator(
                     Deployment: "deterministic-mode-handler",
                     IsFallback: true,
                     Reason: "mode_handler_deterministic_response",
-                    Notes: []));
+                    Notes: []),
+                TotalModelCallCount: behavior.DecisionModelCallCount,
+                HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
+                FastModelCallCount: behavior.FastDecisionModelCallCount,
+                UsedDeterministicPath: true,
+                SelectionReasons: BuildSelectionReasons(
+                    behavior.PrimaryDecisionModelSelection.SelectionReason,
+                    behavior.ExplorationSubtypeModelSelection?.SelectionReason,
+                    "mode_handler_deterministic_response"),
+                EscalationJustifications: BuildEscalationJustifications(
+                    behavior.PrimaryDecisionModelSelection.EscalationJustification,
+                    behavior.ExplorationSubtypeModelSelection?.EscalationJustification));
         }
 
         var routedCompositionRequest = modeResult.CompositionRequest ?? new ResponseCompositionRequest(
@@ -794,7 +847,20 @@ public sealed class ConversationLayerOrchestrator(
                 Deployment: routedComposition.DeploymentUsed,
                 IsFallback: routedComposition.ModelUsed.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
                 Reason: "mode_handler_response",
-                Notes: []));
+                Notes: []),
+            TotalModelCallCount: behavior.DecisionModelCallCount + (routedComposition.UsedDeterministicPath ? 0 : 1),
+            HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
+            FastModelCallCount: behavior.FastDecisionModelCallCount + (routedComposition.UsedDeterministicPath ? 0 : 1),
+            UsedDeterministicPath: behavior.PrimaryDecisionModelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
+                                   || behavior.ExplorationSubtypeModelSelection?.SelectionKind == ConversationModelSelectionKind.Deterministic
+                                   || routedComposition.UsedDeterministicPath,
+            SelectionReasons: BuildSelectionReasons(
+                behavior.PrimaryDecisionModelSelection.SelectionReason,
+                behavior.ExplorationSubtypeModelSelection?.SelectionReason,
+                routedComposition.SelectionReason),
+            EscalationJustifications: BuildEscalationJustifications(
+                behavior.PrimaryDecisionModelSelection.EscalationJustification,
+                behavior.ExplorationSubtypeModelSelection?.EscalationJustification));
     }
 
     private bool CanUsePersistentMemory(UserChatRequest request)
@@ -1363,6 +1429,24 @@ public sealed class ConversationLayerOrchestrator(
         return Math.Max(1, (charCount / 4) + (messages.Count * 8));
     }
 
+    private static IReadOnlyList<string> BuildSelectionReasons(params string?[] reasons)
+    {
+        return reasons
+            .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+            .Select(static reason => reason!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> BuildEscalationJustifications(params string?[] justifications)
+    {
+        return justifications
+            .Where(static justification => !string.IsNullOrWhiteSpace(justification))
+            .Select(static justification => justification!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private (IReadOnlyList<AIMessage> ContextMessages, string? ContextSummary, IReadOnlyDictionary<string, string> StructuredState, IReadOnlyList<string> ReasonCodes)
         BuildTransientContext(UserChatRequest request)
     {
@@ -1513,5 +1597,11 @@ public sealed class ConversationLayerOrchestrator(
     private sealed record OrchestratedConversationResult(
         UserChatResponse Response,
         ConversationStateSnapshot State,
-        AIModelRoute AssistantRoute);
+        AIModelRoute AssistantRoute,
+        int TotalModelCallCount,
+        int HeavyModelCallCount,
+        int FastModelCallCount,
+        bool UsedDeterministicPath,
+        IReadOnlyList<string> SelectionReasons,
+        IReadOnlyList<string> EscalationJustifications);
 }

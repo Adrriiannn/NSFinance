@@ -221,10 +221,17 @@ public sealed class ConversationRemediationPolicyTests
 
         var result = await engine.DetermineExplorationSubtypeAsync(
             BuildModeRequest("somewhere with nice lighting"),
+            new ConversationModelSelectionPlan(
+                SelectionKind: ConversationModelSelectionKind.Fast,
+                ModelClass: AIModelClass.Fast,
+                SelectionReason: "test_fast_subtype",
+                EscalationJustification: null,
+                CouldAvoidEscalation: false,
+                ReasonCodes: ["test_fast_subtype"]),
             CancellationToken.None);
 
-        Assert.Equal(ExplorationSubtype.Open, result.Subtype);
-        Assert.False(result.ToolPathEligible);
+        Assert.Equal(ExplorationSubtype.Open, result.Decision.Subtype);
+        Assert.False(result.Decision.ToolPathEligible);
     }
 
     [Fact]
@@ -234,10 +241,17 @@ public sealed class ConversationRemediationPolicyTests
 
         var result = await engine.DetermineExplorationSubtypeAsync(
             BuildModeRequest("parks near me open now"),
+            new ConversationModelSelectionPlan(
+                SelectionKind: ConversationModelSelectionKind.Fast,
+                ModelClass: AIModelClass.Fast,
+                SelectionReason: "test_fast_subtype",
+                EscalationJustification: null,
+                CouldAvoidEscalation: false,
+                ReasonCodes: ["test_fast_subtype"]),
             CancellationToken.None);
 
-        Assert.Equal(ExplorationSubtype.Structured, result.Subtype);
-        Assert.True(result.ToolPathEligible);
+        Assert.Equal(ExplorationSubtype.Structured, result.Decision.Subtype);
+        Assert.True(result.Decision.ToolPathEligible);
     }
 
     [Fact]
@@ -405,6 +419,7 @@ public sealed class ConversationRemediationPolicyTests
     {
         return new ConversationBehaviorEngine(
             new StubDecisionEngine(decision, explorationSubtypeDecision),
+            new ConversationModelRoutingPolicy(),
             new ReadinessTransitionPolicy(),
             new FollowUpBindingPolicy(),
             new ContradictionResolutionPolicy(),
@@ -559,26 +574,37 @@ public sealed class ConversationRemediationPolicyTests
         ConversationTurnStrategyDecision decision,
         ExplorationSubtypeDecision? explorationSubtypeDecision) : IConversationDecisionEngine
     {
-        public Task<ConversationTurnStrategyDecision> EvaluateAsync(
+        public Task<ConversationDecisionEvaluationResult> EvaluateAsync(
             ConversationBehaviorRequest request,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(decision);
-        }
-
-        public Task<ExplorationSubtypeDecision> DetermineExplorationSubtypeAsync(
-            ConversationModeRequest request,
+            ConversationModelSelectionPlan modelSelection,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(
-                explorationSubtypeDecision
-                ?? new ExplorationSubtypeDecision(
-                    Subtype: ExplorationSubtype.Open,
-                    Confidence: 0.5d,
-                    ToolPathEligible: false,
-                    PrimaryWhy: "Stub open subtype.",
-                    MissingConstraints: [],
-                    ReasonCodes: ["stub_open"]));
+                new ConversationDecisionEvaluationResult(
+                    Decision: decision,
+                    ModelSelection: modelSelection,
+                    Route: null,
+                    UsedModelInvocation: false));
+        }
+
+        public Task<ExplorationSubtypeEvaluationResult> DetermineExplorationSubtypeAsync(
+            ConversationModeRequest request,
+            ConversationModelSelectionPlan modelSelection,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(
+                new ExplorationSubtypeEvaluationResult(
+                    Decision: explorationSubtypeDecision
+                              ?? new ExplorationSubtypeDecision(
+                                  Subtype: ExplorationSubtype.Open,
+                                  Confidence: 0.5d,
+                                  ToolPathEligible: false,
+                                  PrimaryWhy: "Stub open subtype.",
+                                  MissingConstraints: [],
+                                  ReasonCodes: ["stub_open"]),
+                    ModelSelection: modelSelection,
+                    Route: null,
+                    UsedModelInvocation: false));
         }
     }
 

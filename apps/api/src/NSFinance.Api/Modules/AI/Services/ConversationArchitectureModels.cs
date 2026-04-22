@@ -136,6 +136,39 @@ public sealed record ExplorationSubtypeDecision(
     IReadOnlyList<string> MissingConstraints,
     IReadOnlyList<string> ReasonCodes);
 
+public sealed record ExplorationSubtypeResolutionPlan(
+    bool RequiresModelReasoning,
+    ExplorationSubtypeDecision? Decision,
+    string ResolutionSource,
+    IReadOnlyList<string> ReasonCodes);
+
+public enum ConversationModelSelectionKind
+{
+    Deterministic = 0,
+    Fast = 1,
+    HeavyReasoning = 2
+}
+
+public sealed record ConversationModelSelectionPlan(
+    ConversationModelSelectionKind SelectionKind,
+    AIModelClass? ModelClass,
+    string SelectionReason,
+    string? EscalationJustification,
+    bool CouldAvoidEscalation,
+    IReadOnlyList<string> ReasonCodes);
+
+public sealed record ConversationDecisionEvaluationResult(
+    ConversationTurnStrategyDecision Decision,
+    ConversationModelSelectionPlan ModelSelection,
+    AIModelRoute? Route,
+    bool UsedModelInvocation);
+
+public sealed record ExplorationSubtypeEvaluationResult(
+    ExplorationSubtypeDecision Decision,
+    ConversationModelSelectionPlan ModelSelection,
+    AIModelRoute? Route,
+    bool UsedModelInvocation);
+
 public sealed record ConversationSignals(
     bool HasEmotionalFraming,
     bool HasSubjectiveLanguage,
@@ -193,6 +226,11 @@ public sealed record ConversationBehaviorResult(
     ConversationMode TargetMode,
     ExplorationSubtypeDecision? ExplorationSubtypeDecision,
     ResponseCompositionRequest? CompositionRequest,
+    ConversationModelSelectionPlan PrimaryDecisionModelSelection,
+    ConversationModelSelectionPlan? ExplorationSubtypeModelSelection,
+    int DecisionModelCallCount,
+    int HeavyDecisionModelCallCount,
+    int FastDecisionModelCallCount,
     IReadOnlyList<string> ReasonCodes,
     IReadOnlyList<string> Warnings);
 
@@ -235,6 +273,8 @@ public sealed record ResponseCompositionResult(
     string ModelUsed,
     string DeploymentUsed,
     AIModelClass ReasoningClass,
+    bool UsedDeterministicPath,
+    string SelectionReason,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> FollowUpIntentHints);
 
