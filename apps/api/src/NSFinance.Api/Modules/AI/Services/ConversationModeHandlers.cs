@@ -484,11 +484,13 @@ public sealed class StructuredExplorationHandler(
         PlaceSearchItem item,
         IReadOnlyList<string> requestedPlaceTypes)
     {
-        var candidateTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var primaryType = NormalizeTypeToken(item.PrimaryType);
-        if (!string.IsNullOrWhiteSpace(primaryType))
+        var orderedCandidateTypes = new List<string>();
+        var seenTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(primaryType) && seenTypes.Add(primaryType))
         {
-            candidateTypes.Add(primaryType);
+            orderedCandidateTypes.Add(primaryType);
         }
 
         if (item.Types is { Count: > 0 })
@@ -496,17 +498,19 @@ public sealed class StructuredExplorationHandler(
             foreach (var value in item.Types)
             {
                 var normalized = NormalizeTypeToken(value);
-                if (!string.IsNullOrWhiteSpace(normalized))
+                if (!string.IsNullOrWhiteSpace(normalized) && seenTypes.Add(normalized))
                 {
-                    candidateTypes.Add(normalized);
+                    orderedCandidateTypes.Add(normalized);
                 }
             }
         }
 
-        if (candidateTypes.Count == 0)
+        if (orderedCandidateTypes.Count == 0)
         {
             return false;
         }
+
+        var canonicalType = ResolveCanonicalTypeForFiltering(primaryType, orderedCandidateTypes);
 
         foreach (var requested in requestedPlaceTypes)
         {
@@ -517,32 +521,63 @@ public sealed class StructuredExplorationHandler(
             }
 
             var requestedFamily = BuildRequestedTypeFamily(normalizedRequested);
-            if (!string.IsNullOrWhiteSpace(primaryType))
+            if (!string.IsNullOrWhiteSpace(canonicalType))
             {
-                if (IsTypeFamilyMatch(primaryType, requestedFamily))
+                if (IsTypeFamilyMatch(canonicalType, requestedFamily))
                 {
                     return true;
                 }
 
-                // If Google provides a primary type and it doesn't match the requested family,
-                // don't allow secondary labels to override it.
-                continue;
+                // Canonical non-generic type takes precedence over secondary hints.
+                // This blocks venues like dance halls leaking into coffee queries.
+                if (!IsGenericPlaceType(canonicalType))
+                {
+                    continue;
+                }
             }
 
-            if (candidateTypes.Any(candidateType => IsTypeFamilyMatch(candidateType, requestedFamily)))
+            if (orderedCandidateTypes.Any(candidateType => IsTypeFamilyMatch(candidateType, requestedFamily)))
             {
                 return true;
             }
 
             if (IsCoffeeFamily(requestedFamily)
                 && item.ServesCoffee == true
-                && HasCoffeeSignal(item.Name))
+                && HasCoffeeSignal(item.Name)
+                && (string.IsNullOrWhiteSpace(canonicalType) || IsGenericPlaceType(canonicalType)))
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static string ResolveCanonicalTypeForFiltering(
+        string primaryType,
+        IReadOnlyList<string> orderedCandidateTypes)
+    {
+        if (!string.IsNullOrWhiteSpace(primaryType))
+        {
+            return primaryType;
+        }
+
+        var firstSpecific = orderedCandidateTypes
+            .FirstOrDefault(type => !IsGenericPlaceType(type));
+        if (!string.IsNullOrWhiteSpace(firstSpecific))
+        {
+            return firstSpecific;
+        }
+
+        return orderedCandidateTypes.FirstOrDefault() ?? string.Empty;
+    }
+
+    private static bool IsGenericPlaceType(string typeToken)
+    {
+        return string.Equals(typeToken, "point_of_interest", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(typeToken, "establishment", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(typeToken, "food", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(typeToken, "store", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsCoffeeFamily(ISet<string> requestedFamily)

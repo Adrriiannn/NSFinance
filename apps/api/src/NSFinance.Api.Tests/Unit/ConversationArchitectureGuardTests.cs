@@ -696,6 +696,102 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task StructuredExplorationHandler_RejectsSecondaryCoffeeTags_WhenCanonicalTypeIsDifferent()
+    {
+        var placesSearch = new FixedPlacesSearchService(
+        [
+            new PlaceSearchItem(
+                PlaceId: "axis-1",
+                Name: "Axis Art Centre and Theatre",
+                Category: null,
+                PriceLevel: null,
+                PrimaryType: null,
+                Types: ["dance_hall", "cafe"],
+                ShortFormattedAddress: "Address 1",
+                ServesCoffee: true),
+            new PlaceSearchItem(
+                PlaceId: "cafe-1",
+                Name: "Sweet Paradise Cafe",
+                Category: "Cafe",
+                PriceLevel: null,
+                PrimaryType: "cafe",
+                Types: ["cafe", "food"],
+                ShortFormattedAddress: "Address 2")
+        ]);
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.95d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "coffee shops near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-secondary-tag-reject",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-secondary-tag-reject",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.93d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.91d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Single(result.CompositionRequest!.GroundedData.Entities);
+        Assert.Equal("Sweet Paradise Cafe", result.CompositionRequest.GroundedData.Entities[0].Label);
+    }
+
+    [Fact]
     public async Task StructuredExplorationHandler_ClarifiesLocationOnly_WhenPlaceTypeKnownButLocationMissing()
     {
         var placesSearch = new TrackingPlacesSearchService();
