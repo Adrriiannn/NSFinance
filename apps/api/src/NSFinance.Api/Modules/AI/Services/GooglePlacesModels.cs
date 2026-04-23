@@ -86,7 +86,8 @@ public sealed record CompanionPlaceDiscoveryRequest(
     string? LanguageCode = null,
     double? Latitude = null,
     double? Longitude = null,
-    int? RadiusMeters = null);
+    int? RadiusMeters = null,
+    int? MaxCandidates = null);
 
 public sealed record CompanionNearbyDiscoveryRequest(
     double Latitude,

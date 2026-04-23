@@ -561,7 +561,7 @@ public sealed class CompanionPlacesNearbyRequestBuilder : ICompanionPlacesNearby
             diagnostics.Add("places_request:nearby_simplified_before_send");
         }
 
-        var maxCandidates = Math.Clamp(request.MaxCandidates, 4, 12);
+        var maxCandidates = Math.Clamp(request.MaxCandidates, 4, 16);
         diagnostics.Add("places_request:nearby_preflight_valid");
 
         return new CompanionPlacesNearbyRequestBuildResult(

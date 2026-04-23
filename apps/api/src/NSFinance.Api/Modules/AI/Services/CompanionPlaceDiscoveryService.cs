@@ -25,7 +25,8 @@ public sealed class CompanionPlaceDiscoveryService(
         cancellationToken.ThrowIfCancellationRequested();
 
         var nowUtc = DateTime.UtcNow;
-        var maxCandidates = Math.Clamp(placesOptions.MaxCompanionCandidates, 1, 8);
+        var defaultBudget = Math.Clamp(placesOptions.MaxCompanionCandidates, 1, 8);
+        var maxCandidates = Math.Clamp(request.MaxCandidates ?? defaultBudget, 1, 16);
         var normalizedQuery = request.Query?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(normalizedQuery))
         {
@@ -593,6 +594,8 @@ public sealed class GooglePlacesCompanionSearchService(
         var rankingContext = BuildRankingContext(effectiveLocationContext, constraints);
         var hybridDecision = hybridRetrievalPolicy.Decide(locationContext, constraints);
         warnings.Add(hybridDecision.ReasonCode);
+        var retrievalCandidateBudget = ResolveRetrievalCandidateBudget(constraints, hybridDecision.UseHybridRetrieval);
+        warnings.Add($"places_retrieval:candidate_budget:{retrievalCandidateBudget}");
         if (effectiveLocationContext?.ImplicitLocalBias == true)
         {
             warnings.Add("real_world_commerce_local_bias_enabled");
@@ -619,6 +622,7 @@ public sealed class GooglePlacesCompanionSearchService(
             query: primaryQueryBuild.Query,
             countryCode: country,
             locationContext: effectiveLocationContext,
+            maxCandidates: retrievalCandidateBudget,
             warnings: warnings);
         logger.LogInformation(
             "Companion places primary search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters} country={CountryCode}",
@@ -654,7 +658,7 @@ public sealed class GooglePlacesCompanionSearchService(
                         CountryCode: country,
                         LocationContext: effectiveLocationContext,
                         IncludedTypes: nearbyTypeMapping.IncludedTypes,
-                        MaxCandidates: Math.Clamp(Math.Max(placesOptions.MaxCompanionCandidates, 8), 4, 12),
+                        MaxCandidates: Math.Clamp(retrievalCandidateBudget, 4, 16),
                         DefaultRadiusMeters: placesOptions.DefaultSearchRadiusMeters));
                 warnings.UnionWith(nearbyRequestBuild.ReasonCodes);
                 if (!nearbyRequestBuild.Succeeded || nearbyRequestBuild.Request is null)
@@ -740,6 +744,7 @@ public sealed class GooglePlacesCompanionSearchService(
             query: fallbackQuery,
             countryCode: country,
             locationContext: fallbackLocationContext,
+            maxCandidates: retrievalCandidateBudget,
             warnings: warnings);
         logger.LogInformation(
             "Companion places fallback search query={Query} hasCoordinates={HasCoordinates} radiusMeters={RadiusMeters} country={CountryCode}",
@@ -941,6 +946,7 @@ public sealed class GooglePlacesCompanionSearchService(
         string query,
         string? countryCode,
         PlaceSearchLocationContext? locationContext,
+        int? maxCandidates,
         ISet<string> warnings)
     {
         var normalizedCountryCode = NormalizeCountryCode(countryCode);
@@ -954,7 +960,8 @@ public sealed class GooglePlacesCompanionSearchService(
             CountryCode: normalizedCountryCode,
             Latitude: locationContext?.Latitude,
             Longitude: locationContext?.Longitude,
-            RadiusMeters: locationContext?.RadiusMeters);
+            RadiusMeters: locationContext?.RadiusMeters,
+            MaxCandidates: maxCandidates);
     }
 
     private static string? NormalizeCountryCode(string? countryCode)
@@ -1043,7 +1050,9 @@ public sealed class GooglePlacesCompanionSearchService(
             rankingContext.ApplyDistanceRanking,
             ranking.RankedCandidates.Count,
             string.Join(',', ranking.Diagnostics));
-        var maxFinalItems = Math.Clamp(placesOptions.MaxCompanionCandidates, 1, 8);
+        var visibleTarget = Math.Clamp(placesOptions.MaxCompanionCandidates, 1, 8);
+        var maxFinalItems = Math.Clamp(visibleTarget * 3, 8, 24);
+        warnings.Add($"places_retrieval:internal_pool_cap:{maxFinalItems}");
         var items = ranking.RankedCandidates
             .Take(maxFinalItems)
             .Select(candidate => new PlaceSearchItem(
@@ -1101,6 +1110,20 @@ public sealed class GooglePlacesCompanionSearchService(
                 ReturnedCandidateCount = items.Length
             },
             Warnings: warnings.ToArray());
+    }
+
+    private int ResolveRetrievalCandidateBudget(
+        LocalDiscoveryConstraintExtractionResult constraints,
+        bool useHybridRetrieval)
+    {
+        var visibleTarget = Math.Clamp(placesOptions.MaxCompanionCandidates, 1, 8);
+        if (constraints.PlaceTypeHints.Count == 0)
+        {
+            return visibleTarget;
+        }
+
+        var multiplier = useHybridRetrieval ? 2 : 1;
+        return Math.Clamp(visibleTarget * multiplier, visibleTarget, 16);
     }
 
     private static CompanionPlaceRankingContext BuildRankingContext(

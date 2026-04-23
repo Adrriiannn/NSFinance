@@ -393,6 +393,45 @@ public sealed class GooglePlacesCompanionSearchServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_WithTypedPlaceHint_ExpandsCandidateBudgetForCompensation()
+    {
+        var discovery = new TrackingCompanionDiscoveryService(
+            textResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cafe-1")])
+            ],
+            nearbyResults:
+            [
+                BuildResult(candidates: [BuildCandidate("cafe-2")])
+            ]);
+        var sut = CreateSut(
+            discovery,
+            new FixedLocalityResolver(
+                new CompanionLocalityResolutionResult(
+                    HasCoordinates: false,
+                    Latitude: null,
+                    Longitude: null,
+                    ResolvedLocalityLabel: null,
+                    ReasonCode: "unused")));
+
+        var result = await sut.SearchAsync(
+            "coffee shops near me",
+            "IE",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.3570,
+                Longitude: -6.4486,
+                RadiusMeters: 2000),
+            CancellationToken.None);
+
+        var textRequest = Assert.Single(discovery.Requests);
+        var nearbyRequest = Assert.Single(discovery.NearbyRequests);
+        Assert.Equal(16, textRequest.MaxCandidates);
+        Assert.Equal(16, nearbyRequest.MaxCandidates);
+        Assert.Contains("places_retrieval:candidate_budget:16", result.Warnings ?? []);
+    }
+
+    [Fact]
     public async Task SearchAsync_NonGpsLocality_DoesNotApplyDistanceRanking()
     {
         var first = BuildCandidate("first", latitude: 53.3900, longitude: -6.5000);

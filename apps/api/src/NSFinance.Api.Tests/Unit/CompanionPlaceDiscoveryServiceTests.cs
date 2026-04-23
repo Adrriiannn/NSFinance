@@ -44,6 +44,41 @@ public sealed class CompanionPlaceDiscoveryServiceTests
     }
 
     [Fact]
+    public async Task DiscoverAsync_RespectsExplicitCandidateBudgetOverride_UpToSixteen()
+    {
+        var fakeClient = new FakeGooglePlacesClient
+        {
+            SearchResult = new GooglePlacesClientResult<IReadOnlyList<GooglePlacesClientPlace>>(
+                Succeeded: true,
+                Value: Enumerable.Range(1, 24).Select(BuildPlace).ToArray(),
+                TimedOut: false,
+                StatusCode: System.Net.HttpStatusCode.OK,
+                ErrorCode: null,
+                ErrorMessage: null,
+                Elapsed: TimeSpan.FromMilliseconds(25))
+        };
+        var sut = new CompanionPlaceDiscoveryService(
+            fakeClient,
+            new GooglePlacesFieldMaskProvider(),
+            new InMemoryGooglePlacesCache(),
+            new GooglePlacesCacheKeyBuilder(),
+            Options.Create(CreateOptions()),
+            NullLogger<CompanionPlaceDiscoveryService>.Instance);
+
+        var result = await sut.DiscoverAsync(
+            new CompanionPlaceDiscoveryRequest(
+                Query: "coffee shops",
+                CountryCode: "IE",
+                MaxCandidates: 16),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(16, result.Candidates.Count);
+        Assert.Equal(16, result.Metadata.RequestedCandidateCount);
+        Assert.Equal(16, Assert.Single(fakeClient.SearchRequests).MaxResultCount);
+    }
+
+    [Fact]
     public async Task DiscoverAsync_UsesCache_ForIdenticalRequest()
     {
         var fakeClient = new FakeGooglePlacesClient
