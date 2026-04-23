@@ -503,12 +503,6 @@ public sealed class StructuredExplorationHandler(
             }
         }
 
-        var category = NormalizeTypeToken(item.Category);
-        if (!string.IsNullOrWhiteSpace(category))
-        {
-            candidateTypes.Add(category);
-        }
-
         if (candidateTypes.Count == 0)
         {
             return false;
@@ -516,29 +510,90 @@ public sealed class StructuredExplorationHandler(
 
         foreach (var requested in requestedPlaceTypes)
         {
-            if (string.IsNullOrWhiteSpace(requested))
+            var normalizedRequested = NormalizeTypeToken(requested);
+            if (string.IsNullOrWhiteSpace(normalizedRequested))
             {
                 continue;
             }
 
-            if (candidateTypes.Contains(requested))
+            var requestedFamily = BuildRequestedTypeFamily(normalizedRequested);
+            if (!string.IsNullOrWhiteSpace(primaryType))
             {
-                return true;
-            }
+                if (IsTypeFamilyMatch(primaryType, requestedFamily))
+                {
+                    return true;
+                }
 
-            if (string.Equals(requested, "store", StringComparison.OrdinalIgnoreCase)
-                && candidateTypes.Any(type => type.EndsWith("_store", StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
-            var requestedTokens = SplitTypeTokens(requested);
-            if (requestedTokens.Count == 0)
-            {
+                // If Google provides a primary type and it doesn't match the requested family,
+                // don't allow secondary labels to override it.
                 continue;
             }
 
-            if (candidateTypes.Any(candidate => requestedTokens.IsSubsetOf(SplitTypeTokens(candidate))))
+            if (candidateTypes.Any(candidateType => IsTypeFamilyMatch(candidateType, requestedFamily)))
+            {
+                return true;
+            }
+
+            if (IsCoffeeFamily(requestedFamily)
+                && item.ServesCoffee == true
+                && HasCoffeeSignal(item.Name))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsCoffeeFamily(ISet<string> requestedFamily)
+    {
+        return requestedFamily.Any(value =>
+            string.Equals(value, "cafe", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "coffee_shop", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool HasCoffeeSignal(string? name)
+    {
+        return !string.IsNullOrWhiteSpace(name)
+               && (name.Contains("coffee", StringComparison.OrdinalIgnoreCase)
+                   || name.Contains("cafe", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static HashSet<string> BuildRequestedTypeFamily(string requestedType)
+    {
+        var family = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            requestedType
+        };
+
+        if (string.Equals(requestedType, "cafe", StringComparison.OrdinalIgnoreCase))
+        {
+            family.Add("coffee_shop");
+        }
+        else if (string.Equals(requestedType, "coffee_shop", StringComparison.OrdinalIgnoreCase))
+        {
+            family.Add("cafe");
+        }
+
+        if (requestedType.EndsWith("_store", StringComparison.OrdinalIgnoreCase))
+        {
+            family.Add("store");
+        }
+
+        return family;
+    }
+
+    private static bool IsTypeFamilyMatch(string candidateType, ISet<string> requestedFamily)
+    {
+        if (requestedFamily.Contains(candidateType))
+        {
+            return true;
+        }
+
+        foreach (var requestedType in requestedFamily)
+        {
+            if (candidateType.EndsWith($"_{requestedType}", StringComparison.OrdinalIgnoreCase)
+                || requestedType.EndsWith($"_{candidateType}", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -558,14 +613,6 @@ public sealed class StructuredExplorationHandler(
             .Replace('-', '_')
             .Replace(' ', '_');
         return normalized;
-    }
-
-    private static HashSet<string> SplitTypeTokens(string value)
-    {
-        return value
-            .Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(static token => !string.IsNullOrWhiteSpace(token))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyDictionary<string, string> BuildNormalizedConstraints(
@@ -632,9 +679,10 @@ public sealed class StructuredExplorationHandler(
     private static string BuildPlaceFact(PlaceSearchItem item)
     {
         var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(item.Category))
+        var category = ResolveCategoryFromPlaces(item);
+        if (!string.IsNullOrWhiteSpace(category))
         {
-            parts.Add(item.Category);
+            parts.Add(category);
         }
 
         if (item.Rating.HasValue)
@@ -657,6 +705,75 @@ public sealed class StructuredExplorationHandler(
         }
 
         return string.Join(", ", parts);
+    }
+
+    private static string? ResolveCategoryFromPlaces(PlaceSearchItem item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.PrimaryTypeDisplayName))
+        {
+            return item.PrimaryTypeDisplayName.Trim();
+        }
+
+        var normalizedPrimaryType = NormalizeTypeToken(item.PrimaryType);
+        if (!string.IsNullOrWhiteSpace(normalizedPrimaryType))
+        {
+            return HumanizeTypeToken(normalizedPrimaryType);
+        }
+
+        var bestType = item.Types?
+            .Select(NormalizeTypeToken)
+            .Where(static type => !string.IsNullOrWhiteSpace(type))
+            .OrderByDescending(GetTypeSpecificityScore)
+            .FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(bestType))
+        {
+            return HumanizeTypeToken(bestType);
+        }
+
+        return string.IsNullOrWhiteSpace(item.Category)
+            ? null
+            : item.Category.Trim();
+    }
+
+    private static int GetTypeSpecificityScore(string typeToken)
+    {
+        var tokenCount = typeToken.Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+        var lengthScore = Math.Min(typeToken.Length / 8, 4);
+        var genericPenalty = typeToken switch
+        {
+            "point_of_interest" => 4,
+            "establishment" => 4,
+            "food" => 2,
+            _ => 0
+        };
+
+        return (tokenCount * 3) + lengthScore - genericPenalty;
+    }
+
+    private static string HumanizeTypeToken(string typeToken)
+    {
+        var words = typeToken
+            .Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(CapitalizeWord)
+            .ToArray();
+        return words.Length == 0
+            ? typeToken
+            : string.Join(' ', words);
+    }
+
+    private static string CapitalizeWord(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.Length == 1)
+        {
+            return value.ToUpperInvariant();
+        }
+
+        return $"{char.ToUpperInvariant(value[0])}{value[1..].ToLowerInvariant()}";
     }
 
     private static string ResolveCountryCode(

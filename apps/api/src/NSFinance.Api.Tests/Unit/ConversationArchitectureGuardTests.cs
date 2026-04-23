@@ -512,6 +512,190 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task StructuredExplorationHandler_PrioritizesPrimaryType_WhenRequestedTypeIsSpecific()
+    {
+        var placesSearch = new FixedPlacesSearchService(
+        [
+            new PlaceSearchItem(
+                PlaceId: "venue-1",
+                Name: "Axis Art Centre and Theatre",
+                Category: null,
+                PriceLevel: null,
+                PrimaryType: "educational_institution",
+                Types: ["educational_institution", "cafe"],
+                ShortFormattedAddress: "Address 1",
+                ServesCoffee: true),
+            new PlaceSearchItem(
+                PlaceId: "cafe-1",
+                Name: "Sweet Paradise Cafe",
+                Category: "Cafe",
+                PriceLevel: null,
+                PrimaryType: "cafe",
+                Types: ["cafe", "food"],
+                ShortFormattedAddress: "Address 2")
+        ]);
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.95d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "coffee shops near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-primary-type-priority",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-primary-type-priority",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.93d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.91d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Single(result.CompositionRequest!.GroundedData.Entities);
+        Assert.Equal("Sweet Paradise Cafe", result.CompositionRequest.GroundedData.Entities[0].Label);
+        Assert.Contains("structured_exploration_place_type_filter_applied", result.Warnings);
+    }
+
+    [Fact]
+    public async Task StructuredExplorationHandler_FormatsCategoryFromPlacesTypes_WhenCategoryMissing()
+    {
+        var placesSearch = new FixedPlacesSearchService(
+        [
+            new PlaceSearchItem(
+                PlaceId: "venue-1",
+                Name: "Axis Art Centre and Theatre",
+                Category: null,
+                PriceLevel: null,
+                PrimaryType: null,
+                Types: ["performing_arts_theater", "point_of_interest"],
+                ShortFormattedAddress: "Address 1")
+        ]);
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.95d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["performing_arts_theater"],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "theatres near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-category-fallback",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-category-fallback",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.93d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.91d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Single(result.CompositionRequest!.GroundedData.SummaryFacts);
+        Assert.Contains("Performing Arts Theater", result.CompositionRequest.GroundedData.SummaryFacts[0].Value);
+    }
+
+    [Fact]
     public async Task StructuredExplorationHandler_ClarifiesLocationOnly_WhenPlaceTypeKnownButLocationMissing()
     {
         var placesSearch = new TrackingPlacesSearchService();
@@ -943,6 +1127,53 @@ public sealed class ConversationArchitectureGuardTests
         Assert.Equal(2, summary["fastModelCallCount"]);
         Assert.Equal(true, summary["responseUsedModelInvocation"]);
         Assert.Equal(true, summary["responseFallbackUsed"]);
+    }
+
+    [Fact]
+    public async Task ResponseComposer_UsesDeterministicFallback_WhenModelInvocationTransportCancels()
+    {
+        var composer = new ResponseComposer(
+            new ResponseCompositionPromptBuilder(),
+            new UserChatResponseParser(),
+            new StaticResponseCompositionModelRouter(),
+            new TransportCancelledResponseCompositionAIClient(),
+            new NoOpChatTelemetry(),
+            NullLogger<ResponseComposer>.Instance);
+
+        var result = await composer.ComposeAsync(
+            new ResponseCompositionRequest(
+                ResponseType: ResponseCompositionType.ResultSummary,
+                ToneDirective: ResponseToneDirective.Neutral,
+                Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                Mode: ConversationMode.Exploration,
+                ReadinessLevel: ConversationReadinessLevel.R4_ToolReady,
+                UserMessage: "coffee shops near me",
+                GroundedData: new GroundedDataEnvelope(
+                    Entities:
+                    [
+                        new ConversationSuggestedEntity("cafe-1", "Bean Room", 1)
+                    ],
+                    SummaryFacts:
+                    [
+                        new GroundedDataPoint("Bean Room", "cafe, rating 4.6, open now")
+                    ],
+                    Warnings: []),
+                Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                MissingConstraints: [],
+                MaxLengthHint: 450,
+                ClarificationQuestion: null,
+                SuggestedOptions: ["Refine the shortlist", "Compare options"]),
+            correlationId: "corr-compose-cancelled",
+            cancellationToken: CancellationToken.None);
+
+        Assert.True(result.UsedDeterministicPath);
+        Assert.True(result.FallbackUsed);
+        Assert.True(result.UsedModelInvocation);
+        Assert.Equal("response_composition_safe_fallback", result.SelectionReason);
+        Assert.Equal("response_composition_transport_cancelled", result.RecoveryReason);
+        Assert.Contains("response_composition_transport_cancelled", result.Warnings);
+        Assert.Contains("response_composition_safe_fallback", result.Warnings);
+        Assert.Contains("Here is one grounded option:", result.ReplyText);
     }
 
     [Fact]
@@ -1485,6 +1716,14 @@ public sealed class ConversationArchitectureGuardTests
                     RawDiagnostics: null,
                     Succeeded: true,
                     FailureReason: null));
+        }
+    }
+
+    private sealed class TransportCancelledResponseCompositionAIClient : IAIClient
+    {
+        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
+        {
+            throw new TaskCanceledException("The operation was canceled.");
         }
     }
 }

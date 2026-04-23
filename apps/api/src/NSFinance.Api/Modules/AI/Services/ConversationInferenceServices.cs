@@ -484,18 +484,60 @@ public sealed class ResponseComposer(
             },
             cancellationToken);
 
-        var response = await aiClient.SendAsync(
-            AIRequest.Create(
-                taskType: AITaskType.ResponseComposition,
-                preferredModelClass: AIModelClass.Fast,
-                messages: prompt.Messages,
-                correlationId: correlationId,
-                systemInstructions: prompt.SystemInstructions,
-                structuredOutputSchemaName: prompt.StructuredSchemaName,
-                temperature: 0.2d,
-                maxOutputTokens: Math.Clamp(request.MaxLengthHint, 120, 900)),
-            route,
-            cancellationToken);
+        AIResponse response;
+        try
+        {
+            response = await aiClient.SendAsync(
+                AIRequest.Create(
+                    taskType: AITaskType.ResponseComposition,
+                    preferredModelClass: AIModelClass.Fast,
+                    messages: prompt.Messages,
+                    correlationId: correlationId,
+                    systemInstructions: prompt.SystemInstructions,
+                    structuredOutputSchemaName: prompt.StructuredSchemaName,
+                    temperature: 0.2d,
+                    maxOutputTokens: Math.Clamp(request.MaxLengthHint, 120, 900)),
+                route,
+                cancellationToken);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                ex,
+                "Response composition model invocation cancelled by transport correlationId={CorrelationId} responseType={ResponseType}",
+                correlationId,
+                request.ResponseType);
+
+            return await BuildModelInvocationFallbackAsync(
+                request,
+                correlationId,
+                recoveryReason: "response_composition_transport_cancelled",
+                warnings:
+                [
+                    "response_composition_transport_cancelled",
+                    "response_composition_safe_fallback"
+                ],
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Response composition model invocation failed correlationId={CorrelationId} responseType={ResponseType}",
+                correlationId,
+                request.ResponseType);
+
+            return await BuildModelInvocationFallbackAsync(
+                request,
+                correlationId,
+                recoveryReason: "response_composition_model_call_failed",
+                warnings:
+                [
+                    "response_composition_model_call_failed",
+                    "response_composition_safe_fallback"
+                ],
+                cancellationToken);
+        }
 
         if (userChatResponseParser.TryParse(
                 response,
@@ -564,6 +606,46 @@ public sealed class ResponseComposer(
                 "structured_parse_failed",
                 "response_composition_safe_fallback"
             ]);
+
+        await TrackResponseSelectionAsync(
+            correlationId,
+            request.ResponseType,
+            ConversationModelSelectionKind.Deterministic,
+            recovered.SelectionReason,
+            usedModelInvocation: true,
+            recovered.FallbackUsed,
+            recovered.RecoveryReason,
+            recovered.Warnings,
+            cancellationToken);
+
+        return recovered;
+    }
+
+    private async Task<ResponseCompositionResult> BuildModelInvocationFallbackAsync(
+        ResponseCompositionRequest request,
+        string correlationId,
+        string recoveryReason,
+        IReadOnlyList<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        await telemetry.TrackAsync(
+            "chat.response.fallback",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = correlationId,
+                ["stage"] = "response_composer_model_invocation",
+                ["responseType"] = request.ResponseType.ToString(),
+                ["failureReason"] = recoveryReason
+            },
+            cancellationToken);
+
+        var recovered = BuildDeterministicResponse(
+            request,
+            selectionReason: "response_composition_safe_fallback",
+            fallbackUsed: true,
+            usedModelInvocation: true,
+            recoveryReason: recoveryReason,
+            warnings: warnings);
 
         await TrackResponseSelectionAsync(
             correlationId,

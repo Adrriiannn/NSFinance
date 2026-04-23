@@ -1049,7 +1049,7 @@ public sealed class GooglePlacesCompanionSearchService(
             .Select(candidate => new PlaceSearchItem(
                 PlaceId: candidate.PlaceId,
                 Name: candidate.DisplayName,
-                Category: candidate.PrimaryTypeDisplayName ?? candidate.PrimaryType,
+                Category: ResolveCategoryFromPlaces(candidate),
                 PriceLevel: candidate.PriceLevel,
                 ResourceName: candidate.ResourceName,
                 DisplayName: candidate.DisplayName,
@@ -1284,6 +1284,85 @@ public sealed class GooglePlacesCompanionSearchService(
         return new PlaceEditorialSummary(
             Text: Pick(first.Text, second.Text),
             LanguageCode: Pick(first.LanguageCode, second.LanguageCode));
+    }
+
+    private static string? ResolveCategoryFromPlaces(CompanionPlaceCandidate candidate)
+    {
+        if (!string.IsNullOrWhiteSpace(candidate.PrimaryTypeDisplayName))
+        {
+            return candidate.PrimaryTypeDisplayName.Trim();
+        }
+
+        var normalizedPrimary = NormalizeTypeToken(candidate.PrimaryType);
+        if (!string.IsNullOrWhiteSpace(normalizedPrimary))
+        {
+            return HumanizeTypeToken(normalizedPrimary);
+        }
+
+        var bestType = candidate.Types
+            .Select(NormalizeTypeToken)
+            .Where(static type => !string.IsNullOrWhiteSpace(type))
+            .OrderByDescending(GetTypeSpecificityScore)
+            .FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(bestType))
+        {
+            return HumanizeTypeToken(bestType);
+        }
+
+        return null;
+    }
+
+    private static string NormalizeTypeToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return value.Trim().ToLowerInvariant()
+            .Replace('-', '_')
+            .Replace(' ', '_');
+    }
+
+    private static int GetTypeSpecificityScore(string typeToken)
+    {
+        var tokenCount = typeToken.Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+        var lengthScore = Math.Min(typeToken.Length / 8, 4);
+        var genericPenalty = typeToken switch
+        {
+            "point_of_interest" => 4,
+            "establishment" => 4,
+            "food" => 2,
+            _ => 0
+        };
+
+        return (tokenCount * 3) + lengthScore - genericPenalty;
+    }
+
+    private static string HumanizeTypeToken(string typeToken)
+    {
+        var words = typeToken
+            .Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(CapitalizeWord)
+            .ToArray();
+        return words.Length == 0
+            ? typeToken
+            : string.Join(' ', words);
+    }
+
+    private static string CapitalizeWord(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        if (value.Length == 1)
+        {
+            return value.ToUpperInvariant();
+        }
+
+        return $"{char.ToUpperInvariant(value[0])}{value[1..].ToLowerInvariant()}";
     }
 
     private static string? Normalize(string? value)
