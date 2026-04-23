@@ -387,9 +387,12 @@ public sealed class ConversationLatencyOptimizationTests
         Assert.Equal("structured_reply_text_missing", result.RecoveryReason);
         Assert.Contains("structured_parse_failed", result.Warnings);
         Assert.Contains("response_composition_safe_fallback", result.Warnings);
-        Assert.Contains("Here are a few grounded options to start with:", result.ReplyText);
-        Assert.Contains("1. Bean Room - cafe, rating 4.6, open now", result.ReplyText);
-        Assert.Contains("2. Roast House - cafe, rating 4.4, Dublin 2", result.ReplyText);
+        Assert.Contains("Here are grounded options near you:", result.ReplyText);
+        Assert.Contains("1. Bean Room", result.ReplyText);
+        Assert.Contains("Details: cafe, rating 4.6, open now", result.ReplyText);
+        Assert.Contains("2. Roast House", result.ReplyText);
+        Assert.Contains("Details: cafe, rating 4.4, Dublin 2", result.ReplyText);
+        Assert.Contains("Would you like me to narrow these by distance, parking, or seating?", result.ReplyText);
         Assert.DoesNotContain("Here's the next helpful step", result.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\"warnings\"", result.ReplyText, StringComparison.OrdinalIgnoreCase);
 
@@ -427,6 +430,48 @@ public sealed class ConversationLatencyOptimizationTests
         Assert.True(result.FallbackUsed);
         Assert.Contains("I found grounded results, but I need one more detail to shape a clean shortlist.", result.ReplyText);
         Assert.DoesNotContain("\"warnings\"", result.ReplyText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ResponseComposer_UsesLockedStructuredResultCount_ForResultSummaryReplies()
+    {
+        var composer = new ResponseComposer(
+            new StubResponseCompositionPromptBuilder(),
+            new UserChatResponseParser(),
+            new StaticModelRouter(),
+            new StaticResponseAIClient(
+                """
+                {
+                  "replyText": "model generated text that should not control shortlist count",
+                  "suggestedStructuredStateUpdates": {
+                    "noop": "true"
+                  }
+                }
+                """),
+            new RecordingTelemetry(),
+            NullLogger<ResponseComposer>.Instance);
+
+        var entities = Enumerable.Range(1, 8)
+            .Select(index => new ConversationSuggestedEntity($"place-{index}", $"Place {index}", index))
+            .ToArray();
+        var facts = entities
+            .Select(entity => new GroundedDataPoint(entity.Label, $"rating 4.{entity.Rank}, open now"))
+            .ToArray();
+        var request = CreateResponseCompositionRequest(
+            ResponseCompositionType.ResultSummary,
+            new GroundedDataEnvelope(entities, facts, []));
+
+        var result = await composer.ComposeAsync(
+            request,
+            "corr-locked-shortlist-count",
+            CancellationToken.None);
+
+        Assert.Equal("response_composition_fast", result.SelectionReason);
+        Assert.DoesNotContain("model generated text", result.ReplyText, StringComparison.OrdinalIgnoreCase);
+        for (var index = 1; index <= 8; index++)
+        {
+            Assert.Contains($"{index}. Place {index}", result.ReplyText);
+        }
     }
 
     [Fact]

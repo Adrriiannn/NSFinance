@@ -23,7 +23,7 @@ public sealed record SendChatMessageRequest(
     string Message,
     string ClientRequestId,
     Guid? ConversationThreadId,
-    bool RequirePersistentMemory = false,
+    bool RequirePersistentMemory = true,
     bool AllowFallbackOnPersistentFailure = false,
     ChatStateDto? State = null,
     IReadOnlyList<ChatTurnDto>? RecentTurns = null,

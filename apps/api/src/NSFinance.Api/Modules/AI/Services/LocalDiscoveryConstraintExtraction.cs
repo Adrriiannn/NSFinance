@@ -140,6 +140,10 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["lively"] = "lively",
             ["safe"] = "safe",
             ["scenic"] = "scenic",
+            ["parking"] = "parking",
+            ["carpark"] = "parking",
+            ["seat"] = "seating",
+            ["seating"] = "seating",
             ["dog"] = "dog_friendly",
             ["friendly"] = "friendly"
         };
@@ -331,6 +335,12 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
 
     private static string? ExtractLocalityHint(string normalizedText)
     {
+        var branchOverrideLocality = ExtractBranchOverrideLocalityHint(normalizedText);
+        if (!string.IsNullOrWhiteSpace(branchOverrideLocality))
+        {
+            return branchOverrideLocality;
+        }
+
         var match = LocalityPattern().Match(normalizedText);
         if (!match.Success || match.Groups.Count < 2)
         {
@@ -370,6 +380,63 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
 
     [GeneratedRegex(@"\b(?:in|around|near)\s+([a-z0-9][a-z0-9\s'\-]{1,60})\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex LocalityPattern();
+
+    [GeneratedRegex(@"\bwhat about\s+([a-z0-9][a-z0-9\s'\-]{1,60}?)(?:\s+instead)?$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex WhatAboutLocalityPattern();
+
+    [GeneratedRegex(@"\btry\s+([a-z0-9][a-z0-9\s'\-]{1,60}?)(?:\s+instead)?$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex TryLocalityPattern();
+
+    [GeneratedRegex(@"\bsame thing(?:\s+but)?\s+in\s+([a-z0-9][a-z0-9\s'\-]{1,60})$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex SameThingInLocalityPattern();
+
+    [GeneratedRegex(@"\bnot near me[, ]+\s*([a-z0-9][a-z0-9\s'\-]{1,60})$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex NotNearMeLocalityPattern();
+
+    private static string? ExtractBranchOverrideLocalityHint(string normalizedText)
+    {
+        var workingText = normalizedText
+            .Trim()
+            .Trim(',', ';', ':', '.', '!', '?');
+        var patterns = new[]
+        {
+            WhatAboutLocalityPattern(),
+            TryLocalityPattern(),
+            SameThingInLocalityPattern(),
+            NotNearMeLocalityPattern()
+        };
+
+        foreach (var pattern in patterns)
+        {
+            var match = pattern.Match(workingText);
+            if (!match.Success || match.Groups.Count < 2)
+            {
+                continue;
+            }
+
+            var locality = match.Groups[1].Value.Trim();
+            if (string.IsNullOrWhiteSpace(locality))
+            {
+                continue;
+            }
+
+            locality = TrimLocalityTail(locality);
+            locality = Regex.Replace(locality, @"\s+", " ").Trim().TrimEnd('.', ',', ';', ':', '!', '?');
+            if (GenericLocalityStopWords.Contains(locality))
+            {
+                continue;
+            }
+
+            if (!IsTrustedLocality(locality))
+            {
+                continue;
+            }
+
+            return locality.Length <= 80 ? locality : locality[..80].TrimEnd();
+        }
+
+        return null;
+    }
 
     private static string TrimLocalityTail(string locality)
     {

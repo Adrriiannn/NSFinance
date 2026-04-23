@@ -53,7 +53,7 @@ public static class SendChatMessageEndpoint
             ClientRequestId: request.ClientRequestId.Trim(),
             UserId: userId,
             ConversationThreadId: request.ConversationThreadId,
-            UsePersistentMemory: true,
+            UsePersistentMemory: request.RequirePersistentMemory,
             AllowTransientFallbackOnPersistentFailure: request.RequirePersistentMemory
                 ? false
                 : request.AllowFallbackOnPersistentFailure);

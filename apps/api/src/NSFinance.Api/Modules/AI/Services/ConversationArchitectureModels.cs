@@ -97,6 +97,7 @@ public static class ConversationConstraintKeys
     public const string ExplorationPlaceTypes = "exploration_place_types";
     public const string ExplorationPreferences = "exploration_preferences";
     public const string ExplorationTime = "exploration_time";
+    public const string ExplorationContextLastUsedUtc = "exploration_context_last_used_utc";
     public const string FinancialFocus = "financial_focus";
 }
 

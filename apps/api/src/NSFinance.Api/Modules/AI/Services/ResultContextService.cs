@@ -231,6 +231,8 @@ public sealed class ResultContextService(
         ResultContextSnapshot? snapshot)
     {
         var normalized = (userMessage ?? string.Empty).Trim().ToLowerInvariant();
+        var signals = ConversationSignalAnalyzer.Analyze(userMessage);
+        var extraction = ConversationPolicyHelpers.ExtractLocalDiscovery(userMessage);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return snapshot is null
@@ -238,9 +240,7 @@ public sealed class ResultContextService(
                 : ResultContextBindingClassification.BindPrior;
         }
 
-        if (normalized.Contains("new topic", StringComparison.Ordinal)
-            || normalized.Contains("something else", StringComparison.Ordinal)
-            || normalized.Contains("different question", StringComparison.Ordinal))
+        if (signals.HasTopicSwitchSignal)
         {
             return ResultContextBindingClassification.NewTopic;
         }
@@ -250,35 +250,49 @@ public sealed class ResultContextService(
             return ResultContextBindingClassification.None;
         }
 
-        if (normalized.Contains("instead", StringComparison.Ordinal)
-            || normalized.Contains("what about", StringComparison.Ordinal)
-            || normalized.Contains("another", StringComparison.Ordinal))
+        if (signals.HasBranchingSignal)
         {
             return ResultContextBindingClassification.NewBranch;
         }
 
-        if (normalized.Contains("compare", StringComparison.Ordinal)
-            || normalized.Contains("filter", StringComparison.Ordinal)
-            || normalized.Contains("cheaper", StringComparison.Ordinal)
-            || normalized.Contains("quieter", StringComparison.Ordinal)
-            || normalized.Contains("closer", StringComparison.Ordinal)
-            || normalized.Contains("shortlist", StringComparison.Ordinal)
-            || normalized.Contains("short list", StringComparison.Ordinal)
-            || normalized.Contains("top options", StringComparison.Ordinal))
+        if (signals.HasComparisonSignal)
         {
             return ResultContextBindingClassification.Refine;
         }
 
-        if (normalized.Contains("that one", StringComparison.Ordinal)
-            || normalized.Contains("the first", StringComparison.Ordinal)
-            || normalized.Contains("the second", StringComparison.Ordinal)
-            || normalized.Contains("those", StringComparison.Ordinal)
-            || normalized.Contains("them", StringComparison.Ordinal))
+        var hasConstraintCue = extraction.PreferenceHints.Count > 0
+                               || extraction.TimeHints.Count > 0
+                               || ContainsAny(normalized, "shortlist", "short list", "top options", "filter");
+        var wordCount = CountWords(normalized);
+        var isCompactFollowUp = wordCount is > 0 and <= 8;
+        if (hasConstraintCue
+            && (signals.HasResultReferenceSignal
+                || (isCompactFollowUp && extraction.PlaceTypeHints.Count == 0)))
+        {
+            return ResultContextBindingClassification.Refine;
+        }
+
+        if (signals.HasResultReferenceSignal)
         {
             return ResultContextBindingClassification.BindPrior;
         }
 
         return ResultContextBindingClassification.None;
+    }
+
+    private static int CountWords(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return 0;
+        }
+
+        return value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
+    }
+
+    private static bool ContainsAny(string source, params string[] values)
+    {
+        return values.Any(value => source.Contains(value, StringComparison.Ordinal));
     }
 
     private static ResultContextSnapshot Deserialize(string snapshotJson)

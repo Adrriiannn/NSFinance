@@ -138,8 +138,9 @@ public sealed class ChatTurnOptions
 public sealed class ConversationArchitectureOptions
 {
     public bool EmitTelemetryEvents { get; set; } = true;
-    public int ResultContextActiveMinutes { get; set; } = 45;
+    public int ResultContextActiveMinutes { get; set; } = 30;
     public int ResultContextPersistedHours { get; set; } = 24;
+    public int ExplorationConstraintTtlMinutes { get; set; } = 30;
     public ConversationModelTierOptions Tiers { get; set; } = new();
 }
 

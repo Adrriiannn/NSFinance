@@ -639,8 +639,9 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
             return chat;
           }
 
-          const bindingType = updates.follow_up_binding_type?.trim().toLowerCase();
-          const shouldClearResultContext = bindingType === "none" || bindingType === "newtopic";
+          const shouldClearResultContext =
+            updates.active_result_set_clear?.trim().toLowerCase() === "true"
+            || updates.result_context_clear?.trim().toLowerCase() === "true";
           const activeResultSetIdFromUpdate =
             updates.active_result_set_id?.trim()
             || updates.result_context_active_result_set_id?.trim()
@@ -648,7 +649,10 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
           const activeResultSetId = shouldClearResultContext
             ? null
             : activeResultSetIdFromUpdate ?? chat.activeResultSetId;
-          const selectedEntityId = shouldClearResultContext
+          const shouldClearSelectedEntity =
+            shouldClearResultContext
+            || updates.selected_entity_clear?.trim().toLowerCase() === "true";
+          const selectedEntityId = shouldClearSelectedEntity
             ? null
             : updates.selected_entity_id?.trim() ?? chat.selectedEntityId;
           const clearPending = updates.pending_clarification_clear === "true";

@@ -60,6 +60,19 @@ public sealed class LocalDiscoveryConstraintExtractionTests
         Assert.Equal("dublin 2", result.LocalityHint);
     }
 
+    [Theory]
+    [InlineData("what about Dublin 2 instead?", "dublin 2")]
+    [InlineData("try Rathmines instead", "rathmines")]
+    [InlineData("not near me, Dublin 8", "dublin 8")]
+    [InlineData("same thing but in Dublin 2", "dublin 2")]
+    public void Extract_BranchOverridePhrases_CaptureLocality(string query, string expectedLocality)
+    {
+        var result = _extractor.Extract(query);
+
+        Assert.True(result.HasExplicitLocality);
+        Assert.Equal(expectedLocality, result.LocalityHint);
+    }
+
     [Fact]
     public void Extract_FinanceOnlyPrompt_IsNotLocalDiscovery()
     {

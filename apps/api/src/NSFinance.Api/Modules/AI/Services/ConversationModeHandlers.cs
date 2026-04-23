@@ -63,6 +63,10 @@ public sealed class StructuredExplorationHandler(
         var warnings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var extraction = constraintExtractor.Extract(request.Request.UserMessage);
         var grounding = CompanionLocationGroundingParser.Parse(request.ClientMetadata, request.State);
+        var mergedConstraints = MergeExplorationConstraintState(
+            request.State.Constraints,
+            extraction,
+            grounding);
         var typedArea = extraction.LocalityHint ?? grounding.TypedArea;
         var locationContext = new PlaceSearchLocationContext(
             Source: grounding.HasCoordinates ? grounding.Source : !string.IsNullOrWhiteSpace(typedArea) ? "typed_area" : null,
@@ -86,10 +90,6 @@ public sealed class StructuredExplorationHandler(
                 grounding,
                 request.ClientMetadata,
                 request.State);
-            var mergedConstraints = MergeExplorationConstraintState(
-                request.State.Constraints,
-                extraction,
-                grounding);
             var blockedState = request.State with
             {
                 ActiveMode = ConversationMode.Conversation,
@@ -155,7 +155,7 @@ public sealed class StructuredExplorationHandler(
                     ReadinessLevel: request.State.ReadinessLevel,
                     UserMessage: request.Request.UserMessage,
                     GroundedData: new GroundedDataEnvelope([], [], warnings.ToArray()),
-                    Constraints: request.State.Constraints,
+                    Constraints: mergedConstraints,
                     MissingConstraints: [],
                     MaxLengthHint: 420,
                     ClarificationQuestion: "I didn't get strong matches yet. Want to tighten the place type, area, or vibe?",
@@ -167,6 +167,7 @@ public sealed class StructuredExplorationHandler(
                     ActiveMode = ConversationMode.Exploration,
                     ModeCandidate = ConversationMode.Exploration,
                     ReadinessLevel = ConversationReadinessLevel.R3_StructuredIncomplete,
+                    Constraints = mergedConstraints,
                     PendingClarification = null,
                     NeedsFollowUp = true
                 },
@@ -176,8 +177,26 @@ public sealed class StructuredExplorationHandler(
                 Succeeded: true);
         }
 
+        var selectedItems = SelectStructuredShortlist(searchResult.Items, 8);
+        var normalizedConstraints = BuildNormalizedConstraints(
+            mergedConstraints,
+            extraction,
+            grounding);
+        var selectedEntities = selectedItems
+            .Select((item, index) => new ConversationSuggestedEntity(item.PlaceId, item.Name, index + 1, item.GoogleMapsUri))
+            .ToArray();
         ResultContextSnapshot? persistedResultContext = request.ResultContext;
-        ConversationStateSnapshot nextState = request.State;
+        ConversationStateSnapshot nextState = request.State with
+        {
+            ActiveMode = ConversationMode.Exploration,
+            ModeCandidate = ConversationMode.Exploration,
+            ReadinessLevel = ConversationReadinessLevel.R4_ToolReady,
+            Constraints = mergedConstraints,
+            MissingConstraints = [],
+            LastSuggestedEntities = selectedEntities,
+            PendingClarification = null,
+            NeedsFollowUp = true
+        };
         if (request.Request.UserId.HasValue && request.Request.ConversationThreadId.HasValue)
         {
             var write = await resultContextService.WriteAsync(
@@ -187,9 +206,8 @@ public sealed class StructuredExplorationHandler(
                     SourceMode: ConversationMode.Exploration,
                     SourceSubtype: ExplorationSubtype.Structured,
                     QueryFingerprint: BuildQueryFingerprint(shaped.Query, extraction),
-                    NormalizedConstraints: BuildNormalizedConstraints(extraction, grounding),
-                    SuggestedEntities: searchResult.Items
-                        .Take(8)
+                    NormalizedConstraints: normalizedConstraints,
+                    SuggestedEntities: selectedItems
                         .Select((item, index) => new ResultContextEntity(
                             EntityId: item.PlaceId,
                             Label: item.Name,
@@ -203,27 +221,20 @@ public sealed class StructuredExplorationHandler(
                     CreatedUtc: DateTime.UtcNow),
                 cancellationToken);
             persistedResultContext = write.Snapshot;
-            nextState = request.State with
+            nextState = nextState with
             {
-                ActiveMode = ConversationMode.Exploration,
-                ModeCandidate = ConversationMode.Exploration,
-                ReadinessLevel = ConversationReadinessLevel.R4_ToolReady,
                 LastSuggestedEntities = write.Snapshot.SuggestedEntities
                     .Select(item => new ConversationSuggestedEntity(item.EntityId, item.Label, item.Rank, item.StableReference))
                     .ToArray(),
                 ResultContextRef = write.Reference,
                 LastExecutionFingerprint = write.Snapshot.QueryFingerprint,
-                PendingClarification = null,
                 NeedsFollowUp = true
             };
         }
 
         var groundedData = new GroundedDataEnvelope(
-            Entities: searchResult.Items
-                .Take(8)
-                .Select((item, index) => new ConversationSuggestedEntity(item.PlaceId, item.Name, index + 1, item.GoogleMapsUri))
-                .ToArray(),
-            SummaryFacts: BuildStructuredFacts(searchResult),
+            Entities: selectedEntities,
+            SummaryFacts: BuildStructuredFacts(selectedItems),
             Warnings: warnings.ToArray());
 
         return new ConversationModeExecutionResult(
@@ -391,12 +402,33 @@ public sealed class StructuredExplorationHandler(
         string Question,
         IReadOnlyList<string> SuggestedOptions);
 
+    private static IReadOnlyList<PlaceSearchItem> SelectStructuredShortlist(
+        IReadOnlyList<PlaceSearchItem> items,
+        int maxCount)
+    {
+        if (items.Count == 0 || maxCount <= 0)
+        {
+            return [];
+        }
+
+        return items
+            .Where(static item => !string.IsNullOrWhiteSpace(item.PlaceId) && !string.IsNullOrWhiteSpace(item.Name))
+            .Take(maxCount)
+            .ToArray();
+    }
+
     private static IReadOnlyDictionary<string, string> BuildNormalizedConstraints(
+        IReadOnlyDictionary<string, string> mergedConstraints,
         LocalDiscoveryConstraintExtractionResult extraction,
         CompanionLocationGrounding grounding)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (extraction.PlaceTypeHints.Count > 0)
+        if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationPlaceTypes, out var placeTypes)
+            && !string.IsNullOrWhiteSpace(placeTypes))
+        {
+            result["place_types"] = placeTypes;
+        }
+        else if (extraction.PlaceTypeHints.Count > 0)
         {
             result["place_types"] = string.Join('|', extraction.PlaceTypeHints);
         }
@@ -406,12 +438,22 @@ public sealed class StructuredExplorationHandler(
             result["preference_hints"] = string.Join('|', extraction.PreferenceHints);
         }
 
-        if (extraction.TimeHints.Count > 0)
+        if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationTime, out var timeHints)
+            && !string.IsNullOrWhiteSpace(timeHints))
+        {
+            result["time_hints"] = timeHints;
+        }
+        else if (extraction.TimeHints.Count > 0)
         {
             result["time_hints"] = string.Join('|', extraction.TimeHints);
         }
 
-        if (grounding.HasTypedArea)
+        if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var area)
+            && !string.IsNullOrWhiteSpace(area))
+        {
+            result["typed_area"] = area;
+        }
+        else if (grounding.HasTypedArea)
         {
             result["typed_area"] = grounding.TypedArea!;
         }
@@ -427,10 +469,9 @@ public sealed class StructuredExplorationHandler(
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
     }
 
-    private static IReadOnlyList<GroundedDataPoint> BuildStructuredFacts(PlaceSearchResult result)
+    private static IReadOnlyList<GroundedDataPoint> BuildStructuredFacts(IReadOnlyList<PlaceSearchItem> selectedItems)
     {
-        return result.Items
-            .Take(6)
+        return selectedItems
             .Select(item => new GroundedDataPoint(
                 Label: item.Name,
                 Value: BuildPlaceFact(item)))

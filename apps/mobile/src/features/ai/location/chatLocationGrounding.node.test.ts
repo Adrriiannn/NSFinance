@@ -154,7 +154,7 @@ test("chat location diagnostics allow non-nearby marker", () => {
   assert.equal(metadata.chat_location_refresh_attempted, "true");
 });
 
-test("chat location attachment resolves gps for non-nearby prompts when permission is granted", async () => {
+test("chat location attachment resolves gps for location-dependent prompts when permission is granted", async () => {
   const attachment = await resolveChatLocationAttachment(
     "what can i do later tonight?",
     "granted",
@@ -172,7 +172,7 @@ test("chat location attachment resolves gps for non-nearby prompts when permissi
 
   assert.equal(attachment.context?.source, "gps");
   assert.equal(attachment.requiresNearbyClarification, false);
-  assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
+  assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "true");
 });
 
 test("chat location attachment keeps non-nearby prompts non-blocking when location cannot be resolved", async () => {
@@ -180,6 +180,42 @@ test("chat location attachment keeps non-nearby prompts non-blocking when locati
     "where can i buy a ps5",
     "granted",
     async () => null
+  );
+
+  assert.equal(attachment.context, null);
+  assert.equal(attachment.requiresNearbyClarification, false);
+  assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
+});
+
+test("chat location attachment skips gps for non-location prompts", async () => {
+  const attachment = await resolveChatLocationAttachment(
+    "how is my monthly budget doing?",
+    "granted",
+    async () => ({
+      latitude: 53.35,
+      longitude: -6.26,
+      accuracyMeters: 22,
+      capturedAtUtc: "2026-04-20T19:30:00Z",
+      localityLabel: "Dublin"
+    })
+  );
+
+  assert.equal(attachment.context, null);
+  assert.equal(attachment.requiresNearbyClarification, false);
+  assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
+});
+
+test("chat location attachment does not attach gps when explicit area is provided", async () => {
+  const attachment = await resolveChatLocationAttachment(
+    "coffee shops open now in Dublin 2",
+    "granted",
+    async () => ({
+      latitude: 53.35,
+      longitude: -6.26,
+      accuracyMeters: 20,
+      capturedAtUtc: "2026-04-20T20:05:00Z",
+      localityLabel: "Dublin"
+    })
   );
 
   assert.equal(attachment.context, null);

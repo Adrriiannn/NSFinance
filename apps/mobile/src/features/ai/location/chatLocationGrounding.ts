@@ -82,6 +82,9 @@ const discoverySignals = [
   "where can i go"
 ];
 
+const explicitAreaRegex =
+  /\b(?:in|around)\s+[a-z0-9][a-z0-9\s'\-]{1,60}\b/;
+
 export type ChatGpsLocationContext = {
   source: "gps";
   latitude: number;
@@ -118,6 +121,40 @@ export function isNearbyLocationDependentPrompt(prompt: string): boolean {
   }
 
   return discoverySignals.some((signal) => normalized.includes(signal));
+}
+
+export function isLocationDependentExplorationPrompt(prompt: string): boolean {
+  const normalized = prompt.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  if (explicitAreaRegex.test(normalized) && !nearbySignals.some((signal) => normalized.includes(signal))) {
+    return false;
+  }
+
+  const hasNearbySignal = nearbySignals.some((signal) => normalized.includes(signal));
+  const hasPlaceSignal = placeSignals.some((signal) => normalized.includes(signal));
+  const hasDiscoverySignal = discoverySignals.some((signal) => normalized.includes(signal));
+  const hasOperationalSignal =
+    normalized.includes("open now")
+    || normalized.includes("tonight")
+    || normalized.includes("this weekend")
+    || normalized.includes("weekend");
+
+  if (hasNearbySignal && (hasPlaceSignal || hasDiscoverySignal)) {
+    return true;
+  }
+
+  if (hasPlaceSignal && hasOperationalSignal) {
+    return true;
+  }
+
+  if (hasDiscoverySignal && hasOperationalSignal) {
+    return true;
+  }
+
+  return false;
 }
 
 export function normalizeTypedArea(value: string): string | null {
@@ -301,7 +338,25 @@ export async function resolveChatLocationAttachment(
   permissionState: string,
   getSnapshot: (forceFresh: boolean) => Promise<NearbyGpsSnapshot | null>
 ): Promise<ChatLocationAttachmentResolution> {
-  const requiresNearbyClarification = isNearbyLocationDependentPrompt(prompt);
+  const requiresNearbyClarification = isLocationDependentExplorationPrompt(prompt);
+  if (!requiresNearbyClarification) {
+    const diagnosticsMetadata = buildChatLocationResolutionDiagnosticsMetadata(
+      permissionState,
+      {
+        context: null,
+        refreshAttempted: false,
+        outcome: "failed"
+      },
+      false
+    );
+
+    return {
+      context: null,
+      diagnosticsMetadata,
+      requiresNearbyClarification: false
+    };
+  }
+
   if (permissionState !== "granted") {
     const diagnosticsMetadata = buildChatLocationResolutionDiagnosticsMetadata(
       permissionState,
@@ -328,7 +383,7 @@ export async function resolveChatLocationAttachment(
   return {
     context: resolution.context,
     diagnosticsMetadata,
-    requiresNearbyClarification: requiresNearbyClarification && !resolution.context
+    requiresNearbyClarification: !resolution.context
   };
 }
 

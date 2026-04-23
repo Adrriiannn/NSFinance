@@ -168,6 +168,30 @@ public sealed class ConversationRemediationPolicyTests
     }
 
     [Fact]
+    public void ContradictionResolutionPolicy_DoesNotRewriteArea_ForNonLocationMutationSegments()
+    {
+        var state = CreateDefaultState(
+            semanticFamily: ConversationSemanticFamilies.Exploration,
+            explorationSubtype: ExplorationSubtype.Structured.ToString(),
+            explorationArea: "near_me",
+            explorationPlaceTypes: "cafe");
+
+        var policy = new ContradictionResolutionPolicy();
+        var result = policy.Apply(
+            state,
+            "actually do they have parking?",
+            FollowUpBindingType.BindPrior,
+            ConversationSignalAnalyzer.Analyze("actually do they have parking?"));
+
+        Assert.Equal("near_me", result.State.Constraints[ConversationConstraintKeys.ExplorationArea]);
+        Assert.DoesNotContain("contradiction_exploration_area_rewritten", result.ReasonCodes);
+        Assert.Contains(
+            "parking",
+            result.State.Constraints[ConversationConstraintKeys.ExplorationPreferences],
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ContradictionResolutionPolicy_ClearsStructuredPlaceTypeWhenSwitchingToOpenBranch()
     {
         var state = CreateDefaultState(
@@ -357,6 +381,81 @@ public sealed class ConversationRemediationPolicyTests
 
         Assert.Equal(FollowUpBindingType.NewBranch, result.BindingType);
         Assert.Equal(snapshot.ResultSetId, result.ActiveResultSetId);
+    }
+
+    [Theory]
+    [InlineData("What about Dublin 2 instead?")]
+    [InlineData("try Rathmines instead")]
+    [InlineData("not near me, Dublin 8")]
+    [InlineData("same thing but in Dublin 2")]
+    public void FollowUpBindingPolicy_BranchesDeterministically_ForLocalityOverridePhrases(string userMessage)
+    {
+        var snapshot = CreateResultContextSnapshot(activeWindowExpired: false);
+        var policy = new FollowUpBindingPolicy();
+        var state = CreateDefaultState(semanticFamily: ConversationSemanticFamilies.Exploration);
+
+        var result = policy.Determine(
+            BuildChatRequest(userMessage, state),
+            state,
+            new ResultContextReadResult(
+                ActiveResultContext: snapshot,
+                BindingClassification: ResultContextBindingClassification.NewBranch,
+                UsedClientResultSetId: false,
+                ExpiredBindingCleared: false,
+                ReasonCodes: []));
+
+        Assert.Equal(FollowUpBindingType.NewBranch, result.BindingType);
+        Assert.Equal(snapshot.ResultSetId, result.ActiveResultSetId);
+    }
+
+    [Theory]
+    [InlineData("What about Dublin 2 instead?")]
+    [InlineData("try Rathmines instead")]
+    [InlineData("not near me, Dublin 8")]
+    [InlineData("same thing but in Dublin 2")]
+    public void ConversationSignalAnalyzer_FlagsBranchOverridePhrases(string userMessage)
+    {
+        var signals = ConversationSignalAnalyzer.Analyze(userMessage);
+        Assert.True(signals.HasBranchingSignal);
+    }
+
+    [Fact]
+    public void ConversationSignalAnalyzer_DoesNotTreatGenericNegation_AsCorrectionSignal()
+    {
+        var signals = ConversationSignalAnalyzer.Analyze("not sure yet");
+        Assert.False(signals.HasCorrectionSignal);
+    }
+
+    [Fact]
+    public void ContradictionResolutionPolicy_RefinementFollowUp_PreservesStructuredSearchFamily()
+    {
+        var state = CreateDefaultState(
+            semanticFamily: ConversationSemanticFamilies.Exploration,
+            explorationSubtype: ExplorationSubtype.Structured.ToString(),
+            explorationArea: "near_me",
+            explorationPlaceTypes: "cafe") with
+        {
+            Constraints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [ConversationConstraintKeys.SemanticFamily] = ConversationSemanticFamilies.Exploration,
+                [ConversationConstraintKeys.ExplorationSubtype] = ExplorationSubtype.Structured.ToString(),
+                [ConversationConstraintKeys.ExplorationArea] = "near_me",
+                [ConversationConstraintKeys.ExplorationPlaceTypes] = "cafe",
+                [ConversationConstraintKeys.ExplorationTime] = "open_now"
+            }
+        };
+
+        var policy = new ContradictionResolutionPolicy();
+        var result = policy.Apply(
+            state,
+            "do they have parking?",
+            FollowUpBindingType.BindPrior,
+            ConversationSignalAnalyzer.Analyze("do they have parking?"));
+
+        Assert.Equal("cafe", result.State.Constraints[ConversationConstraintKeys.ExplorationPlaceTypes]);
+        Assert.Equal("near_me", result.State.Constraints[ConversationConstraintKeys.ExplorationArea]);
+        Assert.Equal("open_now", result.State.Constraints[ConversationConstraintKeys.ExplorationTime]);
+        Assert.Contains("parking", result.State.Constraints[ConversationConstraintKeys.ExplorationPreferences], StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

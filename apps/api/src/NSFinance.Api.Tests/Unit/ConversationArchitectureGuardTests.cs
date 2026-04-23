@@ -219,6 +219,96 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task StructuredExplorationHandler_LocksShortlistCountAndCarriesStructuredConstraints()
+    {
+        var placesSearch = new FixedPlacesSearchService(
+            Enumerable.Range(1, 10)
+                .Select(index => new PlaceSearchItem(
+                    PlaceId: $"place-{index}",
+                    Name: $"Place {index}",
+                    Category: "cafe",
+                    PriceLevel: null,
+                    ShortFormattedAddress: $"Address {index}",
+                    Rating: 4.0d + (index / 100d),
+                    OpeningHours: new PlaceOpeningHoursSummary(
+                        OpenNow: true,
+                        WeekdayDescriptions: [],
+                        NextOpenTimeUtc: null)))
+                .ToArray());
+        var handler = new StructuredExplorationHandler(
+            new StubConstraintExtractor(),
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+        var state = CreateDefaultState() with
+        {
+            Constraints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [ConversationConstraintKeys.ExplorationTime] = "open_now"
+            }
+        };
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "parks near me",
+                    RecentTurns: [],
+                    State: state,
+                    CorrelationId: "corr-structured-shortlist-lock",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-structured-shortlist-lock",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: state,
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.95d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.91d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, placesSearch.CallCount);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Equal(ResponseCompositionType.ResultSummary, result.CompositionRequest!.ResponseType);
+        Assert.Equal(8, result.CompositionRequest.GroundedData.Entities.Count);
+        Assert.Equal(8, result.State.LastSuggestedEntities?.Count);
+        Assert.Equal("park", result.State.Constraints[ConversationConstraintKeys.ExplorationPlaceTypes]);
+        Assert.Equal("near_me", result.State.Constraints[ConversationConstraintKeys.ExplorationArea]);
+        Assert.Equal("open_now", result.State.Constraints[ConversationConstraintKeys.ExplorationTime]);
+    }
+
+    [Fact]
     public async Task StructuredExplorationHandler_ClarifiesLocationOnly_WhenPlaceTypeKnownButLocationMissing()
     {
         var placesSearch = new TrackingPlacesSearchService();
@@ -637,9 +727,11 @@ public sealed class ConversationArchitectureGuardTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("Here are a few grounded options to start with:", response.ReplyText);
-        Assert.Contains("1. Bean Room - cafe, rating 4.6, open now", response.ReplyText);
-        Assert.Contains("2. Roast House - cafe, rating 4.4, Dublin 2", response.ReplyText);
+        Assert.Contains("Here are grounded options near you:", response.ReplyText);
+        Assert.Contains("1. Bean Room", response.ReplyText);
+        Assert.Contains("Details: cafe, rating 4.6, open now", response.ReplyText);
+        Assert.Contains("2. Roast House", response.ReplyText);
+        Assert.Contains("Details: cafe, rating 4.4, Dublin 2", response.ReplyText);
         Assert.Contains("structured_parse_failed", response.Warnings);
         Assert.Contains("response_composition_safe_fallback", response.Warnings);
 
@@ -866,6 +958,21 @@ public sealed class ConversationArchitectureGuardTests
         {
             CallCount++;
             return Task.FromResult(new PlaceSearchResult([]));
+        }
+    }
+
+    private sealed class FixedPlacesSearchService(IReadOnlyList<PlaceSearchItem> items) : IPlacesSearchService
+    {
+        public int CallCount { get; private set; }
+
+        public Task<PlaceSearchResult> SearchAsync(
+            string query,
+            string country,
+            PlaceSearchLocationContext? locationContext,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(new PlaceSearchResult(items));
         }
     }
 

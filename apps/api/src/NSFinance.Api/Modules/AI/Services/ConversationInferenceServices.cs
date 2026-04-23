@@ -505,8 +505,11 @@ public sealed class ResponseComposer(
                 out var parseFailureReason)
             && parsedResponse.Succeeded)
         {
+            var replyText = request.ResponseType == ResponseCompositionType.ResultSummary
+                ? BuildCanonicalStructuredResultSummaryReply(request)
+                : parsedResponse.ReplyText;
             var success = new ResponseCompositionResult(
-                ReplyText: parsedResponse.ReplyText,
+                ReplyText: replyText,
                 SuggestedStructuredStateUpdates: parsedResponse.SuggestedStructuredStateUpdates,
                 ModelUsed: parsedResponse.ModelUsed,
                 DeploymentUsed: route.Deployment,
@@ -634,7 +637,7 @@ public sealed class ResponseComposer(
 
         if (request.ResponseType == ResponseCompositionType.ResultSummary)
         {
-            replyText = BuildResultSummaryFallbackReply(request);
+            replyText = BuildCanonicalStructuredResultSummaryReply(request);
         }
 
         replyText = replyText.Replace("Hereâ€™s", "Here's", StringComparison.Ordinal);
@@ -667,7 +670,7 @@ public sealed class ResponseComposer(
             : [];
     }
 
-    private static string BuildResultSummaryFallbackReply(ResponseCompositionRequest request)
+    private static string BuildCanonicalStructuredResultSummaryReply(ResponseCompositionRequest request)
     {
         if (request.GroundedData.Entities.Count == 0)
         {
@@ -682,37 +685,37 @@ public sealed class ResponseComposer(
             .GroupBy(fact => fact.Label.Trim(), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().Value.Trim(), StringComparer.OrdinalIgnoreCase);
 
-        var shortlistLines = request.GroundedData.Entities
-            .OrderBy(entity => entity.Rank)
-            .Take(5)
-            .Select(entity => BuildResultSummaryLine(entity, factLookup))
+        var ordered = request.GroundedData.Entities
+            .Where(static entity => !string.IsNullOrWhiteSpace(entity.Label))
+            .OrderBy(entity => entity.Rank <= 0 ? int.MaxValue : entity.Rank)
+            .ThenBy(entity => entity.Label, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-
-        var intro = shortlistLines.Length == 1
-            ? "Here is a grounded option to start with:"
-            : "Here are a few grounded options to start with:";
-        var closingLine = request.SuggestedOptions is { Count: > 0 }
-            ? $"Next step: {string.Join(" or ", request.SuggestedOptions.Take(2)).ToLowerInvariant()}."
-            : null;
-
-        return string.Join(
-            Environment.NewLine,
-            new[] { intro }
-                .Concat(shortlistLines)
-                .Concat(closingLine is null ? [] : [string.Empty, closingLine]));
-    }
-
-    private static string BuildResultSummaryLine(
-        ConversationSuggestedEntity entity,
-        IReadOnlyDictionary<string, string> factLookup)
-    {
-        var line = $"{entity.Rank}. {entity.Label}";
-        if (factLookup.TryGetValue(entity.Label, out var fact) && !string.IsNullOrWhiteSpace(fact))
+        if (ordered.Length == 0)
         {
-            line += $" - {fact}";
+            return "I found grounded results, but I couldn't safely format the shortlist.";
         }
 
-        return line;
+        var intro = ordered.Length == 1
+            ? "Here is one grounded option:"
+            : "Here are grounded options near you:";
+        var lines = new List<string>(ordered.Length * 2 + 3)
+        {
+            intro
+        };
+
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var entity = ordered[index];
+            lines.Add($"{index + 1}. {entity.Label}");
+            if (factLookup.TryGetValue(entity.Label, out var fact) && !string.IsNullOrWhiteSpace(fact))
+            {
+                lines.Add($"   Details: {fact}");
+            }
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("Would you like me to narrow these by distance, parking, or seating?");
+        return string.Join(Environment.NewLine, lines);
     }
 }
 
@@ -735,7 +738,7 @@ public static class ConversationSignalAnalyzer
                                   || extraction.TimeHints.Count > 0;
         var hasEmotionalFraming = ContainsAny(normalized, "i think", "i feel", "i'm worried", "i am worried", "stressed", "overwhelmed", "too high");
         var hasSubjectiveLanguage = ContainsAny(normalized, "nice", "quiet", "safe", "good", "better", "best", "feel");
-        var hasCorrectionSignal = ContainsAny(normalized, "actually", "instead", "not", "wrong", "forget", "change of plan");
+        var hasCorrectionSignal = HasCorrectionSignal(normalized);
         var hasTopicSwitchSignal = ContainsAny(normalized, "new topic", "something else", "different question");
         var hasFactualQuestion = (normalized.StartsWith("what ", StringComparison.Ordinal)
                                   && !normalized.StartsWith("what about", StringComparison.Ordinal))
@@ -774,8 +777,16 @@ public static class ConversationSignalAnalyzer
             HasFinancialFocusSelection: hasFinancialFocusSelection,
             HasAtmosphericExplorationIntent: hasAtmosphericExplorationIntent,
             HasSafetyExplorationIntent: hasSafetyExplorationIntent));
-        var hasResultReferenceSignal = ContainsAny(normalized, "that one", "those", "them", "they", "the first", "the second", "this list", "that list");
-        var hasBranchingSignal = ContainsAny(normalized, "instead", "what about", "another", "rather than");
+        var hasPronounFollowUpSignal = normalized.StartsWith("do they ", StringComparison.Ordinal)
+                                       || normalized.StartsWith("are they ", StringComparison.Ordinal)
+                                       || normalized.StartsWith("does it ", StringComparison.Ordinal)
+                                       || normalized.StartsWith("is it ", StringComparison.Ordinal);
+        var hasResultReferenceSignal = ContainsAny(normalized, "that one", "those", "them", "they", "the first", "the second", "this list", "that list")
+                                       || hasPronounFollowUpSignal;
+        var hasMutationRewriteSignal = HasMutationRewriteSignal(userMessage);
+        var hasBranchingSignal = (hasMutationRewriteSignal && (extraction.HasExplicitLocality || extraction.HasNearMeLanguage))
+                                 || ContainsAny(normalized, "another", "rather than")
+                                 || normalized.StartsWith("try ", StringComparison.Ordinal);
         var hasComparisonSignal = ContainsAny(normalized, "compare", "versus", "vs", "against", "first list");
 
         return new ConversationSignals(
@@ -802,5 +813,32 @@ public static class ConversationSignalAnalyzer
     private static bool ContainsAny(string source, params string[] values)
     {
         return values.Any(value => source.Contains(value, StringComparison.Ordinal));
+    }
+
+    private static bool HasCorrectionSignal(string normalized)
+    {
+        return ContainsAny(
+            normalized,
+            "actually",
+            "instead",
+            "wrong",
+            "forget",
+            "change of plan",
+            "change it",
+            "scratch that")
+               || normalized.Contains("not near me", StringComparison.Ordinal);
+    }
+
+    private static bool HasMutationRewriteSignal(string? userMessage)
+    {
+        var original = (userMessage ?? string.Empty).Trim();
+        if (original.Length == 0)
+        {
+            return false;
+        }
+
+        var mutation = ConversationPolicyHelpers.ResolveMutationSegment(original).Trim();
+        return mutation.Length > 0
+               && !string.Equals(mutation, original, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -241,6 +241,84 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
+    public async Task ConversationLayerOrchestrator_MergesSparseIncomingStatePatch_WithPersistedStructuredConstraints()
+    {
+        var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
+        {
+            ["AI:Enabled"] = "true",
+            ["AI:UseMockProvider"] = "true",
+            ["AI:ProviderKind"] = "Mock",
+            ["AI:Routing:HeavyModelEnabled"] = "true",
+            ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple"
+        });
+
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = await SeedUserAsync(dbContext, "chat-state-merge");
+        var threadService = scope.ServiceProvider.GetRequiredService<IConversationThreadService>();
+        var stateService = scope.ServiceProvider.GetRequiredService<IConversationStateService>();
+        var orchestrator = scope.ServiceProvider.GetRequiredService<IUserChatOrchestrator>();
+
+        var thread = await threadService.CreateThreadAsync(userId, "State merge", CancellationToken.None);
+        await stateService.SaveSnapshotAsync(
+            userId,
+            thread.Id,
+            new ChatStateSnapshot(
+                ActiveTopic: "exploration",
+                UserIntent: "find cafes",
+                Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [ConversationConstraintKeys.SemanticFamily] = ConversationSemanticFamilies.Exploration,
+                    [ConversationConstraintKeys.ExplorationSubtype] = ExplorationSubtype.Structured.ToString(),
+                    [ConversationConstraintKeys.ExplorationPlaceTypes] = "cafe",
+                    [ConversationConstraintKeys.ExplorationArea] = "near_me",
+                    [ConversationConstraintKeys.ExplorationTime] = "open_now"
+                },
+                Summaries: [],
+                BudgetPreference: null,
+                LocationPreference: "current_location",
+                MerchantInvestigationSubject: null,
+                RecentConclusions: []),
+            ConversationStateSnapshotReason.AssistantTurn,
+            CancellationToken.None);
+
+        var sparseLocationPatch = new ChatStateSnapshot(
+            ActiveTopic: null,
+            UserIntent: null,
+            Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [CompanionLocationMetadataKeys.Source] = "gps",
+                [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                [CompanionLocationMetadataKeys.Longitude] = "-6.2603097"
+            },
+            Summaries: [],
+            BudgetPreference: null,
+            LocationPreference: "current_location",
+            MerchantInvestigationSubject: null,
+            RecentConclusions: []);
+
+        _ = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "thanks",
+                RecentTurns: [],
+                State: sparseLocationPatch,
+                CorrelationId: "corr-state-merge",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ClientRequestId: "client-state-merge",
+                UserId: userId,
+                ConversationThreadId: thread.Id,
+                UsePersistentMemory: true,
+                AllowTransientFallbackOnPersistentFailure: false),
+            CancellationToken.None);
+
+        var latestState = await stateService.GetLatestStateAsync(userId, thread.Id, CancellationToken.None);
+        Assert.NotNull(latestState);
+        Assert.Contains("cafe", latestState!.State.Constraints[ConversationConstraintKeys.ExplorationPlaceTypes], StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("near_me", latestState.State.Constraints[ConversationConstraintKeys.ExplorationArea]);
+        Assert.Equal("open_now", latestState.State.Constraints[ConversationConstraintKeys.ExplorationTime]);
+    }
+
+    [Fact]
     public async Task ConversationLayerOrchestrator_DedupesCompletedTurn_ByClientRequestId()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>

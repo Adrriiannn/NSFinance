@@ -335,7 +335,7 @@ public sealed class ContradictionResolutionPolicy : IContradictionResolutionPoli
             var mutationSignals = ConversationSignalAnalyzer.Analyze(mutationSegment);
             var existingSubtype = ReadConstraint(state, ConversationConstraintKeys.ExplorationSubtype);
             var updatedPlaceTypes = ConversationPolicyHelpers.ResolveExplorationPlaceTypes(extraction);
-            var updatedArea = ConversationPolicyHelpers.ResolveExplorationArea(extraction);
+            var updatedArea = ResolveUpdatedExplorationArea(normalizedMutationSegment, extraction, mutationSignals);
             var updatedPreferences = ConversationPolicyHelpers.ResolveExplorationPreferences(normalizedMutationSegment, extraction);
             var updatedTime = ConversationPolicyHelpers.ResolveExplorationTime(extraction);
             var targetSubtype = ResolveExplorationSubtypeForMutation(
@@ -620,6 +620,71 @@ public sealed class ContradictionResolutionPolicy : IContradictionResolutionPoli
         }
 
         return parsedExistingSubtype;
+    }
+
+    private static string? ResolveUpdatedExplorationArea(
+        string normalizedMutationSegment,
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ConversationSignals mutationSignals)
+    {
+        var resolvedFromExtraction = ConversationPolicyHelpers.ResolveExplorationArea(extraction);
+        if (!string.IsNullOrWhiteSpace(resolvedFromExtraction))
+        {
+            return resolvedFromExtraction;
+        }
+
+        if (!mutationSignals.HasBranchingSignal && !mutationSignals.HasCorrectionSignal)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(normalizedMutationSegment))
+        {
+            return null;
+        }
+
+        var candidate = normalizedMutationSegment
+            .Trim()
+            .Trim(',', ';', ':', '.', '?', '!');
+        candidate = candidate.StartsWith("in ", StringComparison.OrdinalIgnoreCase)
+            ? candidate[3..].Trim()
+            : candidate.StartsWith("around ", StringComparison.OrdinalIgnoreCase)
+                ? candidate[7..].Trim()
+                : candidate.StartsWith("near ", StringComparison.OrdinalIgnoreCase)
+                    ? candidate[5..].Trim()
+                    : candidate;
+
+        if (!CompanionLocationGroundingParser.IsValidAreaHint(candidate))
+        {
+            return null;
+        }
+
+        var candidateExtraction = ConversationPolicyHelpers.ExtractLocalDiscovery(candidate);
+        var candidateArea = ConversationPolicyHelpers.ResolveExplorationArea(candidateExtraction);
+        if (!string.IsNullOrWhiteSpace(candidateArea))
+        {
+            return candidateArea;
+        }
+
+        // Reject candidate fragments that mutate non-location constraints; this prevents
+        // brittle keyword-blocklists and keeps location override logic domain-agnostic.
+        var mutatesNonLocationConstraints = candidateExtraction.PlaceTypeHints.Count > 0
+                                            || candidateExtraction.PreferenceHints.Count > 0
+                                            || candidateExtraction.TimeHints.Count > 0
+                                            || candidateExtraction.AudienceHints.Count > 0;
+        if (mutatesNonLocationConstraints)
+        {
+            return null;
+        }
+
+        if (candidateExtraction.IsLocalDiscoveryCandidate
+            && !candidateExtraction.HasExplicitLocality
+            && !candidateExtraction.HasNearMeLanguage)
+        {
+            return null;
+        }
+
+        return candidate;
     }
 
     private static bool SetConstraint(
@@ -1102,6 +1167,26 @@ internal static class ConversationPolicyHelpers
             return TrimTrailingInstead(afterWhatAbout);
         }
 
+        if (TryTakeAfterMarker(lowered, normalized, "try ", out var afterTry))
+        {
+            return TrimTrailingInstead(afterTry);
+        }
+
+        if (TryTakeAfterMarker(lowered, normalized, "same thing but in", out var afterSameThingButIn))
+        {
+            return TrimTrailingInstead(afterSameThingButIn);
+        }
+
+        if (TryTakeAfterMarker(lowered, normalized, "same thing in", out var afterSameThingIn))
+        {
+            return TrimTrailingInstead(afterSameThingIn);
+        }
+
+        if (TryTakeAfterMarker(lowered, normalized, "not near me", out var afterNotNearMe))
+        {
+            return afterNotNearMe.TrimStart(',', ' ');
+        }
+
         if (lowered.Contains("instead", StringComparison.Ordinal))
         {
             var insteadIndex = lowered.LastIndexOf("instead", StringComparison.Ordinal);
@@ -1182,6 +1267,21 @@ internal static class ConversationPolicyHelpers
         if (ContainsAny(normalized, "view", "beach view", "waterfront", "scenic"))
         {
             preferences.Add("scenic");
+        }
+
+        if (ContainsAny(normalized, "parking", "car park", "carpark"))
+        {
+            preferences.Add("parking");
+        }
+
+        if (ContainsAny(normalized, "seating", "seat", "outdoor seating"))
+        {
+            preferences.Add("seating");
+        }
+
+        if (ContainsAny(normalized, "top rated", "highly rated", "best rated", "rating"))
+        {
+            preferences.Add("rating");
         }
 
         return preferences.Count > 0
@@ -1267,19 +1367,26 @@ internal static class ConversationPolicyHelpers
 
     public static bool HasOperationalStructuredFollowUpCue(string normalized)
     {
+        var extraction = ExtractLocalDiscovery(normalized);
+        if (extraction.PreferenceHints.Count > 0
+            || extraction.TimeHints.Count > 0
+            || extraction.AudienceHints.Count > 0)
+        {
+            return true;
+        }
+
         return ContainsAny(
             normalized,
-            "parking",
-            "open now",
+            "compare",
+            "versus",
+            "vs",
+            "against",
+            "filter",
             "closer",
             "closest",
             "distance",
-            "rating",
             "reviews",
-            "wheelchair",
-            "accessible",
-            "delivery",
-            "takeaway");
+            "accessible");
     }
 
     public static bool HasDeterministicStructuredFollowUpIntent(

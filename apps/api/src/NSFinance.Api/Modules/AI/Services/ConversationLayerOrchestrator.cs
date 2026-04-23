@@ -75,7 +75,7 @@ public sealed class ConversationLayerOrchestrator(
         string? contextSummary;
         IReadOnlyDictionary<string, string> structuredState;
         IReadOnlyList<string> contextReasonCodes;
-        var effectiveState = NormalizeIncomingState(request.State);
+        var effectiveState = ApplyConversationMemoryTtl(NormalizeIncomingState(request.State));
         var resultContextReadResult = new ResultContextReadResult(
             ActiveResultContext: null,
             BindingClassification: ResultContextBindingClassification.None,
@@ -185,7 +185,7 @@ public sealed class ConversationLayerOrchestrator(
                     persistentUserId,
                     persistentThreadId,
                     cancellationToken);
-                effectiveState = persistedState?.State ?? effectiveState;
+                effectiveState = ApplyConversationMemoryTtl(persistedState?.State ?? effectiveState);
 
                 if (resultContextService is not null)
                 {
@@ -283,6 +283,8 @@ public sealed class ConversationLayerOrchestrator(
         {
             (contextMessages, contextSummary, structuredState, contextReasonCodes) = BuildTransientContext(request);
         }
+
+        effectiveState = ApplyConversationMemoryTtl(effectiveState);
 
         setupStopwatch.Stop();
 
@@ -604,7 +606,11 @@ public sealed class ConversationLayerOrchestrator(
         behaviorStopwatch.Stop();
 
         var currentResultContext = resultContextReadResult.ActiveResultContext;
-        var behaviorState = behavior.State;
+        var behaviorState = RefreshExplorationContextUsage(ApplyConversationMemoryTtl(behavior.State));
+        behavior = behavior with
+        {
+            State = behaviorState
+        };
         long modeExecutionDurationMs = 0;
         long responseCompositionDurationMs = 0;
 
@@ -669,7 +675,7 @@ public sealed class ConversationLayerOrchestrator(
                 ModelUsed: composed.ModelUsed,
                 ReasoningClass: composed.ReasoningClass,
                 SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
-                    behavior.State,
+                    behaviorState,
                     currentResultContext,
                     behavior.StrategyDecision,
                     behavior.StrategyDecision.SuggestedOptions,
@@ -690,7 +696,7 @@ public sealed class ConversationLayerOrchestrator(
 
             return new OrchestratedConversationResult(
                 Response: reply,
-                State: behavior.State,
+                State: behaviorState,
                 AssistantRoute: new AIModelRoute(
                     TaskType: AITaskType.ResponseComposition,
                     ModelClass: composed.ReasoningClass,
@@ -748,7 +754,7 @@ public sealed class ConversationLayerOrchestrator(
         modeExecutionStopwatch.Stop();
         modeExecutionDurationMs = modeExecutionStopwatch.ElapsedMilliseconds;
 
-        var finalState = modeResult.State;
+        var finalState = RefreshExplorationContextUsage(ApplyConversationMemoryTtl(modeResult.State));
         currentResultContext = modeResult.ResultContext ?? currentResultContext;
 
         if (!modeResult.Succeeded)
@@ -983,10 +989,17 @@ public sealed class ConversationLayerOrchestrator(
     {
         if (request.State is not null)
         {
+            var latestState = await conversationStateService!.GetLatestStateAsync(
+                request.UserId!.Value,
+                conversationThreadId,
+                cancellationToken);
+            var mergedState = MergeIncomingStatePatch(
+                latestState?.State,
+                request.State);
             await conversationStateService!.SaveSnapshotAsync(
                 request.UserId!.Value,
                 conversationThreadId,
-                request.State,
+                mergedState,
                 ConversationStateSnapshotReason.UserTurn,
                 cancellationToken);
         }
@@ -1553,6 +1566,104 @@ public sealed class ConversationLayerOrchestrator(
         return (messages, context.ContextSummary, context.StructuredState, context.ReasonCodes);
     }
 
+    private ConversationStateSnapshot MergeIncomingStatePatch(
+        ConversationStateSnapshot? persistedState,
+        ConversationStateSnapshot incomingPatch)
+    {
+        var baseState = NormalizeIncomingState(persistedState);
+        var patch = NormalizeIncomingState(incomingPatch);
+
+        var mergedConstraints = new Dictionary<string, string>(baseState.Constraints, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in patch.Constraints)
+        {
+            if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value))
+            {
+                continue;
+            }
+
+            mergedConstraints[pair.Key.Trim()] = pair.Value.Trim();
+        }
+
+        return ApplyConversationMemoryTtl(baseState with
+        {
+            ActiveTopic = !string.IsNullOrWhiteSpace(patch.ActiveTopic) ? patch.ActiveTopic : baseState.ActiveTopic,
+            UserIntent = !string.IsNullOrWhiteSpace(patch.UserIntent) ? patch.UserIntent : baseState.UserIntent,
+            Constraints = mergedConstraints,
+            Summaries = patch.Summaries.Count > 0 ? patch.Summaries : baseState.Summaries,
+            BudgetPreference = !string.IsNullOrWhiteSpace(patch.BudgetPreference) ? patch.BudgetPreference : baseState.BudgetPreference,
+            LocationPreference = !string.IsNullOrWhiteSpace(patch.LocationPreference) ? patch.LocationPreference : baseState.LocationPreference,
+            MerchantInvestigationSubject = !string.IsNullOrWhiteSpace(patch.MerchantInvestigationSubject) ? patch.MerchantInvestigationSubject : baseState.MerchantInvestigationSubject,
+            RecentConclusions = patch.RecentConclusions.Count > 0 ? patch.RecentConclusions : baseState.RecentConclusions
+        });
+    }
+
+    private ConversationStateSnapshot ApplyConversationMemoryTtl(ConversationStateSnapshot state)
+    {
+        var ttlMinutes = Math.Max(1, options.Value.Architecture.ExplorationConstraintTtlMinutes);
+        var nowUtc = DateTimeOffset.UtcNow;
+        var thresholdUtc = nowUtc.AddMinutes(-ttlMinutes);
+
+        var constraints = new Dictionary<string, string>(state.Constraints, StringComparer.OrdinalIgnoreCase);
+        var contextStamp = constraints.TryGetValue(ConversationConstraintKeys.ExplorationContextLastUsedUtc, out var rawStamp)
+            ? rawStamp
+            : null;
+        var staleExplorationContext = TryParseUtc(contextStamp, out var parsedStamp)
+                                      && parsedStamp < thresholdUtc;
+
+        if (staleExplorationContext)
+        {
+            constraints.Remove(ConversationConstraintKeys.ExplorationSubtype);
+            constraints.Remove(ConversationConstraintKeys.ExplorationArea);
+            constraints.Remove(ConversationConstraintKeys.ExplorationPlaceTypes);
+            constraints.Remove(ConversationConstraintKeys.ExplorationPreferences);
+            constraints.Remove(ConversationConstraintKeys.ExplorationTime);
+            constraints.Remove(ConversationConstraintKeys.ExplorationContextLastUsedUtc);
+        }
+
+        var pendingClarification = state.PendingClarification;
+        if (pendingClarification?.CreatedAtUtc is DateTimeOffset pendingCreatedUtc
+            && pendingCreatedUtc < thresholdUtc)
+        {
+            pendingClarification = null;
+        }
+
+        return state with
+        {
+            Constraints = constraints,
+            PendingClarification = pendingClarification
+        };
+    }
+
+    private ConversationStateSnapshot RefreshExplorationContextUsage(ConversationStateSnapshot state)
+    {
+        var hasExplorationContext = state.ModeCandidate == ConversationMode.Exploration
+                                    || state.ActiveMode == ConversationMode.Exploration
+                                    || state.Constraints.ContainsKey(ConversationConstraintKeys.ExplorationArea)
+                                    || state.Constraints.ContainsKey(ConversationConstraintKeys.ExplorationPlaceTypes)
+                                    || state.Constraints.ContainsKey(ConversationConstraintKeys.ExplorationTime);
+        if (!hasExplorationContext)
+        {
+            return state;
+        }
+
+        var constraints = new Dictionary<string, string>(state.Constraints, StringComparer.OrdinalIgnoreCase)
+        {
+            [ConversationConstraintKeys.ExplorationContextLastUsedUtc] = DateTimeOffset.UtcNow.UtcDateTime.ToString("O")
+        };
+
+        return state with
+        {
+            Constraints = constraints
+        };
+    }
+
+    private static bool TryParseUtc(string? value, out DateTimeOffset result)
+    {
+        result = default;
+        return !string.IsNullOrWhiteSpace(value)
+               && DateTimeOffset.TryParse(value, out result);
+    }
+
     private static ConversationStateSnapshot NormalizeIncomingState(ConversationStateSnapshot? state)
     {
         if (state is not null)
@@ -1673,6 +1784,11 @@ public sealed class ConversationLayerOrchestrator(
         if (resultContext?.ResultSetId is Guid resultSetId)
         {
             updates["active_result_set_id"] = resultSetId.ToString("D");
+        }
+        else if (state.FollowUpBindingType is FollowUpBindingType.None or FollowUpBindingType.NewTopic)
+        {
+            updates["active_result_set_clear"] = "true";
+            updates["selected_entity_clear"] = "true";
         }
 
         MergeUpdates(updates, primaryUpdates);
