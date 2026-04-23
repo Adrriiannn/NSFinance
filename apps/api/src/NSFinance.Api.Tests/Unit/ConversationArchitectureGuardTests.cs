@@ -226,8 +226,10 @@ public sealed class ConversationArchitectureGuardTests
                 .Select(index => new PlaceSearchItem(
                     PlaceId: $"place-{index}",
                     Name: $"Place {index}",
-                    Category: "cafe",
+                    Category: "park",
                     PriceLevel: null,
+                    PrimaryType: "park",
+                    Types: ["park", "point_of_interest"],
                     ShortFormattedAddress: $"Address {index}",
                     Rating: 4.0d + (index / 100d),
                     OpeningHours: new PlaceOpeningHoursSummary(
@@ -306,6 +308,207 @@ public sealed class ConversationArchitectureGuardTests
         Assert.Equal("park", result.State.Constraints[ConversationConstraintKeys.ExplorationPlaceTypes]);
         Assert.Equal("near_me", result.State.Constraints[ConversationConstraintKeys.ExplorationArea]);
         Assert.Equal("open_now", result.State.Constraints[ConversationConstraintKeys.ExplorationTime]);
+    }
+
+    [Fact]
+    public async Task StructuredExplorationHandler_FiltersShortlistToRequestedPlaceType()
+    {
+        var placesSearch = new FixedPlacesSearchService(
+        [
+            new PlaceSearchItem(
+                PlaceId: "cafe-1",
+                Name: "Cafe One",
+                Category: "Cafe",
+                PriceLevel: null,
+                PrimaryType: "cafe",
+                Types: ["cafe", "food"],
+                ShortFormattedAddress: "Address 1"),
+            new PlaceSearchItem(
+                PlaceId: "store-1",
+                Name: "Electronics Shop",
+                Category: "Electronics store",
+                PriceLevel: null,
+                PrimaryType: "electronics_store",
+                Types: ["electronics_store", "store"],
+                ShortFormattedAddress: "Address 2"),
+            new PlaceSearchItem(
+                PlaceId: "furniture-1",
+                Name: "Furniture World",
+                Category: "Furniture store",
+                PriceLevel: null,
+                PrimaryType: "furniture_store",
+                Types: ["furniture_store", "store"],
+                ShortFormattedAddress: "Address 3")
+        ]);
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.95d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "coffee shops near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-structured-type-filter",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-structured-type-filter",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.93d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.91d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Single(result.CompositionRequest!.GroundedData.Entities);
+        Assert.All(
+            result.CompositionRequest.GroundedData.SummaryFacts,
+            fact => Assert.Contains("cafe", fact.Value, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("structured_exploration_place_type_filter_applied", result.Warnings);
+    }
+
+    [Fact]
+    public async Task StructuredExplorationHandler_DoesNotFallbackToMixedCategories_WhenRequestedTypeHasNoMatches()
+    {
+        var placesSearch = new FixedPlacesSearchService(
+        [
+            new PlaceSearchItem(
+                PlaceId: "store-1",
+                Name: "Electronics Shop",
+                Category: "Electronics store",
+                PriceLevel: null,
+                PrimaryType: "electronics_store",
+                Types: ["electronics_store", "store"],
+                ShortFormattedAddress: "Address 2"),
+            new PlaceSearchItem(
+                PlaceId: "furniture-1",
+                Name: "Furniture World",
+                Category: "Furniture store",
+                PriceLevel: null,
+                PrimaryType: "furniture_store",
+                Types: ["furniture_store", "store"],
+                ShortFormattedAddress: "Address 3")
+        ]);
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.95d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: [],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "coffee shops near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-structured-type-no-match",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-structured-type-no-match",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.93d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.91d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Equal(ResponseCompositionType.Fallback, result.CompositionRequest!.ResponseType);
+        Assert.Contains("structured_exploration_no_results_for_requested_place_type", result.Warnings);
     }
 
     [Fact]

@@ -146,38 +146,28 @@ public sealed class StructuredExplorationHandler(
         if (searchResult.Items.Count == 0)
         {
             warnings.Add("structured_exploration_no_results");
-            return new ConversationModeExecutionResult(
-                CompositionRequest: new ResponseCompositionRequest(
-                    ResponseType: ResponseCompositionType.Fallback,
-                    ToneDirective: ResponseToneDirective.Neutral,
-                    Strategy: ConversationBehaviorStrategy.SuggestAndClarify,
-                    Mode: ConversationMode.Exploration,
-                    ReadinessLevel: request.State.ReadinessLevel,
-                    UserMessage: request.Request.UserMessage,
-                    GroundedData: new GroundedDataEnvelope([], [], warnings.ToArray()),
-                    Constraints: mergedConstraints,
-                    MissingConstraints: [],
-                    MaxLengthHint: 420,
-                    ClarificationQuestion: "I didn't get strong matches yet. Want to tighten the place type, area, or vibe?",
-                    SuggestedOptions: ["Tighter place type", "Different area", "Different vibe"]),
-                DeterministicReplyText: null,
-                SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                State: request.State with
-                {
-                    ActiveMode = ConversationMode.Exploration,
-                    ModeCandidate = ConversationMode.Exploration,
-                    ReadinessLevel = ConversationReadinessLevel.R3_StructuredIncomplete,
-                    Constraints = mergedConstraints,
-                    PendingClarification = null,
-                    NeedsFollowUp = true
-                },
-                ResultContext: request.ResultContext,
-                Warnings: warnings.ToArray(),
-                FollowUpIntentHints: ["refine_place_preferences"],
-                Succeeded: true);
+            return BuildStructuredNoResultResponse(request, mergedConstraints, warnings);
         }
 
-        var selectedItems = SelectStructuredShortlist(searchResult.Items, 8);
+        var requestedPlaceTypes = ResolveRequestedPlaceTypes(mergedConstraints, extraction);
+        var filteredItems = FilterItemsByRequestedPlaceTypes(searchResult.Items, requestedPlaceTypes);
+        if (requestedPlaceTypes.Count > 0)
+        {
+            warnings.Add(filteredItems.Count > 0
+                ? "structured_exploration_place_type_filter_applied"
+                : "structured_exploration_place_type_filter_no_match");
+        }
+
+        if (requestedPlaceTypes.Count > 0 && filteredItems.Count == 0)
+        {
+            warnings.Add("structured_exploration_no_results_for_requested_place_type");
+            return BuildStructuredNoResultResponse(request, mergedConstraints, warnings);
+        }
+
+        var shortlistSource = requestedPlaceTypes.Count > 0
+            ? filteredItems
+            : searchResult.Items;
+        var selectedItems = SelectStructuredShortlist(shortlistSource, 8);
         var normalizedConstraints = BuildNormalizedConstraints(
             mergedConstraints,
             extraction,
@@ -287,6 +277,42 @@ public sealed class StructuredExplorationHandler(
         }
 
         return missing;
+    }
+
+    private static ConversationModeExecutionResult BuildStructuredNoResultResponse(
+        ConversationModeRequest request,
+        IReadOnlyDictionary<string, string> mergedConstraints,
+        ISet<string> warnings)
+    {
+        return new ConversationModeExecutionResult(
+            CompositionRequest: new ResponseCompositionRequest(
+                ResponseType: ResponseCompositionType.Fallback,
+                ToneDirective: ResponseToneDirective.Neutral,
+                Strategy: ConversationBehaviorStrategy.SuggestAndClarify,
+                Mode: ConversationMode.Exploration,
+                ReadinessLevel: request.State.ReadinessLevel,
+                UserMessage: request.Request.UserMessage,
+                GroundedData: new GroundedDataEnvelope([], [], warnings.ToArray()),
+                Constraints: mergedConstraints,
+                MissingConstraints: [],
+                MaxLengthHint: 420,
+                ClarificationQuestion: "I didn't get strong matches yet. Want to tighten the place type, area, or vibe?",
+                SuggestedOptions: ["Tighter place type", "Different area", "Different vibe"]),
+            DeterministicReplyText: null,
+            SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            State: request.State with
+            {
+                ActiveMode = ConversationMode.Exploration,
+                ModeCandidate = ConversationMode.Exploration,
+                ReadinessLevel = ConversationReadinessLevel.R3_StructuredIncomplete,
+                Constraints = mergedConstraints,
+                PendingClarification = null,
+                NeedsFollowUp = true
+            },
+            ResultContext: request.ResultContext,
+            Warnings: warnings.ToArray(),
+            FollowUpIntentHints: ["refine_place_preferences"],
+            Succeeded: true);
     }
 
     private static StructuredClarificationPrompt BuildStructuredClarificationPrompt(
@@ -415,6 +441,131 @@ public sealed class StructuredExplorationHandler(
             .Where(static item => !string.IsNullOrWhiteSpace(item.PlaceId) && !string.IsNullOrWhiteSpace(item.Name))
             .Take(maxCount)
             .ToArray();
+    }
+
+    private static IReadOnlyList<string> ResolveRequestedPlaceTypes(
+        IReadOnlyDictionary<string, string> mergedConstraints,
+        LocalDiscoveryConstraintExtractionResult extraction)
+    {
+        if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationPlaceTypes, out var encoded)
+            && !string.IsNullOrWhiteSpace(encoded))
+        {
+            return encoded
+                .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(NormalizeTypeToken)
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        return extraction.PlaceTypeHints
+            .Select(NormalizeTypeToken)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<PlaceSearchItem> FilterItemsByRequestedPlaceTypes(
+        IReadOnlyList<PlaceSearchItem> items,
+        IReadOnlyList<string> requestedPlaceTypes)
+    {
+        if (items.Count == 0 || requestedPlaceTypes.Count == 0)
+        {
+            return [];
+        }
+
+        return items
+            .Where(item => MatchesRequestedPlaceType(item, requestedPlaceTypes))
+            .ToArray();
+    }
+
+    private static bool MatchesRequestedPlaceType(
+        PlaceSearchItem item,
+        IReadOnlyList<string> requestedPlaceTypes)
+    {
+        var candidateTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var primaryType = NormalizeTypeToken(item.PrimaryType);
+        if (!string.IsNullOrWhiteSpace(primaryType))
+        {
+            candidateTypes.Add(primaryType);
+        }
+
+        if (item.Types is { Count: > 0 })
+        {
+            foreach (var value in item.Types)
+            {
+                var normalized = NormalizeTypeToken(value);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    candidateTypes.Add(normalized);
+                }
+            }
+        }
+
+        var category = NormalizeTypeToken(item.Category);
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            candidateTypes.Add(category);
+        }
+
+        if (candidateTypes.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var requested in requestedPlaceTypes)
+        {
+            if (string.IsNullOrWhiteSpace(requested))
+            {
+                continue;
+            }
+
+            if (candidateTypes.Contains(requested))
+            {
+                return true;
+            }
+
+            if (string.Equals(requested, "store", StringComparison.OrdinalIgnoreCase)
+                && candidateTypes.Any(type => type.EndsWith("_store", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            var requestedTokens = SplitTypeTokens(requested);
+            if (requestedTokens.Count == 0)
+            {
+                continue;
+            }
+
+            if (candidateTypes.Any(candidate => requestedTokens.IsSubsetOf(SplitTypeTokens(candidate))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NormalizeTypeToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant()
+            .Replace('-', '_')
+            .Replace(' ', '_');
+        return normalized;
+    }
+
+    private static HashSet<string> SplitTypeTokens(string value)
+    {
+        return value
+            .Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static token => !string.IsNullOrWhiteSpace(token))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyDictionary<string, string> BuildNormalizedConstraints(

@@ -92,6 +92,15 @@ public sealed class LocalDiscoveryConstraintExtractionTests
     }
 
     [Fact]
+    public void Extract_CoffeeShopsPhrase_DoesNotAddGenericStoreTypeHint()
+    {
+        var result = _extractor.Extract("coffee shops near me");
+
+        Assert.Contains("cafe", result.PlaceTypeHints);
+        Assert.DoesNotContain("store", result.PlaceTypeHints);
+    }
+
+    [Fact]
     public void Shape_NoGpsWithTypedArea_AppliesTypedAreaAndFriendlyHints()
     {
         var shaped = _shaper.Shape(

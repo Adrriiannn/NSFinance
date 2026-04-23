@@ -179,7 +179,7 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
         var tokens = normalized
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var placeTypeHints = ResolveMappedHints(tokens, PlaceTypeMap);
+        var placeTypeHints = ResolvePlaceTypeHints(normalized, tokens);
         var audienceHints = ResolveMappedHints(tokens, AudienceMap);
         var preferenceHints = ResolveMappedHints(tokens, PreferenceMap);
         var timeHints = ResolveTimeHints(normalized, tokens);
@@ -302,6 +302,30 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
         return hints.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    private static IReadOnlyList<string> ResolvePlaceTypeHints(
+        string normalizedText,
+        IReadOnlySet<string> tokens)
+    {
+        var hints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hasCoffeeShopPhrase = CoffeeShopPhrasePattern().IsMatch(normalizedText);
+        foreach (var token in tokens)
+        {
+            if (hasCoffeeShopPhrase
+                && (string.Equals(token, "shop", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(token, "shops", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            if (PlaceTypeMap.TryGetValue(token, out var mapped))
+            {
+                hints.Add(mapped);
+            }
+        }
+
+        return hints.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     private static IReadOnlyList<string> ResolveTimeHints(
         string normalizedText,
         IReadOnlySet<string> tokens)
@@ -392,6 +416,9 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
 
     [GeneratedRegex(@"\bnot near me[, ]+\s*([a-z0-9][a-z0-9\s'\-]{1,60})$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex NotNearMeLocalityPattern();
+
+    [GeneratedRegex(@"\bcoffee\s+shops?\b", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex CoffeeShopPhrasePattern();
 
     private static string? ExtractBranchOverrideLocalityHint(string normalizedText)
     {
