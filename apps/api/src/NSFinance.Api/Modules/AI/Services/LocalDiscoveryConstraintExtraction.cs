@@ -183,6 +183,7 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
         var localityHint = ExtractLocalityHint(normalized);
         var hasExplicitLocality = !string.IsNullOrWhiteSpace(localityHint);
         var hasDiscoveryPhrase = ContainsAnyPhrase(normalized, DiscoveryPhrases);
+        var hasOpenToken = tokens.Contains("open");
         var hasDiscoveryToken = tokens.Contains("places")
                                 || tokens.Contains("place")
                                 || tokens.Contains("nearby")
@@ -233,6 +234,12 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             reasonCodes.Add("local_discovery_time_hint");
         }
 
+        if (hasOpenToken)
+        {
+            confidence += 0.12d;
+            reasonCodes.Add("local_discovery_open_token");
+        }
+
         if (preferenceHints.Count > 0)
         {
             confidence += 0.10d;
@@ -248,6 +255,7 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
         confidence = Math.Round(Math.Clamp(confidence, 0d, 0.98d), 4, MidpointRounding.AwayFromZero);
         var isCandidate = confidence >= 0.55d
                           || (hasNearMeLanguage && (hasDiscoveryPhrase || placeTypeHints.Count > 0))
+                          || (hasNearMeLanguage && hasOpenToken)
                           || (hasExplicitLocality && (hasDiscoveryPhrase || placeTypeHints.Count > 0));
         if (!isCandidate)
         {

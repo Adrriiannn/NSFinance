@@ -36,7 +36,8 @@ public sealed record ConversationStateSnapshot(
     bool NeedsFollowUp = false,
     FollowUpBindingType FollowUpBindingType = FollowUpBindingType.None,
     ConversationResultContextReference? ResultContextRef = null,
-    ConversationLoopGuards? LoopGuards = null);
+    ConversationLoopGuards? LoopGuards = null,
+    PendingClarificationState? PendingClarification = null);
 
 public sealed record UserChatRequest(
     string UserMessage,

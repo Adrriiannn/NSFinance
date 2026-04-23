@@ -737,7 +737,8 @@ public static class ConversationSignalAnalyzer
         var hasSubjectiveLanguage = ContainsAny(normalized, "nice", "quiet", "safe", "good", "better", "best", "feel");
         var hasCorrectionSignal = ContainsAny(normalized, "actually", "instead", "not", "wrong", "forget", "change of plan");
         var hasTopicSwitchSignal = ContainsAny(normalized, "new topic", "something else", "different question");
-        var hasFactualQuestion = normalized.StartsWith("what ", StringComparison.Ordinal)
+        var hasFactualQuestion = (normalized.StartsWith("what ", StringComparison.Ordinal)
+                                  && !normalized.StartsWith("what about", StringComparison.Ordinal))
                                  || normalized.StartsWith("when ", StringComparison.Ordinal)
                                  || normalized.StartsWith("where ", StringComparison.Ordinal)
                                  || normalized.StartsWith("who ", StringComparison.Ordinal)

@@ -82,6 +82,7 @@ public sealed class FollowUpBindingPolicy : IFollowUpBindingPolicy
         var reasonCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var metadata = request.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var signals = ConversationSignalAnalyzer.Analyze(request.UserMessage);
+        var extraction = ConversationPolicyHelpers.ExtractLocalDiscovery(request.UserMessage);
         var snapshot = resultContextReadResult.ActiveResultContext;
         var bindingType = MapBindingType(resultContextReadResult.BindingClassification);
 
@@ -137,6 +138,17 @@ public sealed class FollowUpBindingPolicy : IFollowUpBindingPolicy
             reasonCodes.Add("followup_binding_semantic_family_mismatch");
             return new FollowUpBindingPolicyResult(
                 BindingType: FollowUpBindingType.NewTopic,
+                ActiveResultSetId: null,
+                SelectedEntityId: null,
+                ReasonCodes: reasonCodes.ToArray());
+        }
+
+        if (bindingType == FollowUpBindingType.None
+            && IsFreshStructuredSearchTurn(extraction, signals))
+        {
+            reasonCodes.Add("followup_binding_fresh_structured_query_precedence");
+            return new FollowUpBindingPolicyResult(
+                BindingType: FollowUpBindingType.None,
                 ActiveResultSetId: null,
                 SelectedEntityId: null,
                 ReasonCodes: reasonCodes.ToArray());
@@ -211,6 +223,23 @@ public sealed class FollowUpBindingPolicy : IFollowUpBindingPolicy
         }
 
         return !string.Equals(semanticFamily, sourceFamily, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsFreshStructuredSearchTurn(
+        LocalDiscoveryConstraintExtractionResult extraction,
+        ConversationSignals signals)
+    {
+        if (signals.HasBranchingSignal || signals.HasComparisonSignal || signals.HasResultReferenceSignal)
+        {
+            return false;
+        }
+
+        var hasPlaceType = extraction.PlaceTypeHints.Count > 0 || signals.HasConcretePlaceSignal;
+        var hasLocationFrame = extraction.HasNearMeLanguage
+                               || extraction.HasExplicitLocality
+                               || extraction.TimeHints.Count > 0
+                               || signals.HasExplicitLocation;
+        return hasPlaceType && hasLocationFrame;
     }
 
     private static bool TryReadGuid(
@@ -315,6 +344,53 @@ public sealed class ContradictionResolutionPolicy : IContradictionResolutionPoli
                 extraction,
                 mutationSignals,
                 updatedPlaceTypes);
+
+            var freshStructuredQuery = ConversationPolicyHelpers.HasConcreteStructuredSearchFrame(extraction, mutationSignals)
+                                       && !mutationSignals.HasBranchingSignal
+                                       && !mutationSignals.HasComparisonSignal
+                                       && !mutationSignals.HasResultReferenceSignal
+                                       && !mutationSignals.HasCorrectionSignal;
+            if (freshStructuredQuery)
+            {
+                constraints.Clear();
+                constraints[ConversationConstraintKeys.SemanticFamily] = ConversationSemanticFamilies.Exploration;
+                constraints[ConversationConstraintKeys.ExplorationSubtype] = ExplorationSubtype.Structured.ToString();
+                if (!string.IsNullOrWhiteSpace(updatedPlaceTypes))
+                {
+                    constraints[ConversationConstraintKeys.ExplorationPlaceTypes] = updatedPlaceTypes;
+                }
+
+                if (!string.IsNullOrWhiteSpace(updatedArea))
+                {
+                    constraints[ConversationConstraintKeys.ExplorationArea] = updatedArea;
+                }
+
+                if (!string.IsNullOrWhiteSpace(updatedTime))
+                {
+                    constraints[ConversationConstraintKeys.ExplorationTime] = updatedTime;
+                }
+
+                if (!string.IsNullOrWhiteSpace(updatedPreferences))
+                {
+                    constraints[ConversationConstraintKeys.ExplorationPreferences] = updatedPreferences;
+                }
+
+                reasonCodes.Add("contradiction_fresh_structured_query_reset");
+                return new ContradictionResolutionResult(
+                    State: state with
+                    {
+                        Constraints = constraints,
+                        SelectedEntityId = null,
+                        LastSuggestedEntities = [],
+                        LastExecutionFingerprint = null,
+                        ResultContextRef = null,
+                        TransitionIntent = ConversationTransitionIntents.DirectMode,
+                        NeedsFollowUp = true,
+                        FollowUpBindingType = FollowUpBindingType.None
+                    },
+                    BindingTypeOverride: FollowUpBindingType.None,
+                    ReasonCodes: reasonCodes.ToArray());
+            }
 
             if (SetConstraint(constraints, ConversationConstraintKeys.ExplorationSubtype, targetSubtype.ToString()))
             {
@@ -1131,12 +1207,19 @@ internal static class ConversationPolicyHelpers
         LocalDiscoveryConstraintExtractionResult extraction,
         ConversationSignals signals)
     {
-        return (extraction.PlaceTypeHints.Count > 0 || signals.HasConcretePlaceSignal)
-               && (extraction.HasNearMeLanguage
-                   || extraction.HasExplicitLocality
-                   || extraction.TimeHints.Count > 0
-                   || signals.HasExplicitLocation
-                   || signals.HasStructuredExplorationIntent);
+        var hasDomainFrame = extraction.PlaceTypeHints.Count > 0 || signals.HasConcretePlaceSignal;
+        var hasLocationFrame = extraction.HasNearMeLanguage
+                               || extraction.HasExplicitLocality
+                               || extraction.TimeHints.Count > 0
+                               || signals.HasExplicitLocation;
+        var hasAnchoredLocality = extraction.HasNearMeLanguage || extraction.HasExplicitLocality;
+        var hasOperationalFrame = extraction.TimeHints.Count > 0
+                                  || extraction.ReasonCodes.Contains("local_discovery_open_token", StringComparer.OrdinalIgnoreCase);
+        var hasStructuredSkeleton = extraction.IsLocalDiscoveryCandidate
+                                    && hasAnchoredLocality
+                                    && hasOperationalFrame;
+
+        return (hasDomainFrame && hasLocationFrame) || hasStructuredSkeleton;
     }
 
     public static bool HasAtmosphericExplorationIntent(

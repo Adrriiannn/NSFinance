@@ -53,6 +53,15 @@ public enum FollowUpBindingType
     NewTopic = 4
 }
 
+public enum ClarificationSlot
+{
+    None = 0,
+    ExplorationLocation = 1,
+    ExplorationPlaceType = 2,
+    ExplorationRefinement = 3,
+    FinancialFocus = 4
+}
+
 public enum ResponseCompositionType
 {
     Direct = 0,
@@ -194,6 +203,14 @@ public sealed record ConversationLoopGuards(
     int StrategicQuestionCountThisTurn = 0,
     int ConsecutiveNoProgressTurns = 0,
     string? LastClarificationFingerprint = null);
+
+public sealed record PendingClarificationState(
+    ClarificationSlot Slot,
+    string? PromptIntent = null,
+    string? KnownPlaceTypes = null,
+    string? KnownArea = null,
+    string? KnownTime = null,
+    DateTimeOffset? CreatedAtUtc = null);
 
 public sealed record ConversationSuggestedEntity(
     string EntityId,

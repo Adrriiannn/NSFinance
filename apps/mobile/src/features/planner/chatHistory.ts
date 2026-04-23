@@ -39,6 +39,10 @@ export type CompanionChat = {
   updatedUtc: string;
   messages: CompanionMessage[];
   conversationThreadId: string | null;
+  activeResultSetId: string | null;
+  selectedEntityId: string | null;
+  pendingClarificationSlot: string | null;
+  pendingClarificationPromptIntent: string | null;
   color: CompanionChatColor;
   isPinned: boolean;
   pinnedUtc: string | null;
@@ -73,6 +77,22 @@ function normalizeChat(raw: Partial<CompanionChat>): CompanionChat {
     conversationThreadId:
       typeof raw.conversationThreadId === "string" && raw.conversationThreadId.trim()
         ? raw.conversationThreadId
+        : null,
+    activeResultSetId:
+      typeof raw.activeResultSetId === "string" && raw.activeResultSetId.trim()
+        ? raw.activeResultSetId.trim()
+        : null,
+    selectedEntityId:
+      typeof raw.selectedEntityId === "string" && raw.selectedEntityId.trim()
+        ? raw.selectedEntityId.trim()
+        : null,
+    pendingClarificationSlot:
+      typeof raw.pendingClarificationSlot === "string" && raw.pendingClarificationSlot.trim()
+        ? raw.pendingClarificationSlot.trim()
+        : null,
+    pendingClarificationPromptIntent:
+      typeof raw.pendingClarificationPromptIntent === "string" && raw.pendingClarificationPromptIntent.trim()
+        ? raw.pendingClarificationPromptIntent.trim()
         : null,
     color,
     isPinned: Boolean(raw.isPinned),

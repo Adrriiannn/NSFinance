@@ -113,6 +113,7 @@ public sealed class ConversationStateService(
         var followUpBindingType = baseState.FollowUpBindingType;
         var resultContextRef = baseState.ResultContextRef;
         var loopGuards = baseState.LoopGuards ?? new ConversationLoopGuards();
+        var pendingClarification = baseState.PendingClarification;
 
         foreach (var kvp in updates)
         {
@@ -252,6 +253,78 @@ public sealed class ConversationStateService(
                     LastClarificationFingerprint = value
                 };
             }
+            else if (key.Equals("pending_clarification_slot", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Enum.TryParse<ClarificationSlot>(value, true, out var parsedSlot)
+                    && parsedSlot != ClarificationSlot.None)
+                {
+                    pendingClarification = (pendingClarification ?? new PendingClarificationState(parsedSlot)) with
+                    {
+                        Slot = parsedSlot
+                    };
+                }
+                else
+                {
+                    pendingClarification = null;
+                }
+            }
+            else if (key.Equals("pending_clarification_prompt_intent", StringComparison.OrdinalIgnoreCase))
+            {
+                if (pendingClarification is not null)
+                {
+                    pendingClarification = pendingClarification with
+                    {
+                        PromptIntent = value
+                    };
+                }
+            }
+            else if (key.Equals("pending_clarification_known_place_types", StringComparison.OrdinalIgnoreCase))
+            {
+                if (pendingClarification is not null)
+                {
+                    pendingClarification = pendingClarification with
+                    {
+                        KnownPlaceTypes = value
+                    };
+                }
+            }
+            else if (key.Equals("pending_clarification_known_area", StringComparison.OrdinalIgnoreCase))
+            {
+                if (pendingClarification is not null)
+                {
+                    pendingClarification = pendingClarification with
+                    {
+                        KnownArea = value
+                    };
+                }
+            }
+            else if (key.Equals("pending_clarification_known_time", StringComparison.OrdinalIgnoreCase))
+            {
+                if (pendingClarification is not null)
+                {
+                    pendingClarification = pendingClarification with
+                    {
+                        KnownTime = value
+                    };
+                }
+            }
+            else if (key.Equals("pending_clarification_created_utc", StringComparison.OrdinalIgnoreCase)
+                     && DateTimeOffset.TryParse(value, out var parsedCreatedAtUtc))
+            {
+                if (pendingClarification is not null)
+                {
+                    pendingClarification = pendingClarification with
+                    {
+                        CreatedAtUtc = parsedCreatedAtUtc
+                    };
+                }
+            }
+            else if (key.Equals("pending_clarification_clear", StringComparison.OrdinalIgnoreCase)
+                     && bool.TryParse(value, out var clearPendingClarification)
+                     && clearPendingClarification)
+            {
+                pendingClarification = null;
+            }
         }
 
         return NormalizeState(new ConversationStateSnapshot(
@@ -281,7 +354,8 @@ public sealed class ConversationStateService(
             NeedsFollowUp: needsFollowUp,
             FollowUpBindingType: followUpBindingType,
             ResultContextRef: resultContextRef,
-            LoopGuards: loopGuards));
+            LoopGuards: loopGuards,
+            PendingClarification: pendingClarification));
     }
 
     private static string SerializeState(ConversationStateSnapshot state)
@@ -332,6 +406,12 @@ public sealed class ConversationStateService(
             .Select(x => x.OrderBy(entity => entity.Rank).First())
             .ToArray();
 
+        PendingClarificationState? pendingClarification = snapshot.PendingClarification;
+        if (pendingClarification?.Slot == ClarificationSlot.None)
+        {
+            pendingClarification = null;
+        }
+
         ConversationResultContextReference? resultContextRef = snapshot.ResultContextRef;
         if (resultContextRef?.ExpiresUtc is DateTime expiresUtc && expiresUtc <= DateTime.UtcNow)
         {
@@ -369,7 +449,8 @@ public sealed class ConversationStateService(
             NeedsFollowUp: snapshot.NeedsFollowUp,
             FollowUpBindingType: snapshot.FollowUpBindingType,
             ResultContextRef: resultContextRef,
-            LoopGuards: snapshot.LoopGuards ?? new ConversationLoopGuards());
+            LoopGuards: snapshot.LoopGuards ?? new ConversationLoopGuards(),
+            PendingClarification: pendingClarification);
     }
 
     private static ConversationStateSnapshot CreateDefaultState()
@@ -401,7 +482,8 @@ public sealed class ConversationStateService(
             NeedsFollowUp: false,
             FollowUpBindingType: FollowUpBindingType.None,
             ResultContextRef: null,
-            LoopGuards: new ConversationLoopGuards());
+            LoopGuards: new ConversationLoopGuards(),
+            PendingClarification: null);
     }
 
     private async Task EnsureThreadOwnershipAsync(Guid userId, Guid conversationThreadId, CancellationToken cancellationToken)

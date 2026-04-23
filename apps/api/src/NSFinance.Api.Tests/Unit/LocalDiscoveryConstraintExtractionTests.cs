@@ -69,6 +69,16 @@ public sealed class LocalDiscoveryConstraintExtractionTests
     }
 
     [Fact]
+    public void Extract_OpenNearMePrompt_IsStructuredCandidateEvenWithoutExplicitPlaceType()
+    {
+        var result = _extractor.Extract("what's open near me");
+
+        Assert.True(result.IsLocalDiscoveryCandidate);
+        Assert.True(result.HasNearMeLanguage);
+        Assert.Contains("local_discovery_open_token", result.ReasonCodes);
+    }
+
+    [Fact]
     public void Shape_NoGpsWithTypedArea_AppliesTypedAreaAndFriendlyHints()
     {
         var shaped = _shaper.Shape(

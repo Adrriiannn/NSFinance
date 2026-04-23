@@ -1565,7 +1565,8 @@ public sealed class ConversationLayerOrchestrator(
                 MissingConstraints = state.MissingConstraints?.ToArray() ?? [],
                 LastSuggestedOptions = state.LastSuggestedOptions?.ToArray() ?? [],
                 LastSuggestedEntities = state.LastSuggestedEntities?.ToArray() ?? [],
-                LoopGuards = state.LoopGuards ?? new ConversationLoopGuards()
+                LoopGuards = state.LoopGuards ?? new ConversationLoopGuards(),
+                PendingClarification = state.PendingClarification
             };
         }
 
@@ -1634,6 +1635,39 @@ public sealed class ConversationLayerOrchestrator(
         if (!string.IsNullOrWhiteSpace(state.SelectedEntityId))
         {
             updates["selected_entity_id"] = state.SelectedEntityId;
+        }
+
+        if (state.PendingClarification is not null)
+        {
+            updates["pending_clarification_slot"] = state.PendingClarification.Slot.ToString();
+            if (!string.IsNullOrWhiteSpace(state.PendingClarification.PromptIntent))
+            {
+                updates["pending_clarification_prompt_intent"] = state.PendingClarification.PromptIntent!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.PendingClarification.KnownPlaceTypes))
+            {
+                updates["pending_clarification_known_place_types"] = state.PendingClarification.KnownPlaceTypes!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.PendingClarification.KnownArea))
+            {
+                updates["pending_clarification_known_area"] = state.PendingClarification.KnownArea!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.PendingClarification.KnownTime))
+            {
+                updates["pending_clarification_known_time"] = state.PendingClarification.KnownTime!;
+            }
+
+            if (state.PendingClarification.CreatedAtUtc.HasValue)
+            {
+                updates["pending_clarification_created_utc"] = state.PendingClarification.CreatedAtUtc.Value.UtcDateTime.ToString("O");
+            }
+        }
+        else
+        {
+            updates["pending_clarification_clear"] = "true";
         }
 
         if (resultContext?.ResultSetId is Guid resultSetId)

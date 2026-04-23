@@ -261,7 +261,10 @@ public sealed class ResultContextService(
             || normalized.Contains("filter", StringComparison.Ordinal)
             || normalized.Contains("cheaper", StringComparison.Ordinal)
             || normalized.Contains("quieter", StringComparison.Ordinal)
-            || normalized.Contains("closer", StringComparison.Ordinal))
+            || normalized.Contains("closer", StringComparison.Ordinal)
+            || normalized.Contains("shortlist", StringComparison.Ordinal)
+            || normalized.Contains("short list", StringComparison.Ordinal)
+            || normalized.Contains("top options", StringComparison.Ordinal))
         {
             return ResultContextBindingClassification.Refine;
         }

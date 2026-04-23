@@ -255,6 +255,10 @@ const createChat = (): CompanionChat => {
     updatedUtc: now,
     messages: [],
     conversationThreadId: null,
+    activeResultSetId: null,
+    selectedEntityId: null,
+    pendingClarificationSlot: null,
+    pendingClarificationPromptIntent: null,
     color: "orange",
     isPinned: false,
     pinnedUtc: null
@@ -620,6 +624,55 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     });
   }, []);
 
+  const applySuggestedStateUpdatesToChat = useCallback((
+    chatId: string,
+    updates: Record<string, string>
+  ) => {
+    if (!updates || Object.keys(updates).length === 0) {
+      return;
+    }
+
+    setChats((current) =>
+      sortChatsByPinAndRecency(
+        current.map((chat) => {
+          if (chat.id !== chatId) {
+            return chat;
+          }
+
+          const bindingType = updates.follow_up_binding_type?.trim().toLowerCase();
+          const shouldClearResultContext = bindingType === "none" || bindingType === "newtopic";
+          const activeResultSetIdFromUpdate =
+            updates.active_result_set_id?.trim()
+            || updates.result_context_active_result_set_id?.trim()
+            || null;
+          const activeResultSetId = shouldClearResultContext
+            ? null
+            : activeResultSetIdFromUpdate ?? chat.activeResultSetId;
+          const selectedEntityId = shouldClearResultContext
+            ? null
+            : updates.selected_entity_id?.trim() ?? chat.selectedEntityId;
+          const clearPending = updates.pending_clarification_clear === "true";
+          const pendingClarificationSlot = clearPending
+            ? null
+            : updates.pending_clarification_slot?.trim()
+              ?? chat.pendingClarificationSlot;
+          const pendingClarificationPromptIntent = clearPending
+            ? null
+            : updates.pending_clarification_prompt_intent?.trim()
+              ?? chat.pendingClarificationPromptIntent;
+
+          return {
+            ...chat,
+            activeResultSetId: activeResultSetId || null,
+            selectedEntityId: selectedEntityId || null,
+            pendingClarificationSlot: pendingClarificationSlot || null,
+            pendingClarificationPromptIntent: pendingClarificationPromptIntent || null
+          };
+        })
+      )
+    );
+  }, []);
+
   const setChatThreadId = useCallback((chatId: string, conversationThreadId: string | null) => {
     if (!conversationThreadId) {
       return;
@@ -686,7 +739,17 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       const locationMetadata = locationContext
         ? buildChatLocationMetadata(locationContext)
         : null;
+      const contextMetadata: Record<string, string> = {};
+      if (activeChat.activeResultSetId) {
+        contextMetadata.chat_result_set_id = activeChat.activeResultSetId;
+      }
+
+      if (activeChat.selectedEntityId) {
+        contextMetadata.chat_selected_entity_id = activeChat.selectedEntityId;
+      }
+
       const mergedMetadata = {
+        ...contextMetadata,
         ...(diagnosticsMetadata ?? {}),
         ...(locationMetadata ?? {})
       };
@@ -709,6 +772,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       });
 
       setChatThreadId(activeChat.id, response.conversationThreadId);
+      applySuggestedStateUpdatesToChat(activeChat.id, response.suggestedStateUpdates);
 
       if (response.inProgress) {
         setSendInfo("Assistant response is still in progress. Please retry in a moment.");
@@ -762,7 +826,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       setIsSending(false);
       setSendingChatId(null);
     }
-  }, [activeChat, appendMessageToChat, isSending, setChatThreadId]);
+  }, [activeChat, appendMessageToChat, applySuggestedStateUpdatesToChat, isSending, setChatThreadId]);
 
   const queueNearbyGroundingPrompt = useCallback((
     prompt: string,
@@ -808,6 +872,43 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     });
     return second;
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const syncPermissionAfterSettingsReturn = async () => {
+        if (!pendingNearbyRequest || !locationSettingsPromptVisible) {
+          return;
+        }
+
+        const latestPermissionState = await resolveLatestPermissionState();
+        if (cancelled || latestPermissionState !== "granted") {
+          return;
+        }
+
+        setPendingNearbyRequest((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            diagnosticsMetadata: {
+              ...current.diagnosticsMetadata,
+              chat_location_permission_state: "granted"
+            }
+          };
+        });
+        setLocationSettingsPromptVisible(false);
+        setNearbyPermissionPromptVisible(true);
+      };
+
+      void syncPermissionAfterSettingsReturn();
+      return () => {
+        cancelled = true;
+      };
+    }, [locationSettingsPromptVisible, pendingNearbyRequest, resolveLatestPermissionState])
+  );
 
   const sendWithGrounding = useCallback(async (
     prompt: string,
@@ -1061,6 +1162,18 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
 
   const pinnedChats = useMemo(() => chats.filter((chat) => chat.isPinned), [chats]);
   const regularChats = useMemo(() => chats.filter((chat) => !chat.isPinned), [chats]);
+  const pendingNearbyPermissionState =
+    pendingNearbyRequest?.diagnosticsMetadata?.chat_location_permission_state ?? "unknown";
+  const nearbyLocationPrimaryLabel =
+    pendingNearbyPermissionState === "granted" ? "Use current location" : "Allow location";
+  const nearbyLocationTitle =
+    pendingNearbyPermissionState === "granted"
+      ? "Use current location for nearby places"
+      : "Allow location for nearby places";
+  const nearbyLocationMessage =
+    pendingNearbyPermissionState === "granted"
+      ? "Location access is enabled. Use your current location now, or enter an area manually."
+      : "This request needs location to find places near you. You can allow location now or enter an area manually.";
 
   const showPrompts = isKeyboardVisible && (isInputFocused || input.trim().length > 0);
   const promptSuggestions = useMemo(() => {
@@ -1474,11 +1587,11 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       <LocationPermissionPromptModal
         visible={nearbyPermissionPromptVisible}
         onRequestClose={clearPendingNearbyRequest}
-        title="Allow location for nearby places"
-        message="This request needs location to find places near you. You can allow location now or enter an area manually."
+        title={nearbyLocationTitle}
+        message={nearbyLocationMessage}
         actions={[
           {
-            label: "Allow location",
+            label: nearbyLocationPrimaryLabel,
             onPress: () => {
               void handleAllowNearbyPermission();
             },

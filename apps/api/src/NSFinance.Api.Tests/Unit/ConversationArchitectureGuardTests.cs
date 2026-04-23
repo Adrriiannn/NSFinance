@@ -156,6 +156,294 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task StructuredExplorationHandler_ExecutesPlaces_WhenStructuredRequestIsCompleteAndToolReady()
+    {
+        var placesSearch = new TrackingPlacesSearchService();
+        var handler = new StructuredExplorationHandler(
+            new StubConstraintExtractor(),
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "parks near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-structured-ready",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-structured-ready",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.93d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.90d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, placesSearch.CallCount);
+    }
+
+    [Fact]
+    public async Task StructuredExplorationHandler_ClarifiesLocationOnly_WhenPlaceTypeKnownButLocationMissing()
+    {
+        var placesSearch = new TrackingPlacesSearchService();
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.91d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: ["open_now"],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "coffee shops open now",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-location-only",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.PermissionState] = "unknown"
+                    },
+                    ClientRequestId: "client-location-only",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R2_DirectionKnown,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.89d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.89d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: ["area_or_location"],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.PermissionState] = "unknown"
+                }),
+            CancellationToken.None);
+
+        Assert.Equal(0, placesSearch.CallCount);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Contains("don't have your location", result.CompositionRequest!.ClarificationQuestion!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["Use current location", "Specify area"], result.CompositionRequest.SuggestedOptions);
+        Assert.Equal(ClarificationSlot.ExplorationLocation, result.State.PendingClarification?.Slot);
+    }
+
+    [Fact]
+    public async Task StructuredExplorationHandler_ClarifiesPlaceTypeOnly_WhenLocationAlreadyKnown()
+    {
+        var placesSearch = new TrackingPlacesSearchService();
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.82d,
+                HasNearMeLanguage: true,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: [],
+                AudienceHints: [],
+                TimeHints: ["open_now"],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "what's open near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-place-type-only",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Source] = "gps",
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097"
+                    },
+                    ClientRequestId: "client-place-type-only",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R2_DirectionKnown,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.88d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.85d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: ["place_type"],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Source] = "gps",
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097"
+                }),
+            CancellationToken.None);
+
+        Assert.Equal(0, placesSearch.CallCount);
+        Assert.NotNull(result.CompositionRequest);
+        Assert.Contains("what would you like me to look for", result.CompositionRequest!.ClarificationQuestion!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["Coffee shops", "Restaurants", "Shops", "Parks"], result.CompositionRequest.SuggestedOptions);
+        Assert.Equal(ClarificationSlot.ExplorationPlaceType, result.State.PendingClarification?.Slot);
+    }
+
+    [Fact]
+    public async Task StructuredExplorationHandler_UsesDeniedPermissionPrompt_WhenLocationPermissionIsBlocked()
+    {
+        var placesSearch = new TrackingPlacesSearchService();
+        var extractor = new FixedConstraintExtractor(
+            new LocalDiscoveryConstraintExtractionResult(
+                IsLocalDiscoveryCandidate: true,
+                Confidence: 0.91d,
+                HasNearMeLanguage: false,
+                HasExplicitLocality: false,
+                LocalityHint: null,
+                PlaceTypeHints: ["cafe"],
+                AudienceHints: [],
+                TimeHints: ["open_now"],
+                PreferenceHints: [],
+                ReasonCodes: ["fixed_extractor"]));
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "coffee shops open now",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-location-denied",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.PermissionState] = "denied_open_settings"
+                    },
+                    ClientRequestId: "client-location-denied",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R2_DirectionKnown,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.89d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.89d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: ["area_or_location"],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.PermissionState] = "denied_open_settings"
+                }),
+            CancellationToken.None);
+
+        Assert.Equal(0, placesSearch.CallCount);
+        Assert.Contains("settings", result.CompositionRequest!.ClarificationQuestion!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["Allow location", "Specify area"], result.CompositionRequest.SuggestedOptions);
+        Assert.Equal("location_permission_denied_or_unavailable", result.FollowUpIntentHints.Last());
+    }
+
+    [Fact]
     public async Task ConversationLayerOrchestrator_ExecutesBehaviorEngineBeforeModeRouter()
     {
         var order = new List<string>();
@@ -545,6 +833,11 @@ public sealed class ConversationArchitectureGuardTests
                 PreferenceHints: [],
                 ReasonCodes: ["stub_constraint_extract"]);
         }
+    }
+
+    private sealed class FixedConstraintExtractor(LocalDiscoveryConstraintExtractionResult result) : ILocalDiscoveryConstraintExtractor
+    {
+        public LocalDiscoveryConstraintExtractionResult Extract(string? userQuery) => result;
     }
 
     private sealed class StubQueryShaper : ILocalDiscoveryQueryShaper

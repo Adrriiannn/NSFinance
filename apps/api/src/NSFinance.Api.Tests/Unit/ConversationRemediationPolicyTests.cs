@@ -318,6 +318,163 @@ public sealed class ConversationRemediationPolicyTests
     }
 
     [Fact]
+    public void FollowUpBindingPolicy_PrefersFreshStructuredQuery_OverActiveResultContext()
+    {
+        var snapshot = CreateResultContextSnapshot(activeWindowExpired: false);
+        var policy = new FollowUpBindingPolicy();
+
+        var result = policy.Determine(
+            BuildChatRequest("coffee shops near me", CreateDefaultState()),
+            CreateDefaultState(),
+            new ResultContextReadResult(
+                ActiveResultContext: snapshot,
+                BindingClassification: ResultContextBindingClassification.None,
+                UsedClientResultSetId: false,
+                ExpiredBindingCleared: false,
+                ReasonCodes: []));
+
+        Assert.Equal(FollowUpBindingType.None, result.BindingType);
+        Assert.Null(result.ActiveResultSetId);
+        Assert.Contains("followup_binding_fresh_structured_query_precedence", result.ReasonCodes);
+    }
+
+    [Fact]
+    public void FollowUpBindingPolicy_BranchesLocationChange_WhenActiveStructuredContextExists()
+    {
+        var snapshot = CreateResultContextSnapshot(activeWindowExpired: false);
+        var policy = new FollowUpBindingPolicy();
+        var state = CreateDefaultState(semanticFamily: ConversationSemanticFamilies.Exploration);
+
+        var result = policy.Determine(
+            BuildChatRequest("What about Dublin 2 instead?", state),
+            state,
+            new ResultContextReadResult(
+                ActiveResultContext: snapshot,
+                BindingClassification: ResultContextBindingClassification.NewBranch,
+                UsedClientResultSetId: false,
+                ExpiredBindingCleared: false,
+                ReasonCodes: []));
+
+        Assert.Equal(FollowUpBindingType.NewBranch, result.BindingType);
+        Assert.Equal(snapshot.ResultSetId, result.ActiveResultSetId);
+    }
+
+    [Fact]
+    public async Task ConversationBehaviorEngine_StitchesLocationSlotFillReplies_ToPendingStructuredClarification()
+    {
+        var state = CreateDefaultState(
+            semanticFamily: ConversationSemanticFamilies.Exploration,
+            explorationSubtype: ExplorationSubtype.Structured.ToString(),
+            explorationPlaceTypes: "cafe",
+            explorationArea: "near_me") with
+        {
+            PendingClarification = new PendingClarificationState(
+                Slot: ClarificationSlot.ExplorationLocation,
+                PromptIntent: "location_permission_prompt",
+                KnownPlaceTypes: "cafe",
+                KnownArea: "near_me",
+                KnownTime: "open_now",
+                CreatedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1))
+        };
+
+        var decisionEngine = new CapturingDecisionEngine(
+            new ConversationTurnStrategyDecision(
+                Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                ModeCandidate: ConversationMode.Exploration,
+                Readiness: new ReadinessTransition(
+                    From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                    To: ConversationReadinessLevel.R4_ToolReady),
+                Confidence: 0.94d,
+                FollowUpBindingType: FollowUpBindingType.None,
+                ClarificationQuestion: null,
+                SuggestedOptions: [],
+                ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                ReasonCodes: ["captured_tool_ready"]),
+            new ExplorationSubtypeDecision(
+                Subtype: ExplorationSubtype.Structured,
+                Confidence: 0.9d,
+                ToolPathEligible: true,
+                PrimaryWhy: "Structured after stitch.",
+                MissingConstraints: [],
+                ReasonCodes: ["captured_structured"]));
+        var engine = CreateBehaviorEngine(decisionEngine);
+
+        var result = await engine.EvaluateAsync(
+            BuildBehaviorRequest(
+                "near me",
+                state,
+                metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.NotNull(decisionEngine.LastPrimaryUserMessage);
+        Assert.Contains("coffee shops near me open now", decisionEngine.LastPrimaryUserMessage!, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.State.PendingClarification);
+        Assert.Contains("clarification_slot_fill_location_resolved", result.StrategyDecision.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task ConversationBehaviorEngine_StitchesPlaceTypeSlotFillReplies_WithoutReaskingKnownLocation()
+    {
+        var state = CreateDefaultState(
+            semanticFamily: ConversationSemanticFamilies.Exploration,
+            explorationSubtype: ExplorationSubtype.Structured.ToString(),
+            explorationArea: "near_me") with
+        {
+            PendingClarification = new PendingClarificationState(
+                Slot: ClarificationSlot.ExplorationPlaceType,
+                PromptIntent: "exploration_missing_place_type",
+                KnownPlaceTypes: null,
+                KnownArea: "near_me",
+                KnownTime: "open_now",
+                CreatedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1))
+        };
+
+        var decisionEngine = new CapturingDecisionEngine(
+            new ConversationTurnStrategyDecision(
+                Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                ModeCandidate: ConversationMode.Exploration,
+                Readiness: new ReadinessTransition(
+                    From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                    To: ConversationReadinessLevel.R4_ToolReady),
+                Confidence: 0.93d,
+                FollowUpBindingType: FollowUpBindingType.None,
+                ClarificationQuestion: null,
+                SuggestedOptions: [],
+                ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                ReasonCodes: ["captured_tool_ready"]),
+            new ExplorationSubtypeDecision(
+                Subtype: ExplorationSubtype.Structured,
+                Confidence: 0.9d,
+                ToolPathEligible: true,
+                PrimaryWhy: "Structured after stitch.",
+                MissingConstraints: [],
+                ReasonCodes: ["captured_structured"]));
+        var engine = CreateBehaviorEngine(decisionEngine);
+
+        var result = await engine.EvaluateAsync(
+            BuildBehaviorRequest(
+                "coffee shops",
+                state,
+                metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        Assert.NotNull(decisionEngine.LastPrimaryUserMessage);
+        Assert.Contains("coffee shops near me open now", decisionEngine.LastPrimaryUserMessage!, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(result.State.PendingClarification);
+        Assert.Contains("clarification_slot_fill_place_type_resolved", result.StrategyDecision.ReasonCodes);
+    }
+
+    [Fact]
     public async Task ConversationBehaviorEngine_DoesNotEmitGuardWarning_ForOrdinaryDirectConversationTurn()
     {
         var engine = CreateBehaviorEngine(
@@ -420,6 +577,21 @@ public sealed class ConversationRemediationPolicyTests
     {
         return new ConversationBehaviorEngine(
             new StubDecisionEngine(decision, explorationSubtypeDecision),
+            new ConversationModelRoutingPolicy(),
+            new ReadinessTransitionPolicy(),
+            new FollowUpBindingPolicy(),
+            new ContradictionResolutionPolicy(),
+            new FinancialActivationPolicy(),
+            new ExplorationSubtypeDecisionPolicy(),
+            new ToolGuardWarningPolicy(),
+            new NoOpChatTelemetry());
+    }
+
+    private static ConversationBehaviorEngine CreateBehaviorEngine(
+        IConversationDecisionEngine decisionEngine)
+    {
+        return new ConversationBehaviorEngine(
+            decisionEngine,
             new ConversationModelRoutingPolicy(),
             new ReadinessTransitionPolicy(),
             new FollowUpBindingPolicy(),
@@ -699,6 +871,42 @@ public sealed class ConversationRemediationPolicyTests
                 IsFallback: false,
                 Reason: "stub_route",
                 Notes: []);
+        }
+    }
+
+    private sealed class CapturingDecisionEngine(
+        ConversationTurnStrategyDecision decision,
+        ExplorationSubtypeDecision explorationSubtypeDecision) : IConversationDecisionEngine
+    {
+        public string? LastPrimaryUserMessage { get; private set; }
+        public string? LastSubtypeUserMessage { get; private set; }
+
+        public Task<ConversationDecisionEvaluationResult> EvaluateAsync(
+            ConversationBehaviorRequest request,
+            ConversationModelSelectionPlan modelSelection,
+            CancellationToken cancellationToken)
+        {
+            LastPrimaryUserMessage = request.Request.UserMessage;
+            return Task.FromResult(
+                new ConversationDecisionEvaluationResult(
+                    Decision: decision,
+                    ModelSelection: modelSelection,
+                    Route: null,
+                    UsedModelInvocation: false));
+        }
+
+        public Task<ExplorationSubtypeEvaluationResult> DetermineExplorationSubtypeAsync(
+            ConversationModeRequest request,
+            ConversationModelSelectionPlan modelSelection,
+            CancellationToken cancellationToken)
+        {
+            LastSubtypeUserMessage = request.Request.UserMessage;
+            return Task.FromResult(
+                new ExplorationSubtypeEvaluationResult(
+                    Decision: explorationSubtypeDecision,
+                    ModelSelection: modelSelection,
+                    Route: null,
+                    UsedModelInvocation: false));
         }
     }
 }

@@ -74,19 +74,39 @@ public sealed class StructuredExplorationHandler(
             AccuracyBucket: grounding.AccuracyBucket,
             CapturedAtUtc: grounding.CapturedAtUtc);
 
-        var shaped = queryShaper.Shape(request.Request.UserMessage, locationContext, extraction);
-        warnings.UnionWith(shaped.ReasonCodes);
-
-        if (request.StrategyDecision.Readiness.To != ConversationReadinessLevel.R4_ToolReady
-            || request.StrategyDecision.ToolExecutionPermission != ToolExecutionPermission.EligibleIfGuardPasses)
+        var missingConstraints = BuildMissingConstraints(extraction, grounding, request.State);
+        var toolReady = request.StrategyDecision.Readiness.To == ConversationReadinessLevel.R4_ToolReady
+                        && request.StrategyDecision.ToolExecutionPermission == ToolExecutionPermission.EligibleIfGuardPasses;
+        if (!toolReady || missingConstraints.Count > 0)
         {
             warnings.Add("chat.tool.guard_blocked");
+            var clarification = BuildStructuredClarificationPrompt(
+                missingConstraints,
+                extraction,
+                grounding,
+                request.ClientMetadata,
+                request.State);
+            var mergedConstraints = MergeExplorationConstraintState(
+                request.State.Constraints,
+                extraction,
+                grounding);
             var blockedState = request.State with
             {
                 ActiveMode = ConversationMode.Conversation,
                 ModeCandidate = ConversationMode.Exploration,
-                MissingConstraints = BuildMissingConstraints(extraction, grounding),
-                LastClarificationPrompt = "I can search once we pin down the missing detail or confirm the area."
+                ReadinessLevel = ConversationReadinessLevel.R3_StructuredIncomplete,
+                Constraints = mergedConstraints,
+                MissingConstraints = missingConstraints,
+                LastClarificationPrompt = clarification.Question,
+                LastSuggestedOptions = clarification.SuggestedOptions,
+                PendingClarification = new PendingClarificationState(
+                    Slot: clarification.Slot,
+                    PromptIntent: clarification.PromptIntent,
+                    KnownPlaceTypes: mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationPlaceTypes, out var placeTypes) ? placeTypes : null,
+                    KnownArea: mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var area) ? area : null,
+                    KnownTime: mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationTime, out var time) ? time : null,
+                    CreatedAtUtc: DateTimeOffset.UtcNow),
+                NeedsFollowUp = true
             };
 
             return new ConversationModeExecutionResult(
@@ -102,15 +122,18 @@ public sealed class StructuredExplorationHandler(
                     MissingConstraints: blockedState.MissingConstraints ?? [],
                     MaxLengthHint: 450,
                     ClarificationQuestion: blockedState.LastClarificationPrompt,
-                    SuggestedOptions: ["Add an area", "Share a concrete place type"]),
+                    SuggestedOptions: blockedState.LastSuggestedOptions),
                 DeterministicReplyText: null,
                 SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 State: blockedState,
                 ResultContext: request.ResultContext,
                 Warnings: warnings.ToArray(),
-                FollowUpIntentHints: ["clarify_intent"],
+                FollowUpIntentHints: ["clarify_intent", clarification.PromptIntent],
                 Succeeded: true);
         }
+
+        var shaped = queryShaper.Shape(request.Request.UserMessage, locationContext, extraction);
+        warnings.UnionWith(shaped.ReasonCodes);
 
         var countryCode = ResolveCountryCode(request.ClientMetadata, request.State);
         var searchResult = await placesSearchService.SearchAsync(
@@ -144,6 +167,7 @@ public sealed class StructuredExplorationHandler(
                     ActiveMode = ConversationMode.Exploration,
                     ModeCandidate = ConversationMode.Exploration,
                     ReadinessLevel = ConversationReadinessLevel.R3_StructuredIncomplete,
+                    PendingClarification = null,
                     NeedsFollowUp = true
                 },
                 ResultContext: request.ResultContext,
@@ -189,6 +213,7 @@ public sealed class StructuredExplorationHandler(
                     .ToArray(),
                 ResultContextRef = write.Reference,
                 LastExecutionFingerprint = write.Snapshot.QueryFingerprint,
+                PendingClarification = null,
                 NeedsFollowUp = true
             };
         }
@@ -226,21 +251,145 @@ public sealed class StructuredExplorationHandler(
 
     private static IReadOnlyList<string> BuildMissingConstraints(
         LocalDiscoveryConstraintExtractionResult extraction,
-        CompanionLocationGrounding grounding)
+        CompanionLocationGrounding grounding,
+        ConversationStateSnapshot state)
     {
         var missing = new List<string>();
-        if (extraction.PlaceTypeHints.Count == 0)
+        var hasKnownPlaceTypes = extraction.PlaceTypeHints.Count > 0
+                                 || state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationPlaceTypes, out var existingPlaceTypes)
+                                 && !string.IsNullOrWhiteSpace(existingPlaceTypes);
+        if (!hasKnownPlaceTypes)
         {
             missing.Add("place_type");
         }
 
-        if (!grounding.HasCoordinates && !grounding.HasTypedArea && !extraction.HasExplicitLocality)
+        var hasPersistentArea = state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var existingArea)
+                                && !string.IsNullOrWhiteSpace(existingArea)
+                                && !string.Equals(existingArea, "near_me", StringComparison.OrdinalIgnoreCase);
+        var hasKnownArea = grounding.HasCoordinates
+                           || grounding.HasTypedArea
+                           || extraction.HasExplicitLocality
+                           || hasPersistentArea;
+        if (!hasKnownArea)
         {
             missing.Add("area_or_location");
         }
 
         return missing;
     }
+
+    private static StructuredClarificationPrompt BuildStructuredClarificationPrompt(
+        IReadOnlyList<string> missingConstraints,
+        LocalDiscoveryConstraintExtractionResult extraction,
+        CompanionLocationGrounding grounding,
+        IReadOnlyDictionary<string, string> metadata,
+        ConversationStateSnapshot state)
+    {
+        var missingPlaceType = missingConstraints.Contains("place_type", StringComparer.OrdinalIgnoreCase);
+        var missingLocation = missingConstraints.Contains("area_or_location", StringComparer.OrdinalIgnoreCase);
+        var hasSearchableLocation = grounding.HasCoordinates
+                                    || grounding.HasTypedArea
+                                    || extraction.HasExplicitLocality
+                                    || state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var knownArea)
+                                    && !string.IsNullOrWhiteSpace(knownArea)
+                                    && !string.Equals(knownArea, "near_me", StringComparison.OrdinalIgnoreCase);
+
+        if (missingPlaceType && (!missingLocation || hasSearchableLocation))
+        {
+            return new StructuredClarificationPrompt(
+                Slot: ClarificationSlot.ExplorationPlaceType,
+                PromptIntent: "exploration_missing_place_type",
+                Question: "I can search near you. What would you like me to look for?",
+                SuggestedOptions: ["Coffee shops", "Restaurants", "Shops", "Parks"]);
+        }
+
+        if (missingLocation)
+        {
+            var permissionState = ResolveLocationPermissionState(metadata);
+            return permissionState switch
+            {
+                "denied_open_settings" or "unavailable" => new StructuredClarificationPrompt(
+                    Slot: ClarificationSlot.ExplorationLocation,
+                    PromptIntent: "location_permission_denied_or_unavailable",
+                    Question: "I can't use your current location right now. Enable location in settings, or tell me an area to search.",
+                    SuggestedOptions: ["Allow location", "Specify area"]),
+                "denied_can_ask_again" or "unknown" => new StructuredClarificationPrompt(
+                    Slot: ClarificationSlot.ExplorationLocation,
+                    PromptIntent: "location_permission_prompt",
+                    Question: "I can do that. I don't have your location yet. Do you want to search near your current location or in a specific area?",
+                    SuggestedOptions: ["Use current location", "Specify area"]),
+                _ => new StructuredClarificationPrompt(
+                    Slot: ClarificationSlot.ExplorationLocation,
+                    PromptIntent: "location_missing_fix",
+                    Question: "I can search as soon as location is set. Do you want to use your current location or specify an area?",
+                    SuggestedOptions: ["Use current location", "Specify area"])
+            };
+        }
+
+        return new StructuredClarificationPrompt(
+            Slot: ClarificationSlot.ExplorationRefinement,
+            PromptIntent: "exploration_refine",
+            Question: "What should I refine first?",
+            SuggestedOptions: ["Distance", "Parking", "Open now"]);
+    }
+
+    private static string ResolveLocationPermissionState(IReadOnlyDictionary<string, string> metadata)
+    {
+        if (metadata.TryGetValue(CompanionLocationMetadataKeys.PermissionState, out var exactValue)
+            && !string.IsNullOrWhiteSpace(exactValue))
+        {
+            return exactValue.Trim().ToLowerInvariant();
+        }
+
+        foreach (var pair in metadata)
+        {
+            if (string.Equals(pair.Key, CompanionLocationMetadataKeys.PermissionState, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(pair.Value))
+            {
+                return pair.Value.Trim().ToLowerInvariant();
+            }
+        }
+
+        return "unknown";
+    }
+
+    private static IReadOnlyDictionary<string, string> MergeExplorationConstraintState(
+        IReadOnlyDictionary<string, string> existing,
+        LocalDiscoveryConstraintExtractionResult extraction,
+        CompanionLocationGrounding grounding)
+    {
+        var merged = new Dictionary<string, string>(existing, StringComparer.OrdinalIgnoreCase);
+
+        if (extraction.PlaceTypeHints.Count > 0)
+        {
+            merged[ConversationConstraintKeys.ExplorationPlaceTypes] = string.Join('|', extraction.PlaceTypeHints);
+        }
+
+        var area = extraction.HasExplicitLocality && !string.IsNullOrWhiteSpace(extraction.LocalityHint)
+            ? extraction.LocalityHint!.Trim()
+            : extraction.HasNearMeLanguage
+                ? "near_me"
+                : grounding.HasTypedArea
+                    ? grounding.TypedArea!.Trim()
+                    : null;
+        if (!string.IsNullOrWhiteSpace(area))
+        {
+            merged[ConversationConstraintKeys.ExplorationArea] = area;
+        }
+
+        if (extraction.TimeHints.Count > 0)
+        {
+            merged[ConversationConstraintKeys.ExplorationTime] = string.Join('|', extraction.TimeHints);
+        }
+
+        return merged;
+    }
+
+    private sealed record StructuredClarificationPrompt(
+        ClarificationSlot Slot,
+        string PromptIntent,
+        string Question,
+        IReadOnlyList<string> SuggestedOptions);
 
     private static IReadOnlyDictionary<string, string> BuildNormalizedConstraints(
         LocalDiscoveryConstraintExtractionResult extraction,
@@ -373,6 +522,7 @@ public sealed class OpenExplorationHandler : IConversationModeHandler
             ActiveMode = ConversationMode.Exploration,
             ModeCandidate = ConversationMode.Exploration,
             ReadinessLevel = ConversationReadinessLevel.R2_DirectionKnown,
+            PendingClarification = null,
             NeedsFollowUp = true
         };
 
@@ -453,6 +603,7 @@ public sealed class FinancialModeHandler : IConversationModeHandler
             ActiveMode = ConversationMode.Financial,
             ModeCandidate = ConversationMode.Financial,
             ReadinessLevel = ConversationReadinessLevel.R2_DirectionKnown,
+            PendingClarification = null,
             NeedsFollowUp = true
         };
 
@@ -498,6 +649,7 @@ public sealed class GeneralKnowledgeModeHandler : IConversationModeHandler
         {
             ActiveMode = ConversationMode.GeneralKnowledge,
             ModeCandidate = ConversationMode.GeneralKnowledge,
+            PendingClarification = null,
             NeedsFollowUp = false
         };
 
