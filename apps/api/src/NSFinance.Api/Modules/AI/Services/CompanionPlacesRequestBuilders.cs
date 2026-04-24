@@ -131,6 +131,8 @@ public sealed class CompanionPlacesTextQueryBuilder(
             ["movie_theater"] = "cinemas",
             ["performing_arts_theater"] = "theatres",
             ["gas_station"] = "petrol stations",
+            ["parking"] = "car parks",
+            ["post_office"] = "post offices",
             ["pharmacy"] = "pharmacies",
             ["gym"] = "gyms",
             ["electronics_store"] = "electronics stores",
@@ -169,7 +171,29 @@ public sealed class CompanionPlacesTextQueryBuilder(
         "look",
         "looking",
         "for",
-        "tell"
+        "tell",
+        "near",
+        "nearby",
+        "around",
+        "here",
+        "close",
+        "to",
+        "where",
+        "i",
+        "am",
+        "in",
+        "my",
+        "the",
+        "still",
+        "open",
+        "any",
+        "are",
+        "that",
+        "what",
+        "can",
+        "do",
+        "buy",
+        "a"
     ];
 
     public CompanionPlacesTextQueryBuildResult Build(CompanionPlacesTextQueryBuildRequest request)
@@ -180,7 +204,11 @@ public sealed class CompanionPlacesTextQueryBuilder(
         var normalized = vocabularyNormalizer.Normalize(request.UserQuery);
         diagnostics.UnionWith(normalized.ReasonCodes);
 
-        var intentPhrase = ResolveIntentPhrase(normalized.NormalizedQuery, request.Constraints);
+        var intentPhrase = ResolveIntentPhrase(
+            normalized.NormalizedQuery,
+            request.Constraints,
+            request.LocationContext,
+            diagnostics);
         var preferencePrefix = ResolvePreferencePrefix(request.Constraints);
         var timeSuffix = request.Constraints.TimeHints.Any(value =>
                 string.Equals(value, "open_now", StringComparison.OrdinalIgnoreCase))
@@ -190,7 +218,7 @@ public sealed class CompanionPlacesTextQueryBuilder(
         var query = $"{preferencePrefix}{intentPhrase}{timeSuffix}".Trim();
         if (string.IsNullOrWhiteSpace(query))
         {
-            query = SimplifyFallbackQuery(request.Constraints);
+            query = SimplifyFallbackQuery(request.Constraints, request.LocationContext, normalized.NormalizedQuery);
             diagnostics.Add("places_request:text_query_fallback_simplified");
         }
 
@@ -215,7 +243,10 @@ public sealed class CompanionPlacesTextQueryBuilder(
         query = NormalizeFinalQuery(query);
         if (request.ForceSimplifiedFallback || !IsTextQueryPreflightValid(query))
         {
-            query = NormalizeFinalQuery(SimplifyFallbackQuery(request.Constraints));
+            query = NormalizeFinalQuery(SimplifyFallbackQuery(
+                request.Constraints,
+                request.LocationContext,
+                normalized.NormalizedQuery));
             diagnostics.Add("places_request:text_query_fallback_simplified");
             if (!request.IsGpsNearMe)
             {
@@ -250,8 +281,23 @@ public sealed class CompanionPlacesTextQueryBuilder(
 
     private static string ResolveIntentPhrase(
         string normalizedQuery,
-        LocalDiscoveryConstraintExtractionResult constraints)
+        LocalDiscoveryConstraintExtractionResult constraints,
+        PlaceSearchLocationContext? locationContext,
+        ISet<string> diagnostics)
     {
+        if (!string.IsNullOrWhiteSpace(locationContext?.PlannerBrandTerm))
+        {
+            diagnostics.Add("places_request:text_query_planner_brand_preserved");
+            return locationContext.PlannerBrandTerm!.Trim();
+        }
+
+        var plannerHint = ResolvePlannerIntentHint(locationContext);
+        if (!string.IsNullOrWhiteSpace(plannerHint))
+        {
+            diagnostics.Add("places_request:text_query_planner_concept_applied");
+            return plannerHint!;
+        }
+
         if (constraints.PlaceTypeHints.Count > 0
             && TypePhraseMap.TryGetValue(constraints.PlaceTypeHints[0], out var phraseFromHint))
         {
@@ -264,6 +310,16 @@ public sealed class CompanionPlacesTextQueryBuilder(
             .ToArray();
         if (words.Length > 0)
         {
+            if (ContainsAll(words, "car", "park") || ContainsAll(words, "car", "parks"))
+            {
+                return "car parks";
+            }
+
+            if (ContainsAll(words, "post", "office") || ContainsAll(words, "post", "offices"))
+            {
+                return "post offices";
+            }
+
             if (words.Any(word => word is "coffee" or "cafe" or "cafes"))
             {
                 return "coffee shops";
@@ -315,6 +371,13 @@ public sealed class CompanionPlacesTextQueryBuilder(
             {
                 return "convenience stores";
             }
+
+            var entityPhrase = TryBuildEntityPhrase(words);
+            if (!string.IsNullOrWhiteSpace(entityPhrase))
+            {
+                diagnostics.Add("places_request:text_query_entity_phrase_preserved");
+                return entityPhrase!;
+            }
         }
 
         if (constraints.AudienceHints.Any(value => string.Equals(value, "kids", StringComparison.OrdinalIgnoreCase)))
@@ -347,8 +410,22 @@ public sealed class CompanionPlacesTextQueryBuilder(
         return string.Empty;
     }
 
-    private static string SimplifyFallbackQuery(LocalDiscoveryConstraintExtractionResult constraints)
+    private static string SimplifyFallbackQuery(
+        LocalDiscoveryConstraintExtractionResult constraints,
+        PlaceSearchLocationContext? locationContext,
+        string normalizedQuery)
     {
+        if (!string.IsNullOrWhiteSpace(locationContext?.PlannerBrandTerm))
+        {
+            return locationContext.PlannerBrandTerm!.Trim();
+        }
+
+        var plannerHint = ResolvePlannerIntentHint(locationContext);
+        if (!string.IsNullOrWhiteSpace(plannerHint))
+        {
+            return plannerHint!;
+        }
+
         if (constraints.PlaceTypeHints.Count > 0
             && TypePhraseMap.TryGetValue(constraints.PlaceTypeHints[0], out var mapped))
         {
@@ -365,7 +442,82 @@ public sealed class CompanionPlacesTextQueryBuilder(
             return "family friendly places";
         }
 
+        var fallbackWords = normalizedQuery
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(word => !ConversationalNoiseWords.Contains(word))
+            .ToArray();
+        var entityPhrase = TryBuildEntityPhrase(fallbackWords);
+        if (!string.IsNullOrWhiteSpace(entityPhrase))
+        {
+            return entityPhrase!;
+        }
+
         return "local places";
+    }
+
+    private static string? ResolvePlannerIntentHint(PlaceSearchLocationContext? locationContext)
+    {
+        if (locationContext?.PlannerIncludeTypes is { Count: > 0 })
+        {
+            foreach (var typeHint in locationContext.PlannerIncludeTypes)
+            {
+                if (!string.IsNullOrWhiteSpace(typeHint)
+                    && TypePhraseMap.TryGetValue(typeHint.Trim(), out var phrase))
+                {
+                    return phrase;
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(locationContext?.PlannerCanonicalConcept))
+        {
+            var token = locationContext.PlannerCanonicalConcept!.Trim();
+            var normalizedToken = token
+                .ToLowerInvariant()
+                .Replace('-', '_')
+                .Replace(' ', '_');
+            normalizedToken = normalizedToken switch
+            {
+                "movietheater" => "movie_theater",
+                "movietheatre" => "movie_theater",
+                _ => normalizedToken
+            };
+            if (TypePhraseMap.TryGetValue(normalizedToken, out var mapped))
+            {
+                return mapped;
+            }
+
+            return normalizedToken.Replace('_', ' ');
+        }
+
+        return null;
+    }
+
+    private static bool ContainsAll(IReadOnlyList<string> words, string first, string second)
+    {
+        return words.Any(word => string.Equals(word, first, StringComparison.OrdinalIgnoreCase))
+               && words.Any(word => string.Equals(word, second, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? TryBuildEntityPhrase(IReadOnlyList<string> words)
+    {
+        var filtered = words
+            .Where(word => word.Length >= 3 && word.Any(char.IsLetter))
+            .Where(word => !IsLocationToken(word))
+            .Take(4)
+            .ToArray();
+        if (filtered.Length == 0)
+        {
+            return null;
+        }
+
+        return string.Join(' ', filtered);
+    }
+
+    private static bool IsLocationToken(string token)
+    {
+        var normalized = token.Trim().ToLowerInvariant();
+        return normalized is "near" or "nearby" or "around" or "here" or "close" or "where" or "am";
     }
 
     private static string? ResolveLocalityCandidate(
@@ -495,9 +647,11 @@ public sealed class CompanionPlacesNearbyRequestBuilder : ICompanionPlacesNearby
         "gym",
         "movie_theater",
         "museum",
+        "parking",
         "park",
         "pharmacy",
         "playground",
+        "post_office",
         "performing_arts_theater",
         "restaurant",
         "store",

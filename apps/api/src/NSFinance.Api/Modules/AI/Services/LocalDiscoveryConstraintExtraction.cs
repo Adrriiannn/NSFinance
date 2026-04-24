@@ -43,7 +43,11 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
         "close to me",
         "close by",
         "where i am",
-        "near where i am"
+        "near where i am",
+        "near us",
+        "around us",
+        "in my neighborhood",
+        "in my neighbourhood"
     ];
 
     private static readonly string[] DiscoveryPhrases =
@@ -63,6 +67,9 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
     private static readonly string[] TimePhrases =
     [
         "open now",
+        "24/7",
+        "24x7",
+        "24 hours",
         "tonight",
         "this weekend",
         "weekend"
@@ -92,6 +99,9 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["playground"] = "playground",
             ["playgrounds"] = "playground",
             ["beach"] = "beach",
+            ["parking"] = "parking",
+            ["carpark"] = "parking",
+            ["carparks"] = "parking",
             ["park"] = "park",
             ["parks"] = "park",
             ["attraction"] = "tourist_attraction",
@@ -107,6 +117,7 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             ["petrol"] = "gas_station",
             ["fuel"] = "gas_station",
             ["gas"] = "gas_station",
+            ["postoffice"] = "post_office",
             ["pharmacy"] = "pharmacy",
             ["pharmacies"] = "pharmacy",
             ["chemist"] = "pharmacy",
@@ -308,11 +319,32 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
     {
         var hints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var hasCoffeeShopPhrase = CoffeeShopPhrasePattern().IsMatch(normalizedText);
+        var hasCarParkPhrase = normalizedText.Contains("car park", StringComparison.Ordinal)
+                               || normalizedText.Contains("car parks", StringComparison.Ordinal);
+        var hasPostOfficePhrase = normalizedText.Contains("post office", StringComparison.Ordinal)
+                                  || normalizedText.Contains("post offices", StringComparison.Ordinal);
+        if (hasCarParkPhrase)
+        {
+            hints.Add("parking");
+        }
+
+        if (hasPostOfficePhrase)
+        {
+            hints.Add("post_office");
+        }
+
         foreach (var token in tokens)
         {
             if (hasCoffeeShopPhrase
                 && (string.Equals(token, "shop", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(token, "shops", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            if (hasCarParkPhrase
+                && (string.Equals(token, "park", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(token, "parks", StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
             }
@@ -346,6 +378,14 @@ public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryC
             if (normalizedText.Contains("weekend", StringComparison.Ordinal))
             {
                 result.Add("weekend");
+            }
+
+            if (normalizedText.Contains("24/7", StringComparison.Ordinal)
+                || normalizedText.Contains("24x7", StringComparison.Ordinal)
+                || normalizedText.Contains("24 hours", StringComparison.Ordinal))
+            {
+                result.Add("open_now");
+                result.Add("always_open");
             }
         }
 
@@ -568,7 +608,10 @@ public sealed class LocalDiscoveryQueryShaper(
             reasonCodes.Add("local_discovery_query_locality_skipped_low_confidence");
         }
 
-        var placeTypePhrases = extracted.PlaceTypeHints.Select(ToQueryPhrase).ToArray();
+        var effectivePlaceTypeHints = locationContext?.PlannerIncludeTypes is { Count: > 0 }
+            ? locationContext.PlannerIncludeTypes
+            : extracted.PlaceTypeHints;
+        var placeTypePhrases = effectivePlaceTypeHints.Select(ToQueryPhrase).ToArray();
         if (placeTypePhrases.Length > 0
             && !ContainsAny(query, placeTypePhrases))
         {
@@ -578,11 +621,18 @@ public sealed class LocalDiscoveryQueryShaper(
         else if (placeTypePhrases.Length == 0
                  && extracted.IsLocalDiscoveryCandidate)
         {
-            var inferredDiscoveryType = InferFallbackDiscoveryType(extracted.AudienceHints);
-            if (!ContainsAny(query, [inferredDiscoveryType]))
+            if (!string.IsNullOrWhiteSpace(locationContext?.PlannerBrandTerm))
             {
-                query = $"{query} {inferredDiscoveryType}";
-                reasonCodes.Add("local_discovery_query_default_type_appended");
+                reasonCodes.Add("local_discovery_query_default_type_skipped_brand_preserved");
+            }
+            else
+            {
+                var inferredDiscoveryType = InferFallbackDiscoveryType(extracted.AudienceHints);
+                if (!ContainsAny(query, [inferredDiscoveryType]))
+                {
+                    query = $"{query} {inferredDiscoveryType}";
+                    reasonCodes.Add("local_discovery_query_default_type_appended");
+                }
             }
         }
 
@@ -641,6 +691,8 @@ public sealed class LocalDiscoveryQueryShaper(
             "tourist_attraction" => "tourist attractions",
             "movie_theater" => "cinema",
             "performing_arts_theater" => "theatre",
+            "parking" => "car parks",
+            "post_office" => "post offices",
             "pet_friendly" => "pet friendly",
             "dog_friendly" => "dog friendly",
             "open_now" => "open now",

@@ -5,7 +5,8 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed class AIConfigurationStartupLogger(
     IOptions<AIIntegrationOptions> options,
-    ILogger<AIConfigurationStartupLogger> logger) : IHostedService
+    ILogger<AIConfigurationStartupLogger>? logger = null,
+    IHostEnvironment? hostEnvironment = null) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -19,7 +20,7 @@ public sealed class AIConfigurationStartupLogger(
         var heavyEnabled = provider == AIProviderKind.Mock
             || (routing.HeavyModelEnabled ?? heavyRouteConfigured);
 
-        logger.LogInformation(
+        logger?.LogInformation(
             "AI configuration loaded provider={Provider} endpointHost={EndpointHost} useMockProvider={UseMockProvider} aliasNormalizationApplied={AliasNormalizationApplied} fastModel={FastModel} fastDeployment={FastDeployment} heavyModel={HeavyModel} heavyDeployment={HeavyDeployment} heavyEnabled={HeavyEnabled}",
             provider,
             endpointHost,
@@ -30,6 +31,26 @@ public sealed class AIConfigurationStartupLogger(
             DisplayOrMissing(routing.HeavyModelName),
             DisplayOrMissing(routing.HeavyDeploymentName),
             heavyEnabled);
+
+        if (provider == AIProviderKind.Mock || config.UseMockProvider)
+        {
+            var isProduction = hostEnvironment?.IsProduction() == true;
+            var isDevelopment = hostEnvironment?.IsDevelopment() != false;
+            var environmentName = hostEnvironment?.EnvironmentName ?? Environments.Development;
+            if (isProduction && !IsMockAllowedInProduction())
+            {
+                logger?.LogCritical(
+                    "Mock AI provider is active in production and is blocked. Set AI_ALLOW_MOCK_PROVIDER_IN_PRODUCTION=true only for emergency diagnostics.");
+                throw new InvalidOperationException("Mock AI provider is not allowed in production.");
+            }
+
+            if (!isDevelopment)
+            {
+                logger?.LogWarning(
+                    "Mock AI provider is active in non-development environment={EnvironmentName}.",
+                    environmentName);
+            }
+        }
 
         return Task.CompletedTask;
     }
@@ -56,5 +77,13 @@ public sealed class AIConfigurationStartupLogger(
         return string.IsNullOrWhiteSpace(value)
             ? "missing"
             : value.Trim();
+    }
+
+    private static bool IsMockAllowedInProduction()
+    {
+        var raw = Environment.GetEnvironmentVariable("AI_ALLOW_MOCK_PROVIDER_IN_PRODUCTION");
+        return string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(raw, "1", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase);
     }
 }

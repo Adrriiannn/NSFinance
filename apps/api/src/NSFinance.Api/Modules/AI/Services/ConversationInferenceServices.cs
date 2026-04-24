@@ -803,20 +803,31 @@ public sealed class ResponseComposer(
 
 public static class ConversationSignalAnalyzer
 {
-    public static ConversationSignals Analyze(string? userMessage)
+    public static ConversationSignals Analyze(string? userMessage, TurnInterpretationV2? interpretation = null)
     {
         var normalized = (userMessage ?? string.Empty).Trim().ToLowerInvariant();
         var extraction = ConversationPolicyHelpers.ExtractLocalDiscovery(userMessage);
+        var interpretedPlaceTypes = interpretation?.PlacePlan.IncludeTypes ?? [];
+        var interpretedExploration = interpretation?.IntentFamily is TurnInterpretationIntentFamily.PlaceDiscovery or TurnInterpretationIntentFamily.Mixed;
+        var interpretedFinancial = interpretation?.IntentFamily == TurnInterpretationIntentFamily.FinancialGuidance;
+        var interpretedLocation = interpretation?.LocationPlan.NearMeSemantic == true
+                                 || !string.IsNullOrWhiteSpace(interpretation?.LocationPlan.ResolvedAreaHint)
+                                 || !string.IsNullOrWhiteSpace(interpretation?.LocationPlan.ExplicitAreaText);
         var hasFinancialFocusSelection = ConversationPolicyHelpers.ResolveFinancialFocus(normalized) is not null
                                          && (ContainsAny(normalized, "review", "look at", "focus on", "show me", "help me", "yes", "please")
                                              || normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length <= 3);
-        var hasFinancialSignal = ContainsAny(normalized, "budget", "subscriptions", "spending", "spend", "afford", "expense", "save");
-        var hasExplorationSignal = extraction.IsLocalDiscoveryCandidate
+        var hasFinancialSignal = interpretedFinancial
+                                 || ContainsAny(normalized, "budget", "subscriptions", "spending", "spend", "afford", "expense", "save");
+        var hasExplorationSignal = interpretedExploration
+                                   || extraction.IsLocalDiscoveryCandidate
                                    || ContainsAny(normalized, "walk", "beach", "view", "quiet place", "nice place", "lighting", "late walk");
         var hasConcretePlaceSignal = extraction.PlaceTypeHints.Count > 0
+                                     || interpretedPlaceTypes.Count > 0
+                                     || interpretation?.PlacePlan.BrandOrEntityTerms.Count > 0
                                      || ContainsAny(normalized, "beach", "waterfront");
         var hasExplicitLocation = extraction.HasNearMeLanguage
                                   || extraction.HasExplicitLocality
+                                  || interpretedLocation
                                   || extraction.TimeHints.Count > 0;
         var hasEmotionalFraming = ContainsAny(normalized, "i think", "i feel", "i'm worried", "i am worried", "stressed", "overwhelmed", "too high");
         var hasSubjectiveLanguage = ContainsAny(normalized, "nice", "quiet", "safe", "good", "better", "best", "feel");

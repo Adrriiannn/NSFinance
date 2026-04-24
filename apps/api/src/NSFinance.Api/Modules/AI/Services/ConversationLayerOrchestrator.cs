@@ -23,7 +23,9 @@ public sealed class ConversationLayerOrchestrator(
     IConversationSummaryService? conversationSummaryService = null,
     IPersistentConversationContextService? persistentConversationContextService = null,
     IResultContextService? resultContextService = null,
-    ILocalDiscoveryConstraintExtractor? localDiscoveryConstraintExtractor = null) : IUserChatOrchestrator
+    ILocalDiscoveryConstraintExtractor? localDiscoveryConstraintExtractor = null,
+    ITurnInterpretationEngine? turnInterpretationEngine = null,
+    IPlaceRetrievalPlanner? placeRetrievalPlanner = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -590,13 +592,49 @@ public sealed class ConversationLayerOrchestrator(
         CancellationToken cancellationToken)
     {
         var clientMetadata = request.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var interpretedState = effectiveState;
+        if (turnInterpretationEngine is not null)
+        {
+            var interpretationResult = await turnInterpretationEngine.InterpretAsync(
+                new TurnInterpretationPromptInput(
+                    UserMessage: request.UserMessage,
+                    State: effectiveState,
+                    Metadata: clientMetadata,
+                    ContextSummary: contextSummary,
+                    ResultContext: resultContextReadResult.ActiveResultContext),
+                request.CorrelationId,
+                cancellationToken);
+            var retrievalPlan = placeRetrievalPlanner?.Build(interpretationResult.Interpretation);
+            clientMetadata = TurnInterpretationMetadataMapper.Merge(
+                clientMetadata,
+                interpretationResult.Interpretation,
+                retrievalPlan);
+            interpretedState = ApplyInterpretationToState(
+                effectiveState,
+                interpretationResult.Interpretation,
+                retrievalPlan,
+                ttlMinutes: Math.Max(5, options.Value.Architecture.ExplorationConstraintTtlMinutes));
+            if (interpretationResult.Warnings.Count > 0)
+            {
+                await telemetry.TrackAsync(
+                    "chat.turn.interpretation_warnings",
+                    new Dictionary<string, object?>
+                    {
+                        ["correlationId"] = request.CorrelationId,
+                        ["selectionReason"] = interpretationResult.SelectionReason,
+                        ["warnings"] = interpretationResult.Warnings.ToArray()
+                    },
+                    cancellationToken);
+            }
+        }
+
         var behaviorStopwatch = Stopwatch.StartNew();
         var behavior = await behaviorEngine.EvaluateAsync(
             new ConversationBehaviorRequest(
                 Request: request,
                 ContextMessages: contextMessages,
                 ContextSummary: contextSummary,
-                EffectiveState: effectiveState,
+                EffectiveState: interpretedState,
                 ResultContext: resultContextReadResult.ActiveResultContext,
                 ResultContextReadResult: resultContextReadResult,
                 ClientMetadata: clientMetadata,
@@ -1597,6 +1635,73 @@ public sealed class ConversationLayerOrchestrator(
         });
     }
 
+    private static ConversationStateSnapshot ApplyInterpretationToState(
+        ConversationStateSnapshot state,
+        TurnInterpretationV2 interpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        int ttlMinutes)
+    {
+        var constraints = new Dictionary<string, string>(state.Constraints, StringComparer.OrdinalIgnoreCase);
+        var now = DateTimeOffset.UtcNow;
+        var expires = now.AddMinutes(Math.Max(5, ttlMinutes));
+
+        if (interpretation.IntentFamily is TurnInterpretationIntentFamily.PlaceDiscovery or TurnInterpretationIntentFamily.Mixed)
+        {
+            constraints[ConversationConstraintKeys.SemanticFamily] = ConversationSemanticFamilies.Exploration;
+        }
+        else if (interpretation.IntentFamily == TurnInterpretationIntentFamily.FinancialGuidance)
+        {
+            constraints[ConversationConstraintKeys.SemanticFamily] = ConversationSemanticFamilies.Financial;
+        }
+
+        var includeTypes = retrievalPlan?.IncludedTypes ?? interpretation.PlacePlan.IncludeTypes;
+        if (includeTypes.Count > 0)
+        {
+            constraints[ConversationConstraintKeys.ExplorationPlaceTypes] = string.Join('|', includeTypes);
+        }
+
+        var preferences = retrievalPlan?.Preferences ?? interpretation.PlacePlan.Preferences;
+        if (preferences.Count > 0)
+        {
+            constraints[ConversationConstraintKeys.ExplorationPreferences] = string.Join('|', preferences);
+        }
+
+        var timeFilters = retrievalPlan?.TimeFilters ?? interpretation.PlacePlan.TimeFilters;
+        if (timeFilters.Count > 0)
+        {
+            constraints[ConversationConstraintKeys.ExplorationTime] = string.Join('|', timeFilters);
+        }
+
+        var resolvedArea = retrievalPlan?.ResolvedAreaHint
+                           ?? interpretation.LocationPlan.ResolvedAreaHint
+                           ?? interpretation.LocationPlan.ExplicitAreaText;
+        if (!string.IsNullOrWhiteSpace(resolvedArea))
+        {
+            constraints[ConversationConstraintKeys.ExplorationArea] = resolvedArea.Trim();
+            constraints[ConversationConstraintKeys.ExplorationAreaLastUsedUtc] = now.UtcDateTime.ToString("O");
+            constraints[ConversationConstraintKeys.ExplorationAreaExpiresUtc] = expires.UtcDateTime.ToString("O");
+        }
+        else if (interpretation.LocationPlan.NearMeSemantic)
+        {
+            constraints[ConversationConstraintKeys.ExplorationArea] = "near_me";
+        }
+
+        if (!string.IsNullOrWhiteSpace(retrievalPlan?.BrandTerm))
+        {
+            constraints[ConversationConstraintKeys.ExplorationBrandTerm] = retrievalPlan.BrandTerm!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(retrievalPlan?.CanonicalConcept))
+        {
+            constraints[ConversationConstraintKeys.ExplorationCanonicalConcept] = retrievalPlan.CanonicalConcept!;
+        }
+
+        return state with
+        {
+            Constraints = constraints
+        };
+    }
+
     private ConversationStateSnapshot ApplyConversationMemoryTtl(ConversationStateSnapshot state)
     {
         var ttlMinutes = Math.Max(1, options.Value.Architecture.ExplorationConstraintTtlMinutes);
@@ -1618,6 +1723,10 @@ public sealed class ConversationLayerOrchestrator(
             constraints.Remove(ConversationConstraintKeys.ExplorationPreferences);
             constraints.Remove(ConversationConstraintKeys.ExplorationTime);
             constraints.Remove(ConversationConstraintKeys.ExplorationContextLastUsedUtc);
+            constraints.Remove(ConversationConstraintKeys.ExplorationAreaLastUsedUtc);
+            constraints.Remove(ConversationConstraintKeys.ExplorationAreaExpiresUtc);
+            constraints.Remove(ConversationConstraintKeys.ExplorationBrandTerm);
+            constraints.Remove(ConversationConstraintKeys.ExplorationCanonicalConcept);
         }
 
         var pendingClarification = state.PendingClarification;
@@ -1650,6 +1759,17 @@ public sealed class ConversationLayerOrchestrator(
         {
             [ConversationConstraintKeys.ExplorationContextLastUsedUtc] = DateTimeOffset.UtcNow.UtcDateTime.ToString("O")
         };
+        if (constraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var area)
+            && !string.IsNullOrWhiteSpace(area)
+            && !string.Equals(area, "near_me", StringComparison.OrdinalIgnoreCase))
+        {
+            var now = DateTimeOffset.UtcNow;
+            constraints[ConversationConstraintKeys.ExplorationAreaLastUsedUtc] = now.UtcDateTime.ToString("O");
+            constraints[ConversationConstraintKeys.ExplorationAreaExpiresUtc] = now
+                .AddMinutes(Math.Max(5, options.Value.Architecture.ExplorationConstraintTtlMinutes))
+                .UtcDateTime
+                .ToString("O");
+        }
 
         return state with
         {

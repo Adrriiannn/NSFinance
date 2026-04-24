@@ -94,9 +94,15 @@ public static class ConversationConstraintKeys
     public const string SemanticFamily = "semantic_family";
     public const string ExplorationSubtype = "exploration_subtype";
     public const string ExplorationArea = "exploration_area";
+    public const string ExplorationAreaLastUsedUtc = "exploration_area_last_used_utc";
+    public const string ExplorationAreaExpiresUtc = "exploration_area_expires_utc";
     public const string ExplorationPlaceTypes = "exploration_place_types";
+    public const string ExplorationExcludeTypes = "exploration_exclude_types";
     public const string ExplorationPreferences = "exploration_preferences";
     public const string ExplorationTime = "exploration_time";
+    public const string ExplorationAudience = "exploration_audience";
+    public const string ExplorationBrandTerm = "exploration_brand_term";
+    public const string ExplorationCanonicalConcept = "exploration_canonical_concept";
     public const string ExplorationContextLastUsedUtc = "exploration_context_last_used_utc";
     public const string FinancialFocus = "financial_focus";
 }

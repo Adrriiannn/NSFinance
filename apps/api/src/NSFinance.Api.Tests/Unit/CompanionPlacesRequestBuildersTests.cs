@@ -110,6 +110,52 @@ public sealed class CompanionPlacesRequestBuildersTests
     }
 
     [Fact]
+    public void BuildTextQuery_PlannerBrandTerm_IsPreservedForBrandFirstSearch()
+    {
+        var builder = new CompanionPlacesTextQueryBuilder(normalizer);
+        var constraints = extractor.Extract("starbucks near me");
+
+        var result = builder.Build(
+            new CompanionPlacesTextQueryBuildRequest(
+                UserQuery: "starbucks near me",
+                Constraints: constraints,
+                LocationContext: new PlaceSearchLocationContext(
+                    Source: "gps",
+                    Latitude: 53.3570,
+                    Longitude: -6.4486,
+                    RadiusMeters: 2000,
+                    PlannerBrandTerm: "starbucks",
+                    PlannerCanonicalConcept: "cafe",
+                    SearchScope: "brand_first"),
+                IsGpsNearMe: true));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("starbucks", result.Query);
+        Assert.Contains("places_request:text_query_planner_brand_preserved", result.ReasonCodes);
+    }
+
+    [Fact]
+    public void BuildTextQuery_CarParksNearMe_PreservesParkingIntent()
+    {
+        var builder = new CompanionPlacesTextQueryBuilder(normalizer);
+        var constraints = extractor.Extract("car parks near me");
+
+        var result = builder.Build(
+            new CompanionPlacesTextQueryBuildRequest(
+                UserQuery: "car parks near me",
+                Constraints: constraints,
+                LocationContext: new PlaceSearchLocationContext(
+                    Source: "gps",
+                    Latitude: 53.3570,
+                    Longitude: -6.4486,
+                    RadiusMeters: 2000),
+                IsGpsNearMe: true));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("car parks", result.Query);
+    }
+
+    [Fact]
     public void BuildNearbyRequest_ValidInput_IsSanitizedAndClamped()
     {
         var builder = new CompanionPlacesNearbyRequestBuilder();

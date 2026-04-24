@@ -101,6 +101,23 @@ public sealed class LocalDiscoveryConstraintExtractionTests
     }
 
     [Fact]
+    public void Extract_CarParksPhrase_PreservesParkingAndAvoidsLeisureParkCollision()
+    {
+        var result = _extractor.Extract("car parks near me");
+
+        Assert.Contains("parking", result.PlaceTypeHints);
+        Assert.DoesNotContain("park", result.PlaceTypeHints);
+    }
+
+    [Fact]
+    public void Extract_PostOfficesPhrase_MapsToPostOfficeType()
+    {
+        var result = _extractor.Extract("post offices near me");
+
+        Assert.Contains("post_office", result.PlaceTypeHints);
+    }
+
+    [Fact]
     public void Shape_NoGpsWithTypedArea_AppliesTypedAreaAndFriendlyHints()
     {
         var shaped = _shaper.Shape(
@@ -124,5 +141,20 @@ public sealed class LocalDiscoveryConstraintExtractionTests
 
         Assert.Contains("family friendly attractions", shaped.Query, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("local_discovery_query_default_type_appended", shaped.ReasonCodes);
+    }
+
+    [Fact]
+    public void Shape_BrandWithPlannerHint_DoesNotAppendTourismFallback()
+    {
+        var shaped = _shaper.Shape(
+            "starbucks near me",
+            new PlaceSearchLocationContext(
+                Source: "gps",
+                Latitude: 53.35,
+                Longitude: -6.26,
+                PlannerBrandTerm: "starbucks"));
+
+        Assert.DoesNotContain("tourist attractions", shaped.Query, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("starbucks", shaped.Query, StringComparison.OrdinalIgnoreCase);
     }
 }

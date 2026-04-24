@@ -70,6 +70,31 @@ public sealed class CompanionNearbyTypeMapperTests
         Assert.Contains("grocery_store", result.IncludedTypes);
     }
 
+    [Fact]
+    public void Map_CarParksNearMe_MapsToParking_NotLeisurePark()
+    {
+        var result = sut.Map(
+            "car parks near me",
+            BuildConstraints());
+
+        Assert.Contains("parking", result.IncludedTypes);
+        Assert.DoesNotContain("park", result.IncludedTypes);
+    }
+
+    [Fact]
+    public void Map_PlannerExclusions_RemoveConflictingTypes()
+    {
+        var result = sut.Map(
+            "parks near me",
+            BuildConstraints(placeTypeHints: ["park"]),
+            new PlaceSearchLocationContext(
+                PlannerIncludeTypes: ["park"],
+                PlannerExcludeTypes: ["park"]));
+
+        Assert.Empty(result.IncludedTypes);
+        Assert.Contains("nearby_type_exclusions_applied", result.ReasonCodes);
+    }
+
     private static LocalDiscoveryConstraintExtractionResult BuildConstraints(
         IReadOnlyList<string>? placeTypeHints = null,
         IReadOnlyList<string>? audienceHints = null)

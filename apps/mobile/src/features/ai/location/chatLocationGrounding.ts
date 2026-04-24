@@ -21,65 +21,11 @@ const nearbySignals = [
   "around me",
   "around here",
   "close to me",
-  "where i am"
-];
-
-const placeSignals = [
-  "cinema",
-  "cinemas",
-  "movie",
-  "movies",
-  "theatre",
-  "theater",
-  "movie theatre",
-  "movie theater",
-  "convenience store",
-  "convenience stores",
-  "shop",
-  "shops",
-  "store",
-  "stores",
-  "museum",
-  "museums",
-  "park",
-  "parks",
-  "playground",
-  "playgrounds",
-  "pharmacy",
-  "pharmacies",
-  "chemist",
-  "petrol station",
-  "gas station",
-  "fuel",
-  "gym",
-  "gyms",
-  "restaurant",
-  "restaurants",
-  "cafe",
-  "cafes",
-  "coffee",
-  "dining",
-  "brunch",
-  "bar",
-  "pub",
-  "places",
-  "place",
-  "visit",
-  "go",
-  "activity",
-  "activities",
-  "fun"
-];
-
-const discoverySignals = [
-  "things to do",
-  "what can i do",
-  "what should i do",
-  "where should i go",
-  "somewhere",
-  "something fun",
-  "places to visit",
-  "where can i go"
+  "where i am",
+  "near us",
+  "around us",
+  "in my neighborhood",
+  "in my neighbourhood"
 ];
 
 const explicitAreaRegex =
@@ -110,17 +56,7 @@ export function isNearbyLocationDependentPrompt(prompt: string): boolean {
     return false;
   }
 
-  const hasNearbySignal = nearbySignals.some((signal) => normalized.includes(signal));
-  if (!hasNearbySignal) {
-    return false;
-  }
-
-  const hasPlaceSignal = placeSignals.some((signal) => normalized.includes(signal));
-  if (hasPlaceSignal) {
-    return true;
-  }
-
-  return discoverySignals.some((signal) => normalized.includes(signal));
+  return nearbySignals.some((signal) => normalized.includes(signal));
 }
 
 export function isLocationDependentExplorationPrompt(prompt: string): boolean {
@@ -129,32 +65,7 @@ export function isLocationDependentExplorationPrompt(prompt: string): boolean {
     return false;
   }
 
-  if (explicitAreaRegex.test(normalized) && !nearbySignals.some((signal) => normalized.includes(signal))) {
-    return false;
-  }
-
-  const hasNearbySignal = nearbySignals.some((signal) => normalized.includes(signal));
-  const hasPlaceSignal = placeSignals.some((signal) => normalized.includes(signal));
-  const hasDiscoverySignal = discoverySignals.some((signal) => normalized.includes(signal));
-  const hasOperationalSignal =
-    normalized.includes("open now")
-    || normalized.includes("tonight")
-    || normalized.includes("this weekend")
-    || normalized.includes("weekend");
-
-  if (hasNearbySignal && (hasPlaceSignal || hasDiscoverySignal)) {
-    return true;
-  }
-
-  if (hasPlaceSignal && hasOperationalSignal) {
-    return true;
-  }
-
-  if (hasDiscoverySignal && hasOperationalSignal) {
-    return true;
-  }
-
-  return false;
+  return isNearbyLocationDependentPrompt(normalized) || explicitAreaRegex.test(normalized);
 }
 
 export function normalizeTypedArea(value: string): string | null {
@@ -338,24 +249,7 @@ export async function resolveChatLocationAttachment(
   permissionState: string,
   getSnapshot: (forceFresh: boolean) => Promise<NearbyGpsSnapshot | null>
 ): Promise<ChatLocationAttachmentResolution> {
-  const requiresNearbyClarification = isLocationDependentExplorationPrompt(prompt);
-  if (!requiresNearbyClarification) {
-    const diagnosticsMetadata = buildChatLocationResolutionDiagnosticsMetadata(
-      permissionState,
-      {
-        context: null,
-        refreshAttempted: false,
-        outcome: "failed"
-      },
-      false
-    );
-
-    return {
-      context: null,
-      diagnosticsMetadata,
-      requiresNearbyClarification: false
-    };
-  }
+  const hasNearbySemantics = isNearbyLocationDependentPrompt(prompt);
 
   if (permissionState !== "granted") {
     const diagnosticsMetadata = buildChatLocationResolutionDiagnosticsMetadata(
@@ -365,12 +259,12 @@ export async function resolveChatLocationAttachment(
         refreshAttempted: false,
         outcome: "failed"
       },
-      requiresNearbyClarification
+      hasNearbySemantics
     );
     return {
       context: null,
       diagnosticsMetadata,
-      requiresNearbyClarification
+      requiresNearbyClarification: false
     };
   }
 
@@ -378,12 +272,12 @@ export async function resolveChatLocationAttachment(
   const diagnosticsMetadata = buildChatLocationResolutionDiagnosticsMetadata(
     permissionState,
     resolution,
-    requiresNearbyClarification
+    hasNearbySemantics
   );
   return {
     context: resolution.context,
     diagnosticsMetadata,
-    requiresNearbyClarification: !resolution.context
+    requiresNearbyClarification: false
   };
 }
 

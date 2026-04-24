@@ -137,6 +137,10 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IToolGuardWarningPolicy, ToolGuardWarningPolicy>();
         services.AddScoped<IResultContextService, ResultContextService>();
         services.AddScoped<IResponseComposer, ResponseComposer>();
+        services.AddScoped<ITurnInterpretationPromptBuilder, TurnInterpretationPromptBuilder>();
+        services.AddScoped<ITurnInterpretationParser, TurnInterpretationParser>();
+        services.AddScoped<ITurnInterpretationEngine, TurnInterpretationEngine>();
+        services.AddScoped<IPlaceRetrievalPlanner, PlaceRetrievalPlanner>();
         services.AddScoped<IConversationDecisionPromptBuilder, ConversationDecisionPromptBuilder>();
         services.AddScoped<IExplorationSubtypePromptBuilder, ExplorationSubtypePromptBuilder>();
         services.AddScoped<IResponseCompositionPromptBuilder, ResponseCompositionPromptBuilder>();

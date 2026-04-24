@@ -28,6 +28,7 @@ internal sealed class MockAIProviderTransport(
         {
             "conversation_turn_strategy_decision_v1" => BuildConversationDecisionResponse(request),
             "exploration_subtype_decision_v1" => BuildExplorationSubtypeDecisionResponse(request),
+            "turn_interpretation_v2" => BuildTurnInterpretationResponse(request),
             "response_composition_output_v1" => BuildResponseCompositionResponse(request),
             _ => scenario switch
             {
@@ -650,6 +651,165 @@ internal sealed class MockAIProviderTransport(
                 : ["continue_conversation"]);
 
         return JsonSerializer.Serialize(response, SerializerOptions);
+    }
+
+    private static string BuildTurnInterpretationResponse(AIRequest request)
+    {
+        var userMessage = ExtractLatestUserMessage(request).ToLowerInvariant();
+        var nearMe = ContainsAny(
+            userMessage,
+            "near me",
+            "nearby",
+            "around me",
+            "close to me",
+            "around here",
+            "near us",
+            "in my neighborhood",
+            "in my neighbourhood");
+        var explicitArea = ExtractAreaHint(userMessage);
+        var hasLocation = nearMe || !string.IsNullOrWhiteSpace(explicitArea);
+        var brand = ResolveBrand(userMessage);
+        var includeTypes = ResolveIncludeTypes(userMessage, brand);
+        var hasTarget = includeTypes.Length > 0 || !string.IsNullOrWhiteSpace(brand);
+        var action = hasTarget && hasLocation
+            ? "ReadyForSearch"
+            : hasTarget
+                ? "MissingLocation"
+                : hasLocation
+                    ? "MissingTarget"
+                    : "Conversation";
+        var scopeVerdict = StartsWithAny(userMessage, "who ", "what year", "when was")
+            ? "OutOfScope"
+            : "InScope";
+        if (scopeVerdict == "OutOfScope")
+        {
+            action = "SoftRedirect";
+        }
+
+        return Serialize(new
+        {
+            intent_family = ContainsAny(userMessage, "budget", "spending", "subscription")
+                ? "FinancialGuidance"
+                : "PlaceDiscovery",
+            in_scope_verdict = scopeVerdict,
+            action_type = action,
+            confidence = hasTarget || hasLocation ? 0.88 : 0.62,
+            ambiguities = action == "MissingLocation"
+                ? new[] { "missing_location" }
+                : action == "MissingTarget"
+                    ? new[] { "missing_target" }
+                    : Array.Empty<string>(),
+            recommended_next_step = action switch
+            {
+                "ReadyForSearch" => "ready_for_search",
+                "MissingLocation" => "ask_for_location",
+                "MissingTarget" => "ask_for_target",
+                "SoftRedirect" => "soft_redirect",
+                _ => "continue_conversation"
+            },
+            place_plan = new
+            {
+                brand_or_entity_terms = string.IsNullOrWhiteSpace(brand) ? Array.Empty<string>() : new[] { brand },
+                canonical_concept = includeTypes.FirstOrDefault(),
+                candidate_domains = Array.Empty<string>(),
+                include_types = includeTypes,
+                exclude_types = ContainsAny(userMessage, "car park", "car parks", "parking")
+                    ? new[] { "park" }
+                    : Array.Empty<string>(),
+                preferences = Array.Empty<string>(),
+                time_filters = ContainsAny(userMessage, "open now", "24/7") ? new[] { "open_now" } : Array.Empty<string>(),
+                audience_filters = Array.Empty<string>()
+            },
+            location_plan = new
+            {
+                near_me_semantic = nearMe,
+                explicit_area_text = explicitArea,
+                resolved_area_hint = explicitArea,
+                requires_location = hasTarget,
+                can_use_recent_area = true,
+                clarification_needed = action is "MissingLocation" or "MissingTarget"
+            },
+            reason_codes = new[] { "mock_turn_interpretation_v2" }
+        });
+    }
+
+    private static string? ExtractAreaHint(string userMessage)
+    {
+        var match = Regex.Match(
+            userMessage,
+            @"\b(?:in|around|near)\s+([a-z0-9][a-z0-9\s'\-]{1,60})\b",
+            RegexOptions.CultureInvariant);
+        if (!match.Success || match.Groups.Count < 2)
+        {
+            return null;
+        }
+
+        var area = match.Groups[1].Value.Trim();
+        return area.Length == 0 ? null : area;
+    }
+
+    private static string? ResolveBrand(string userMessage)
+    {
+        var brands = new[] { "starbucks", "tesco", "lidl", "aldi", "mcdonalds", "supervalu" };
+        var knownBrand = brands.FirstOrDefault(brand => userMessage.Contains(brand, StringComparison.Ordinal));
+        if (!string.IsNullOrWhiteSpace(knownBrand))
+        {
+            return knownBrand;
+        }
+
+        var tokens = userMessage
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "find", "show", "me", "near", "nearby", "around", "close", "to", "where", "i", "am", "in", "my",
+            "any", "open", "now", "restaurants", "restaurant", "parks", "park", "gyms", "gym", "post", "office",
+            "offices", "car", "parking", "stores", "store", "shops", "shop"
+        };
+        var candidate = tokens
+            .TakeWhile(token => !string.Equals(token, "near", StringComparison.OrdinalIgnoreCase)
+                                && !string.Equals(token, "nearby", StringComparison.OrdinalIgnoreCase)
+                                && !string.Equals(token, "around", StringComparison.OrdinalIgnoreCase)
+                                && !string.Equals(token, "in", StringComparison.OrdinalIgnoreCase))
+            .Where(token => token.Length >= 3 && !stopWords.Contains(token))
+            .Take(3)
+            .ToArray();
+        return candidate.Length == 0 ? null : string.Join(' ', candidate);
+    }
+
+    private static string[] ResolveIncludeTypes(string userMessage, string? brand)
+    {
+        if (!string.IsNullOrWhiteSpace(brand)
+            && ContainsAny(userMessage, "coffee", "cafe", "cafes"))
+        {
+            return ["cafe"];
+        }
+
+        if (ContainsAny(userMessage, "post office", "post offices"))
+        {
+            return ["post_office"];
+        }
+
+        if (ContainsAny(userMessage, "car park", "car parks", "parking"))
+        {
+            return ["parking"];
+        }
+
+        if (ContainsAny(userMessage, "coffee", "cafe", "cafes"))
+        {
+            return ["cafe"];
+        }
+
+        if (ContainsAny(userMessage, "restaurant", "restaurants"))
+        {
+            return ["restaurant"];
+        }
+
+        if (ContainsAny(userMessage, "gym", "gyms", "fitness"))
+        {
+            return ["gym"];
+        }
+
+        return [];
     }
 
     private static string BuildClarificationReply(ResponseCompositionRequest request)

@@ -639,7 +639,7 @@ public sealed class GooglePlacesCompanionSearchService(
 
         if (hybridDecision.UseHybridRetrieval)
         {
-            var nearbyTypeMapping = nearbyTypeMapper.Map(query, constraints);
+            var nearbyTypeMapping = nearbyTypeMapper.Map(query, constraints, effectiveLocationContext);
             foreach (var reasonCode in nearbyTypeMapping.ReasonCodes)
             {
                 warnings.Add($"places_retrieval:{reasonCode}");
@@ -715,11 +715,31 @@ public sealed class GooglePlacesCompanionSearchService(
         }
 
         warnings.Add("places_query_shape:no_results_primary");
+        var shouldBroadenFromBrand = string.Equals(
+                                         effectiveLocationContext?.SearchScope,
+                                         "brand_first",
+                                         StringComparison.OrdinalIgnoreCase)
+                                     && !string.IsNullOrWhiteSpace(effectiveLocationContext?.PlannerCanonicalConcept);
+        var fallbackContext = shouldBroadenFromBrand && effectiveLocationContext is not null
+            ? effectiveLocationContext with
+            {
+                PlannerBrandTerm = null,
+                SearchScope = "concept_broadened"
+            }
+            : effectiveLocationContext;
+        var fallbackUserQuery = shouldBroadenFromBrand
+            ? effectiveLocationContext?.PlannerCanonicalConcept ?? query
+            : query;
+        if (shouldBroadenFromBrand)
+        {
+            warnings.Add("places_query_shape:brand_first_broaden_to_concept");
+        }
+
         var fallbackQueryBuild = textQueryBuilder.Build(
             new CompanionPlacesTextQueryBuildRequest(
-                UserQuery: query,
+                UserQuery: fallbackUserQuery,
                 Constraints: constraints,
-                LocationContext: effectiveLocationContext,
+                LocationContext: fallbackContext,
                 IsGpsNearMe: false,
                 ForceSimplifiedFallback: true));
         warnings.UnionWith(fallbackQueryBuild.ReasonCodes);
@@ -738,7 +758,7 @@ public sealed class GooglePlacesCompanionSearchService(
 
         warnings.Add("places_query_shape:fallback_text_search");
         var fallbackLocationContext = BuildFallbackLocationContext(
-            effectiveLocationContext,
+            fallbackContext,
             warnings);
         var fallbackRequest = BuildDiscoveryRequest(
             query: fallbackQuery,
@@ -785,7 +805,32 @@ public sealed class GooglePlacesCompanionSearchService(
         }
 
         var placeTypeHints = constraints.PlaceTypeHints.ToList();
-        if (locationContext.PlannerSelectedDomain is { } selectedDomain)
+        var appliedConceptHint = false;
+        if (locationContext.PlannerIncludeTypes is { Count: > 0 })
+        {
+            placeTypeHints = locationContext.PlannerIncludeTypes
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim().ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            warnings.Add("real_world_retrieval_planner_include_types_applied");
+        }
+        else if (!string.IsNullOrWhiteSpace(locationContext.PlannerSelectedConcept))
+        {
+            var mappedFromConcept = MapConceptToPlaceTypeHint(locationContext.PlannerSelectedConcept!);
+            if (!string.IsNullOrWhiteSpace(mappedFromConcept))
+            {
+                placeTypeHints.Insert(0, mappedFromConcept!);
+                placeTypeHints = placeTypeHints
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                warnings.Add("real_world_retrieval_planner_concept_hint_applied");
+                appliedConceptHint = true;
+            }
+        }
+
+        if (!appliedConceptHint && locationContext.PlannerSelectedDomain is { } selectedDomain)
         {
             var mappedType = MapDomainToPlaceTypeHint(selectedDomain);
             if (!string.IsNullOrWhiteSpace(mappedType))
@@ -799,13 +844,62 @@ public sealed class GooglePlacesCompanionSearchService(
             }
         }
 
+        if (locationContext.PlannerExcludeTypes is { Count: > 0 })
+        {
+            var excludeSet = locationContext.PlannerExcludeTypes
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim().ToLowerInvariant())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (excludeSet.Count > 0)
+            {
+                placeTypeHints = placeTypeHints
+                    .Where(type => !excludeSet.Contains(type))
+                    .ToList();
+                warnings.Add("real_world_retrieval_planner_exclude_types_applied");
+            }
+        }
+
         warnings.Add("real_world_retrieval_planner_constraints_applied");
         return constraints with
         {
             IsLocalDiscoveryCandidate = true,
             Confidence = Math.Max(constraints.Confidence, 0.95d),
             HasNearMeLanguage = constraints.HasNearMeLanguage || locationContext.HasNearMeSemantic,
+            HasExplicitLocality = constraints.HasExplicitLocality || !string.IsNullOrWhiteSpace(locationContext.TypedArea),
+            LocalityHint = !string.IsNullOrWhiteSpace(locationContext.TypedArea)
+                ? locationContext.TypedArea
+                : constraints.LocalityHint,
             PlaceTypeHints = placeTypeHints
+        };
+    }
+
+    private static string? MapConceptToPlaceTypeHint(string concept)
+    {
+        if (string.IsNullOrWhiteSpace(concept))
+        {
+            return null;
+        }
+
+        var normalized = concept.Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized switch
+        {
+            "movietheater" => "movie_theater",
+            "movietheatre" => "movie_theater",
+            "cafe" or "coffee_shop" => "cafe",
+            "restaurant" or "takeaway" => "restaurant",
+            "bar" or "pub" => "bar",
+            "movie_theater" or "cinema" => "movie_theater",
+            "park" => "park",
+            "playground" => "playground",
+            "pharmacy" => "pharmacy",
+            "gas_station" or "petrol_station" => "gas_station",
+            "gym" => "gym",
+            "electronics_store" => "electronics_store",
+            "convenience_store" => "convenience_store",
+            "grocery_store" or "supermarket" => "grocery_store",
+            "parking" or "car_park" => "parking",
+            "post_office" => "post_office",
+            _ => null
         };
     }
 
@@ -830,7 +924,7 @@ public sealed class GooglePlacesCompanionSearchService(
             RealWorldDiscoveryDomain.EntertainmentGeneral => "tourist_attraction",
             RealWorldDiscoveryDomain.NightlifeGeneral => "bar",
             RealWorldDiscoveryDomain.FoodDrinkGeneral => "restaurant",
-            RealWorldDiscoveryDomain.ServiceGeneral => "pharmacy",
+            RealWorldDiscoveryDomain.ServiceGeneral => null,
             RealWorldDiscoveryDomain.CommerceGeneral => "store",
             RealWorldDiscoveryDomain.ExploratoryEveningActivity => "tourist_attraction",
             RealWorldDiscoveryDomain.ExploratoryFamilyActivity => "tourist_attraction",
@@ -1142,7 +1236,12 @@ public sealed class GooglePlacesCompanionSearchService(
             ApplyDistanceRanking: applyDistanceRanking,
             UserLatitude: locationContext?.Latitude,
             UserLongitude: locationContext?.Longitude,
-            PlaceTypeHints: constraints.PlaceTypeHints);
+            PlaceTypeHints: constraints.PlaceTypeHints,
+            BrandTerm: locationContext?.PlannerBrandTerm,
+            CanonicalConcept: locationContext?.PlannerCanonicalConcept,
+            ExcludedTypeHints: locationContext?.PlannerExcludeTypes ?? [],
+            PreferenceHints: constraints.PreferenceHints,
+            TimeHints: constraints.TimeHints);
     }
 
     private static CompanionPlaceDiscoveryResult MergeHybridResults(

@@ -10,7 +10,8 @@ public interface ICompanionNearbyTypeMapper
 {
     CompanionNearbyTypeMappingResult Map(
         string? userQuery,
-        LocalDiscoveryConstraintExtractionResult constraints);
+        LocalDiscoveryConstraintExtractionResult constraints,
+        PlaceSearchLocationContext? locationContext = null);
 }
 
 public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
@@ -22,8 +23,10 @@ public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
             ["restaurant"] = "restaurant",
             ["bar"] = "bar",
             ["museum"] = "museum",
+            ["parking"] = "parking",
             ["park"] = "park",
             ["playground"] = "playground",
+            ["post_office"] = "post_office",
             ["tourist_attraction"] = "tourist_attraction",
             ["zoo"] = "zoo",
             ["movie_theater"] = "movie_theater",
@@ -40,10 +43,30 @@ public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
 
     public CompanionNearbyTypeMappingResult Map(
         string? userQuery,
-        LocalDiscoveryConstraintExtractionResult constraints)
+        LocalDiscoveryConstraintExtractionResult constraints,
+        PlaceSearchLocationContext? locationContext = null)
     {
         var types = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var reasons = new HashSet<string>(StringComparer.Ordinal);
+        var excludedTypes = BuildExcludedTypeSet(locationContext?.PlannerExcludeTypes);
+
+        if (locationContext?.PlannerIncludeTypes is { Count: > 0 })
+        {
+            foreach (var plannerType in locationContext.PlannerIncludeTypes)
+            {
+                var normalizedPlannerType = NormalizeNearbyType(plannerType);
+                if (!string.IsNullOrWhiteSpace(normalizedPlannerType))
+                {
+                    types.Add(normalizedPlannerType);
+                }
+            }
+
+            if (types.Count > 0)
+            {
+                reasons.Add("nearby_type_from_planner");
+            }
+        }
+
         foreach (var hint in constraints.PlaceTypeHints)
         {
             if (HintToNearbyType.TryGetValue(hint, out var mapped))
@@ -56,7 +79,29 @@ public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
         var normalizedQuery = Normalize(userQuery);
         if (types.Count == 0 && normalizedQuery.Length > 0)
         {
-            if (ContainsAnyPhrase(normalizedQuery, "coffee", "coffee shop", "cafes", "cafe"))
+            var hasParkingPhrase = ContainsAnyPhrase(
+                normalizedQuery,
+                "car park",
+                "car parks",
+                "parking",
+                "parking lot",
+                "parking garage");
+            var hasPostOfficePhrase = ContainsAnyPhrase(
+                normalizedQuery,
+                "post office",
+                "post offices");
+
+            if (hasParkingPhrase)
+            {
+                types.Add("parking");
+                reasons.Add("nearby_type_from_query_phrase");
+            }
+            else if (hasPostOfficePhrase)
+            {
+                types.Add("post_office");
+                reasons.Add("nearby_type_from_query_phrase");
+            }
+            else if (ContainsAnyPhrase(normalizedQuery, "coffee", "coffee shop", "cafes", "cafe"))
             {
                 types.Add("cafe");
                 reasons.Add("nearby_type_from_query_phrase");
@@ -132,6 +177,12 @@ public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
             }
         }
 
+        if (excludedTypes.Count > 0)
+        {
+            types.RemoveWhere(type => excludedTypes.Contains(type));
+            reasons.Add("nearby_type_exclusions_applied");
+        }
+
         if (types.Count == 0)
         {
             if (constraints.AudienceHints.Any(hint => string.Equals(hint, "kids", StringComparison.OrdinalIgnoreCase)))
@@ -167,5 +218,44 @@ public sealed class CompanionNearbyTypeMapper : ICompanionNearbyTypeMapper
     private static bool ContainsAnyPhrase(string value, params string[] phrases)
     {
         return phrases.Any(phrase => value.Contains(phrase, StringComparison.Ordinal));
+    }
+
+    private static string NormalizeNearbyType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+        return normalized switch
+        {
+            "car_park" => "parking",
+            "car_parks" => "parking",
+            "parking_lot" => "parking",
+            "postoffice" => "post_office",
+            "post_offices" => "post_office",
+            _ => normalized
+        };
+    }
+
+    private static HashSet<string> BuildExcludedTypeSet(IReadOnlyList<string>? plannerExcludeTypes)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (plannerExcludeTypes is null || plannerExcludeTypes.Count == 0)
+        {
+            return result;
+        }
+
+        foreach (var value in plannerExcludeTypes)
+        {
+            var normalized = NormalizeNearbyType(value);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                result.Add(normalized);
+            }
+        }
+
+        return result;
     }
 }

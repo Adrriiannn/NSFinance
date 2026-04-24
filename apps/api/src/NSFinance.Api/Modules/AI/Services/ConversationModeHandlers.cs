@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Options;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
@@ -46,7 +47,8 @@ public sealed class StructuredExplorationHandler(
     ILocalDiscoveryConstraintExtractor constraintExtractor,
     ILocalDiscoveryQueryShaper queryShaper,
     IPlacesSearchService placesSearchService,
-    IResultContextService resultContextService) : IConversationModeHandler
+    IResultContextService resultContextService,
+    IOptions<AIIntegrationOptions>? options = null) : IConversationModeHandler
 {
     public bool CanHandle(ConversationMode mode, ExplorationSubtype? explorationSubtype)
     {
@@ -62,12 +64,29 @@ public sealed class StructuredExplorationHandler(
 
         var warnings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var extraction = constraintExtractor.Extract(request.Request.UserMessage);
+        var interpretation = TurnInterpretationMetadataMapper.ReadInterpretation(request.ClientMetadata);
+        var retrievalPlan = TurnInterpretationMetadataMapper.ReadRetrievalPlan(request.ClientMetadata);
         var grounding = CompanionLocationGroundingParser.Parse(request.ClientMetadata, request.State);
+        var explorationTtlMinutes = Math.Max(
+            5,
+            options?.Value.Architecture.ExplorationConstraintTtlMinutes ?? 30);
+        var rememberedArea = TryResolveFreshAreaFromState(
+            request.State,
+            explorationTtlMinutes);
         var mergedConstraints = MergeExplorationConstraintState(
             request.State.Constraints,
             extraction,
-            grounding);
-        var typedArea = extraction.LocalityHint ?? grounding.TypedArea;
+            grounding,
+            retrievalPlan,
+            rememberedArea);
+        var typedArea = extraction.LocalityHint
+                        ?? grounding.TypedArea
+                        ?? retrievalPlan?.ResolvedAreaHint
+                        ?? rememberedArea;
+        if (!string.IsNullOrWhiteSpace(rememberedArea))
+        {
+            warnings.Add("structured_exploration_reused_recent_area");
+        }
         var locationContext = new PlaceSearchLocationContext(
             Source: grounding.HasCoordinates ? grounding.Source : !string.IsNullOrWhiteSpace(typedArea) ? "typed_area" : null,
             Latitude: grounding.HasCoordinates ? grounding.Latitude : null,
@@ -76,9 +95,28 @@ public sealed class StructuredExplorationHandler(
             TypedArea: typedArea,
             LocalityLabel: grounding.LocalityLabel ?? typedArea,
             AccuracyBucket: grounding.AccuracyBucket,
-            CapturedAtUtc: grounding.CapturedAtUtc);
+            CapturedAtUtc: grounding.CapturedAtUtc,
+            PlannerSelectedDomain: retrievalPlan?.SelectedDomain,
+            PlannerSelectedConcept: retrievalPlan?.CanonicalConcept,
+            PlannerIntentFamily: retrievalPlan?.IntentFamily,
+            PlannerAuthoritative: retrievalPlan?.PlannerAuthoritative == true,
+            HasNearMeSemantic: retrievalPlan?.NearMeSemantic == true || interpretation?.LocationPlan.NearMeSemantic == true,
+            PlannerExecutionMode: retrievalPlan?.SearchScope == "brand_first"
+                ? RealWorldExecutionMode.FocusedPlaceSearch
+                : RealWorldExecutionMode.FocusedThemeSearch,
+            SearchScope: retrievalPlan?.SearchScope,
+            PlannerBrandTerm: retrievalPlan?.BrandTerm,
+            PlannerCanonicalConcept: retrievalPlan?.CanonicalConcept,
+            PlannerIncludeTypes: retrievalPlan?.IncludedTypes,
+            PlannerExcludeTypes: retrievalPlan?.ExcludedTypes);
 
-        var missingConstraints = BuildMissingConstraints(extraction, grounding, request.State);
+        var missingConstraints = BuildMissingConstraints(
+            extraction,
+            grounding,
+            request.State,
+            interpretation,
+            retrievalPlan,
+            rememberedArea);
         var toolReady = request.StrategyDecision.Readiness.To == ConversationReadinessLevel.R4_ToolReady
                         && request.StrategyDecision.ToolExecutionPermission == ToolExecutionPermission.EligibleIfGuardPasses;
         if (!toolReady || missingConstraints.Count > 0)
@@ -132,7 +170,12 @@ public sealed class StructuredExplorationHandler(
                 Succeeded: true);
         }
 
-        var shaped = queryShaper.Shape(request.Request.UserMessage, locationContext, extraction);
+        var querySeed = !string.IsNullOrWhiteSpace(retrievalPlan?.BrandTerm)
+            ? retrievalPlan.BrandTerm!
+            : !string.IsNullOrWhiteSpace(retrievalPlan?.CanonicalConcept)
+                ? retrievalPlan.CanonicalConcept!
+                : request.Request.UserMessage;
+        var shaped = queryShaper.Shape(querySeed, locationContext, extraction);
         warnings.UnionWith(shaped.ReasonCodes);
 
         var countryCode = ResolveCountryCode(request.ClientMetadata, request.State);
@@ -171,7 +214,9 @@ public sealed class StructuredExplorationHandler(
         var normalizedConstraints = BuildNormalizedConstraints(
             mergedConstraints,
             extraction,
-            grounding);
+            grounding,
+            retrievalPlan,
+            rememberedArea);
         var selectedEntities = selectedItems
             .Select((item, index) => new ConversationSuggestedEntity(item.PlaceId, item.Name, index + 1, item.GoogleMapsUri))
             .ToArray();
@@ -253,13 +298,25 @@ public sealed class StructuredExplorationHandler(
     private static IReadOnlyList<string> BuildMissingConstraints(
         LocalDiscoveryConstraintExtractionResult extraction,
         CompanionLocationGrounding grounding,
-        ConversationStateSnapshot state)
+        ConversationStateSnapshot state,
+        TurnInterpretationV2? interpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        string? rememberedArea = null)
     {
         var missing = new List<string>();
         var hasKnownPlaceTypes = extraction.PlaceTypeHints.Count > 0
                                  || state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationPlaceTypes, out var existingPlaceTypes)
                                  && !string.IsNullOrWhiteSpace(existingPlaceTypes);
-        if (!hasKnownPlaceTypes)
+        var interpretedTypes = retrievalPlan?.IncludedTypes
+                               ?? interpretation?.PlacePlan.IncludeTypes
+                               ?? [];
+        var hasBrandSignal = !string.IsNullOrWhiteSpace(retrievalPlan?.BrandTerm)
+                             || interpretation?.PlacePlan.BrandOrEntityTerms.Count > 0;
+        var hasConceptSignal = !string.IsNullOrWhiteSpace(retrievalPlan?.CanonicalConcept)
+                               || !string.IsNullOrWhiteSpace(interpretation?.PlacePlan.CanonicalConcept);
+        var missingTargetByInterpretation = interpretation?.ActionType == TurnInterpretationActionType.MissingTarget;
+        if ((!hasKnownPlaceTypes && interpretedTypes.Count == 0 && !hasBrandSignal && !hasConceptSignal)
+            || missingTargetByInterpretation)
         {
             missing.Add("place_type");
         }
@@ -267,16 +324,31 @@ public sealed class StructuredExplorationHandler(
         var hasPersistentArea = state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var existingArea)
                                 && !string.IsNullOrWhiteSpace(existingArea)
                                 && !string.Equals(existingArea, "near_me", StringComparison.OrdinalIgnoreCase);
+        var hasInterpretedArea = !string.IsNullOrWhiteSpace(retrievalPlan?.ResolvedAreaHint)
+                                 || !string.IsNullOrWhiteSpace(interpretation?.LocationPlan.ResolvedAreaHint)
+                                 || !string.IsNullOrWhiteSpace(interpretation?.LocationPlan.ExplicitAreaText);
         var hasKnownArea = grounding.HasCoordinates
                            || grounding.HasTypedArea
                            || extraction.HasExplicitLocality
-                           || hasPersistentArea;
-        if (!hasKnownArea)
+                           || hasPersistentArea
+                           || !string.IsNullOrWhiteSpace(rememberedArea)
+                           || hasInterpretedArea;
+        var requiresLocation = retrievalPlan?.RequiresLocation
+                               ?? interpretation?.LocationPlan.RequiresLocation
+                               ?? hasKnownPlaceTypes
+                               || hasBrandSignal
+                               || hasConceptSignal;
+        var missingLocationByInterpretation = interpretation?.ActionType == TurnInterpretationActionType.MissingLocation
+                                              || interpretation?.LocationPlan.ClarificationNeeded == true
+                                              && requiresLocation;
+        if ((!hasKnownArea && requiresLocation) || missingLocationByInterpretation)
         {
             missing.Add("area_or_location");
         }
 
-        return missing;
+        return missing
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static ConversationModeExecutionResult BuildStructuredNoResultResponse(
@@ -393,30 +465,73 @@ public sealed class StructuredExplorationHandler(
     private static IReadOnlyDictionary<string, string> MergeExplorationConstraintState(
         IReadOnlyDictionary<string, string> existing,
         LocalDiscoveryConstraintExtractionResult extraction,
-        CompanionLocationGrounding grounding)
+        CompanionLocationGrounding grounding,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        string? rememberedArea)
     {
         var merged = new Dictionary<string, string>(existing, StringComparer.OrdinalIgnoreCase);
 
-        if (extraction.PlaceTypeHints.Count > 0)
+        var effectivePlaceTypes = retrievalPlan?.IncludedTypes is { Count: > 0 }
+            ? retrievalPlan.IncludedTypes
+            : extraction.PlaceTypeHints;
+        if (effectivePlaceTypes.Count > 0)
         {
-            merged[ConversationConstraintKeys.ExplorationPlaceTypes] = string.Join('|', extraction.PlaceTypeHints);
+            merged[ConversationConstraintKeys.ExplorationPlaceTypes] = string.Join('|', effectivePlaceTypes);
+        }
+
+        if (retrievalPlan?.ExcludedTypes is { Count: > 0 })
+        {
+            merged[ConversationConstraintKeys.ExplorationExcludeTypes] = string.Join('|', retrievalPlan.ExcludedTypes);
         }
 
         var area = extraction.HasExplicitLocality && !string.IsNullOrWhiteSpace(extraction.LocalityHint)
             ? extraction.LocalityHint!.Trim()
-            : extraction.HasNearMeLanguage
-                ? "near_me"
-                : grounding.HasTypedArea
-                    ? grounding.TypedArea!.Trim()
-                    : null;
+            : grounding.HasTypedArea
+                ? grounding.TypedArea!.Trim()
+                : !string.IsNullOrWhiteSpace(retrievalPlan?.ResolvedAreaHint)
+                    ? retrievalPlan.ResolvedAreaHint!.Trim()
+                    : !string.IsNullOrWhiteSpace(rememberedArea)
+                        ? rememberedArea.Trim()
+                        : extraction.HasNearMeLanguage || retrievalPlan?.NearMeSemantic == true
+                            ? "near_me"
+                            : null;
         if (!string.IsNullOrWhiteSpace(area))
         {
             merged[ConversationConstraintKeys.ExplorationArea] = area;
         }
 
-        if (extraction.TimeHints.Count > 0)
+        var effectiveTimeHints = retrievalPlan?.TimeFilters is { Count: > 0 }
+            ? retrievalPlan.TimeFilters
+            : extraction.TimeHints;
+        if (effectiveTimeHints.Count > 0)
         {
-            merged[ConversationConstraintKeys.ExplorationTime] = string.Join('|', extraction.TimeHints);
+            merged[ConversationConstraintKeys.ExplorationTime] = string.Join('|', effectiveTimeHints);
+        }
+
+        var effectivePreferences = retrievalPlan?.Preferences is { Count: > 0 }
+            ? retrievalPlan.Preferences
+            : extraction.PreferenceHints;
+        if (effectivePreferences.Count > 0)
+        {
+            merged[ConversationConstraintKeys.ExplorationPreferences] = string.Join('|', effectivePreferences);
+        }
+
+        var effectiveAudience = retrievalPlan?.AudienceFilters is { Count: > 0 }
+            ? retrievalPlan.AudienceFilters
+            : extraction.AudienceHints;
+        if (effectiveAudience.Count > 0)
+        {
+            merged[ConversationConstraintKeys.ExplorationAudience] = string.Join('|', effectiveAudience);
+        }
+
+        if (!string.IsNullOrWhiteSpace(retrievalPlan?.BrandTerm))
+        {
+            merged[ConversationConstraintKeys.ExplorationBrandTerm] = retrievalPlan.BrandTerm!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(retrievalPlan?.CanonicalConcept))
+        {
+            merged[ConversationConstraintKeys.ExplorationCanonicalConcept] = retrievalPlan.CanonicalConcept!;
         }
 
         return merged;
@@ -653,7 +768,9 @@ public sealed class StructuredExplorationHandler(
     private static IReadOnlyDictionary<string, string> BuildNormalizedConstraints(
         IReadOnlyDictionary<string, string> mergedConstraints,
         LocalDiscoveryConstraintExtractionResult extraction,
-        CompanionLocationGrounding grounding)
+        CompanionLocationGrounding grounding,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        string? rememberedArea)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationPlaceTypes, out var placeTypes)
@@ -664,6 +781,12 @@ public sealed class StructuredExplorationHandler(
         else if (extraction.PlaceTypeHints.Count > 0)
         {
             result["place_types"] = string.Join('|', extraction.PlaceTypeHints);
+        }
+
+        if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationExcludeTypes, out var excludeTypes)
+            && !string.IsNullOrWhiteSpace(excludeTypes))
+        {
+            result["exclude_types"] = excludeTypes;
         }
 
         if (extraction.PreferenceHints.Count > 0)
@@ -690,8 +813,78 @@ public sealed class StructuredExplorationHandler(
         {
             result["typed_area"] = grounding.TypedArea!;
         }
+        else if (!string.IsNullOrWhiteSpace(retrievalPlan?.ResolvedAreaHint))
+        {
+            result["typed_area"] = retrievalPlan.ResolvedAreaHint!;
+        }
+        else if (!string.IsNullOrWhiteSpace(rememberedArea))
+        {
+            result["typed_area"] = rememberedArea!;
+        }
+
+        if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationBrandTerm, out var brandTerm)
+            && !string.IsNullOrWhiteSpace(brandTerm))
+        {
+            result["brand_term"] = brandTerm;
+        }
+        else if (!string.IsNullOrWhiteSpace(retrievalPlan?.BrandTerm))
+        {
+            result["brand_term"] = retrievalPlan.BrandTerm!;
+        }
+
+        if (mergedConstraints.TryGetValue(ConversationConstraintKeys.ExplorationCanonicalConcept, out var canonicalConcept)
+            && !string.IsNullOrWhiteSpace(canonicalConcept))
+        {
+            result["canonical_concept"] = canonicalConcept;
+        }
+        else if (!string.IsNullOrWhiteSpace(retrievalPlan?.CanonicalConcept))
+        {
+            result["canonical_concept"] = retrievalPlan.CanonicalConcept!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(retrievalPlan?.SearchScope))
+        {
+            result["search_scope"] = retrievalPlan.SearchScope;
+        }
+
+        if (retrievalPlan?.SelectedDomain is RealWorldDiscoveryDomain selectedDomain)
+        {
+            result["planner_domain"] = selectedDomain.ToString();
+        }
 
         return result;
+    }
+
+    private static string? TryResolveFreshAreaFromState(ConversationStateSnapshot state, int ttlMinutes)
+    {
+        if (!state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var area)
+            || string.IsNullOrWhiteSpace(area))
+        {
+            return null;
+        }
+
+        var trimmedArea = area.Trim();
+        if (string.Equals(trimmedArea, "near_me", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationAreaExpiresUtc, out var expiresRaw)
+            && DateTimeOffset.TryParse(expiresRaw, out var expiresUtc))
+        {
+            return expiresUtc >= now ? trimmedArea : null;
+        }
+
+        if (state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationAreaLastUsedUtc, out var lastUsedRaw)
+            && DateTimeOffset.TryParse(lastUsedRaw, out var lastUsedUtc))
+        {
+            return lastUsedUtc >= now.AddMinutes(-Math.Max(5, ttlMinutes))
+                ? trimmedArea
+                : null;
+        }
+
+        return null;
     }
 
     private static string BuildQueryFingerprint(

@@ -4,7 +4,12 @@ public sealed record CompanionPlaceRankingContext(
     bool ApplyDistanceRanking,
     double? UserLatitude,
     double? UserLongitude,
-    IReadOnlyList<string> PlaceTypeHints);
+    IReadOnlyList<string> PlaceTypeHints,
+    string? BrandTerm = null,
+    string? CanonicalConcept = null,
+    IReadOnlyList<string>? ExcludedTypeHints = null,
+    IReadOnlyList<string>? PreferenceHints = null,
+    IReadOnlyList<string>? TimeHints = null);
 
 public sealed record CompanionPlaceRankingResult(
     IReadOnlyList<CompanionPlaceCandidate> RankedCandidates,
@@ -60,7 +65,7 @@ public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
                 distanceByPlaceId[candidate.PlaceId] = distanceMeters.Value;
             }
 
-            var score = ComputeScore(candidate, distanceMeters, context.PlaceTypeHints);
+            var score = ComputeScore(candidate, distanceMeters, context);
             scored.Add((candidate, score, distanceMeters));
         }
 
@@ -92,19 +97,26 @@ public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
     private static double ComputeScore(
         CompanionPlaceCandidate candidate,
         double? distanceMeters,
-        IReadOnlyList<string> placeTypeHints)
+        CompanionPlaceRankingContext context)
     {
         var distanceScore = ScoreDistance(distanceMeters);
-        var typeScore = ScoreTypeFit(candidate, placeTypeHints);
+        var typeScore = ScoreTypeFit(candidate, context.PlaceTypeHints);
+        var conceptScore = ScoreConceptFit(candidate, context.CanonicalConcept);
+        var brandScore = ScoreBrandFit(candidate, context.BrandTerm);
+        var preferenceScore = ScorePreferenceFit(candidate, context.PreferenceHints ?? []);
+        var timeScore = ScoreTimeFit(candidate, context.TimeHints ?? []);
         var qualityScore = ScoreQuality(candidate);
-        var openNowScore = candidate.OpeningHours.OpenNow.HasValue
-            ? candidate.OpeningHours.OpenNow.Value ? 1d : 0.20d
-            : 0.50d;
+        var exclusionPenalty = ScoreExclusionPenalty(candidate, context.ExcludedTypeHints ?? []);
 
-        return (distanceScore * 0.58d)
-               + (typeScore * 0.22d)
-               + (qualityScore * 0.14d)
-               + (openNowScore * 0.06d);
+        var combinedTypeFit = Math.Max(typeScore, conceptScore);
+        var score = (distanceScore * 0.42d)
+                    + (combinedTypeFit * 0.20d)
+                    + (brandScore * 0.18d)
+                    + (preferenceScore * 0.08d)
+                    + (timeScore * 0.06d)
+                    + (qualityScore * 0.12d)
+                    - exclusionPenalty;
+        return Math.Clamp(score, 0d, 1.5d);
     }
 
     private static double ScoreDistance(double? distanceMeters)
@@ -180,6 +192,162 @@ public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
         }
 
         return 0.25d;
+    }
+
+    private static double ScoreConceptFit(
+        CompanionPlaceCandidate candidate,
+        string? canonicalConcept)
+    {
+        if (string.IsNullOrWhiteSpace(canonicalConcept))
+        {
+            return 0.40d;
+        }
+
+        var canonical = NormalizeToken(canonicalConcept);
+        if (string.IsNullOrWhiteSpace(canonical))
+        {
+            return 0.40d;
+        }
+
+        var allTypes = candidate.Types
+            .Select(NormalizeToken)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var primary = NormalizeToken(candidate.PrimaryType);
+        if (!string.IsNullOrWhiteSpace(primary))
+        {
+            allTypes.Add(primary);
+        }
+
+        if (allTypes.Contains(canonical))
+        {
+            return 1d;
+        }
+
+        return allTypes.Any(type =>
+                type.Contains(canonical, StringComparison.OrdinalIgnoreCase)
+                || canonical.Contains(type, StringComparison.OrdinalIgnoreCase))
+            ? 0.72d
+            : 0.24d;
+    }
+
+    private static double ScoreBrandFit(
+        CompanionPlaceCandidate candidate,
+        string? brandTerm)
+    {
+        if (string.IsNullOrWhiteSpace(brandTerm))
+        {
+            return 0.45d;
+        }
+
+        var brand = brandTerm.Trim();
+        if (candidate.DisplayName.Contains(brand, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1d;
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate.PrimaryTypeDisplayName)
+            && candidate.PrimaryTypeDisplayName.Contains(brand, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0.70d;
+        }
+
+        return 0.12d;
+    }
+
+    private static double ScorePreferenceFit(
+        CompanionPlaceCandidate candidate,
+        IReadOnlyList<string> preferenceHints)
+    {
+        if (preferenceHints.Count == 0)
+        {
+            return 0.55d;
+        }
+
+        var score = 0.35d;
+        foreach (var hint in preferenceHints.Select(NormalizeToken))
+        {
+            if (string.IsNullOrWhiteSpace(hint))
+            {
+                continue;
+            }
+
+            if (hint is "dog_friendly" or "pet_friendly")
+            {
+                score = Math.Max(score, candidate.AllowsDogs == true ? 1d : 0.20d);
+                continue;
+            }
+
+            if (hint == "budget")
+            {
+                var budgetScore = candidate.PriceLevel is null
+                    ? 0.50d
+                    : candidate.PriceLevel.Contains("INEXPENSIVE", StringComparison.OrdinalIgnoreCase)
+                        ? 1d
+                        : candidate.PriceLevel.Contains("MODERATE", StringComparison.OrdinalIgnoreCase)
+                            ? 0.65d
+                            : 0.20d;
+                score = Math.Max(score, budgetScore);
+            }
+        }
+
+        return score;
+    }
+
+    private static double ScoreTimeFit(
+        CompanionPlaceCandidate candidate,
+        IReadOnlyList<string> timeHints)
+    {
+        if (timeHints.Count == 0)
+        {
+            return candidate.OpeningHours.OpenNow.HasValue
+                ? candidate.OpeningHours.OpenNow.Value ? 0.90d : 0.25d
+                : 0.50d;
+        }
+
+        var requiresOpenNow = timeHints.Any(value =>
+            string.Equals(value, "open_now", StringComparison.OrdinalIgnoreCase));
+        if (!requiresOpenNow)
+        {
+            return 0.55d;
+        }
+
+        return candidate.OpeningHours.OpenNow.HasValue
+            ? candidate.OpeningHours.OpenNow.Value ? 1d : 0.05d
+            : 0.30d;
+    }
+
+    private static double ScoreExclusionPenalty(
+        CompanionPlaceCandidate candidate,
+        IReadOnlyList<string> excludedTypeHints)
+    {
+        if (excludedTypeHints.Count == 0)
+        {
+            return 0d;
+        }
+
+        var excludedSet = excludedTypeHints
+            .Select(NormalizeToken)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (excludedSet.Count == 0)
+        {
+            return 0d;
+        }
+
+        var candidateTypes = candidate.Types
+            .Select(NormalizeToken)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var primary = NormalizeToken(candidate.PrimaryType);
+        if (!string.IsNullOrWhiteSpace(primary))
+        {
+            candidateTypes.Add(primary);
+        }
+
+        return candidateTypes.Any(candidateType => excludedSet.Contains(candidateType))
+            ? 0.38d
+            : 0d;
     }
 
     private static double ScoreQuality(CompanionPlaceCandidate candidate)

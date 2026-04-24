@@ -28,7 +28,8 @@ public sealed class ConversationBehaviorEngine(
             request.EffectiveState);
         var workingRequest = clarificationRewrite.Request;
         var startingState = clarificationRewrite.State;
-        var signals = ConversationSignalAnalyzer.Analyze(workingRequest.UserMessage);
+        var interpretation = TurnInterpretationMetadataMapper.ReadInterpretation(request.ClientMetadata);
+        var signals = ConversationSignalAnalyzer.Analyze(workingRequest.UserMessage, interpretation);
 
         var resultContextReadResult = request.ResultContextReadResult
                                       ?? new ResultContextReadResult(
@@ -89,6 +90,7 @@ public sealed class ConversationBehaviorEngine(
             normalizedDecision,
             effectiveState,
             signals);
+        var scopeGovernedDecision = ApplyScopeGovernance(financiallyGuardedDecision, interpretation);
         ExplorationSubtypeDecision? explorationSubtypeDecision = null;
         ConversationModelSelectionPlan? explorationSubtypeModelSelection = null;
         var explorationSubtypeResolutionSource = "not_applicable";
@@ -101,14 +103,14 @@ public sealed class ConversationBehaviorEngine(
                                          && primaryDecisionEvaluation.ModelSelection.SelectionKind == ConversationModelSelectionKind.Fast
             ? 1
             : 0;
-        if (financiallyGuardedDecision.ModeCandidate == ConversationMode.Exploration)
+        if (scopeGovernedDecision.ModeCandidate == ConversationMode.Exploration)
         {
             var resolutionPlan = explorationSubtypeDecisionPolicy.DetermineResolution(
                 workingRequest.UserMessage,
                 effectiveState,
                 request.ResultContext,
                 effectiveBindingType,
-                financiallyGuardedDecision);
+                scopeGovernedDecision);
             explorationSubtypeResolutionSource = resolutionPlan.ResolutionSource;
 
             if (!resolutionPlan.RequiresModelReasoning)
@@ -121,7 +123,7 @@ public sealed class ConversationBehaviorEngine(
                         ContextSummary: request.ContextSummary,
                         State: effectiveState,
                         ResultContext: request.ResultContext,
-                        StrategyDecision: financiallyGuardedDecision,
+                        StrategyDecision: scopeGovernedDecision,
                         ExplorationSubtypeDecision: resolutionPlan.Decision,
                         ClientMetadata: request.ClientMetadata),
                     signals,
@@ -137,7 +139,7 @@ public sealed class ConversationBehaviorEngine(
                         ContextSummary: request.ContextSummary,
                         State: effectiveState,
                         ResultContext: request.ResultContext,
-                        StrategyDecision: financiallyGuardedDecision,
+                        StrategyDecision: scopeGovernedDecision,
                         ExplorationSubtypeDecision: null,
                         ClientMetadata: request.ClientMetadata),
                     signals,
@@ -150,7 +152,7 @@ public sealed class ConversationBehaviorEngine(
                         ContextSummary: request.ContextSummary,
                         State: effectiveState,
                         ResultContext: request.ResultContext,
-                        StrategyDecision: financiallyGuardedDecision,
+                        StrategyDecision: scopeGovernedDecision,
                         ExplorationSubtypeDecision: null,
                         ClientMetadata: request.ClientMetadata),
                     explorationSubtypeModelSelection,
@@ -202,14 +204,17 @@ public sealed class ConversationBehaviorEngine(
                 cancellationToken);
         }
 
-        var finalModeCandidateDecision = financiallyGuardedDecision;
+        var finalModeCandidateDecision = scopeGovernedDecision;
 
         if (finalModeCandidateDecision.ModeCandidate == ConversationMode.Exploration
             && explorationSubtypeDecision?.Subtype == ExplorationSubtype.Structured
-            && CompanionLocationGroundingParser.RequiresCurrentLocation(workingRequest.UserMessage))
+            && (CompanionLocationGroundingParser.RequiresCurrentLocation(workingRequest.UserMessage)
+                || interpretation?.LocationPlan.NearMeSemantic == true
+                || interpretation?.LocationPlan.RequiresLocation == true))
         {
             var grounding = CompanionLocationGroundingParser.Parse(request.ClientMetadata, effectiveState);
-            if (!grounding.HasCoordinates && !grounding.HasTypedArea)
+            var hasFreshAreaMemory = HasFreshAreaMemory(effectiveState);
+            if (!grounding.HasCoordinates && !grounding.HasTypedArea && !hasFreshAreaMemory)
             {
                 finalModeCandidateDecision = finalModeCandidateDecision with
                 {
@@ -329,6 +334,69 @@ public sealed class ConversationBehaviorEngine(
             FastDecisionModelCallCount: fastDecisionModelCallCount,
             ReasonCodes: finalDecision.ReasonCodes,
             Warnings: warnings.ToArray());
+    }
+
+    private static bool HasFreshAreaMemory(ConversationStateSnapshot state)
+    {
+        if (!state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationArea, out var area)
+            || string.IsNullOrWhiteSpace(area)
+            || string.Equals(area, "near_me", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!state.Constraints.TryGetValue(ConversationConstraintKeys.ExplorationAreaExpiresUtc, out var expiresRaw)
+            || string.IsNullOrWhiteSpace(expiresRaw)
+            || !DateTimeOffset.TryParse(expiresRaw, out var expiresUtc))
+        {
+            return false;
+        }
+
+        return expiresUtc >= DateTimeOffset.UtcNow;
+    }
+
+    private static ConversationTurnStrategyDecision ApplyScopeGovernance(
+        ConversationTurnStrategyDecision decision,
+        TurnInterpretationV2? interpretation)
+    {
+        if (interpretation is null
+            || interpretation.InScopeVerdict == TurnInterpretationInScopeVerdict.InScope)
+        {
+            return decision;
+        }
+
+        if (interpretation.InScopeVerdict == TurnInterpretationInScopeVerdict.Borderline)
+        {
+            return decision with
+            {
+                ReasonCodes = decision.ReasonCodes
+                    .Concat(["scope_governance_borderline_allowed"])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+        }
+
+        return decision with
+        {
+            Strategy = ConversationBehaviorStrategy.SuggestAndClarify,
+            ModeCandidate = ConversationMode.Conversation,
+            Readiness = decision.Readiness with
+            {
+                To = ConversationReadinessLevel.R2_DirectionKnown
+            },
+            ToolExecutionPermission = ToolExecutionPermission.Forbidden,
+            ClarificationQuestion = "I can help best with finance, nearby places, or planning decisions tied to money. Which direction should we take?",
+            SuggestedOptions =
+            [
+                "Nearby places",
+                "Budget guidance",
+                "Spending question"
+            ],
+            ReasonCodes = decision.ReasonCodes
+                .Concat(["scope_governance_soft_redirect"])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+        };
     }
 
     private static ConversationTurnStrategyDecision EnforceBehaviorRules(

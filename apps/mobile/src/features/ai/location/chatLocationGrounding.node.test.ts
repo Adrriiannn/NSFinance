@@ -187,7 +187,7 @@ test("chat location attachment keeps non-nearby prompts non-blocking when locati
   assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
 });
 
-test("chat location attachment skips gps for non-location prompts", async () => {
+test("chat location attachment attempts gps even for non-location prompts when permission is granted", async () => {
   const attachment = await resolveChatLocationAttachment(
     "how is my monthly budget doing?",
     "granted",
@@ -200,12 +200,12 @@ test("chat location attachment skips gps for non-location prompts", async () => 
     })
   );
 
-  assert.equal(attachment.context, null);
+  assert.equal(attachment.context?.source, "gps");
   assert.equal(attachment.requiresNearbyClarification, false);
   assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
 });
 
-test("chat location attachment does not attach gps when explicit area is provided", async () => {
+test("chat location attachment still includes gps metadata when explicit area is provided", async () => {
   const attachment = await resolveChatLocationAttachment(
     "coffee shops open now in Dublin 2",
     "granted",
@@ -218,12 +218,12 @@ test("chat location attachment does not attach gps when explicit area is provide
     })
   );
 
-  assert.equal(attachment.context, null);
+  assert.equal(attachment.context?.source, "gps");
   assert.equal(attachment.requiresNearbyClarification, false);
   assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "false");
 });
 
-test("chat location attachment keeps nearby prompts strict when permission is not granted", async () => {
+test("chat location attachment remains non-blocking when permission is not granted", async () => {
   const attachment = await resolveChatLocationAttachment(
     "cinemas near me",
     "denied_can_ask_again",
@@ -231,6 +231,6 @@ test("chat location attachment keeps nearby prompts strict when permission is no
   );
 
   assert.equal(attachment.context, null);
-  assert.equal(attachment.requiresNearbyClarification, true);
+  assert.equal(attachment.requiresNearbyClarification, false);
   assert.equal(attachment.diagnosticsMetadata.chat_location_nearby_prompt, "true");
 });

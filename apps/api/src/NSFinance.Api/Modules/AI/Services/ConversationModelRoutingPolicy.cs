@@ -24,9 +24,19 @@ public sealed class ConversationModelRoutingPolicy : IConversationModelRoutingPo
         ConversationStateSnapshot effectiveState)
     {
         var extraction = ConversationPolicyHelpers.ExtractLocalDiscovery(request.Request.UserMessage);
+        var interpretation = TurnInterpretationMetadataMapper.ReadInterpretation(request.Request.Metadata);
         var semanticFamily = ConversationPolicyHelpers.ResolveSemanticFamily(effectiveState, signals);
         var normalized = (request.Request.UserMessage ?? string.Empty).Trim().ToLowerInvariant();
         var reasonCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (interpretation?.InScopeVerdict == TurnInterpretationInScopeVerdict.OutOfScope)
+        {
+            reasonCodes.Add("model_selection_scope_soft_redirect_deterministic");
+            return BuildDeterministicPlan(
+                "scope_soft_redirect_deterministic",
+                null,
+                reasonCodes);
+        }
 
         if (HasDeterministicStructuredFollowUp(
                 request.ResultContext,
@@ -54,7 +64,20 @@ public sealed class ConversationModelRoutingPolicy : IConversationModelRoutingPo
                 ReasonCodes: reasonCodes.ToArray());
         }
 
+        var interpretationSuggestsStructured = interpretation?.ActionType is TurnInterpretationActionType.ReadyForSearch
+            or TurnInterpretationActionType.MissingLocation
+            or TurnInterpretationActionType.MissingTarget;
         if (ConversationPolicyHelpers.HasConcreteStructuredSearchFrame(extraction, signals)
+            || (interpretationSuggestsStructured
+                && interpretation?.IntentFamily is TurnInterpretationIntentFamily.PlaceDiscovery or TurnInterpretationIntentFamily.Mixed))
+        {
+            if (interpretationSuggestsStructured)
+            {
+                reasonCodes.Add("model_selection_structured_search_from_interpretation");
+            }
+        }
+        if ((ConversationPolicyHelpers.HasConcreteStructuredSearchFrame(extraction, signals)
+             || interpretationSuggestsStructured)
             && !ConversationPolicyHelpers.ShouldPreferExperientialOpen(extraction, signals))
         {
             reasonCodes.Add("model_selection_structured_search_deterministic");
