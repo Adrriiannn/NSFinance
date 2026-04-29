@@ -138,6 +138,13 @@ public sealed class ChatTurnOptions
 public sealed class ConversationArchitectureOptions
 {
     public bool EmitTelemetryEvents { get; set; } = true;
+    public bool InterpretationEnabled { get; set; } = true;
+    public bool ConversationIntelligenceEnabled { get; set; } = true;
+    public bool CompanionActionResolverEnabled { get; set; } = true;
+    public bool PlacesFollowUpExecutionEnabled { get; set; } = true;
+    public bool PlacesBrandFirstEnabled { get; set; } = true;
+    public bool PlacesOpenWorldConceptRankingEnabled { get; set; } = true;
+    public bool ResponseCompositionAIScriptlessEnabled { get; set; } = true;
     public int ResultContextActiveMinutes { get; set; } = 30;
     public int ResultContextPersistedHours { get; set; } = 24;
     public int ExplorationConstraintTtlMinutes { get; set; } = 30;

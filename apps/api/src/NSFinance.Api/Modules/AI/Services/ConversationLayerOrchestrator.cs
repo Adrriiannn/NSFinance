@@ -26,7 +26,9 @@ public sealed class ConversationLayerOrchestrator(
     ILocalDiscoveryConstraintExtractor? localDiscoveryConstraintExtractor = null,
     ITurnInterpretationEngine? turnInterpretationEngine = null,
     IPlaceRetrievalPlanner? placeRetrievalPlanner = null,
-    IConversationIntelligenceService? conversationIntelligenceService = null) : IUserChatOrchestrator
+    IConversationIntelligenceService? conversationIntelligenceService = null,
+    ICompanionActionResolver? companionActionResolver = null,
+    IPlaceResultFollowUpService? placeResultFollowUpService = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -596,7 +598,8 @@ public sealed class ConversationLayerOrchestrator(
         var interpretedState = effectiveState;
         TurnInterpretationV2? turnInterpretation = null;
         PlaceRetrievalPlanV1? retrievalPlan = null;
-        if (turnInterpretationEngine is not null)
+        if (turnInterpretationEngine is not null
+            && options.Value.Architecture.InterpretationEnabled)
         {
             var interpretationResult = await turnInterpretationEngine.InterpretAsync(
                 new TurnInterpretationPromptInput(
@@ -637,7 +640,8 @@ public sealed class ConversationLayerOrchestrator(
         var intelligenceModelCallCount = 0;
         var intelligenceFastModelCallCount = 0;
         var intelligenceHeavyModelCallCount = 0;
-        if (conversationIntelligenceService is not null)
+        if (conversationIntelligenceService is not null
+            && options.Value.Architecture.ConversationIntelligenceEnabled)
         {
             var intelligenceResult = await conversationIntelligenceService.EvaluateAsync(
                 new ConversationIntelligencePromptInput(
@@ -670,6 +674,52 @@ public sealed class ConversationLayerOrchestrator(
             clientMetadata = MergeConversationIntelligenceMetadata(
                 clientMetadata,
                 conversationIntelligence);
+        }
+
+        CompanionResolvedAction? resolvedAction = null;
+        if (companionActionResolver is not null
+            && options.Value.Architecture.CompanionActionResolverEnabled)
+        {
+            resolvedAction = companionActionResolver.Resolve(
+                request,
+                interpretedState,
+                resultContextReadResult,
+                turnInterpretation,
+                retrievalPlan,
+                conversationIntelligence);
+            await telemetry.TrackAsync(
+                "chat.turn.resolved_action",
+                BuildResolvedActionTelemetry(
+                    request.CorrelationId,
+                    resolvedAction,
+                    resultContextReadResult.ActiveResultContext is not null),
+                cancellationToken);
+        }
+
+        if (resolvedAction is not null
+            && options.Value.Architecture.PlacesFollowUpExecutionEnabled
+            && placeResultFollowUpService is not null
+            && resultContextReadResult.ActiveResultContext is not null
+            && resolvedAction.Kind is CompanionActionKind.FilterPreviousResults
+                or CompanionActionKind.SortPreviousResults
+                or CompanionActionKind.EnrichPreviousResults
+                or CompanionActionKind.ComparePreviousResults)
+        {
+            return await ExecutePlaceFollowUpPathAsync(
+                request,
+                contextSummary,
+                interpretedState,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                resolvedAction,
+                conversationIntelligence,
+                turnInterpretation,
+                retrievalPlan,
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken);
         }
 
         var behaviorStopwatch = Stopwatch.StartNew();
@@ -749,7 +799,9 @@ public sealed class ConversationLayerOrchestrator(
                 conversationIntelligence,
                 turnInterpretation,
                 retrievalPlan,
-                currentResultContext);
+                currentResultContext,
+                resolvedAction,
+                followUpExecutionResult: null);
 
             var responseCompositionStopwatch = Stopwatch.StartNew();
             var composed = await responseComposer.ComposeAsync(
@@ -840,7 +892,7 @@ public sealed class ConversationLayerOrchestrator(
                 StrategyDecision: behavior.StrategyDecision,
                 ExplorationSubtypeDecision: behavior.ExplorationSubtypeDecision,
                 ClientMetadata: clientMetadata,
-                ConversationIntelligence: conversationIntelligence),
+            ConversationIntelligence: conversationIntelligence),
             cancellationToken);
         modeExecutionStopwatch.Stop();
         modeExecutionDurationMs = modeExecutionStopwatch.ElapsedMilliseconds;
@@ -976,7 +1028,9 @@ public sealed class ConversationLayerOrchestrator(
             conversationIntelligence,
             turnInterpretation,
             retrievalPlan,
-            currentResultContext);
+            currentResultContext,
+            resolvedAction,
+            followUpExecutionResult: null);
 
         var routedCompositionStopwatch = Stopwatch.StartNew();
         var routedComposition = await responseComposer.ComposeAsync(
@@ -1081,14 +1135,240 @@ public sealed class ConversationLayerOrchestrator(
         ConversationIntelligenceResult? conversationIntelligence,
         TurnInterpretationV2? turnInterpretation,
         PlaceRetrievalPlanV1? retrievalPlan,
-        ResultContextSnapshot? resultContext)
+        ResultContextSnapshot? resultContext,
+        CompanionResolvedAction? resolvedAction,
+        PlaceFollowUpExecutionResult? followUpExecutionResult)
     {
         return request with
         {
             ConversationIntelligence = conversationIntelligence,
             TurnInterpretation = turnInterpretation,
             RetrievalPlan = retrievalPlan,
-            ResultContext = resultContext
+            ResultContext = resultContext,
+            ResolvedAction = resolvedAction,
+            FollowUpExecutionResult = followUpExecutionResult
+        };
+    }
+
+    private async Task<OrchestratedConversationResult> ExecutePlaceFollowUpPathAsync(
+        UserChatRequest request,
+        string? contextSummary,
+        ConversationStateSnapshot state,
+        ResultContextReadResult resultContextReadResult,
+        IReadOnlyList<string> existingWarnings,
+        IReadOnlyList<string> intelligenceWarnings,
+        CompanionResolvedAction resolvedAction,
+        ConversationIntelligenceResult? conversationIntelligence,
+        TurnInterpretationV2? turnInterpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        int intelligenceModelCallCount,
+        int intelligenceFastModelCallCount,
+        int intelligenceHeavyModelCallCount,
+        CancellationToken cancellationToken)
+    {
+        var activeResult = resultContextReadResult.ActiveResultContext
+                           ?? throw new InvalidOperationException("Place follow-up path requires an active result context.");
+        var followUpStopwatch = Stopwatch.StartNew();
+        var followUpResult = await placeResultFollowUpService!.ExecuteAsync(
+            resolvedAction,
+            activeResult,
+            cancellationToken);
+        followUpStopwatch.Stop();
+
+        await telemetry.TrackAsync(
+            "chat.turn.tool_execution",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["tool"] = "place_result_follow_up",
+                ["actionKind"] = resolvedAction.Kind.ToString(),
+                ["candidateCount"] = followUpResult.Candidates.Count,
+                ["evidenceQuality"] = followUpResult.EvidenceQuality,
+                ["warningCount"] = followUpResult.Warnings.Count,
+                ["durationMs"] = followUpStopwatch.ElapsedMilliseconds
+            },
+            cancellationToken);
+
+        var nextState = state with
+        {
+            ActiveMode = ConversationMode.Exploration,
+            ModeCandidate = ConversationMode.Exploration,
+            ReadinessLevel = ConversationReadinessLevel.R4_ToolReady,
+            NeedsFollowUp = true,
+            FollowUpBindingType = FollowUpBindingType.Refine,
+            ResultContextRef = new ConversationResultContextReference(
+                ActiveResultSetId: activeResult.ResultSetId,
+                BranchRootResultSetId: activeResult.BranchRootResultSetId,
+                ActiveUntilUtc: activeResult.ActiveUntilUtc,
+                ExpiresUtc: activeResult.ExpiresUtc),
+            PendingClarification = null
+        };
+        var strategy = new ConversationTurnStrategyDecision(
+            Strategy: resolvedAction.Kind == CompanionActionKind.ComparePreviousResults
+                ? ConversationBehaviorStrategy.RefinePriorResultSet
+                : ConversationBehaviorStrategy.ContinueRefinementThread,
+            ModeCandidate: ConversationMode.Exploration,
+            Readiness: new ReadinessTransition(state.ReadinessLevel, ConversationReadinessLevel.R4_ToolReady),
+            Confidence: conversationIntelligence?.UserIntentConfidence ?? turnInterpretation?.Confidence ?? 0.8d,
+            FollowUpBindingType: FollowUpBindingType.Refine,
+            ClarificationQuestion: null,
+            SuggestedOptions: [],
+            ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+            ReasonCodes: ["resolved_action_prior_result_follow_up"]);
+
+        var compositionRequest = EnrichCompositionRequest(
+            new ResponseCompositionRequest(
+                ResponseType: resolvedAction.Kind == CompanionActionKind.ComparePreviousResults
+                    ? ResponseCompositionType.Comparison
+                    : ResponseCompositionType.ResultSummary,
+                ToneDirective: ResolveToneDirective(conversationIntelligence),
+                Strategy: strategy.Strategy,
+                Mode: ConversationMode.Exploration,
+                ReadinessLevel: nextState.ReadinessLevel,
+                UserMessage: request.UserMessage,
+                GroundedData: BuildFollowUpGroundedData(followUpResult),
+                Constraints: nextState.Constraints,
+                MissingConstraints: [],
+                MaxLengthHint: 700,
+                ClarificationQuestion: null,
+                SuggestedOptions: []),
+            conversationIntelligence,
+            turnInterpretation,
+            retrievalPlan,
+            activeResult,
+            resolvedAction,
+            followUpResult);
+
+        var responseCompositionStopwatch = Stopwatch.StartNew();
+        var composed = await responseComposer.ComposeAsync(
+            compositionRequest,
+            request.CorrelationId,
+            cancellationToken);
+        responseCompositionStopwatch.Stop();
+
+        var reply = new UserChatResponse(
+            ReplyText: composed.ReplyText,
+            ModelUsed: composed.ModelUsed,
+            ReasoningClass: composed.ReasoningClass,
+            SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                nextState,
+                activeResult,
+                strategy,
+                [],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                composed.SuggestedStructuredStateUpdates),
+            ReferencedContextSummary: contextSummary,
+            Warnings: existingWarnings
+                .Concat(resultContextReadResult.ReasonCodes)
+                .Concat(intelligenceWarnings)
+                .Concat(resolvedAction.Warnings)
+                .Concat(followUpResult.Warnings)
+                .Concat(composed.Warnings)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            FollowUpIntentHints: composed.FollowUpIntentHints
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            Succeeded: true,
+            FailureReason: null);
+
+        return new OrchestratedConversationResult(
+            Response: reply,
+            State: nextState,
+            AssistantRoute: new AIModelRoute(
+                TaskType: AITaskType.ResponseComposition,
+                ModelClass: composed.ReasoningClass,
+                Model: composed.ModelUsed,
+                Deployment: composed.DeploymentUsed,
+                IsFallback: composed.ModelUsed.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
+                Reason: "place_follow_up_response",
+                Notes: []),
+            TotalModelCallCount: intelligenceModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
+            HeavyModelCallCount: intelligenceHeavyModelCallCount,
+            FastModelCallCount: intelligenceFastModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
+            UsedDeterministicPath: composed.UsedDeterministicPath,
+            UsedDeterministicRecovery: composed.UsedDeterministicPath && composed.FallbackUsed && composed.UsedModelInvocation,
+            BehaviorDurationMs: 0,
+            ModeExecutionDurationMs: followUpStopwatch.ElapsedMilliseconds,
+            ResponseCompositionDurationMs: responseCompositionStopwatch.ElapsedMilliseconds,
+            SelectionReasons: BuildSelectionReasons("resolved_action_prior_result_follow_up", null, composed.SelectionReason),
+            EscalationJustifications: [],
+            ResponseSelectionReason: composed.SelectionReason,
+            ResponseFallbackUsed: composed.FallbackUsed,
+            ResponseRecoveryReason: composed.RecoveryReason,
+            ResponseUsedModelInvocation: composed.UsedModelInvocation);
+    }
+
+    private static ResponseToneDirective ResolveToneDirective(ConversationIntelligenceResult? intelligence)
+    {
+        return intelligence?.ResponseStyle.Tone switch
+        {
+            "concise" or "direct" => ResponseToneDirective.Concise,
+            "apologetic" or "reassuring" or "warm" => ResponseToneDirective.Supportive,
+            _ => ResponseToneDirective.Neutral
+        };
+    }
+
+    private static GroundedDataEnvelope BuildFollowUpGroundedData(PlaceFollowUpExecutionResult result)
+    {
+        return new GroundedDataEnvelope(
+            Entities: result.Candidates
+                .Select(candidate => new ConversationSuggestedEntity(
+                    EntityId: candidate.PlaceId,
+                    Label: candidate.Name,
+                    Rank: candidate.NewRank))
+                .ToArray(),
+            SummaryFacts: result.Candidates
+                .Select(candidate => new GroundedDataPoint(
+                    candidate.Name,
+                    BuildFollowUpFact(candidate)))
+                .ToArray(),
+            Warnings: result.Warnings
+                .Concat(result.Uncertainties.Select(static value => $"uncertainty:{value}"))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray());
+    }
+
+    private static string BuildFollowUpFact(PlaceFollowUpCandidate candidate)
+    {
+        var parts = new List<string>();
+        if (candidate.MatchedReasons.Count > 0)
+        {
+            parts.Add($"matched {string.Join(", ", candidate.MatchedReasons.Take(3))}");
+        }
+
+        if (candidate.MissingEvidence.Count > 0)
+        {
+            parts.Add($"missing {string.Join(", ", candidate.MissingEvidence.Take(3))}");
+        }
+
+        if (candidate.Score.HasValue)
+        {
+            parts.Add($"score {candidate.Score.Value:0.00}");
+        }
+
+        return parts.Count == 0 ? "no additional evidence" : string.Join("; ", parts);
+    }
+
+    private static IReadOnlyDictionary<string, object?> BuildResolvedActionTelemetry(
+        string correlationId,
+        CompanionResolvedAction action,
+        bool hasResultContext)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["correlationId"] = correlationId,
+            ["kind"] = action.Kind.ToString(),
+            ["requiresToolExecution"] = action.RequiresToolExecution,
+            ["requiresClarification"] = action.RequiresClarification,
+            ["hasResultContext"] = hasResultContext,
+            ["placeQuery"] = action.PlaceQuery,
+            ["locationQuery"] = action.LocationQuery,
+            ["requirement"] = action.Requirement,
+            ["sortGoal"] = action.SortGoal,
+            ["includeConceptCount"] = action.IncludeConcepts.Count,
+            ["excludeConceptCount"] = action.ExcludeConcepts.Count,
+            ["warningCount"] = action.Warnings.Count
         };
     }
 

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Options;
+
 namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed record CompanionPlaceRankingContext(
@@ -23,7 +25,8 @@ public interface ICompanionPlaceRankingPolicy
         CompanionPlaceRankingContext context);
 }
 
-public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
+public sealed class CompanionPlaceRankingPolicy(
+    IOptions<AIIntegrationOptions>? options = null) : ICompanionPlaceRankingPolicy
 {
     public CompanionPlaceRankingResult Rank(
         IReadOnlyList<CompanionPlaceCandidate> candidates,
@@ -65,7 +68,11 @@ public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
                 distanceByPlaceId[candidate.PlaceId] = distanceMeters.Value;
             }
 
-            var score = ComputeScore(candidate, distanceMeters, context);
+            var score = ComputeScore(
+                candidate,
+                distanceMeters,
+                context,
+                options?.Value.Architecture.PlacesOpenWorldConceptRankingEnabled ?? true);
             scored.Add((candidate, score, distanceMeters));
         }
 
@@ -97,7 +104,8 @@ public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
     private static double ComputeScore(
         CompanionPlaceCandidate candidate,
         double? distanceMeters,
-        CompanionPlaceRankingContext context)
+        CompanionPlaceRankingContext context,
+        bool openWorldConceptRankingEnabled)
     {
         var distanceScore = ScoreDistance(distanceMeters);
         var typeScore = ScoreTypeFit(candidate, context.PlaceTypeHints);
@@ -109,12 +117,16 @@ public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
         var exclusionPenalty = ScoreExclusionPenalty(candidate, context.ExcludedTypeHints ?? []);
 
         var combinedTypeFit = Math.Max(typeScore, conceptScore);
-        var score = (distanceScore * 0.42d)
-                    + (combinedTypeFit * 0.20d)
+        var openWorldConceptFirst = openWorldConceptRankingEnabled && IsOpenWorldConceptFirstContext(context);
+        var distanceWeight = openWorldConceptFirst ? 0.20d : 0.42d;
+        var typeWeight = openWorldConceptFirst ? 0.42d : 0.20d;
+        var qualityWeight = openWorldConceptFirst ? 0.18d : 0.12d;
+        var score = (distanceScore * distanceWeight)
+                    + (combinedTypeFit * typeWeight)
                     + (brandScore * 0.18d)
                     + (preferenceScore * 0.08d)
                     + (timeScore * 0.06d)
-                    + (qualityScore * 0.12d)
+                    + (qualityScore * qualityWeight)
                     - exclusionPenalty;
         return Math.Clamp(score, 0d, 1.5d);
     }
@@ -345,9 +357,38 @@ public sealed class CompanionPlaceRankingPolicy : ICompanionPlaceRankingPolicy
             candidateTypes.Add(primary);
         }
 
-        return candidateTypes.Any(candidateType => excludedSet.Contains(candidateType))
-            ? 0.38d
+        return candidateTypes.Any(candidateType =>
+            excludedSet.Contains(candidateType)
+            || excludedSet.Any(excluded => IsExcludedConceptMatch(candidateType, excluded)))
+            ? 0.52d
             : 0d;
+    }
+
+    private static bool IsOpenWorldConceptFirstContext(CompanionPlaceRankingContext context)
+    {
+        var canonical = NormalizeToken(context.CanonicalConcept);
+        return canonical.Contains("fine_dining", StringComparison.OrdinalIgnoreCase)
+               || canonical.Contains("upscale", StringComparison.OrdinalIgnoreCase)
+               || (context.ExcludedTypeHints ?? [])
+                   .Select(NormalizeToken)
+                   .Any(static value => value is "fast_food" or "takeaway" or "meal_takeaway");
+    }
+
+    private static bool IsExcludedConceptMatch(string candidateType, string excluded)
+    {
+        if (string.IsNullOrWhiteSpace(candidateType) || string.IsNullOrWhiteSpace(excluded))
+        {
+            return false;
+        }
+
+        if (candidateType.Contains(excluded, StringComparison.OrdinalIgnoreCase)
+            || excluded.Contains(candidateType, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return (excluded is "takeaway" or "meal_takeaway" && candidateType.Contains("takeaway", StringComparison.OrdinalIgnoreCase))
+               || (excluded is "fast_food" && candidateType.Contains("fast_food", StringComparison.OrdinalIgnoreCase));
     }
 
     private static double ScoreQuality(CompanionPlaceCandidate candidate)

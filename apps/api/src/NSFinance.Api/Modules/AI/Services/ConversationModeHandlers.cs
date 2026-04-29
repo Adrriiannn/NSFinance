@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Globalization;
 using Microsoft.Extensions.Options;
 
 namespace NSFinance.Api.Modules.AI.Services;
@@ -170,7 +171,8 @@ public sealed class StructuredExplorationHandler(
                 Succeeded: true);
         }
 
-        var querySeed = !string.IsNullOrWhiteSpace(retrievalPlan?.BrandTerm)
+        var brandFirstEnabled = options?.Value.Architecture.PlacesBrandFirstEnabled ?? true;
+        var querySeed = brandFirstEnabled && !string.IsNullOrWhiteSpace(retrievalPlan?.BrandTerm)
             ? retrievalPlan.BrandTerm!
             : !string.IsNullOrWhiteSpace(retrievalPlan?.CanonicalConcept)
                 ? retrievalPlan.CanonicalConcept!
@@ -248,7 +250,8 @@ public sealed class StructuredExplorationHandler(
                             Label: item.Name,
                             Rank: index + 1,
                             StableReference: item.GoogleMapsUri,
-                            Category: item.Category))
+                            Category: ResolveCategoryFromPlaces(item),
+                            Attributes: BuildResultContextAttributes(item, locationContext)))
                         .ToArray(),
                     SelectedEntityId: null,
                     ParentResultSetId: request.ResultContext?.ResultSetId,
@@ -933,6 +936,72 @@ public sealed class StructuredExplorationHandler(
         }
 
         return string.Join(", ", parts);
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildResultContextAttributes(
+        PlaceSearchItem item,
+        PlaceSearchLocationContext? locationContext)
+    {
+        var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        AddIfPresent("primary_type", item.PrimaryType);
+        AddIfPresent("primary_type_display_name", item.PrimaryTypeDisplayName);
+        AddIfPresent("types", item.Types is { Count: > 0 } ? string.Join("|", item.Types) : null);
+        AddIfPresent("short_address", item.ShortFormattedAddress);
+        AddIfPresent("formatted_address", item.FormattedAddress);
+        AddIfPresent("price_level", item.PriceLevel);
+        AddIfPresent("business_status", item.BusinessStatus);
+        AddIfPresent("rating", item.Rating?.ToString("0.0", CultureInfo.InvariantCulture));
+        AddIfPresent("user_rating_count", item.UserRatingCount?.ToString(CultureInfo.InvariantCulture));
+        AddIfPresent("open_now", item.OpeningHours?.OpenNow?.ToString());
+        AddIfPresent("takeout", item.Takeout?.ToString());
+        AddIfPresent("delivery", item.Delivery?.ToString());
+        AddIfPresent("dine_in", item.DineIn?.ToString());
+        AddIfPresent("reservable", item.Reservable?.ToString());
+        AddIfPresent("outdoor_seating", item.OutdoorSeating?.ToString());
+        AddIfPresent("allows_dogs", item.AllowsDogs?.ToString());
+        AddIfPresent("wheelchair_accessible_parking", item.AccessibilityOptions?.WheelchairAccessibleParking?.ToString());
+
+        var distanceMeters = TryComputeDistanceMeters(
+            locationContext?.Latitude,
+            locationContext?.Longitude,
+            item.Location);
+        AddIfPresent("distance_meters", distanceMeters?.ToString("0", CultureInfo.InvariantCulture));
+        return attributes;
+
+        void AddIfPresent(string key, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                attributes[key] = value.Trim();
+            }
+        }
+    }
+
+    private static double? TryComputeDistanceMeters(
+        double? sourceLatitude,
+        double? sourceLongitude,
+        PlaceLocationSummary? target)
+    {
+        if (!sourceLatitude.HasValue || !sourceLongitude.HasValue || target is null)
+        {
+            return null;
+        }
+
+        const double EarthRadiusMeters = 6_371_000d;
+        var sourceLatRad = DegreesToRadians(sourceLatitude.Value);
+        var targetLatRad = DegreesToRadians(target.Latitude);
+        var deltaLat = DegreesToRadians(target.Latitude - sourceLatitude.Value);
+        var deltaLon = DegreesToRadians(target.Longitude - sourceLongitude.Value);
+        var a = Math.Sin(deltaLat / 2d) * Math.Sin(deltaLat / 2d)
+                + (Math.Cos(sourceLatRad) * Math.Cos(targetLatRad)
+                   * Math.Sin(deltaLon / 2d) * Math.Sin(deltaLon / 2d));
+        var c = 2d * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1d - a));
+        return EarthRadiusMeters * c;
+    }
+
+    private static double DegreesToRadians(double value)
+    {
+        return value * (Math.PI / 180d);
     }
 
     private static string? ResolveCategoryFromPlaces(PlaceSearchItem item)

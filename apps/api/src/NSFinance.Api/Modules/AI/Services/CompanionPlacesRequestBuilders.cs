@@ -457,18 +457,6 @@ public sealed class CompanionPlacesTextQueryBuilder(
 
     private static string? ResolvePlannerIntentHint(PlaceSearchLocationContext? locationContext)
     {
-        if (locationContext?.PlannerIncludeTypes is { Count: > 0 })
-        {
-            foreach (var typeHint in locationContext.PlannerIncludeTypes)
-            {
-                if (!string.IsNullOrWhiteSpace(typeHint)
-                    && TypePhraseMap.TryGetValue(typeHint.Trim(), out var phrase))
-                {
-                    return phrase;
-                }
-            }
-        }
-
         if (!string.IsNullOrWhiteSpace(locationContext?.PlannerCanonicalConcept))
         {
             var token = locationContext.PlannerCanonicalConcept!.Trim();
@@ -488,6 +476,18 @@ public sealed class CompanionPlacesTextQueryBuilder(
             }
 
             return normalizedToken.Replace('_', ' ');
+        }
+
+        if (locationContext?.PlannerIncludeTypes is { Count: > 0 })
+        {
+            foreach (var typeHint in locationContext.PlannerIncludeTypes)
+            {
+                if (!string.IsNullOrWhiteSpace(typeHint)
+                    && TypePhraseMap.TryGetValue(typeHint.Trim(), out var phrase))
+                {
+                    return phrase;
+                }
+            }
         }
 
         return null;

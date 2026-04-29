@@ -889,10 +889,7 @@ internal sealed class MockAIProviderTransport(
 
     private static string BuildClarificationReply(ResponseCompositionRequest request)
     {
-        var options = request.SuggestedOptions is { Count: > 0 }
-            ? $" Options: {string.Join("; ", request.SuggestedOptions.Take(3))}."
-            : string.Empty;
-        return $"{request.ClarificationQuestion ?? "Could you clarify what you want to focus on?"}{options}";
+        return request.ClarificationQuestion ?? "Could you clarify what you want to focus on?";
     }
 
     private static string BuildResultSummaryReply(ResponseCompositionRequest request)

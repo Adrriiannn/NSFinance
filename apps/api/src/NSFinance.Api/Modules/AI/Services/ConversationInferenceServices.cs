@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Extensions.Options;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
@@ -407,8 +408,8 @@ public sealed class ConversationDecisionEngine(
                 To: ConversationReadinessLevel.R1_Vague),
             Confidence: 0.55d,
             FollowUpBindingType: FollowUpBindingType.None,
-            ClarificationQuestion: "What would feel most useful to focus on first?",
-            SuggestedOptions: ["Clarify the goal", "Share a constraint", "Ask for general guidance"],
+            ClarificationQuestion: null,
+            SuggestedOptions: [],
             ToolExecutionPermission: ToolExecutionPermission.Forbidden,
             ReasonCodes:
             [
@@ -437,7 +438,8 @@ public sealed class ResponseComposer(
     IAIModelRouter modelRouter,
     IAIClient aiClient,
     IChatTelemetry telemetry,
-    ILogger<ResponseComposer> logger) : IResponseComposer
+    ILogger<ResponseComposer> logger,
+    IOptions<AIIntegrationOptions>? options = null) : IResponseComposer
 {
     public async Task<ResponseCompositionResult> ComposeAsync(
         ResponseCompositionRequest request,
@@ -446,8 +448,29 @@ public sealed class ResponseComposer(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var scriptlessEnabled = options?.Value.Architecture.ResponseCompositionAIScriptlessEnabled ?? true;
         var route = modelRouter.Resolve(AITaskType.ResponseComposition, AIModelClass.Fast, request.ResponseType.ToString());
         var prompt = promptBuilder.BuildPrompt(new ResponseCompositionPromptInput(request, correlationId));
+        if (!scriptlessEnabled)
+        {
+            await telemetry.TrackAsync(
+                "chat.turn.response_composition",
+                new Dictionary<string, object?>
+                {
+                    ["correlationId"] = correlationId,
+                    ["compositionMode"] = "deterministic_fallback_flag",
+                    ["responseType"] = request.ResponseType.ToString()
+                },
+                cancellationToken);
+            return BuildDeterministicResponse(
+                request,
+                selectionReason: "ai_scriptless_response_composition_disabled",
+                usedModelInvocation: false,
+                fallbackUsed: true,
+                recoveryReason: "ai_scriptless_response_composition_disabled",
+                warnings: ["ai_scriptless_response_composition_disabled"]);
+        }
+
         await telemetry.TrackAsync(
             "chat.model.invocation",
             new Dictionary<string, object?>

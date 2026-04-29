@@ -80,6 +80,20 @@ public enum ResponseToneDirective
     Concise = 2
 }
 
+public enum CompanionActionKind
+{
+    NewPlaceSearch = 0,
+    FilterPreviousResults = 1,
+    SortPreviousResults = 2,
+    EnrichPreviousResults = 3,
+    ComparePreviousResults = 4,
+    AnswerDirectly = 5,
+    AskClarification = 6,
+    SoftRedirect = 7,
+    CloseConversation = 8,
+    Fallback = 9
+}
+
 public enum ResultContextBindingClassification
 {
     None = 0,
@@ -295,7 +309,9 @@ public sealed record ResponseCompositionRequest(
     ConversationIntelligenceResult? ConversationIntelligence = null,
     TurnInterpretationV2? TurnInterpretation = null,
     PlaceRetrievalPlanV1? RetrievalPlan = null,
-    ResultContextSnapshot? ResultContext = null);
+    ResultContextSnapshot? ResultContext = null,
+    CompanionResolvedAction? ResolvedAction = null,
+    PlaceFollowUpExecutionResult? FollowUpExecutionResult = null);
 
 public sealed record ConversationIntelligenceResult(
     string ConversationPhase,
@@ -334,6 +350,38 @@ public sealed record ConversationIntelligenceEvaluationResult(
     bool UsedModelInvocation,
     bool FallbackUsed,
     IReadOnlyList<string> Warnings);
+
+public sealed record CompanionResolvedAction(
+    CompanionActionKind Kind,
+    string Reason,
+    bool RequiresToolExecution,
+    bool RequiresClarification,
+    string? ClarificationNeed,
+    string? PlaceQuery,
+    string? LocationQuery,
+    string? Requirement,
+    string? SortGoal,
+    string? TargetResultSetId,
+    IReadOnlyList<string> IncludeConcepts,
+    IReadOnlyList<string> ExcludeConcepts,
+    IReadOnlyList<string> Preferences,
+    IReadOnlyList<string> TimeFilters,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PlaceFollowUpExecutionResult(
+    IReadOnlyList<PlaceFollowUpCandidate> Candidates,
+    string EvidenceQuality,
+    IReadOnlyList<string> Uncertainties,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PlaceFollowUpCandidate(
+    string PlaceId,
+    string Name,
+    int OriginalRank,
+    int NewRank,
+    double? Score,
+    IReadOnlyList<string> MatchedReasons,
+    IReadOnlyList<string> MissingEvidence);
 
 public sealed record ResponseCompositionResult(
     string ReplyText,

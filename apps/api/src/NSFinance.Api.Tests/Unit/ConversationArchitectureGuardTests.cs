@@ -58,6 +58,332 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public void CompanionActionResolver_PreservesBrandSearchWithoutClarification()
+    {
+        var resolver = new CompanionActionResolver();
+        var interpretation = BuildPlaceInterpretation(
+            canonicalConcept: "coffee shop",
+            brandTerms: ["Starbucks"],
+            includeTypes: ["cafe"]);
+        var retrievalPlan = BuildRetrievalPlan(
+            brandTerm: "Starbucks",
+            canonicalConcept: "coffee shop",
+            includedTypes: ["cafe"],
+            nearMe: true);
+        var intelligence = BuildConversationIntelligence(
+            phase: "start",
+            nextAction: "execute_search",
+            shouldExecuteTool: true);
+
+        var action = resolver.Resolve(
+            BuildUserChatRequest("Starbucks near me"),
+            CreateDefaultState(),
+            EmptyResultContextReadResult(),
+            interpretation,
+            retrievalPlan,
+            intelligence);
+
+        Assert.Equal(CompanionActionKind.NewPlaceSearch, action.Kind);
+        Assert.True(action.RequiresToolExecution);
+        Assert.False(action.RequiresClarification);
+        Assert.Equal("Starbucks", action.PlaceQuery);
+        Assert.Equal("near me", action.LocationQuery);
+    }
+
+    [Fact]
+    public void CompanionActionResolver_BindsParkingFollowUpToPriorResults()
+    {
+        var resolver = new CompanionActionResolver();
+        var activeResult = BuildResultContext(
+        [
+            new ResultContextEntity("cafe-1", "Bean Room", 1, Category: "cafe")
+        ]);
+        var intelligence = BuildConversationIntelligence(
+            phase: "refinement",
+            nextAction: "filter_previous_results",
+            targetPreviousResults: true,
+            requirement: "parking",
+            shouldExecuteTool: true,
+            shouldClarify: false);
+
+        var action = resolver.Resolve(
+            BuildUserChatRequest("which one has parking?"),
+            CreateDefaultState(),
+            new ResultContextReadResult(
+                activeResult,
+                ResultContextBindingClassification.Refine,
+                UsedClientResultSetId: false,
+                ExpiredBindingCleared: false,
+                ReasonCodes: ["test_active_result"]),
+            interpretation: null,
+            retrievalPlan: null,
+            intelligence);
+
+        Assert.Equal(CompanionActionKind.FilterPreviousResults, action.Kind);
+        Assert.True(action.RequiresToolExecution);
+        Assert.False(action.RequiresClarification);
+        Assert.Equal("parking", action.Requirement);
+        Assert.Equal(activeResult.ResultSetId.ToString("D"), action.TargetResultSetId);
+    }
+
+    [Fact]
+    public void CompanionActionResolver_SortsClosestFollowUpByDistance()
+    {
+        var resolver = new CompanionActionResolver();
+        var activeResult = BuildResultContext(
+        [
+            new ResultContextEntity("starbucks-1", "Starbucks One", 1, Category: "cafe"),
+            new ResultContextEntity("starbucks-2", "Starbucks Two", 2, Category: "cafe")
+        ]);
+        var intelligence = BuildConversationIntelligence(
+            phase: "refinement",
+            nextAction: "sort_previous_results",
+            targetPreviousResults: true,
+            requirement: "closest",
+            shouldExecuteTool: true);
+
+        var action = resolver.Resolve(
+            BuildUserChatRequest("just the closest please"),
+            CreateDefaultState(),
+            new ResultContextReadResult(
+                activeResult,
+                ResultContextBindingClassification.Refine,
+                UsedClientResultSetId: false,
+                ExpiredBindingCleared: false,
+                ReasonCodes: ["test_active_result"]),
+            interpretation: null,
+            retrievalPlan: null,
+            intelligence);
+
+        Assert.Equal(CompanionActionKind.SortPreviousResults, action.Kind);
+        Assert.Equal("distance", action.SortGoal);
+        Assert.False(action.RequiresClarification);
+    }
+
+    [Fact]
+    public void CompanionActionResolver_PreservesFineDiningConceptAndExcludesFastFood()
+    {
+        var resolver = new CompanionActionResolver();
+        var interpretation = BuildPlaceInterpretation(
+            canonicalConcept: "fine dining restaurants",
+            includeTypes: ["restaurant"],
+            excludeTypes: ["fast food", "takeaway"]);
+        var retrievalPlan = BuildRetrievalPlan(
+            brandTerm: null,
+            canonicalConcept: "fine dining restaurants",
+            includedTypes: ["restaurant"],
+            excludedTypes: ["fast food", "takeaway", "meal takeaway"],
+            nearMe: true);
+        var intelligence = BuildConversationIntelligence(
+            phase: "start",
+            nextAction: "execute_search",
+            shouldExecuteTool: true);
+
+        var action = resolver.Resolve(
+            BuildUserChatRequest("fine dining restaurants near me"),
+            CreateDefaultState(),
+            EmptyResultContextReadResult(),
+            interpretation,
+            retrievalPlan,
+            intelligence);
+
+        Assert.Equal(CompanionActionKind.NewPlaceSearch, action.Kind);
+        Assert.Equal("fine dining restaurants", action.PlaceQuery);
+        Assert.Contains("fine dining", action.IncludeConcepts);
+        Assert.Contains("upscale restaurant", action.IncludeConcepts);
+        Assert.Contains("fast food", action.ExcludeConcepts);
+        Assert.Contains("takeaway", action.ExcludeConcepts);
+    }
+
+    [Fact]
+    public void CompanionPlacesTextQueryBuilder_PrefersOpenWorldPlannerConceptBeforeTypeToken()
+    {
+        var builder = new CompanionPlacesTextQueryBuilder(new CompanionPlacesVocabularyNormalizer());
+
+        var result = builder.Build(
+            new CompanionPlacesTextQueryBuildRequest(
+                UserQuery: "fine dining restaurants near me",
+                Constraints: new LocalDiscoveryConstraintExtractionResult(
+                    IsLocalDiscoveryCandidate: true,
+                    Confidence: 0.95d,
+                    HasNearMeLanguage: true,
+                    HasExplicitLocality: false,
+                    LocalityHint: null,
+                    PlaceTypeHints: ["restaurant"],
+                    AudienceHints: [],
+                    TimeHints: [],
+                    PreferenceHints: [],
+                    ReasonCodes: []),
+                LocationContext: new PlaceSearchLocationContext(
+                    Latitude: 53.3498053d,
+                    Longitude: -6.2603097d,
+                    PlannerCanonicalConcept: "fine dining restaurants",
+                    PlannerIncludeTypes: ["restaurant"],
+                    HasNearMeSemantic: true),
+                IsGpsNearMe: true));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("fine dining restaurants", result.Query);
+        Assert.Contains("places_request:text_query_planner_concept_applied", result.ReasonCodes);
+    }
+
+    [Fact]
+    public void CompanionPlaceRankingPolicy_RanksFineDiningConceptAboveNearbyTakeaway()
+    {
+        var policy = new CompanionPlaceRankingPolicy();
+        var candidates = new[]
+        {
+            new CompanionPlaceCandidate(
+                PlaceId: "takeaway-1",
+                ResourceName: "places/takeaway-1",
+                DisplayName: "Quick Burger",
+                PrimaryType: "meal_takeaway",
+                PrimaryTypeDisplayName: "Meal takeaway",
+                Types: ["meal_takeaway", "fast_food", "restaurant"],
+                NationalPhoneNumber: null,
+                FormattedAddress: null,
+                ShortFormattedAddress: null,
+                Rating: 4.8d,
+                UserRatingCount: 1200,
+                GoogleMapsUri: null,
+                WebsiteUri: null,
+                OpeningHours: new PlaceOpeningHoursSummary(true, [], null),
+                BusinessStatus: null,
+                PriceLevel: "PRICE_LEVEL_INEXPENSIVE",
+                IconMaskBaseUri: null,
+                IconBackgroundColor: null,
+                Takeout: true,
+                Delivery: true,
+                DineIn: false,
+                Reservable: false,
+                ServesBreakfast: null,
+                ServesLunch: null,
+                ServesDinner: null,
+                ServesBeer: null,
+                ServesWine: null,
+                ServesBrunch: null,
+                ServesVegetarianFood: null,
+                OutdoorSeating: null,
+                LiveMusic: null,
+                MenuForChildren: null,
+                ServesCocktails: null,
+                ServesDessert: null,
+                ServesCoffee: null,
+                AllowsDogs: null,
+                Restroom: null,
+                GoodForGroups: null,
+                GoodForWatchingSports: null,
+                PaymentOptions: new PlacePaymentOptionsSummary(null, null, null, null),
+                AccessibilityOptions: new PlaceAccessibilitySummary(null, null, null, null),
+                EditorialSummary: new PlaceEditorialSummary(null, null),
+                Location: new PlaceLocationSummary(53.3500d, -6.2604d)),
+            new CompanionPlaceCandidate(
+                PlaceId: "fine-1",
+                ResourceName: "places/fine-1",
+                DisplayName: "Chapter Room",
+                PrimaryType: "restaurant",
+                PrimaryTypeDisplayName: "Fine dining restaurant",
+                Types: ["restaurant", "point_of_interest"],
+                NationalPhoneNumber: null,
+                FormattedAddress: null,
+                ShortFormattedAddress: null,
+                Rating: 4.5d,
+                UserRatingCount: 300,
+                GoogleMapsUri: null,
+                WebsiteUri: null,
+                OpeningHours: new PlaceOpeningHoursSummary(true, [], null),
+                BusinessStatus: null,
+                PriceLevel: "PRICE_LEVEL_EXPENSIVE",
+                IconMaskBaseUri: null,
+                IconBackgroundColor: null,
+                Takeout: false,
+                Delivery: false,
+                DineIn: true,
+                Reservable: true,
+                ServesBreakfast: null,
+                ServesLunch: null,
+                ServesDinner: true,
+                ServesBeer: true,
+                ServesWine: true,
+                ServesBrunch: null,
+                ServesVegetarianFood: null,
+                OutdoorSeating: null,
+                LiveMusic: null,
+                MenuForChildren: null,
+                ServesCocktails: true,
+                ServesDessert: true,
+                ServesCoffee: null,
+                AllowsDogs: null,
+                Restroom: null,
+                GoodForGroups: null,
+                GoodForWatchingSports: null,
+                PaymentOptions: new PlacePaymentOptionsSummary(null, null, null, null),
+                AccessibilityOptions: new PlaceAccessibilitySummary(null, null, null, null),
+                EditorialSummary: new PlaceEditorialSummary(null, null),
+                Location: new PlaceLocationSummary(53.3650d, -6.2700d))
+        };
+
+        var ranked = policy.Rank(
+            candidates,
+            new CompanionPlaceRankingContext(
+                ApplyDistanceRanking: true,
+                UserLatitude: 53.3498053d,
+                UserLongitude: -6.2603097d,
+                PlaceTypeHints: ["restaurant"],
+                CanonicalConcept: "fine dining restaurants",
+                ExcludedTypeHints: ["fast food", "takeaway", "meal takeaway"]));
+
+        Assert.Equal("fine-1", ranked.RankedCandidates[0].PlaceId);
+    }
+
+    [Fact]
+    public async Task PlaceResultFollowUpService_ReturnsParkingUncertaintyWhenEvidenceIsMissing()
+    {
+        var service = new PlaceResultFollowUpService(
+            new FixedPlaceDetailsService(
+                new PlaceDetailsResult(
+                    PlaceId: "cafe-1",
+                    Name: "Bean Room",
+                    Address: "1 Test Street",
+                    Website: null,
+                    PriceLevel: null,
+                    Rating: 4.5d,
+                    PrimaryType: "cafe",
+                    PrimaryTypeDisplayName: "Cafe",
+                    Types: ["cafe", "food"],
+                    AccessibilityOptions: new PlaceAccessibilitySummary(null, null, null, null))),
+            NullLogger<PlaceResultFollowUpService>.Instance);
+        var action = new CompanionResolvedAction(
+            Kind: CompanionActionKind.FilterPreviousResults,
+            Reason: "parking follow-up",
+            RequiresToolExecution: true,
+            RequiresClarification: false,
+            ClarificationNeed: null,
+            PlaceQuery: "coffee shops",
+            LocationQuery: "near me",
+            Requirement: "parking",
+            SortGoal: null,
+            TargetResultSetId: null,
+            IncludeConcepts: ["cafe"],
+            ExcludeConcepts: [],
+            Preferences: ["parking"],
+            TimeFilters: [],
+            Warnings: []);
+
+        var result = await service.ExecuteAsync(
+            action,
+            BuildResultContext(
+            [
+                new ResultContextEntity("cafe-1", "Bean Room", 1, Category: "cafe")
+            ]),
+            CancellationToken.None);
+
+        Assert.Equal("weak", result.EvidenceQuality);
+        Assert.Contains("place_follow_up_parking_evidence_weak", result.Warnings);
+        Assert.Contains(result.Candidates, candidate => candidate.MissingEvidence.Contains("confirmed_parking"));
+    }
+
+    [Fact]
     public async Task ConversationBehaviorEngine_UsesConversationIntelligenceClosing_ToAvoidToolOrFollowUp()
     {
         var engine = CreateBehaviorEngine(
@@ -1470,17 +1796,20 @@ public sealed class ConversationArchitectureGuardTests
 
     private static ConversationIntelligenceResult BuildConversationIntelligence(
         string phase,
-        string emotionalState,
-        string nextAction,
-        bool shouldExecuteTool,
-        bool shouldContinueTask)
+        string emotionalState = "neutral",
+        string nextAction = "answer_directly",
+        bool shouldExecuteTool = false,
+        bool shouldContinueTask = false,
+        bool shouldClarify = false,
+        bool targetPreviousResults = false,
+        string? requirement = null)
     {
         return new ConversationIntelligenceResult(
             ConversationPhase: phase,
             UserEmotionalState: emotionalState,
             UserIntentConfidence: 0.9d,
             ShouldContinueTask: shouldContinueTask,
-            ShouldClarify: false,
+            ShouldClarify: shouldClarify,
             ShouldExecuteTool: shouldExecuteTool,
             ShouldAcknowledgeIssue: false,
             ResponseStyle: new ConversationResponseStyle(
@@ -1488,15 +1817,119 @@ public sealed class ConversationArchitectureGuardTests
                 Verbosity: "short",
                 AvoidRepetition: true),
             TaskState: new ConversationTaskState(
-                IsNewTask: false,
-                IsFollowUp: shouldContinueTask,
-                IsRefinement: shouldContinueTask,
+                IsNewTask: !shouldContinueTask,
+                IsFollowUp: shouldContinueTask || targetPreviousResults,
+                IsRefinement: shouldContinueTask || targetPreviousResults,
                 IsUserCorrection: false,
-                TargetPreviousResults: shouldContinueTask),
+                TargetPreviousResults: targetPreviousResults || shouldContinueTask),
             NextAction: new ConversationNextAction(
                 Type: nextAction,
-                Reason: "Test intelligence decision."),
+                Reason: "Test intelligence decision.",
+                Target: targetPreviousResults ? "active_result_set" : null,
+                Requirement: requirement),
             ReasonCodes: ["test_conversation_intelligence"]);
+    }
+
+    private static UserChatRequest BuildUserChatRequest(string userMessage)
+    {
+        return new UserChatRequest(
+            UserMessage: userMessage,
+            RecentTurns: [],
+            State: CreateDefaultState(),
+            CorrelationId: "corr-action-resolver",
+            Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static ResultContextReadResult EmptyResultContextReadResult()
+    {
+        return new ResultContextReadResult(
+            ActiveResultContext: null,
+            BindingClassification: ResultContextBindingClassification.None,
+            UsedClientResultSetId: false,
+            ExpiredBindingCleared: false,
+            ReasonCodes: []);
+    }
+
+    private static ResultContextSnapshot BuildResultContext(IReadOnlyList<ResultContextEntity> entities)
+    {
+        var now = DateTime.UtcNow;
+        var resultSetId = Guid.NewGuid();
+        return new ResultContextSnapshot(
+            ResultSetId: resultSetId,
+            ParentResultSetId: null,
+            BranchRootResultSetId: resultSetId,
+            SourceMode: ConversationMode.Exploration,
+            SourceSubtype: ExplorationSubtype.Structured,
+            QueryFingerprint: "test-query",
+            NormalizedConstraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [ConversationConstraintKeys.ExplorationCanonicalConcept] = "coffee shops"
+            },
+            SuggestedEntities: entities,
+            SelectedEntityId: null,
+            ActiveUntilUtc: now.AddMinutes(30),
+            ExpiresUtc: now.AddHours(24),
+            IsExpired: false,
+            IsActiveWindowExpired: false);
+    }
+
+    private static TurnInterpretationV2 BuildPlaceInterpretation(
+        string canonicalConcept,
+        IReadOnlyList<string>? brandTerms = null,
+        IReadOnlyList<string>? includeTypes = null,
+        IReadOnlyList<string>? excludeTypes = null,
+        IReadOnlyList<string>? preferences = null)
+    {
+        return new TurnInterpretationV2(
+            IntentFamily: TurnInterpretationIntentFamily.PlaceDiscovery,
+            InScopeVerdict: TurnInterpretationInScopeVerdict.InScope,
+            ActionType: TurnInterpretationActionType.ReadyForSearch,
+            Confidence: 0.94d,
+            Ambiguities: [],
+            RecommendedNextStep: "execute_search",
+            PlacePlan: new TurnInterpretationPlacePlan(
+                BrandOrEntityTerms: brandTerms ?? [],
+                CanonicalConcept: canonicalConcept,
+                CandidateDomains: ["places"],
+                IncludeTypes: includeTypes ?? [],
+                ExcludeTypes: excludeTypes ?? [],
+                Preferences: preferences ?? [],
+                TimeFilters: [],
+                AudienceFilters: []),
+            LocationPlan: new TurnInterpretationLocationPlan(
+                NearMeSemantic: true,
+                ExplicitAreaText: null,
+                ResolvedAreaHint: null,
+                RequiresLocation: true,
+                CanUseRecentArea: false,
+                ClarificationNeeded: false),
+            ReasonCodes: ["test_place_interpretation"]);
+    }
+
+    private static PlaceRetrievalPlanV1 BuildRetrievalPlan(
+        string? brandTerm,
+        string canonicalConcept,
+        IReadOnlyList<string>? includedTypes = null,
+        IReadOnlyList<string>? excludedTypes = null,
+        bool nearMe = false)
+    {
+        return new PlaceRetrievalPlanV1(
+            Version: "test",
+            SearchScope: nearMe ? "near_me" : "typed_area",
+            PlannerAuthoritative: true,
+            BrandTerm: brandTerm,
+            CanonicalConcept: canonicalConcept,
+            SelectedDomain: RealWorldDiscoveryDomain.Restaurant,
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            IncludedTypes: includedTypes ?? [],
+            ExcludedTypes: excludedTypes ?? [],
+            Preferences: [],
+            TimeFilters: [],
+            AudienceFilters: [],
+            NearMeSemantic: nearMe,
+            RequiresLocation: nearMe,
+            ResolvedAreaHint: nearMe ? null : "Dublin",
+            ReasonCodes: ["test_retrieval_plan"]);
     }
 
     private static AIResponse BuildAIResponse(string payload)
@@ -1789,7 +2222,18 @@ public sealed class ConversationArchitectureGuardTests
                     HeavyDecisionModelCallCount: 0,
                     FastDecisionModelCallCount: 1,
                     ReasonCodes: ["stub_behavior"],
-                    Warnings: []));
+                Warnings: []));
+        }
+    }
+
+    private sealed class FixedPlaceDetailsService(PlaceDetailsResult details) : IPlaceDetailsService
+    {
+        public Task<PlaceDetailsResult> GetDetailsAsync(string placeId, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(details with
+            {
+                PlaceId = placeId
+            });
         }
     }
 

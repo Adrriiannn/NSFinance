@@ -138,6 +138,8 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IResultContextService, ResultContextService>();
         services.AddScoped<IResponseComposer, ResponseComposer>();
         services.AddScoped<IConversationIntelligenceService, ConversationIntelligenceService>();
+        services.AddScoped<ICompanionActionResolver, CompanionActionResolver>();
+        services.AddScoped<IPlaceResultFollowUpService, PlaceResultFollowUpService>();
         services.AddScoped<ITurnInterpretationPromptBuilder, TurnInterpretationPromptBuilder>();
         services.AddScoped<ITurnInterpretationParser, TurnInterpretationParser>();
         services.AddScoped<ITurnInterpretationEngine, TurnInterpretationEngine>();

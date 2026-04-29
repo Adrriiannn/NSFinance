@@ -28,10 +28,6 @@ public sealed class DeterministicConversationDecisionBuilder : IDeterministicCon
                 signals,
                 normalized))
         {
-            var suggestedOptions = signals.HasComparisonSignal
-                ? new[] { "Compare the shortlist", "Filter by a new preference" }
-                : new[] { "Refine the shortlist", "Compare options" };
-
             return BuildDecision(
                 request,
                 modelSelection,
@@ -45,7 +41,7 @@ public sealed class DeterministicConversationDecisionBuilder : IDeterministicCon
                         ? FollowUpBindingType.BindPrior
                         : FollowUpBindingType.Refine,
                 clarificationQuestion: null,
-                suggestedOptions: suggestedOptions,
+                suggestedOptions: [],
                 toolPermission: ToolExecutionPermission.EligibleIfGuardPasses,
                 reasonCodes:
                 [
@@ -135,8 +131,8 @@ public sealed class DeterministicConversationDecisionBuilder : IDeterministicCon
             readinessTo: ConversationReadinessLevel.R1_Vague,
             confidence: 0.58d,
             followUpBindingType: FollowUpBindingType.None,
-            clarificationQuestion: "What would feel most useful to focus on first?",
-            suggestedOptions: ["Clarify the goal", "Share a constraint", "Ask for general guidance"],
+            clarificationQuestion: null,
+            suggestedOptions: [],
             toolPermission: ToolExecutionPermission.Forbidden,
             reasonCodes:
             [
