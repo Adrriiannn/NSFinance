@@ -25,7 +25,8 @@ public sealed class ConversationLayerOrchestrator(
     IResultContextService? resultContextService = null,
     ILocalDiscoveryConstraintExtractor? localDiscoveryConstraintExtractor = null,
     ITurnInterpretationEngine? turnInterpretationEngine = null,
-    IPlaceRetrievalPlanner? placeRetrievalPlanner = null) : IUserChatOrchestrator
+    IPlaceRetrievalPlanner? placeRetrievalPlanner = null,
+    IConversationIntelligenceService? conversationIntelligenceService = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -593,6 +594,8 @@ public sealed class ConversationLayerOrchestrator(
     {
         var clientMetadata = request.Metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var interpretedState = effectiveState;
+        TurnInterpretationV2? turnInterpretation = null;
+        PlaceRetrievalPlanV1? retrievalPlan = null;
         if (turnInterpretationEngine is not null)
         {
             var interpretationResult = await turnInterpretationEngine.InterpretAsync(
@@ -604,7 +607,8 @@ public sealed class ConversationLayerOrchestrator(
                     ResultContext: resultContextReadResult.ActiveResultContext),
                 request.CorrelationId,
                 cancellationToken);
-            var retrievalPlan = placeRetrievalPlanner?.Build(interpretationResult.Interpretation);
+            turnInterpretation = interpretationResult.Interpretation;
+            retrievalPlan = placeRetrievalPlanner?.Build(interpretationResult.Interpretation);
             clientMetadata = TurnInterpretationMetadataMapper.Merge(
                 clientMetadata,
                 interpretationResult.Interpretation,
@@ -624,8 +628,48 @@ public sealed class ConversationLayerOrchestrator(
                         ["selectionReason"] = interpretationResult.SelectionReason,
                         ["warnings"] = interpretationResult.Warnings.ToArray()
                     },
-                    cancellationToken);
+                cancellationToken);
             }
+        }
+
+        ConversationIntelligenceResult? conversationIntelligence = null;
+        var intelligenceWarnings = Array.Empty<string>();
+        var intelligenceModelCallCount = 0;
+        var intelligenceFastModelCallCount = 0;
+        var intelligenceHeavyModelCallCount = 0;
+        if (conversationIntelligenceService is not null)
+        {
+            var intelligenceResult = await conversationIntelligenceService.EvaluateAsync(
+                new ConversationIntelligencePromptInput(
+                    ChatRequest: request,
+                    ContextMessages: contextMessages,
+                    ContextSummary: contextSummary,
+                    State: interpretedState,
+                    ResultContext: resultContextReadResult.ActiveResultContext,
+                    ResultContextReadResult: resultContextReadResult,
+                    ClientMetadata: clientMetadata,
+                    TurnInterpretation: turnInterpretation,
+                    RetrievalPlan: retrievalPlan),
+                request.CorrelationId,
+                cancellationToken);
+            conversationIntelligence = intelligenceResult.Intelligence;
+            intelligenceWarnings = intelligenceResult.Warnings.ToArray();
+            if (intelligenceResult.UsedModelInvocation)
+            {
+                intelligenceModelCallCount = 1;
+                if (intelligenceResult.Route?.ModelClass == AIModelClass.HeavyReasoning)
+                {
+                    intelligenceHeavyModelCallCount = 1;
+                }
+                else
+                {
+                    intelligenceFastModelCallCount = 1;
+                }
+            }
+
+            clientMetadata = MergeConversationIntelligenceMetadata(
+                clientMetadata,
+                conversationIntelligence);
         }
 
         var behaviorStopwatch = Stopwatch.StartNew();
@@ -639,7 +683,8 @@ public sealed class ConversationLayerOrchestrator(
                 ResultContextReadResult: resultContextReadResult,
                 ClientMetadata: clientMetadata,
                 FailureHistory: [],
-                CancellationToken: cancellationToken),
+                CancellationToken: cancellationToken,
+                ConversationIntelligence: conversationIntelligence),
             cancellationToken);
         behaviorStopwatch.Stop();
 
@@ -699,6 +744,12 @@ public sealed class ConversationLayerOrchestrator(
                 MaxLengthHint: 420,
                 ClarificationQuestion: behavior.State.LastClarificationPrompt,
                 SuggestedOptions: behavior.State.LastSuggestedOptions);
+            compositionRequest = EnrichCompositionRequest(
+                compositionRequest,
+                conversationIntelligence,
+                turnInterpretation,
+                retrievalPlan,
+                currentResultContext);
 
             var responseCompositionStopwatch = Stopwatch.StartNew();
             var composed = await responseComposer.ComposeAsync(
@@ -722,6 +773,7 @@ public sealed class ConversationLayerOrchestrator(
                 ReferencedContextSummary: contextSummary,
                 Warnings: existingWarnings
                     .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(intelligenceWarnings)
                     .Concat(behavior.Warnings)
                     .Concat(composed.Warnings)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -743,9 +795,9 @@ public sealed class ConversationLayerOrchestrator(
                     IsFallback: composed.ModelUsed.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
                     Reason: "direct_mode_response",
                     Notes: []),
-                TotalModelCallCount: behavior.DecisionModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
-                HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
-                FastModelCallCount: behavior.FastDecisionModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
+                TotalModelCallCount: intelligenceModelCallCount + behavior.DecisionModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
+                HeavyModelCallCount: intelligenceHeavyModelCallCount + behavior.HeavyDecisionModelCallCount,
+                FastModelCallCount: intelligenceFastModelCallCount + behavior.FastDecisionModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
                 UsedDeterministicPath: behavior.PrimaryDecisionModelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
                                        || behavior.ExplorationSubtypeModelSelection?.SelectionKind == ConversationModelSelectionKind.Deterministic
                                        || composed.UsedDeterministicPath,
@@ -787,7 +839,8 @@ public sealed class ConversationLayerOrchestrator(
                 ResultContext: currentResultContext,
                 StrategyDecision: behavior.StrategyDecision,
                 ExplorationSubtypeDecision: behavior.ExplorationSubtypeDecision,
-                ClientMetadata: clientMetadata),
+                ClientMetadata: clientMetadata,
+                ConversationIntelligence: conversationIntelligence),
             cancellationToken);
         modeExecutionStopwatch.Stop();
         modeExecutionDurationMs = modeExecutionStopwatch.ElapsedMilliseconds;
@@ -805,6 +858,7 @@ public sealed class ConversationLayerOrchestrator(
                 ReferencedContextSummary: contextSummary,
                 Warnings: existingWarnings
                     .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(intelligenceWarnings)
                     .Concat(behavior.Warnings)
                     .Concat(modeResult.Warnings)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -824,9 +878,9 @@ public sealed class ConversationLayerOrchestrator(
                     IsFallback: true,
                     Reason: "mode_execution_failed",
                     Notes: []),
-                TotalModelCallCount: behavior.DecisionModelCallCount,
-                HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
-                FastModelCallCount: behavior.FastDecisionModelCallCount,
+                TotalModelCallCount: intelligenceModelCallCount + behavior.DecisionModelCallCount,
+                HeavyModelCallCount: intelligenceHeavyModelCallCount + behavior.HeavyDecisionModelCallCount,
+                FastModelCallCount: intelligenceFastModelCallCount + behavior.FastDecisionModelCallCount,
                 UsedDeterministicPath: true,
                 UsedDeterministicRecovery: false,
                 BehaviorDurationMs: behaviorStopwatch.ElapsedMilliseconds,
@@ -861,6 +915,7 @@ public sealed class ConversationLayerOrchestrator(
                 ReferencedContextSummary: contextSummary,
                 Warnings: existingWarnings
                     .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(intelligenceWarnings)
                     .Concat(behavior.Warnings)
                     .Concat(modeResult.Warnings)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -882,9 +937,9 @@ public sealed class ConversationLayerOrchestrator(
                     IsFallback: true,
                     Reason: "mode_handler_deterministic_response",
                     Notes: []),
-                TotalModelCallCount: behavior.DecisionModelCallCount,
-                HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
-                FastModelCallCount: behavior.FastDecisionModelCallCount,
+                TotalModelCallCount: intelligenceModelCallCount + behavior.DecisionModelCallCount,
+                HeavyModelCallCount: intelligenceHeavyModelCallCount + behavior.HeavyDecisionModelCallCount,
+                FastModelCallCount: intelligenceFastModelCallCount + behavior.FastDecisionModelCallCount,
                 UsedDeterministicPath: true,
                 UsedDeterministicRecovery: false,
                 BehaviorDurationMs: behaviorStopwatch.ElapsedMilliseconds,
@@ -916,6 +971,12 @@ public sealed class ConversationLayerOrchestrator(
             MaxLengthHint: 420,
             ClarificationQuestion: finalState.LastClarificationPrompt,
             SuggestedOptions: finalState.LastSuggestedOptions);
+        routedCompositionRequest = EnrichCompositionRequest(
+            routedCompositionRequest,
+            conversationIntelligence,
+            turnInterpretation,
+            retrievalPlan,
+            currentResultContext);
 
         var routedCompositionStopwatch = Stopwatch.StartNew();
         var routedComposition = await responseComposer.ComposeAsync(
@@ -939,6 +1000,7 @@ public sealed class ConversationLayerOrchestrator(
             ReferencedContextSummary: contextSummary,
             Warnings: existingWarnings
                 .Concat(resultContextReadResult.ReasonCodes)
+                .Concat(intelligenceWarnings)
                 .Concat(behavior.Warnings)
                 .Concat(modeResult.Warnings)
                 .Concat(routedComposition.Warnings)
@@ -962,9 +1024,9 @@ public sealed class ConversationLayerOrchestrator(
                 IsFallback: routedComposition.ModelUsed.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
                 Reason: "mode_handler_response",
                 Notes: []),
-            TotalModelCallCount: behavior.DecisionModelCallCount + (routedComposition.UsedModelInvocation ? 1 : 0),
-            HeavyModelCallCount: behavior.HeavyDecisionModelCallCount,
-            FastModelCallCount: behavior.FastDecisionModelCallCount + (routedComposition.UsedModelInvocation ? 1 : 0),
+            TotalModelCallCount: intelligenceModelCallCount + behavior.DecisionModelCallCount + (routedComposition.UsedModelInvocation ? 1 : 0),
+            HeavyModelCallCount: intelligenceHeavyModelCallCount + behavior.HeavyDecisionModelCallCount,
+            FastModelCallCount: intelligenceFastModelCallCount + behavior.FastDecisionModelCallCount + (routedComposition.UsedModelInvocation ? 1 : 0),
             UsedDeterministicPath: behavior.PrimaryDecisionModelSelection.SelectionKind == ConversationModelSelectionKind.Deterministic
                                    || behavior.ExplorationSubtypeModelSelection?.SelectionKind == ConversationModelSelectionKind.Deterministic
                                    || routedComposition.UsedDeterministicPath,
@@ -983,6 +1045,51 @@ public sealed class ConversationLayerOrchestrator(
             ResponseFallbackUsed: routedComposition.FallbackUsed,
             ResponseRecoveryReason: routedComposition.RecoveryReason,
             ResponseUsedModelInvocation: routedComposition.UsedModelInvocation);
+    }
+
+    private static IReadOnlyDictionary<string, string> MergeConversationIntelligenceMetadata(
+        IReadOnlyDictionary<string, string> metadata,
+        ConversationIntelligenceResult intelligence)
+    {
+        var merged = new Dictionary<string, string>(metadata, StringComparer.OrdinalIgnoreCase)
+        {
+            ["conversation_intelligence_json"] = JsonSerializer.Serialize(intelligence),
+            ["conversation_phase"] = intelligence.ConversationPhase,
+            ["user_emotional_state"] = intelligence.UserEmotionalState,
+            ["conversation_next_action"] = intelligence.NextAction.Type,
+            ["conversation_should_continue_task"] = intelligence.ShouldContinueTask.ToString(),
+            ["conversation_should_clarify"] = intelligence.ShouldClarify.ToString(),
+            ["conversation_should_execute_tool"] = intelligence.ShouldExecuteTool.ToString(),
+            ["conversation_should_acknowledge_issue"] = intelligence.ShouldAcknowledgeIssue.ToString()
+        };
+
+        if (!string.IsNullOrWhiteSpace(intelligence.NextAction.Requirement))
+        {
+            merged["conversation_next_requirement"] = intelligence.NextAction.Requirement!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(intelligence.NextAction.Target))
+        {
+            merged["conversation_next_target"] = intelligence.NextAction.Target!;
+        }
+
+        return merged;
+    }
+
+    private static ResponseCompositionRequest EnrichCompositionRequest(
+        ResponseCompositionRequest request,
+        ConversationIntelligenceResult? conversationIntelligence,
+        TurnInterpretationV2? turnInterpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        ResultContextSnapshot? resultContext)
+    {
+        return request with
+        {
+            ConversationIntelligence = conversationIntelligence,
+            TurnInterpretation = turnInterpretation,
+            RetrievalPlan = retrievalPlan,
+            ResultContext = resultContext
+        };
     }
 
     private bool CanUsePersistentMemory(UserChatRequest request)

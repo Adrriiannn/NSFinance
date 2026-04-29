@@ -28,6 +28,7 @@ internal sealed class MockAIProviderTransport(
         {
             "conversation_turn_strategy_decision_v1" => BuildConversationDecisionResponse(request),
             "exploration_subtype_decision_v1" => BuildExplorationSubtypeDecisionResponse(request),
+            "conversation_intelligence_v1" => BuildConversationIntelligenceResponse(request),
             "turn_interpretation_v2" => BuildTurnInterpretationResponse(request),
             "response_composition_output_v1" => BuildResponseCompositionResponse(request),
             _ => scenario switch
@@ -544,8 +545,8 @@ internal sealed class MockAIProviderTransport(
                 readiness = new { from = "R0_Unknown", to = "R1_Vague" },
                 confidence = 0.80,
                 followUpBindingType = "None",
-                clarificationQuestion = "Do you want to focus on subscriptions, overall spending, or a specific budget concern?",
-                suggestedOptions = new[] { "Review subscriptions", "Look at spending trends", "Set a budget goal" },
+                clarificationQuestion = (string?)null,
+                suggestedOptions = Array.Empty<string>(),
                 toolExecutionPermission = "Forbidden",
                 reasonCodes = new[] { "mock_financial_validation" }
             });
@@ -608,6 +609,80 @@ internal sealed class MockAIProviderTransport(
             primaryWhy = "The request is atmospheric or experiential rather than a concrete place search.",
             missingConstraints = new[] { "location_or_area" },
             reasonCodes = new[] { "mock_open_subtype" }
+        });
+    }
+
+    private static string BuildConversationIntelligenceResponse(AIRequest request)
+    {
+        var userMessage = ExtractLatestUserMessage(request).ToLowerInvariant();
+        var promptText = string.Join(
+            "\n",
+            request.Messages.Select(message => message.Content));
+        var hasPriorResults = promptText.Contains("Active result context JSON", StringComparison.OrdinalIgnoreCase)
+                              || promptText.Contains("Result context JSON", StringComparison.OrdinalIgnoreCase);
+        var isClosing = userMessage is "thanks" or "thank you" or "that's all" or "thats all" or "never mind" or "stop";
+        var isFrustrated = ContainsAny(userMessage, "useless", "why are you asking", "already said", "that's not what i asked", "thats not what i asked");
+        var isCorrection = ContainsAny(userMessage, "i said", "i meant", "not ", "you're wrong", "you are wrong");
+        var isClosest = ContainsAny(userMessage, "closest", "nearest");
+        var isParking = ContainsAny(userMessage, "parking", "car park", "car parks");
+        var isFollowUp = hasPriorResults && (isClosest || isParking || ContainsAny(userMessage, "open now", "which one", "just the"));
+        var action = isClosing
+            ? "answer_directly"
+            : isClosest
+                ? "sort_previous_results"
+                : isParking && hasPriorResults
+                    ? "filter_previous_results"
+                    : isParking
+                        ? "execute_search"
+                        : isFollowUp
+                            ? "filter_previous_results"
+                            : ContainsAny(userMessage, "near me", "in ", "around ", "restaurants", "coffee", "starbucks", "museums", "parks", "beaches")
+                                ? "execute_search"
+                                : "answer_directly";
+
+        return Serialize(new
+        {
+            conversation_phase = isClosing
+                ? "closing"
+                : isFrustrated
+                    ? "frustration"
+                    : isCorrection
+                        ? "correction"
+                        : isFollowUp
+                            ? "refinement"
+                            : "start",
+            user_emotional_state = isFrustrated ? "frustrated" : isClosing ? "satisfied" : "neutral",
+            user_intent_confidence = 0.88,
+            should_continue_task = !isClosing && (isFollowUp || action != "answer_directly"),
+            should_clarify = false,
+            should_execute_tool = action is "execute_search" or "filter_previous_results" or "sort_previous_results" or "enrich_details",
+            should_acknowledge_issue = isFrustrated || isCorrection,
+            response_style = new
+            {
+                tone = isFrustrated || isCorrection ? "apologetic" : isClosing ? "warm" : "helpful",
+                verbosity = isClosing ? "short" : "medium",
+                avoid_repetition = true
+            },
+            task_state = new
+            {
+                is_new_task = !isFollowUp && !isClosing,
+                is_follow_up = isFollowUp,
+                is_refinement = isFollowUp,
+                is_user_correction = isCorrection,
+                target_previous_results = isFollowUp
+            },
+            next_action = new
+            {
+                type = action,
+                reason = isParking
+                    ? "The user is asking about parking in the current place task."
+                    : isClosest
+                        ? "The user wants the previous or current results ranked by distance."
+                        : "The latest turn can be handled from the current conversation context.",
+                target = isFollowUp ? "active_result_set" : null,
+                requirement = isParking ? "parking" : isClosest ? "closest" : null
+            },
+            reason_codes = new[] { "mock_conversation_intelligence_v1" }
         });
     }
 

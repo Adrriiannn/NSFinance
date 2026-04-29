@@ -92,8 +92,8 @@ public sealed class DeterministicConversationDecisionBuilder : IDeterministicCon
                 readinessTo: ConversationReadinessLevel.R1_Vague,
                 confidence: 0.8d,
                 followUpBindingType: FollowUpBindingType.None,
-                clarificationQuestion: "Do you want to focus on subscriptions, overall spending, or a specific budget concern?",
-                suggestedOptions: ["Review subscriptions", "Look at spending trends", "Set a clearer goal"],
+                clarificationQuestion: null,
+                suggestedOptions: [],
                 toolPermission: ToolExecutionPermission.Forbidden,
                 reasonCodes:
                 [

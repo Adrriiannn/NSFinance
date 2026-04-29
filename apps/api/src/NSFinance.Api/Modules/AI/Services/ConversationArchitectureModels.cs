@@ -240,7 +240,8 @@ public sealed record ConversationBehaviorRequest(
     ResultContextReadResult? ResultContextReadResult,
     IReadOnlyDictionary<string, string> ClientMetadata,
     IReadOnlyList<string> FailureHistory,
-    CancellationToken CancellationToken);
+    CancellationToken CancellationToken,
+    ConversationIntelligenceResult? ConversationIntelligence = null);
 
 public sealed record ConversationBehaviorResult(
     ConversationTurnStrategyDecision StrategyDecision,
@@ -266,7 +267,8 @@ public sealed record ConversationModeRequest(
     ResultContextSnapshot? ResultContext,
     ConversationTurnStrategyDecision StrategyDecision,
     ExplorationSubtypeDecision? ExplorationSubtypeDecision,
-    IReadOnlyDictionary<string, string> ClientMetadata);
+    IReadOnlyDictionary<string, string> ClientMetadata,
+    ConversationIntelligenceResult? ConversationIntelligence = null);
 
 public sealed record GroundedDataPoint(
     string Label,
@@ -289,7 +291,49 @@ public sealed record ResponseCompositionRequest(
     IReadOnlyList<string> MissingConstraints,
     int MaxLengthHint,
     string? ClarificationQuestion = null,
-    IReadOnlyList<string>? SuggestedOptions = null);
+    IReadOnlyList<string>? SuggestedOptions = null,
+    ConversationIntelligenceResult? ConversationIntelligence = null,
+    TurnInterpretationV2? TurnInterpretation = null,
+    PlaceRetrievalPlanV1? RetrievalPlan = null,
+    ResultContextSnapshot? ResultContext = null);
+
+public sealed record ConversationIntelligenceResult(
+    string ConversationPhase,
+    string UserEmotionalState,
+    double UserIntentConfidence,
+    bool ShouldContinueTask,
+    bool ShouldClarify,
+    bool ShouldExecuteTool,
+    bool ShouldAcknowledgeIssue,
+    ConversationResponseStyle ResponseStyle,
+    ConversationTaskState TaskState,
+    ConversationNextAction NextAction,
+    IReadOnlyList<string> ReasonCodes);
+
+public sealed record ConversationResponseStyle(
+    string Tone,
+    string Verbosity,
+    bool AvoidRepetition);
+
+public sealed record ConversationTaskState(
+    bool IsNewTask,
+    bool IsFollowUp,
+    bool IsRefinement,
+    bool IsUserCorrection,
+    bool TargetPreviousResults);
+
+public sealed record ConversationNextAction(
+    string Type,
+    string Reason,
+    string? Target = null,
+    string? Requirement = null);
+
+public sealed record ConversationIntelligenceEvaluationResult(
+    ConversationIntelligenceResult Intelligence,
+    AIModelRoute? Route,
+    bool UsedModelInvocation,
+    bool FallbackUsed,
+    IReadOnlyList<string> Warnings);
 
 public sealed record ResponseCompositionResult(
     string ReplyText,

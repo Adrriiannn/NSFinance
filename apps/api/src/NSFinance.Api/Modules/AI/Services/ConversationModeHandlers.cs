@@ -159,8 +159,8 @@ public sealed class StructuredExplorationHandler(
                     Constraints: blockedState.Constraints,
                     MissingConstraints: blockedState.MissingConstraints ?? [],
                     MaxLengthHint: 450,
-                    ClarificationQuestion: blockedState.LastClarificationPrompt,
-                    SuggestedOptions: blockedState.LastSuggestedOptions),
+                    ClarificationQuestion: null,
+                    SuggestedOptions: []),
                 DeterministicReplyText: null,
                 SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 State: blockedState,
@@ -285,7 +285,7 @@ public sealed class StructuredExplorationHandler(
                 MissingConstraints: [],
                 MaxLengthHint: 700,
                 ClarificationQuestion: null,
-                SuggestedOptions: ["Refine the shortlist", "Compare options"]),
+                SuggestedOptions: []),
             DeterministicReplyText: null,
             SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             State: nextState,
@@ -368,8 +368,8 @@ public sealed class StructuredExplorationHandler(
                 Constraints: mergedConstraints,
                 MissingConstraints: [],
                 MaxLengthHint: 420,
-                ClarificationQuestion: "I didn't get strong matches yet. Want to tighten the place type, area, or vibe?",
-                SuggestedOptions: ["Tighter place type", "Different area", "Different vibe"]),
+                ClarificationQuestion: null,
+                SuggestedOptions: []),
             DeterministicReplyText: null,
             SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             State: request.State with
@@ -408,8 +408,8 @@ public sealed class StructuredExplorationHandler(
             return new StructuredClarificationPrompt(
                 Slot: ClarificationSlot.ExplorationPlaceType,
                 PromptIntent: "exploration_missing_place_type",
-                Question: "I can search near you. What would you like me to look for?",
-                SuggestedOptions: ["Coffee shops", "Restaurants", "Shops", "Parks"]);
+                Question: null,
+                SuggestedOptions: []);
         }
 
         if (missingLocation)
@@ -420,26 +420,26 @@ public sealed class StructuredExplorationHandler(
                 "denied_open_settings" or "unavailable" => new StructuredClarificationPrompt(
                     Slot: ClarificationSlot.ExplorationLocation,
                     PromptIntent: "location_permission_denied_or_unavailable",
-                    Question: "I can't use your current location right now. Enable location in settings, or tell me an area to search.",
-                    SuggestedOptions: ["Allow location", "Specify area"]),
+                    Question: null,
+                    SuggestedOptions: []),
                 "denied_can_ask_again" or "unknown" => new StructuredClarificationPrompt(
                     Slot: ClarificationSlot.ExplorationLocation,
                     PromptIntent: "location_permission_prompt",
-                    Question: "I can do that. I don't have your location yet. Do you want to search near your current location or in a specific area?",
-                    SuggestedOptions: ["Use current location", "Specify area"]),
+                    Question: null,
+                    SuggestedOptions: []),
                 _ => new StructuredClarificationPrompt(
                     Slot: ClarificationSlot.ExplorationLocation,
                     PromptIntent: "location_missing_fix",
-                    Question: "I can search as soon as location is set. Do you want to use your current location or specify an area?",
-                    SuggestedOptions: ["Use current location", "Specify area"])
+                    Question: null,
+                    SuggestedOptions: [])
             };
         }
 
         return new StructuredClarificationPrompt(
             Slot: ClarificationSlot.ExplorationRefinement,
             PromptIntent: "exploration_refine",
-            Question: "What should I refine first?",
-            SuggestedOptions: ["Distance", "Parking", "Open now"]);
+            Question: null,
+            SuggestedOptions: []);
     }
 
     private static string ResolveLocationPermissionState(IReadOnlyDictionary<string, string> metadata)
@@ -540,7 +540,7 @@ public sealed class StructuredExplorationHandler(
     private sealed record StructuredClarificationPrompt(
         ClarificationSlot Slot,
         string PromptIntent,
-        string Question,
+        string? Question,
         IReadOnlyList<string> SuggestedOptions);
 
     private static IReadOnlyList<PlaceSearchItem> SelectStructuredShortlist(
@@ -1041,18 +1041,10 @@ public sealed class OpenExplorationHandler : IConversationModeHandler
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var suggestions = BuildStrategicSuggestions(request.Request.UserMessage);
         var groundedData = new GroundedDataEnvelope(
-            Entities: suggestions
-                .Select((item, index) => new ConversationSuggestedEntity(
-                    EntityId: $"open-{index + 1}",
-                    Label: item.Label,
-                    Rank: index + 1))
-                .ToArray(),
-            SummaryFacts: suggestions
-                .Select(item => new GroundedDataPoint(item.Label, item.Why))
-                .ToArray(),
-            Warnings: ["open_exploration_phase1_reasoning_only"]);
+            Entities: [],
+            SummaryFacts: [],
+            Warnings: ["open_exploration_ai_composed"]);
 
         var nextState = request.State with
         {
@@ -1077,48 +1069,14 @@ public sealed class OpenExplorationHandler : IConversationModeHandler
                     MissingConstraints: [],
                     MaxLengthHint: 650,
                     ClarificationQuestion: null,
-                    SuggestedOptions: ["Make it more concrete", "Add an area", "Ask for a shortlist"]),
+                    SuggestedOptions: []),
                 DeterministicReplyText: null,
                 SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 State: nextState,
                 ResultContext: request.ResultContext,
-                Warnings: ["open_exploration_phase1_reasoning_only"],
-                FollowUpIntentHints: ["make_exploration_concrete", "provide_typed_location"],
+                Warnings: ["open_exploration_ai_composed"],
+                FollowUpIntentHints: ["open_exploration_continuation"],
                 Succeeded: true));
-    }
-
-    private static IReadOnlyList<(string Label, string Why)> BuildStrategicSuggestions(string userMessage)
-    {
-        var normalized = (userMessage ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalized.Contains("quiet", StringComparison.Ordinal)
-            || normalized.Contains("calm", StringComparison.Ordinal))
-        {
-            return
-            [
-                ("Large park edge or riverside path", "Usually better for quiet walking, visibility, and easier exits if it gets busy."),
-                ("Waterfront promenade near residential zones", "Often gives open sightlines, evening lighting, and a calmer pace than city-centre hotspots."),
-                ("Botanic garden or campus green corridor", "These tend to feel intentional, accessible, and less noisy than generic 'things to do' areas.")
-            ];
-        }
-
-        if (normalized.Contains("safe", StringComparison.Ordinal)
-            || normalized.Contains("night", StringComparison.Ordinal)
-            || normalized.Contains("lighting", StringComparison.Ordinal))
-        {
-            return
-            [
-                ("Busy but not chaotic waterfront or town-centre promenade", "Better lighting, foot traffic, and transport options help reduce the 'isolated but dark' tradeoff."),
-                ("Well-used park perimeter near cafes or transit", "A park edge can preserve atmosphere while keeping sightlines and easy fallback routes."),
-                ("Cultural quarter with evening foot traffic", "These areas often balance ambience with visibility and access to nearby help or transport.")
-            ];
-        }
-
-        return
-        [
-            ("Waterfront walk", "Good default for openness, orientation, and easy progression if you want atmosphere without overcommitting."),
-            ("Large park with multiple entrances", "Better for flexible pacing, easy exit points, and adapting the plan once you arrive."),
-            ("Neighbourhood high street with cafes and side streets", "Useful when you want options, transport, and the ability to pivot into something more concrete.")
-        ];
     }
 }
 
@@ -1158,7 +1116,7 @@ public sealed class FinancialModeHandler : IConversationModeHandler
                     MissingConstraints: nextState.MissingConstraints ?? [],
                     MaxLengthHint: 420,
                     ClarificationQuestion: null,
-                    SuggestedOptions: ["Review subscriptions", "Look at spending patterns", "Set a specific budget goal"]),
+                    SuggestedOptions: []),
                 DeterministicReplyText: null,
                 SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 State: nextState,

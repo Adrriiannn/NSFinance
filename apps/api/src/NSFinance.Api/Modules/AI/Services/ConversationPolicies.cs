@@ -768,10 +768,8 @@ public sealed class FinancialActivationPolicy : IFinancialActivationPolicy
             {
                 To = guidedReadiness
             },
-            ClarificationQuestion = hasValidatedThread
-                ? "I can switch into budget help once you confirm the focus. Do you want subscriptions, spending patterns, or a specific budget goal?"
-                : "Do you want to focus on subscriptions, overall spending, or a specific budget concern?",
-            SuggestedOptions = ["Review subscriptions", "Look at spending patterns", "Set a budget goal"],
+            ClarificationQuestion = null,
+            SuggestedOptions = [],
             ToolExecutionPermission = ToolExecutionPermission.Forbidden,
             ReasonCodes = reasonCodes.ToArray()
         };

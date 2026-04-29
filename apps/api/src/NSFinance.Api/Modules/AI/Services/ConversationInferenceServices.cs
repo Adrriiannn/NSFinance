@@ -65,7 +65,8 @@ public sealed class ConversationDecisionEngine(
                 State: request.EffectiveState,
                 ResultContext: request.ResultContext,
                 ClientMetadata: request.ClientMetadata,
-                FailureHistory: request.FailureHistory));
+                FailureHistory: request.FailureHistory,
+                ConversationIntelligence: request.ConversationIntelligence));
 
         await TrackSelectionAsync(
             route,
@@ -342,10 +343,8 @@ public sealed class ConversationDecisionEngine(
                 FollowUpBindingType: request.ResultContext is null
                     ? FollowUpBindingType.None
                     : FollowUpBindingType.Refine,
-                ClarificationQuestion: toolReady
-                    ? null
-                    : "Do you want a concrete place search, or more exploratory suggestions first?",
-                SuggestedOptions: toolReady ? [] : ["Concrete place search", "Exploratory ideas"],
+                ClarificationQuestion: null,
+                SuggestedOptions: [],
                 ToolExecutionPermission: toolReady
                     ? ToolExecutionPermission.EligibleIfGuardPasses
                     : ToolExecutionPermission.Forbidden,
@@ -358,7 +357,6 @@ public sealed class ConversationDecisionEngine(
 
         if (signals.HasFinancialSignal && !signals.HasCompleteQuestion)
         {
-            suggestedOptions = ["Review subscriptions", "Look at spending trends", "Set a clearer goal"];
             return new ConversationTurnStrategyDecision(
                 Strategy: signals.HasEmotionalFraming
                     ? ConversationBehaviorStrategy.AcknowledgeAndGuide
@@ -369,8 +367,8 @@ public sealed class ConversationDecisionEngine(
                     To: ConversationReadinessLevel.R1_Vague),
                 Confidence: 0.78d,
                 FollowUpBindingType: FollowUpBindingType.None,
-                ClarificationQuestion: "Do you want to focus on subscriptions, overall spending, or a specific budget concern?",
-                SuggestedOptions: suggestedOptions,
+                ClarificationQuestion: null,
+                SuggestedOptions: [],
                 ToolExecutionPermission: ToolExecutionPermission.Forbidden,
                 ReasonCodes:
                 [
@@ -447,22 +445,6 @@ public sealed class ResponseComposer(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-
-        if (ShouldUseDeterministicTemplate(request))
-        {
-            var deterministic = BuildDeterministicResponse(request);
-            await TrackResponseSelectionAsync(
-                correlationId,
-                request.ResponseType,
-                ConversationModelSelectionKind.Deterministic,
-                deterministic.SelectionReason,
-                usedModelInvocation: false,
-                deterministic.FallbackUsed,
-                deterministic.RecoveryReason,
-                deterministic.Warnings,
-                cancellationToken);
-            return deterministic;
-        }
 
         var route = modelRouter.Resolve(AITaskType.ResponseComposition, AIModelClass.Fast, request.ResponseType.ToString());
         var prompt = promptBuilder.BuildPrompt(new ResponseCompositionPromptInput(request, correlationId));
@@ -547,11 +529,8 @@ public sealed class ResponseComposer(
                 out var parseFailureReason)
             && parsedResponse.Succeeded)
         {
-            var replyText = request.ResponseType == ResponseCompositionType.ResultSummary
-                ? BuildCanonicalStructuredResultSummaryReply(request)
-                : parsedResponse.ReplyText;
             var success = new ResponseCompositionResult(
-                ReplyText: replyText,
+                ReplyText: parsedResponse.ReplyText,
                 SuggestedStructuredStateUpdates: parsedResponse.SuggestedStructuredStateUpdates,
                 ModelUsed: parsedResponse.ModelUsed,
                 DeploymentUsed: route.Deployment,
@@ -688,12 +667,6 @@ public sealed class ResponseComposer(
             cancellationToken);
     }
 
-    private static bool ShouldUseDeterministicTemplate(ResponseCompositionRequest request)
-    {
-        return request.ResponseType is ResponseCompositionType.Fallback or ResponseCompositionType.Placeholder
-               || (request.ResponseType == ResponseCompositionType.Clarify && request.GroundedData.Entities.Count == 0);
-    }
-
     private static ResponseCompositionResult BuildDeterministicResponse(
         ResponseCompositionRequest request,
         string selectionReason = "deterministic_template",
@@ -702,13 +675,8 @@ public sealed class ResponseComposer(
         string? recoveryReason = null,
         IReadOnlyList<string>? warnings = null)
     {
-        var missing = request.MissingConstraints.Count > 0
-            ? $" I still need: {string.Join(", ", request.MissingConstraints)}."
-            : string.Empty;
-        var options = request.SuggestedOptions is { Count: > 0 }
-            ? $" Options: {string.Join("; ", request.SuggestedOptions.Take(3))}."
-            : string.Empty;
-
+        var missing = string.Empty;
+        var options = string.Empty;
         var replyText = request.ResponseType switch
         {
             ResponseCompositionType.Placeholder => "I can help with that, but I need to guide the conversation a little further before taking action.",
@@ -756,10 +724,7 @@ public sealed class ResponseComposer(
     {
         if (request.GroundedData.Entities.Count == 0)
         {
-            var options = request.SuggestedOptions is { Count: > 0 }
-                ? $" You can refine by {string.Join(", ", request.SuggestedOptions.Take(3)).ToLowerInvariant()}."
-                : string.Empty;
-            return "I found grounded results, but I need one more detail to shape a clean shortlist." + options;
+            return "I found results, but I could not compose the shortlist cleanly.";
         }
 
         var factLookup = request.GroundedData.SummaryFacts
@@ -778,8 +743,8 @@ public sealed class ResponseComposer(
         }
 
         var intro = ordered.Length == 1
-            ? "Here is one grounded option:"
-            : "Here are grounded options near you:";
+            ? "I found one matching option:"
+            : "I found these matching options:";
         var lines = new List<string>(ordered.Length * 2 + 3)
         {
             intro
@@ -795,8 +760,6 @@ public sealed class ResponseComposer(
             }
         }
 
-        lines.Add(string.Empty);
-        lines.Add("Would you like me to narrow these by distance, parking, or seating?");
         return string.Join(Environment.NewLine, lines);
     }
 }

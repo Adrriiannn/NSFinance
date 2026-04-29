@@ -387,12 +387,12 @@ public sealed class ConversationLatencyOptimizationTests
         Assert.Equal("structured_reply_text_missing", result.RecoveryReason);
         Assert.Contains("structured_parse_failed", result.Warnings);
         Assert.Contains("response_composition_safe_fallback", result.Warnings);
-        Assert.Contains("Here are grounded options near you:", result.ReplyText);
+        Assert.Contains("I found these matching options:", result.ReplyText);
         Assert.Contains("1. Bean Room", result.ReplyText);
         Assert.Contains("Details: cafe, rating 4.6, open now", result.ReplyText);
         Assert.Contains("2. Roast House", result.ReplyText);
         Assert.Contains("Details: cafe, rating 4.4, Dublin 2", result.ReplyText);
-        Assert.Contains("Would you like me to narrow these by distance, parking, or seating?", result.ReplyText);
+        Assert.DoesNotContain("Would you like me to narrow these by distance, parking, or seating?", result.ReplyText);
         Assert.DoesNotContain("Here's the next helpful step", result.ReplyText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\"warnings\"", result.ReplyText, StringComparison.OrdinalIgnoreCase);
 
@@ -428,12 +428,12 @@ public sealed class ConversationLatencyOptimizationTests
 
         Assert.True(result.UsedDeterministicPath);
         Assert.True(result.FallbackUsed);
-        Assert.Contains("I found grounded results, but I need one more detail to shape a clean shortlist.", result.ReplyText);
+        Assert.Contains("I found results, but I could not compose the shortlist cleanly.", result.ReplyText);
         Assert.DoesNotContain("\"warnings\"", result.ReplyText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task ResponseComposer_UsesLockedStructuredResultCount_ForResultSummaryReplies()
+    public async Task ResponseComposer_UsesAiComposedText_ForResultSummaryReplies()
     {
         var composer = new ResponseComposer(
             new StubResponseCompositionPromptBuilder(),
@@ -467,11 +467,8 @@ public sealed class ConversationLatencyOptimizationTests
             CancellationToken.None);
 
         Assert.Equal("response_composition_fast", result.SelectionReason);
-        Assert.DoesNotContain("model generated text", result.ReplyText, StringComparison.OrdinalIgnoreCase);
-        for (var index = 1; index <= 8; index++)
-        {
-            Assert.Contains($"{index}. Place {index}", result.ReplyText);
-        }
+        Assert.Contains("model generated text", result.ReplyText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Would you like me to narrow these by distance, parking, or seating?", result.ReplyText);
     }
 
     [Fact]

@@ -137,15 +137,18 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IToolGuardWarningPolicy, ToolGuardWarningPolicy>();
         services.AddScoped<IResultContextService, ResultContextService>();
         services.AddScoped<IResponseComposer, ResponseComposer>();
+        services.AddScoped<IConversationIntelligenceService, ConversationIntelligenceService>();
         services.AddScoped<ITurnInterpretationPromptBuilder, TurnInterpretationPromptBuilder>();
         services.AddScoped<ITurnInterpretationParser, TurnInterpretationParser>();
         services.AddScoped<ITurnInterpretationEngine, TurnInterpretationEngine>();
         services.AddScoped<IPlaceRetrievalPlanner, PlaceRetrievalPlanner>();
+        services.AddScoped<IConversationIntelligencePromptBuilder, ConversationIntelligencePromptBuilder>();
         services.AddScoped<IConversationDecisionPromptBuilder, ConversationDecisionPromptBuilder>();
         services.AddScoped<IExplorationSubtypePromptBuilder, ExplorationSubtypePromptBuilder>();
         services.AddScoped<IResponseCompositionPromptBuilder, ResponseCompositionPromptBuilder>();
         services.AddScoped<IMerchantInvestigationPromptBuilder, MerchantInvestigationPromptBuilder>();
         services.AddScoped<IConversationDecisionParser, ConversationDecisionParser>();
+        services.AddScoped<IConversationIntelligenceParser, ConversationIntelligenceParser>();
         services.AddScoped<IExplorationSubtypeDecisionParser, ExplorationSubtypeDecisionParser>();
         services.AddScoped<IConversationModeHandler, StructuredExplorationHandler>();
         services.AddScoped<IConversationModeHandler, OpenExplorationHandler>();

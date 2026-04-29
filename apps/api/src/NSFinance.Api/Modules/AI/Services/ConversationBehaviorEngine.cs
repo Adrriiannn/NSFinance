@@ -90,7 +90,10 @@ public sealed class ConversationBehaviorEngine(
             normalizedDecision,
             effectiveState,
             signals);
-        var scopeGovernedDecision = ApplyScopeGovernance(financiallyGuardedDecision, interpretation);
+        var scopeGovernedDecision = ApplyConversationIntelligenceGuard(
+            ApplyScopeGovernance(financiallyGuardedDecision, interpretation),
+            request.ConversationIntelligence,
+            effectiveState);
         ExplorationSubtypeDecision? explorationSubtypeDecision = null;
         ConversationModelSelectionPlan? explorationSubtypeModelSelection = null;
         var explorationSubtypeResolutionSource = "not_applicable";
@@ -125,7 +128,8 @@ public sealed class ConversationBehaviorEngine(
                         ResultContext: request.ResultContext,
                         StrategyDecision: scopeGovernedDecision,
                         ExplorationSubtypeDecision: resolutionPlan.Decision,
-                        ClientMetadata: request.ClientMetadata),
+                        ClientMetadata: request.ClientMetadata,
+                        ConversationIntelligence: request.ConversationIntelligence),
                     signals,
                     resolutionPlan,
                     primaryDecisionEvaluation.ModelSelection);
@@ -141,7 +145,8 @@ public sealed class ConversationBehaviorEngine(
                         ResultContext: request.ResultContext,
                         StrategyDecision: scopeGovernedDecision,
                         ExplorationSubtypeDecision: null,
-                        ClientMetadata: request.ClientMetadata),
+                        ClientMetadata: request.ClientMetadata,
+                        ConversationIntelligence: request.ConversationIntelligence),
                     signals,
                     resolutionPlan,
                     primaryDecisionEvaluation.ModelSelection);
@@ -154,7 +159,8 @@ public sealed class ConversationBehaviorEngine(
                         ResultContext: request.ResultContext,
                         StrategyDecision: scopeGovernedDecision,
                         ExplorationSubtypeDecision: null,
-                        ClientMetadata: request.ClientMetadata),
+                        ClientMetadata: request.ClientMetadata,
+                        ConversationIntelligence: request.ConversationIntelligence),
                     explorationSubtypeModelSelection,
                     cancellationToken);
                 explorationSubtypeDecision = explorationSubtypeDecisionPolicy.Normalize(
@@ -397,6 +403,87 @@ public sealed class ConversationBehaviorEngine(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray()
         };
+    }
+
+    private static ConversationTurnStrategyDecision ApplyConversationIntelligenceGuard(
+        ConversationTurnStrategyDecision decision,
+        ConversationIntelligenceResult? intelligence,
+        ConversationStateSnapshot state)
+    {
+        if (intelligence is null)
+        {
+            return decision;
+        }
+
+        if (string.Equals(intelligence.ConversationPhase, "closing", StringComparison.OrdinalIgnoreCase))
+        {
+            return decision with
+            {
+                Strategy = ConversationBehaviorStrategy.DirectAnswer,
+                ModeCandidate = ConversationMode.Conversation,
+                Readiness = decision.Readiness with
+                {
+                    From = state.ReadinessLevel,
+                    To = ConversationReadinessLevel.R1_Vague
+                },
+                FollowUpBindingType = FollowUpBindingType.None,
+                ClarificationQuestion = null,
+                SuggestedOptions = [],
+                ToolExecutionPermission = ToolExecutionPermission.Forbidden,
+                ReasonCodes = decision.ReasonCodes
+                    .Concat(["conversation_intelligence_closing"])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+        }
+
+        if (intelligence.ShouldClarify)
+        {
+            return decision with
+            {
+                Strategy = ConversationBehaviorStrategy.ClarifyOnly,
+                ToolExecutionPermission = ToolExecutionPermission.Forbidden,
+                ReasonCodes = decision.ReasonCodes
+                    .Concat(["conversation_intelligence_clarify"])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+        }
+
+        if (intelligence.ShouldExecuteTool
+            && string.Equals(intelligence.NextAction.Type, "execute_search", StringComparison.OrdinalIgnoreCase)
+            && decision.ModeCandidate == ConversationMode.Exploration)
+        {
+            return decision with
+            {
+                Strategy = ConversationBehaviorStrategy.ToolReadyHandoff,
+                Readiness = decision.Readiness with
+                {
+                    From = state.ReadinessLevel,
+                    To = ConversationReadinessLevel.R4_ToolReady
+                },
+                ToolExecutionPermission = ToolExecutionPermission.EligibleIfGuardPasses,
+                ReasonCodes = decision.ReasonCodes
+                    .Concat(["conversation_intelligence_execute_search"])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+        }
+
+        if (intelligence.TaskState.TargetPreviousResults
+            && decision.FollowUpBindingType is FollowUpBindingType.None or FollowUpBindingType.NewTopic)
+        {
+            return decision with
+            {
+                FollowUpBindingType = FollowUpBindingType.Refine,
+                ReasonCodes = decision.ReasonCodes
+                    .Concat(["conversation_intelligence_prior_result_target"])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+        }
+
+        return decision;
     }
 
     private static ConversationTurnStrategyDecision EnforceBehaviorRules(

@@ -7,6 +7,103 @@ namespace NSFinance.Api.Tests.Unit;
 public sealed class ConversationArchitectureGuardTests
 {
     [Fact]
+    public void ConversationIntelligenceParser_ParsesFollowUpParkingRequirement()
+    {
+        var parser = new ConversationIntelligenceParser();
+        var payload = """
+            {
+              "conversation_phase": "refinement",
+              "user_emotional_state": "neutral",
+              "user_intent_confidence": 0.93,
+              "should_continue_task": true,
+              "should_clarify": false,
+              "should_execute_tool": true,
+              "should_acknowledge_issue": false,
+              "response_style": {
+                "tone": "helpful",
+                "verbosity": "medium",
+                "avoid_repetition": true
+              },
+              "task_state": {
+                "is_new_task": false,
+                "is_follow_up": true,
+                "is_refinement": true,
+                "is_user_correction": false,
+                "target_previous_results": true
+              },
+              "next_action": {
+                "type": "filter_previous_results",
+                "reason": "User asked for parking information about previous results.",
+                "target": "active_result_set",
+                "requirement": "parking"
+              },
+              "reason_codes": ["test_follow_up_parking"]
+            }
+            """;
+
+        var parsed = parser.TryParse(
+            BuildAIResponse(payload),
+            BuildRoute(),
+            out var intelligence,
+            out var reasonCodes,
+            out var failureReason);
+
+        Assert.True(parsed, failureReason);
+        Assert.NotNull(intelligence);
+        Assert.Equal("refinement", intelligence!.ConversationPhase);
+        Assert.True(intelligence.TaskState.TargetPreviousResults);
+        Assert.Equal("filter_previous_results", intelligence.NextAction.Type);
+        Assert.Equal("parking", intelligence.NextAction.Requirement);
+        Assert.Contains("conversation_intelligence_parse_success", reasonCodes);
+    }
+
+    [Fact]
+    public async Task ConversationBehaviorEngine_UsesConversationIntelligenceClosing_ToAvoidToolOrFollowUp()
+    {
+        var engine = CreateBehaviorEngine(
+            new ConversationTurnStrategyDecision(
+                Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                ModeCandidate: ConversationMode.Exploration,
+                Readiness: new ReadinessTransition(
+                    From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                    To: ConversationReadinessLevel.R4_ToolReady),
+                Confidence: 0.92d,
+                FollowUpBindingType: FollowUpBindingType.Refine,
+                ClarificationQuestion: "Old scripted question should be ignored.",
+                SuggestedOptions: ["Old option"],
+                ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                ReasonCodes: ["stub_tool_ready"]),
+            new ExplorationSubtypeDecision(
+                Subtype: ExplorationSubtype.Structured,
+                Confidence: 0.91d,
+                ToolPathEligible: true,
+                PrimaryWhy: "Stub structured exploration.",
+                MissingConstraints: [],
+                ReasonCodes: ["stub_structured"]));
+
+        var request = BuildBehaviorRequest(
+            userMessage: "thanks") with
+        {
+            ConversationIntelligence = BuildConversationIntelligence(
+                phase: "closing",
+                emotionalState: "satisfied",
+                nextAction: "answer_directly",
+                shouldExecuteTool: false,
+                shouldContinueTask: false)
+        };
+
+        var result = await engine.EvaluateAsync(request, CancellationToken.None);
+
+        Assert.True(result.StayInDirectMode);
+        Assert.False(result.RouteToModeHandler);
+        Assert.Equal(ConversationBehaviorStrategy.DirectAnswer, result.StrategyDecision.Strategy);
+        Assert.Equal(ToolExecutionPermission.Forbidden, result.StrategyDecision.ToolExecutionPermission);
+        Assert.Equal(FollowUpBindingType.None, result.StrategyDecision.FollowUpBindingType);
+        Assert.Null(result.StrategyDecision.ClarificationQuestion);
+        Assert.Empty(result.StrategyDecision.SuggestedOptions);
+    }
+
+    [Fact]
     public async Task ConversationBehaviorEngine_DowngradesStructuredNearMeWithoutLocationEvidence_ToR3AndForbidsTools()
     {
         var engine = CreateBehaviorEngine(
@@ -860,8 +957,8 @@ public sealed class ConversationArchitectureGuardTests
 
         Assert.Equal(0, placesSearch.CallCount);
         Assert.NotNull(result.CompositionRequest);
-        Assert.Contains("don't have your location", result.CompositionRequest!.ClarificationQuestion!, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(["Use current location", "Specify area"], result.CompositionRequest.SuggestedOptions);
+        Assert.Null(result.CompositionRequest!.ClarificationQuestion);
+        Assert.Empty(result.CompositionRequest.SuggestedOptions!);
         Assert.Equal(ClarificationSlot.ExplorationLocation, result.State.PendingClarification?.Slot);
     }
 
@@ -938,8 +1035,8 @@ public sealed class ConversationArchitectureGuardTests
 
         Assert.Equal(0, placesSearch.CallCount);
         Assert.NotNull(result.CompositionRequest);
-        Assert.Contains("what would you like me to look for", result.CompositionRequest!.ClarificationQuestion!, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(["Coffee shops", "Restaurants", "Shops", "Parks"], result.CompositionRequest.SuggestedOptions);
+        Assert.Null(result.CompositionRequest!.ClarificationQuestion);
+        Assert.Empty(result.CompositionRequest.SuggestedOptions!);
         Assert.Equal(ClarificationSlot.ExplorationPlaceType, result.State.PendingClarification?.Slot);
     }
 
@@ -1011,8 +1108,8 @@ public sealed class ConversationArchitectureGuardTests
             CancellationToken.None);
 
         Assert.Equal(0, placesSearch.CallCount);
-        Assert.Contains("settings", result.CompositionRequest!.ClarificationQuestion!, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(["Allow location", "Specify area"], result.CompositionRequest.SuggestedOptions);
+        Assert.Null(result.CompositionRequest!.ClarificationQuestion);
+        Assert.Empty(result.CompositionRequest.SuggestedOptions!);
         Assert.Equal("location_permission_denied_or_unavailable", result.FollowUpIntentHints.Last());
     }
 
@@ -1210,7 +1307,7 @@ public sealed class ConversationArchitectureGuardTests
             CancellationToken.None);
 
         Assert.True(response.Succeeded);
-        Assert.Contains("Here are grounded options near you:", response.ReplyText);
+        Assert.Contains("I found these matching options:", response.ReplyText);
         Assert.Contains("1. Bean Room", response.ReplyText);
         Assert.Contains("Details: cafe, rating 4.6, open now", response.ReplyText);
         Assert.Contains("2. Roast House", response.ReplyText);
@@ -1269,7 +1366,7 @@ public sealed class ConversationArchitectureGuardTests
         Assert.Equal("response_composition_transport_cancelled", result.RecoveryReason);
         Assert.Contains("response_composition_transport_cancelled", result.Warnings);
         Assert.Contains("response_composition_safe_fallback", result.Warnings);
-        Assert.Contains("Here is one grounded option:", result.ReplyText);
+        Assert.Contains("I found one matching option:", result.ReplyText);
     }
 
     [Fact]
@@ -1369,6 +1466,67 @@ public sealed class ConversationArchitectureGuardTests
             LocationPreference: null,
             MerchantInvestigationSubject: null,
             RecentConclusions: []);
+    }
+
+    private static ConversationIntelligenceResult BuildConversationIntelligence(
+        string phase,
+        string emotionalState,
+        string nextAction,
+        bool shouldExecuteTool,
+        bool shouldContinueTask)
+    {
+        return new ConversationIntelligenceResult(
+            ConversationPhase: phase,
+            UserEmotionalState: emotionalState,
+            UserIntentConfidence: 0.9d,
+            ShouldContinueTask: shouldContinueTask,
+            ShouldClarify: false,
+            ShouldExecuteTool: shouldExecuteTool,
+            ShouldAcknowledgeIssue: false,
+            ResponseStyle: new ConversationResponseStyle(
+                Tone: "warm",
+                Verbosity: "short",
+                AvoidRepetition: true),
+            TaskState: new ConversationTaskState(
+                IsNewTask: false,
+                IsFollowUp: shouldContinueTask,
+                IsRefinement: shouldContinueTask,
+                IsUserCorrection: false,
+                TargetPreviousResults: shouldContinueTask),
+            NextAction: new ConversationNextAction(
+                Type: nextAction,
+                Reason: "Test intelligence decision."),
+            ReasonCodes: ["test_conversation_intelligence"]);
+    }
+
+    private static AIResponse BuildAIResponse(string payload)
+    {
+        return new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "test",
+            Model: "test-model",
+            Deployment: "test-deployment",
+            InputTokenEstimate: null,
+            OutputTokenEstimate: null,
+            LatencyMs: 1,
+            WasMocked: true,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+    }
+
+    private static AIModelRoute BuildRoute()
+    {
+        return new AIModelRoute(
+            TaskType: AITaskType.ConversationDecision,
+            ModelClass: AIModelClass.Fast,
+            Model: "test-model",
+            Deployment: "test-deployment",
+            IsFallback: false,
+            Reason: "test",
+            Notes: []);
     }
 
     private sealed class NoOpChatTelemetry : IChatTelemetry
