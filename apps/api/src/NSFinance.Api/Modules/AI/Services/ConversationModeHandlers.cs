@@ -49,7 +49,8 @@ public sealed class StructuredExplorationHandler(
     ILocalDiscoveryQueryShaper queryShaper,
     IPlacesSearchService placesSearchService,
     IResultContextService resultContextService,
-    IOptions<AIIntegrationOptions>? options = null) : IConversationModeHandler
+    IOptions<AIIntegrationOptions>? options = null,
+    IGooglePlacesPhotoService? photoService = null) : IConversationModeHandler
 {
     public bool CanHandle(ConversationMode mode, ExplorationSubtype? explorationSubtype)
     {
@@ -279,7 +280,7 @@ public sealed class StructuredExplorationHandler(
             Entities: selectedEntities,
             SummaryFacts: BuildStructuredFacts(selectedItems),
             Warnings: warnings.ToArray());
-        var structuredResults = BuildStructuredPlaceResults(selectedItems, locationContext);
+        var structuredResults = BuildStructuredPlaceResults(selectedItems, locationContext, photoService);
 
         return new ConversationModeExecutionResult(
             CompositionRequest: new ResponseCompositionRequest(
@@ -1028,14 +1029,15 @@ public sealed class StructuredExplorationHandler(
 
     private static CompanionStructuredResults? BuildStructuredPlaceResults(
         IReadOnlyList<PlaceSearchItem> selectedItems,
-        PlaceSearchLocationContext? locationContext)
+        PlaceSearchLocationContext? locationContext,
+        IGooglePlacesPhotoService? photoService)
     {
         var cards = selectedItems
             .Where(static item => !string.IsNullOrWhiteSpace(item.PlaceId) && !string.IsNullOrWhiteSpace(item.Name))
             .Select(item =>
             {
                 var opensInMinutes = TryComputeFutureMinutes(item.OpeningHours?.NextOpenTimeUtc);
-                var photoUrls = BuildPlacePhotoUrls(item.Photos);
+                var photoUrls = BuildPlacePhotoUrls(item.Photos, photoService);
                 return new CompanionPlaceCardResult(
                     Id: item.PlaceId,
                     Name: item.Name,
@@ -1067,16 +1069,20 @@ public sealed class StructuredExplorationHandler(
             : new CompanionStructuredResults("places", cards);
     }
 
-    private static IReadOnlyList<string> BuildPlacePhotoUrls(IReadOnlyList<PlacePhotoSummary>? photos)
+    private static IReadOnlyList<string> BuildPlacePhotoUrls(
+        IReadOnlyList<PlacePhotoSummary>? photos,
+        IGooglePlacesPhotoService? photoService)
     {
-        if (photos is null || photos.Count == 0)
+        if (photos is null || photos.Count == 0 || photoService is null)
         {
             return [];
         }
 
         return photos
             .Where(photo => !string.IsNullOrWhiteSpace(photo.Name))
-            .Select(photo => $"/api/ai/places/photo?name={Uri.EscapeDataString(photo.Name)}&maxWidthPx=1200")
+            .Select(photo => photoService.BuildAppPhotoUrl(photo.Name, maxWidthPx: 900, maxHeightPx: 520))
+            .Where(static url => !string.IsNullOrWhiteSpace(url))
+            .Select(static url => url!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)
             .ToArray();

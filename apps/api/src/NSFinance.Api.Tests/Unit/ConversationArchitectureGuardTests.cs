@@ -738,6 +738,90 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task StructuredExplorationHandler_MapsPlacePhotosIntoStructuredCardResults()
+    {
+        var placesSearch = new FixedPlacesSearchService(
+            [
+                new PlaceSearchItem(
+                    PlaceId: "coffee-1",
+                    Name: "Bean Room",
+                    Category: "park",
+                    PriceLevel: null,
+                    PrimaryType: "park",
+                    Types: ["park", "point_of_interest"],
+                    ShortFormattedAddress: "1 Main Street",
+                    Rating: 4.6d,
+                    Photos:
+                    [
+                        new PlacePhotoSummary(
+                            Name: "places/ChIJ123/photos/AUac456",
+                            WidthPx: 4032,
+                            HeightPx: 3024)
+                    ])
+            ]);
+        var handler = new StructuredExplorationHandler(
+            new StubConstraintExtractor(),
+            new StubQueryShaper(),
+            placesSearch,
+            new StubResultContextService(),
+            options: null,
+            photoService: new StubPhotoService());
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "coffee shops near me",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-structured-photo-card",
+                    Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                        [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                        [CompanionLocationMetadataKeys.Source] = "gps"
+                    },
+                    ClientRequestId: "client-structured-photo-card",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.95d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.91d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                }),
+            CancellationToken.None);
+
+        var card = Assert.Single(result.StructuredResults?.Items ?? []);
+        Assert.Equal("/api/ai/places/photos?name=places%2FChIJ123%2Fphotos%2FAUac456&maxWidthPx=900&maxHeightPx=520", card.PhotoUrl);
+        Assert.Equal(card.PhotoUrl, Assert.Single(card.PhotoUrls));
+    }
+
+    [Fact]
     public async Task StructuredExplorationHandler_LocksShortlistCountAndCarriesStructuredConstraints()
     {
         var placesSearch = new FixedPlacesSearchService(
@@ -2194,6 +2278,26 @@ public sealed class ConversationArchitectureGuardTests
             LastQuery = query;
             LastLocationContext = locationContext;
             return Task.FromResult(new PlaceSearchResult(items));
+        }
+    }
+
+    private sealed class StubPhotoService : IGooglePlacesPhotoService
+    {
+        public string? BuildAppPhotoUrl(string? photoResourceName, int? maxWidthPx = null, int? maxHeightPx = null)
+        {
+            if (string.IsNullOrWhiteSpace(photoResourceName))
+            {
+                return null;
+            }
+
+            return $"/api/ai/places/photos?name={Uri.EscapeDataString(photoResourceName)}&maxWidthPx={maxWidthPx ?? 900}&maxHeightPx={maxHeightPx ?? 520}";
+        }
+
+        public Task<GooglePlacesPhotoMediaResult> ResolvePhotoAsync(
+            GooglePlacesPhotoMediaRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("ResolvePhotoAsync should not be called in this test.");
         }
     }
 

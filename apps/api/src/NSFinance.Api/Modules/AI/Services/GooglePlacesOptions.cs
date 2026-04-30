@@ -9,6 +9,7 @@ public sealed class GooglePlacesOptions
     public bool Enabled { get; set; } = false;
     public string ApiKey { get; set; } = string.Empty;
     public string BaseUrl { get; set; } = "https://places.googleapis.com";
+    public string PlacesPhotoPublicBaseUrl { get; set; } = string.Empty;
     public int TimeoutSeconds { get; set; } = 8;
     public int MaxCompanionCandidates { get; set; } = 8;
     public int MaxMerchantLookupCandidates { get; set; } = 5;
@@ -35,6 +36,12 @@ public sealed class GooglePlacesOptionsValidator : IValidateOptions<GooglePlaces
         if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _))
         {
             failures.Add("CompanionAI:Places:BaseUrl must be an absolute URL.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.PlacesPhotoPublicBaseUrl)
+            && !Uri.TryCreate(options.PlacesPhotoPublicBaseUrl, UriKind.Absolute, out _))
+        {
+            failures.Add("CompanionAI:Places:PlacesPhotoPublicBaseUrl must be an absolute URL when set.");
         }
 
         if (options.TimeoutSeconds <= 0)

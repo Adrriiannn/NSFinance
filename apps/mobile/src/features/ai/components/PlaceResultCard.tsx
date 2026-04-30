@@ -55,6 +55,103 @@ export function PlaceResultCard({
   const closesIn = formatDuration(place.closesInMinutes);
   const opensIn = formatDuration(place.opensInMinutes);
   const accentColor = tokens.palette.accent;
+  const leftDetailRows = [
+    rating ? (
+      <DetailRow
+        key="rating"
+        icon="star-outline"
+        label="Rating"
+        value={rating}
+        valueColor={getRatingColor(place.rating, accentColor)}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+      />
+    ) : null,
+    typeof place.openNow === "boolean" ? (
+      <DetailRow
+        key="open-now"
+        icon="time-outline"
+        label="Open now"
+        value={place.openNow ? "Open" : "Closed"}
+        valueColor={place.openNow ? accentColor : tokens.palette.negative}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+      />
+    ) : null,
+    price ? (
+      <PriceRow
+        key="price"
+        activeCount={price.activeCount}
+        activeColor={accentColor}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+      />
+    ) : null,
+    websiteDisplay ? (
+      <DetailRow
+        key="website"
+        icon="globe-outline"
+        label="Website"
+        value={websiteDisplay}
+        valueColor={accentColor}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+        accessibilityLabel={`Open website for ${place.name}`}
+        onPress={() => onOpenWebsite?.(place)}
+      />
+    ) : null
+  ].filter(Boolean);
+  const rightDetailRows = [
+    category ? (
+      <DetailRow
+        key="category"
+        icon="pricetag-outline"
+        label="Category"
+        value={category}
+        valueColor={getCategoryColor(category, place.name)}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+      />
+    ) : null,
+    closesIn || opensIn ? (
+      <DetailRow
+        key="hours"
+        icon="alarm-outline"
+        label={closesIn ? "Closes in" : "Opens in"}
+        value={closesIn ?? opensIn ?? ""}
+        valueColor={closesIn ? tokens.palette.negative : accentColor}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+      />
+    ) : null,
+    phoneDisplay ? (
+      <DetailRow
+        key="call"
+        icon="call-outline"
+        label="Call now"
+        value={phoneDisplay}
+        valueColor={accentColor}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+        accessibilityLabel={`Call ${place.name}`}
+        onPress={() => onCall?.(place)}
+      />
+    ) : null,
+    menuDisplay ? (
+      <DetailRow
+        key="menu"
+        icon="silverware-fork-knife"
+        iconFamily="material"
+        label="Menu"
+        value={menuDisplay}
+        valueColor={accentColor}
+        textColor={cardColors.text}
+        mutedColor={cardColors.secondary}
+        accessibilityLabel={`Open menu for ${place.name}`}
+        onPress={() => onOpenMenu?.(place)}
+      />
+    ) : null
+  ].filter(Boolean);
   const photos = useMemo(() => {
     const source = [
       ...(Array.isArray(place.photoUrls) ? place.photoUrls : []),
@@ -141,112 +238,13 @@ export function PlaceResultCard({
 
       <View style={styles.detailGrid}>
         <View style={styles.detailColumn}>
-          {rating ? (
-            <DetailRow
-              icon="star-outline"
-              label="Rating"
-              value={rating}
-              valueColor={getRatingColor(place.rating, accentColor)}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
-          {typeof place.openNow === "boolean" ? (
-            <DetailRow
-              icon="time-outline"
-              label="Open now"
-              value={place.openNow ? "Open" : "Closed"}
-              valueColor={place.openNow ? accentColor : tokens.palette.negative}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
-          {price ? (
-            <PriceRow
-              activeCount={price.activeCount}
-              activeColor={accentColor}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
-          {websiteDisplay ? (
-            <DetailRow
-              icon="globe-outline"
-              label="Website"
-              value={websiteDisplay}
-              valueColor={accentColor}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-              accessibilityLabel={`Open website for ${place.name}`}
-              onPress={() => onOpenWebsite?.(place)}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
+          {leftDetailRows}
         </View>
 
         <View style={[styles.verticalDivider, { backgroundColor: cardColors.separator }]} />
 
         <View style={styles.detailColumn}>
-          {category ? (
-            <DetailRow
-              icon="pricetag-outline"
-              label="Category"
-              value={category}
-              valueColor={getCategoryColor(category, place.name)}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
-          {closesIn || opensIn ? (
-            <DetailRow
-              icon="alarm-outline"
-              label={closesIn ? "Closes in" : "Opens in"}
-              value={closesIn ?? opensIn ?? ""}
-              valueColor={closesIn ? tokens.palette.negative : accentColor}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
-          {phoneDisplay ? (
-            <DetailRow
-              icon="call-outline"
-              label="Call now"
-              value={phoneDisplay}
-              valueColor={accentColor}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-              accessibilityLabel={`Call ${place.name}`}
-              onPress={() => onCall?.(place)}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
-          {menuDisplay ? (
-            <DetailRow
-              icon="silverware-fork-knife"
-              iconFamily="material"
-              label="Menu"
-              value={menuDisplay}
-              valueColor={accentColor}
-              textColor={cardColors.text}
-              mutedColor={cardColors.secondary}
-              accessibilityLabel={`Open menu for ${place.name}`}
-              onPress={() => onOpenMenu?.(place)}
-            />
-          ) : (
-            <DetailRowPlaceholder />
-          )}
+          {rightDetailRows}
         </View>
       </View>
       <PlacePhotoViewer
@@ -449,10 +447,6 @@ function DetailRow({
   }
 
   return <View style={styles.detailRow}>{content}</View>;
-}
-
-function DetailRowPlaceholder() {
-  return <View style={[styles.detailRow, styles.invisible]} />;
 }
 
 function PriceRow({

@@ -107,6 +107,16 @@ public static class AIServiceCollectionExtensions
 
             client.Timeout = TimeSpan.FromSeconds(Math.Max(1, placesOptions.TimeoutSeconds));
         });
+        services.AddHttpClient<IGooglePlacesPhotoService, GooglePlacesPhotoService>((sp, client) =>
+        {
+            var placesOptions = sp.GetRequiredService<IOptions<GooglePlacesOptions>>().Value;
+            if (Uri.TryCreate(placesOptions.BaseUrl, UriKind.Absolute, out var baseUri))
+            {
+                client.BaseAddress = baseUri;
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(1, placesOptions.TimeoutSeconds));
+        });
 
         services.AddSingleton<AzureOpenAIApiKeyAuthStrategy>();
         services.AddSingleton<AzureOpenAIManagedIdentityAuthStrategy>();

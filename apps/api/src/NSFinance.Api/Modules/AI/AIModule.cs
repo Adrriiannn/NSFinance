@@ -22,9 +22,15 @@ public static class AIModule
         chat.MapPost("/threads/{threadId:guid}/archive", ArchiveChatThreadEndpoint.HandleAsync)
             .WithName("ArchiveAIChatThread");
 
-        app.MapGet("/api/ai/places/photo", GetPlacePhotoEndpoint.Handle)
+        app.MapGet("/api/ai/places/photos", GetPlacePhotoEndpoint.HandleAsync)
             .WithTags("AI")
-            .WithName("GetAIPlacePhoto");
+            .WithName("GetAIPlacePhotos")
+            .RequireRateLimiting("places-photo");
+
+        app.MapGet("/api/ai/places/photo", GetPlacePhotoEndpoint.HandleAsync)
+            .WithTags("AI")
+            .WithName("GetAIPlacePhoto")
+            .RequireRateLimiting("places-photo");
 
         var internalAi = app.MapGroup("/api/internal/ai")
             .WithTags("AIInternal")

@@ -1,48 +1,42 @@
-using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
 
 namespace NSFinance.Api.Modules.AI.Endpoints;
 
 public static class GetPlacePhotoEndpoint
 {
-    public static IResult Handle(
+    public static async Task<IResult> HandleAsync(
         string name,
         int? maxWidthPx,
         int? maxHeightPx,
-        IOptions<GooglePlacesOptions> options)
+        IGooglePlacesPhotoService photoService,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(name) || !IsValidPhotoName(name))
+        var result = await photoService.ResolvePhotoAsync(
+            new GooglePlacesPhotoMediaRequest(
+                PhotoResourceName: name,
+                MaxWidthPx: maxWidthPx,
+                MaxHeightPx: maxHeightPx,
+                SkipHttpRedirect: true),
+            cancellationToken);
+
+        if (result.Succeeded && !string.IsNullOrWhiteSpace(result.RedirectUri))
         {
-            return Results.BadRequest();
+            httpContext.Response.Headers.CacheControl = "private, max-age=1800";
+            return Results.Redirect(result.RedirectUri, permanent: false);
         }
 
-        var placesOptions = options.Value;
-        if (!placesOptions.Enabled || string.IsNullOrWhiteSpace(placesOptions.ApiKey))
+        var statusCode = result.ErrorCode switch
         {
-            return Results.NotFound();
-        }
+            "invalid_photo_name" => StatusCodes.Status400BadRequest,
+            "places_disabled" => StatusCodes.Status503ServiceUnavailable,
+            "places_photo_timeout" => StatusCodes.Status504GatewayTimeout,
+            _ => StatusCodes.Status502BadGateway
+        };
 
-        var width = Math.Clamp(maxWidthPx ?? 1200, 100, 1600);
-        var height = maxHeightPx.HasValue ? Math.Clamp(maxHeightPx.Value, 100, 1600) : (int?)null;
-        var escapedName = string.Join(
-            '/',
-            name.Trim().Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.EscapeDataString));
-        var dimensionQuery = height.HasValue
-            ? $"maxHeightPx={height.Value}"
-            : $"maxWidthPx={width}";
-        var redirectUrl =
-            $"https://places.googleapis.com/v1/{escapedName}/media?{dimensionQuery}&key={Uri.EscapeDataString(placesOptions.ApiKey)}";
-
-        return Results.Redirect(redirectUrl, permanent: false);
-    }
-
-    private static bool IsValidPhotoName(string name)
-    {
-        var trimmed = name.Trim();
-        return trimmed.StartsWith("places/", StringComparison.Ordinal)
-               && trimmed.Contains("/photos/", StringComparison.Ordinal)
-               && !trimmed.Contains("..", StringComparison.Ordinal)
-               && trimmed.Split('/', StringSplitOptions.RemoveEmptyEntries).Length == 4
-               && trimmed.Length <= 256;
+        return Results.Problem(
+            title: result.ErrorCode ?? "places_photo_provider_error",
+            detail: result.ErrorMessage,
+            statusCode: statusCode);
     }
 }

@@ -673,6 +673,17 @@ public static class ServiceCollectionExtensions
                         QueueLimit = 0
                     }));
 
+            options.AddPolicy("places-photo", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveClientPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 120,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueLimit = 0
+                    }));
+
             options.AddPolicy("support-public", httpContext =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     partitionKey: ResolveClientPartition(httpContext),
