@@ -642,6 +642,102 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task StructuredExplorationHandler_IgnoresConversationalCanonicalConcept_WhenOriginalPlaceIntentIsClear()
+    {
+        var extractor = new LocalDiscoveryConstraintExtractor();
+        var placesSearch = new FixedPlacesSearchService(
+            [
+                new PlaceSearchItem(
+                    PlaceId: "coffee-1",
+                    Name: "Bean Room",
+                    Category: "cafe",
+                    PriceLevel: null,
+                    PrimaryType: "cafe",
+                    Types: ["cafe", "point_of_interest"],
+                    ShortFormattedAddress: "1 Main Street",
+                    Rating: 4.6d)
+            ]);
+        var handler = new StructuredExplorationHandler(
+            extractor,
+            new LocalDiscoveryQueryShaper(extractor),
+            placesSearch,
+            new StubResultContextService());
+        var retrievalPlan = new PlaceRetrievalPlanV1(
+            Version: "place_retrieval_plan_v1",
+            SearchScope: "concept_first",
+            PlannerAuthoritative: true,
+            BrandTerm: null,
+            CanonicalConcept: "i'd like see",
+            SelectedDomain: RealWorldDiscoveryDomain.Cafe,
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            IncludedTypes: ["cafe"],
+            ExcludedTypes: [],
+            Preferences: [],
+            TimeFilters: [],
+            AudienceFilters: [],
+            NearMeSemantic: true,
+            RequiresLocation: true,
+            ResolvedAreaHint: null,
+            ReasonCodes: ["test_bad_canonical"]);
+        var metadata = TurnInterpretationMetadataMapper.Merge(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                [CompanionLocationMetadataKeys.Source] = "gps"
+            },
+            interpretation: null,
+            retrievalPlan);
+
+        var result = await handler.ExecuteAsync(
+            new ConversationModeRequest(
+                Request: new UserChatRequest(
+                    UserMessage: "I'd like to see some coffee shops near me please",
+                    RecentTurns: [],
+                    State: CreateDefaultState(),
+                    CorrelationId: "corr-structured-bad-canonical",
+                    Metadata: metadata,
+                    ClientRequestId: "client-structured-bad-canonical",
+                    UserId: null,
+                    ConversationThreadId: null,
+                    UsePersistentMemory: false,
+                    AllowTransientFallbackOnPersistentFailure: false),
+                ContextMessages: [],
+                ContextSummary: null,
+                State: CreateDefaultState(),
+                ResultContext: null,
+                StrategyDecision: new ConversationTurnStrategyDecision(
+                    Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                    ModeCandidate: ConversationMode.Exploration,
+                    Readiness: new ReadinessTransition(
+                        From: ConversationReadinessLevel.R3_StructuredIncomplete,
+                        To: ConversationReadinessLevel.R4_ToolReady),
+                    Confidence: 0.95d,
+                    FollowUpBindingType: FollowUpBindingType.None,
+                    ClarificationQuestion: null,
+                    SuggestedOptions: [],
+                    ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+                    ReasonCodes: ["stub_tool_ready"]),
+                ExplorationSubtypeDecision: new ExplorationSubtypeDecision(
+                    Subtype: ExplorationSubtype.Structured,
+                    Confidence: 0.90d,
+                    ToolPathEligible: true,
+                    PrimaryWhy: "Stub structured exploration.",
+                    MissingConstraints: [],
+                    ReasonCodes: ["stub_structured"]),
+                ClientMetadata: metadata),
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, placesSearch.CallCount);
+        Assert.NotNull(placesSearch.LastLocationContext);
+        Assert.Null(placesSearch.LastLocationContext!.PlannerCanonicalConcept);
+        Assert.Contains("coffee", placesSearch.LastQuery, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("i'd like see", placesSearch.LastQuery, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("structured_exploration_unreliable_canonical_ignored", result.Warnings);
+    }
+
+    [Fact]
     public async Task StructuredExplorationHandler_LocksShortlistCountAndCarriesStructuredConstraints()
     {
         var placesSearch = new FixedPlacesSearchService(
@@ -2085,6 +2181,8 @@ public sealed class ConversationArchitectureGuardTests
     private sealed class FixedPlacesSearchService(IReadOnlyList<PlaceSearchItem> items) : IPlacesSearchService
     {
         public int CallCount { get; private set; }
+        public string? LastQuery { get; private set; }
+        public PlaceSearchLocationContext? LastLocationContext { get; private set; }
 
         public Task<PlaceSearchResult> SearchAsync(
             string query,
@@ -2093,6 +2191,8 @@ public sealed class ConversationArchitectureGuardTests
             CancellationToken cancellationToken)
         {
             CallCount++;
+            LastQuery = query;
+            LastLocationContext = locationContext;
             return Task.FromResult(new PlaceSearchResult(items));
         }
     }

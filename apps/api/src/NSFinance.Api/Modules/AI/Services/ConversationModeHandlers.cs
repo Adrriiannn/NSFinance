@@ -66,7 +66,12 @@ public sealed class StructuredExplorationHandler(
         var warnings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var extraction = constraintExtractor.Extract(request.Request.UserMessage);
         var interpretation = TurnInterpretationMetadataMapper.ReadInterpretation(request.ClientMetadata);
-        var retrievalPlan = TurnInterpretationMetadataMapper.ReadRetrievalPlan(request.ClientMetadata);
+        var retrievalPlan = NormalizeRetrievalPlan(
+            TurnInterpretationMetadataMapper.ReadRetrievalPlan(request.ClientMetadata),
+            request.Request.UserMessage,
+            extraction,
+            constraintExtractor,
+            warnings);
         var grounding = CompanionLocationGroundingParser.Parse(request.ClientMetadata, request.State);
         var explorationTtlMinutes = Math.Max(
             5,
@@ -287,7 +292,7 @@ public sealed class StructuredExplorationHandler(
                 GroundedData: groundedData,
                 Constraints: nextState.Constraints,
                 MissingConstraints: [],
-                MaxLengthHint: 700,
+                MaxLengthHint: structuredResults is null ? 700 : 240,
                 ClarificationQuestion: null,
                 SuggestedOptions: []),
             DeterministicReplyText: null,
@@ -298,6 +303,118 @@ public sealed class StructuredExplorationHandler(
             FollowUpIntentHints: ["refine_place_preferences", "compare_options"],
             Succeeded: true,
             StructuredResults: structuredResults);
+    }
+
+    private static PlaceRetrievalPlanV1? NormalizeRetrievalPlan(
+        PlaceRetrievalPlanV1? retrievalPlan,
+        string userMessage,
+        LocalDiscoveryConstraintExtractionResult originalExtraction,
+        ILocalDiscoveryConstraintExtractor constraintExtractor,
+        ISet<string> warnings)
+    {
+        if (retrievalPlan is null || string.IsNullOrWhiteSpace(retrievalPlan.CanonicalConcept))
+        {
+            return retrievalPlan;
+        }
+
+        if (IsReliableCanonicalConcept(
+                retrievalPlan.CanonicalConcept!,
+                userMessage,
+                originalExtraction,
+                constraintExtractor))
+        {
+            return retrievalPlan;
+        }
+
+        warnings.Add("structured_exploration_unreliable_canonical_ignored");
+        return retrievalPlan with
+        {
+            CanonicalConcept = null,
+            ReasonCodes = retrievalPlan.ReasonCodes
+                .Concat(["unreliable_canonical_ignored"])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+        };
+    }
+
+    private static bool IsReliableCanonicalConcept(
+        string canonicalConcept,
+        string userMessage,
+        LocalDiscoveryConstraintExtractionResult originalExtraction,
+        ILocalDiscoveryConstraintExtractor constraintExtractor)
+    {
+        var candidate = canonicalConcept.Trim();
+        if (candidate.Length < 2)
+        {
+            return false;
+        }
+
+        var candidateExtraction = constraintExtractor.Extract(candidate);
+        if (candidateExtraction.IsLocalDiscoveryCandidate
+            || candidateExtraction.PlaceTypeHints.Count > 0
+            || candidateExtraction.PreferenceHints.Count > 0)
+        {
+            return true;
+        }
+
+        var candidateTokens = ExtractConceptTokens(candidate);
+        if (candidateTokens.Count == 0)
+        {
+            return false;
+        }
+
+        if (originalExtraction.PlaceTypeHints.Count == 0)
+        {
+            return true;
+        }
+
+        var originalTokens = ExtractConceptTokens(userMessage);
+        return originalTokens.Count == 0 || candidateTokens.Overlaps(originalTokens);
+    }
+
+    private static HashSet<string> ExtractConceptTokens(string? value)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return result;
+        }
+
+        var normalized = value
+            .ToLowerInvariant()
+            .Replace("i'd", " ")
+            .Replace("i'm", " ");
+        foreach (var token in normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var cleaned = token.Trim(' ', '.', ',', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']');
+            if (cleaned.Length < 3 || IsConversationFillerToken(cleaned))
+            {
+                continue;
+            }
+
+            result.Add(cleaned);
+        }
+
+        return result;
+    }
+
+    private static bool IsConversationFillerToken(string token)
+    {
+        return token is "like"
+            or "see"
+            or "show"
+            or "some"
+            or "please"
+            or "near"
+            or "nearby"
+            or "around"
+            or "find"
+            or "would"
+            or "could"
+            or "should"
+            or "want"
+            or "need"
+            or "looking";
     }
 
     private static IReadOnlyList<string> BuildMissingConstraints(

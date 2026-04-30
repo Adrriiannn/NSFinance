@@ -1,6 +1,8 @@
 import { apiRequest } from "../../lib/api/client";
 import type { SendAIChatMessageRequest, SendAIChatMessageResponse } from "../../types/api";
 
+const CHAT_TURN_TIMEOUT_MS = 45_000;
+
 export async function sendAIChatMessage(
   payload: SendAIChatMessageRequest
 ): Promise<SendAIChatMessageResponse> {
@@ -8,9 +10,9 @@ export async function sendAIChatMessage(
     method: "POST",
     body: JSON.stringify(payload)
   }, {
-    // Chat turns can include persistence, retrieval, and AI composition, so keep a slightly
-    // larger client budget than the global API default without loosening every endpoint.
-    timeoutMs: 18_000
+    // Chat turns can include persistence, retrieval, Places calls, and AI composition.
+    // Keep this budget scoped to chat so normal API calls retain the tighter default.
+    timeoutMs: CHAT_TURN_TIMEOUT_MS
   });
 
   return {
