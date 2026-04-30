@@ -948,6 +948,7 @@ export type CompanionPlaceCardResult = {
   name: string;
   distanceMeters?: number | null;
   photoUrl?: string | null;
+  photoUrls?: string[] | null;
   formattedAddress?: string | null;
   shortFormattedAddress?: string | null;
   rating?: number | null;

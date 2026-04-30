@@ -72,7 +72,8 @@ public sealed record GooglePlacesClientPlace(
     PlacePaymentOptionsSummary PaymentOptions,
     PlaceAccessibilitySummary AccessibilityOptions,
     PlaceEditorialSummary EditorialSummary,
-    PlaceLocationSummary? Location);
+    PlaceLocationSummary? Location,
+    IReadOnlyList<PlacePhotoSummary>? Photos = null);
 
 public sealed record GooglePlacesClientResult<T>(
     bool Succeeded,
@@ -473,7 +474,16 @@ public sealed class GooglePlacesClient(
                 ? new PlaceLocationSummary(
                     place.Location.Latitude.Value,
                     place.Location.Longitude.Value)
-                : null);
+                : null,
+            Photos: place.Photos?
+                .Where(photo => !string.IsNullOrWhiteSpace(photo.Name))
+                .Select(photo => new PlacePhotoSummary(
+                    photo.Name!.Trim(),
+                    photo.WidthPx,
+                    photo.HeightPx))
+                .Take(8)
+                .ToArray()
+                ?? []);
     }
 
     private static string? ExtractProviderErrorCode(string? payload)
@@ -573,6 +583,7 @@ internal sealed record GooglePlacesPlaceWire(
     [property: JsonPropertyName("paymentOptions")] GooglePlacesPaymentOptionsWire? PaymentOptions,
     [property: JsonPropertyName("accessibilityOptions")] GooglePlacesAccessibilityOptionsWire? AccessibilityOptions,
     [property: JsonPropertyName("editorialSummary")] GooglePlacesLocalizedTextWire? EditorialSummary,
+    [property: JsonPropertyName("photos")] IReadOnlyList<GooglePlacesPhotoWire>? Photos,
     [property: JsonPropertyName("location")] GooglePlacesLocationWire? Location);
 
 internal sealed record GooglePlacesLocalizedTextWire(
@@ -599,3 +610,8 @@ internal sealed record GooglePlacesAccessibilityOptionsWire(
 internal sealed record GooglePlacesLocationWire(
     [property: JsonPropertyName("latitude")] double? Latitude,
     [property: JsonPropertyName("longitude")] double? Longitude);
+
+internal sealed record GooglePlacesPhotoWire(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("widthPx")] int? WidthPx,
+    [property: JsonPropertyName("heightPx")] int? HeightPx);

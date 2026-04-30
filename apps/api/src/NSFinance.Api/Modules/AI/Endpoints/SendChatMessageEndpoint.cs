@@ -225,6 +225,7 @@ public static class SendChatMessageEndpoint
                     Name: item.Name,
                     DistanceMeters: item.DistanceMeters,
                     PhotoUrl: item.PhotoUrl,
+                    PhotoUrls: item.PhotoUrls,
                     FormattedAddress: item.FormattedAddress,
                     ShortFormattedAddress: item.ShortFormattedAddress,
                     Rating: item.Rating,

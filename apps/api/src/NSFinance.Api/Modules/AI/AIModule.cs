@@ -22,6 +22,10 @@ public static class AIModule
         chat.MapPost("/threads/{threadId:guid}/archive", ArchiveChatThreadEndpoint.HandleAsync)
             .WithName("ArchiveAIChatThread");
 
+        app.MapGet("/api/ai/places/photo", GetPlacePhotoEndpoint.Handle)
+            .WithTags("AI")
+            .WithName("GetAIPlacePhoto");
+
         var internalAi = app.MapGroup("/api/internal/ai")
             .WithTags("AIInternal")
             .RequireAuthorization("SupportOrAdmin");

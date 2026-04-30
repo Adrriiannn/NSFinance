@@ -25,8 +25,9 @@ type PlaceCardCarouselProps = {
   places: CompanionPlaceCard[];
 };
 
-const arrowGutter = 28;
-const cardWidthRatio = 0.6;
+const arrowGap = 6;
+const arrowWidth = 30;
+const cardWidthRatio = 0.75;
 
 export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const tokens = useThemeTokens();
@@ -36,6 +37,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
   const cardWidth = Math.floor(width * cardWidthRatio);
+  const sideGutter = arrowWidth + arrowGap;
   const currentPlace = places[currentIndex];
 
   const canGoPrevious = currentIndex > 0;
@@ -146,7 +148,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   }
 
   return (
-    <View style={[styles.wrapper, { width: cardWidth + (arrowGutter * 2) }]}>
+    <View style={[styles.wrapper, { width: cardWidth + (sideGutter * 2) }]}>
       <View style={styles.viewport}>
         {canGoPrevious ? (
           <ArrowButton
@@ -161,7 +163,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
             styles.animatedCard,
             {
               width: cardWidth,
-              marginLeft: arrowGutter,
+              marginLeft: sideGutter,
               transform: [{ translateX: slide }, { scale }],
               opacity
             }
@@ -188,7 +190,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
           />
         ) : null}
       </View>
-      <View style={[styles.actionsWrap, { width: cardWidth, marginLeft: arrowGutter }]}>
+      <View style={[styles.actionsWrap, { width: cardWidth, marginLeft: sideGutter }]}>
         <PlaceCardActions
           place={currentPlace}
           onDirections={(place) => {
@@ -255,7 +257,7 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     zIndex: 4,
-    width: 32,
+    width: arrowWidth,
     minHeight: 44,
     alignItems: "center",
     justifyContent: "center",

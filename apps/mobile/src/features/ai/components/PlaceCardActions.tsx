@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { palette, radius, spacing, typography } from "../../../theme/tokens";
+import { radius, spacing, typography, useThemeTokens } from "../../../theme/tokens";
 import type { CompanionPlaceCard } from "../utils/placeCardFormatting";
 
 type PlaceCardActionsProps = {
@@ -14,18 +14,21 @@ export function PlaceCardActions({
   onDirections,
   onShare
 }: PlaceCardActionsProps) {
+  const tokens = useThemeTokens();
   return (
     <View style={styles.row}>
       <ActionButton
         label="Directions"
         icon="navigate-outline"
         accessibilityLabel={`Get directions to ${place.name}`}
+        backgroundColor={tokens.palette.accent}
         onPress={() => onDirections(place)}
       />
       <ActionButton
         label="Share"
         icon="share-social-outline"
         accessibilityLabel={`Share ${place.name}`}
+        backgroundColor={tokens.palette.accent}
         onPress={() => onShare(place)}
       />
     </View>
@@ -36,18 +39,20 @@ function ActionButton({
   label,
   icon,
   accessibilityLabel,
+  backgroundColor,
   onPress
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   accessibilityLabel: string;
+  backgroundColor: string;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      style={({ pressed }) => [styles.button, pressed ? styles.pressed : null]}
+      style={({ pressed }) => [styles.button, { backgroundColor }, pressed ? styles.pressed : null]}
       onPress={onPress}
     >
       <Ionicons name={icon} size={13} color="#FFFFFF" />
@@ -64,9 +69,8 @@ const styles = StyleSheet.create({
   },
   button: {
     flex: 1,
-    minHeight: 36,
+    minHeight: 32,
     borderRadius: radius.medium,
-    backgroundColor: palette.success,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",

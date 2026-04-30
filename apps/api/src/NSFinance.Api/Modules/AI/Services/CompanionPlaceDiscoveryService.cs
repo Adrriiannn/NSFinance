@@ -309,6 +309,7 @@ public sealed class CompanionPlaceDiscoveryService(
             PaymentOptions: place.PaymentOptions,
             AccessibilityOptions: place.AccessibilityOptions,
             EditorialSummary: place.EditorialSummary,
+            Photos: place.Photos,
             Location: place.Location);
     }
 
@@ -1194,6 +1195,7 @@ public sealed class GooglePlacesCompanionSearchService(
                 PaymentOptions: candidate.PaymentOptions,
                 AccessibilityOptions: candidate.AccessibilityOptions,
                 EditorialSummary: candidate.EditorialSummary,
+                Photos: candidate.Photos,
                 Location: candidate.Location))
             .ToArray();
 

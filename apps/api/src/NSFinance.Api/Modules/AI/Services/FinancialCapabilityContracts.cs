@@ -165,6 +165,7 @@ public sealed record PlaceSearchItem(
     PlacePaymentOptionsSummary? PaymentOptions = null,
     PlaceAccessibilitySummary? AccessibilityOptions = null,
     PlaceEditorialSummary? EditorialSummary = null,
+    IReadOnlyList<PlacePhotoSummary>? Photos = null,
     PlaceLocationSummary? Location = null);
 
 public sealed record PlaceDetailsResult(

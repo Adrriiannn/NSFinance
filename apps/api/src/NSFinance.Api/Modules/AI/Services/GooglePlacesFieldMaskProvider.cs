@@ -57,6 +57,7 @@ public sealed class GooglePlacesFieldMaskProvider : IGooglePlacesFieldMaskProvid
             "places.goodForWatchingSports",
             "places.paymentOptions",
             "places.accessibilityOptions",
+            "places.photos",
             "places.location"
         ]);
 
@@ -107,6 +108,7 @@ public sealed class GooglePlacesFieldMaskProvider : IGooglePlacesFieldMaskProvid
             "places.goodForWatchingSports",
             "places.paymentOptions",
             "places.accessibilityOptions",
+            "places.photos",
             "places.location"
         ]);
 
@@ -177,6 +179,7 @@ public sealed class GooglePlacesFieldMaskProvider : IGooglePlacesFieldMaskProvid
             "goodForWatchingSports",
             "paymentOptions",
             "accessibilityOptions",
+            "photos",
             "location"
         ]);
 }

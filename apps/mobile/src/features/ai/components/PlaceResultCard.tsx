@@ -1,5 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Image, Modal, PanResponder, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { resolveApiRequestUrl } from "../../../lib/api/diagnostics";
 import { radius, spacing, typography, useThemeTokens } from "../../../theme/tokens";
 import {
   type CompanionPlaceCard,
@@ -9,7 +11,9 @@ import {
   formatPriceLevel,
   formatRating,
   formatWebsiteDisplay,
+  getCategoryColor,
   getDistanceColor,
+  getRatingColor,
   humanizeCategory
 } from "../utils/placeCardFormatting";
 
@@ -27,6 +31,8 @@ export function PlaceResultCard({
   onCall
 }: PlaceResultCardProps) {
   const tokens = useThemeTokens();
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
   const cardColors = {
     background: tokens.surfaces.card,
     border: tokens.isDarkTheme ? "rgba(255,190,122,0.3)" : tokens.palette.border,
@@ -45,6 +51,30 @@ export function PlaceResultCard({
   const price = formatPriceLevel(place.priceLevel);
   const closesIn = formatDuration(place.closesInMinutes);
   const opensIn = formatDuration(place.opensInMinutes);
+  const accentColor = tokens.palette.accent;
+  const photos = useMemo(() => {
+    const source = [
+      ...(Array.isArray(place.photoUrls) ? place.photoUrls : []),
+      place.photoUrl
+    ].filter((url): url is string => Boolean(url?.trim()));
+
+    return Array.from(new Set(source)).map(resolvePhotoUrl);
+  }, [place.photoUrl, place.photoUrls]);
+  const activePhoto = photos[Math.min(photoIndex, Math.max(photos.length - 1, 0))];
+  const photoPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) => photos.length > 1 && Math.abs(gesture.dx) > 16 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx < -36) {
+            setPhotoIndex((current) => Math.min(photos.length - 1, current + 1));
+          } else if (gesture.dx > 36) {
+            setPhotoIndex((current) => Math.max(0, current - 1));
+          }
+        }
+      }),
+    [photos.length]
+  );
 
   return (
     <View
@@ -68,13 +98,20 @@ export function PlaceResultCard({
         ) : null}
       </View>
 
-      {place.photoUrl ? (
-        <Image
-          source={{ uri: place.photoUrl }}
-          resizeMode="cover"
-          style={styles.photo}
-          accessibilityLabel={`Photo of ${place.name}`}
-        />
+      {activePhoto ? (
+        <Pressable
+          accessibilityRole="imagebutton"
+          accessibilityLabel={`Open photo of ${place.name}`}
+          onPress={() => setPhotoViewerOpen(true)}
+          {...photoPanResponder.panHandlers}
+        >
+          <Image
+            source={{ uri: activePhoto }}
+            resizeMode="cover"
+            style={styles.photo}
+            accessibilityLabel={`Photo of ${place.name}`}
+          />
+        </Pressable>
       ) : (
         <View style={[styles.photo, styles.placeholder, { backgroundColor: cardColors.placeholder }]}>
           <Ionicons name="location-outline" size={20} color={cardColors.secondary} />
@@ -102,6 +139,7 @@ export function PlaceResultCard({
               icon="star-outline"
               label="Rating"
               value={rating}
+              valueColor={getRatingColor(place.rating, accentColor)}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
@@ -128,7 +166,7 @@ export function PlaceResultCard({
               icon="globe-outline"
               label="Website"
               value={websiteDisplay}
-              valueColor={tokens.palette.success}
+              valueColor={accentColor}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
               accessibilityLabel={`Open website for ${place.name}`}
@@ -145,6 +183,7 @@ export function PlaceResultCard({
               icon="pricetag-outline"
               label="Category"
               value={category}
+              valueColor={getCategoryColor(category, place.name)}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
@@ -154,7 +193,7 @@ export function PlaceResultCard({
               icon="alarm-outline"
               label={closesIn ? "Closes in" : "Opens in"}
               value={closesIn ?? opensIn ?? ""}
-              valueColor={closesIn ? tokens.palette.negative : tokens.palette.success}
+              valueColor={closesIn ? tokens.palette.negative : accentColor}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
@@ -164,7 +203,7 @@ export function PlaceResultCard({
               icon="call-outline"
               label="Call now"
               value={phoneDisplay}
-              valueColor={tokens.palette.success}
+              valueColor={accentColor}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
               accessibilityLabel={`Call ${place.name}`}
@@ -177,7 +216,7 @@ export function PlaceResultCard({
               iconFamily="material"
               label="Menu"
               value={menuDisplay}
-              valueColor={tokens.palette.success}
+              valueColor={accentColor}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
               accessibilityLabel={`Open menu for ${place.name}`}
@@ -186,8 +225,149 @@ export function PlaceResultCard({
           ) : null}
         </View>
       </View>
+      <PlacePhotoViewer
+        visible={photoViewerOpen}
+        photos={photos}
+        initialIndex={photoIndex}
+        placeName={place.name}
+        onIndexChange={setPhotoIndex}
+        onClose={() => setPhotoViewerOpen(false)}
+      />
     </View>
   );
+}
+
+function resolvePhotoUrl(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : resolveApiRequestUrl(url);
+}
+
+function PlacePhotoViewer({
+  visible,
+  photos,
+  initialIndex,
+  placeName,
+  onIndexChange,
+  onClose
+}: {
+  visible: boolean;
+  photos: string[];
+  initialIndex: number;
+  placeName: string;
+  onIndexChange: (index: number) => void;
+  onClose: () => void;
+}) {
+  const tokens = useThemeTokens();
+  const { width, height } = useWindowDimensions();
+  const [index, setIndex] = useState(initialIndex);
+  const scale = useRef(new Animated.Value(1)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const lastScaleRef = useRef(1);
+  const pinchStartDistanceRef = useRef<number | null>(null);
+
+  const resetZoom = useCallback(() => {
+    lastScaleRef.current = 1;
+    pinchStartDistanceRef.current = null;
+    Animated.parallel([
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, useNativeDriver: true })
+    ]).start();
+  }, [scale, translateX, translateY]);
+
+  useEffect(() => {
+    if (visible) {
+      setIndex(Math.max(0, Math.min(photos.length - 1, initialIndex)));
+      resetZoom();
+    }
+  }, [initialIndex, photos.length, resetZoom, visible]);
+
+  const moveToIndex = useCallback((nextIndex: number) => {
+    const clamped = Math.max(0, Math.min(photos.length - 1, nextIndex));
+    setIndex(clamped);
+    onIndexChange(clamped);
+    resetZoom();
+  }, [onIndexChange, photos.length, resetZoom]);
+
+  const viewerPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 4 || Math.abs(gesture.dy) > 4,
+        onPanResponderGrant: (event) => {
+          if (event.nativeEvent.touches.length >= 2) {
+            pinchStartDistanceRef.current = getTouchDistance(event.nativeEvent.touches);
+          }
+        },
+        onPanResponderMove: (event, gesture) => {
+          if (event.nativeEvent.touches.length >= 2) {
+            const start = pinchStartDistanceRef.current ?? getTouchDistance(event.nativeEvent.touches);
+            pinchStartDistanceRef.current = start;
+            const nextScale = Math.max(1, Math.min(4, lastScaleRef.current * (getTouchDistance(event.nativeEvent.touches) / Math.max(start, 1))));
+            scale.setValue(nextScale);
+            return;
+          }
+
+          if (lastScaleRef.current > 1.02) {
+            translateX.setValue(gesture.dx);
+            translateY.setValue(gesture.dy);
+          }
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          scale.stopAnimation((value) => {
+            lastScaleRef.current = Math.max(1, Math.min(4, value));
+          });
+          pinchStartDistanceRef.current = null;
+
+          if (lastScaleRef.current <= 1.02 && Math.abs(gesture.dx) > 54 && Math.abs(gesture.dx) > Math.abs(gesture.dy)) {
+            moveToIndex(index + (gesture.dx < 0 ? 1 : -1));
+          }
+        }
+      }),
+    [index, moveToIndex, scale, translateX, translateY]
+  );
+
+  if (!visible || photos.length === 0) {
+    return null;
+  }
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.viewerBackdrop} onPress={onClose}>
+        <Pressable style={[styles.viewerContent, { width, height }]} onPress={resetZoom} {...viewerPanResponder.panHandlers}>
+          <Animated.Image
+            source={{ uri: photos[index] }}
+            resizeMode="contain"
+            accessibilityLabel={`Photo of ${placeName}`}
+            style={[
+              styles.viewerImage,
+              {
+                transform: [{ scale }, { translateX }, { translateY }]
+              }
+            ]}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close photo"
+            style={[styles.viewerClose, { backgroundColor: tokens.surfaces.card, borderColor: tokens.palette.borderStrong }]}
+            onPress={onClose}
+          >
+            <Ionicons name="close" size={24} color={tokens.palette.textPrimary} />
+          </Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function getTouchDistance(touches: readonly { pageX: number; pageY: number }[]): number {
+  if (touches.length < 2) {
+    return 1;
+  }
+
+  const [first, second] = touches;
+  const dx = first.pageX - second.pageX;
+  const dy = first.pageY - second.pageY;
+  return Math.sqrt((dx * dx) + (dy * dy));
 }
 
 type DetailRowProps = {
@@ -351,7 +531,7 @@ const styles = StyleSheet.create({
   detailRow: {
     minHeight: 32,
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: spacing[4]
   },
   detailTextWrap: {
@@ -377,5 +557,30 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.72
+  },
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  viewerContent: {
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  viewerImage: {
+    width: "100%",
+    height: "100%"
+  },
+  viewerClose: {
+    position: "absolute",
+    top: spacing[20],
+    right: spacing[20],
+    width: 44,
+    height: 44,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center"
   }
 });

@@ -25,6 +25,11 @@ public sealed record PlaceEditorialSummary(
     string? Text,
     string? LanguageCode);
 
+public sealed record PlacePhotoSummary(
+    string Name,
+    int? WidthPx,
+    int? HeightPx);
+
 public sealed record PlaceSearchMetadata(
     string UseCase,
     bool FromCache,
@@ -78,7 +83,8 @@ public sealed record CompanionPlaceCandidate(
     PlacePaymentOptionsSummary PaymentOptions,
     PlaceAccessibilitySummary AccessibilityOptions,
     PlaceEditorialSummary EditorialSummary,
-    PlaceLocationSummary? Location);
+    PlaceLocationSummary? Location,
+    IReadOnlyList<PlacePhotoSummary>? Photos = null);
 
 public sealed record CompanionPlaceDiscoveryRequest(
     string Query,

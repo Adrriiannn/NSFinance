@@ -7,7 +7,7 @@ public sealed class GooglePlacesFieldMaskProviderTests
     private readonly GooglePlacesFieldMaskProvider sut = new();
 
     [Fact]
-    public void CompanionDiscoveryMask_IsExplicitAndExcludesHeavyFields()
+public void CompanionDiscoveryMask_IsExplicitAndIncludesCardPhotoMetadata()
     {
         var mask = sut.CompanionDiscoverySearchMask;
 
@@ -17,7 +17,7 @@ public sealed class GooglePlacesFieldMaskProviderTests
         Assert.Contains("places.paymentOptions", mask, StringComparison.Ordinal);
         Assert.Contains("places.accessibilityOptions", mask, StringComparison.Ordinal);
         Assert.DoesNotContain("places.reviews", mask, StringComparison.Ordinal);
-        Assert.DoesNotContain("places.photos", mask, StringComparison.Ordinal);
+        Assert.Contains("places.photos", mask, StringComparison.Ordinal);
         Assert.DoesNotContain("places.regularOpeningHours.periods", mask, StringComparison.Ordinal);
     }
 
@@ -44,6 +44,6 @@ public sealed class GooglePlacesFieldMaskProviderTests
         Assert.Contains("places.displayName", nearbyMask, StringComparison.Ordinal);
         Assert.Contains("places.location", nearbyMask, StringComparison.Ordinal);
         Assert.DoesNotContain("places.reviews", nearbyMask, StringComparison.Ordinal);
-        Assert.DoesNotContain("places.photos", nearbyMask, StringComparison.Ordinal);
+        Assert.Contains("places.photos", nearbyMask, StringComparison.Ordinal);
     }
 }

@@ -25,7 +25,8 @@ export function formatDistanceKm(distanceMeters?: number | null): string | null 
   }
 
   const km = distanceMeters / 1000;
-  return km >= 10 ? `${Math.round(km)} km` : `${km.toFixed(1)} km`;
+  const value = km >= 10 ? `${Math.round(km)}km` : `${km.toFixed(1)}km`;
+  return `${value} away`;
 }
 
 export function getDistanceColor(distanceMeters?: number | null): string {
@@ -35,11 +36,7 @@ export function getDistanceColor(distanceMeters?: number | null): string {
 
   const km = distanceMeters / 1000;
   const t = clamp((km - 0.2) / (25 - 0.2), 0, 1);
-  if (t < 0.5) {
-    return interpolateColor([28, 190, 99], [236, 178, 42], t / 0.5);
-  }
-
-  return interpolateColor([236, 178, 42], [221, 68, 68], (t - 0.5) / 0.5);
+  return interpolateColor([242, 140, 40], [221, 68, 68], t);
 }
 
 export function formatRating(rating?: number | null): string | null {
@@ -49,6 +46,32 @@ export function formatRating(rating?: number | null): string | null {
 
   const rounded = Math.round(rating * 10) / 10;
   return Number.isInteger(rounded) ? `${rounded}/5` : `${rounded.toFixed(1)}/5`;
+}
+
+export function getRatingColor(rating?: number | null, highColor = "#F28C28"): string {
+  if (typeof rating !== "number" || !Number.isFinite(rating)) {
+    return "#7C8794";
+  }
+
+  const t = clamp((rating - 1) / 4, 0, 1);
+  return interpolateColor([255, 45, 45], hexToRgb(highColor), t);
+}
+
+export function getCategoryColor(category?: string | null, seed?: string | null): string {
+  const source = `${category ?? ""} ${seed ?? ""}`.trim().toLowerCase();
+  if (!source) {
+    return "#D58A3A";
+  }
+
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+
+  const hue = 18 + (hash % 34);
+  const saturation = 62 + (hash % 18);
+  const lightness = 48 + (hash % 12);
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 }
 
 export function formatPriceLevel(priceLevel?: CompanionPlaceCard["priceLevel"]): PriceSymbols | null {
@@ -94,13 +117,12 @@ export function formatDuration(minutes?: number | null): string | null {
 
   const rounded = Math.max(1, Math.round(minutes));
   if (rounded < 60) {
-    return `${rounded} mins`;
+    return `${rounded}m`;
   }
 
   const hours = Math.floor(rounded / 60);
   const mins = rounded % 60;
-  const hourText = `${hours} hour${hours === 1 ? "" : "s"}`;
-  return mins === 0 ? hourText : `${hourText} ${mins} mins`;
+  return mins === 0 ? `${hours}h` : `${hours}h ${mins}m`;
 }
 
 export function formatWebsiteDisplay(url?: string | null): string | null {
@@ -195,4 +217,17 @@ function parseUrl(url?: string | null): URL | null {
   } catch {
     return null;
   }
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const normalized = hex.replace("#", "").trim();
+  if (!/^[\da-f]{6}$/i.test(normalized)) {
+    return [242, 140, 40];
+  }
+
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16)
+  ];
 }

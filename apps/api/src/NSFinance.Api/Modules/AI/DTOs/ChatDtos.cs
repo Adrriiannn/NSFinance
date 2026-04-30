@@ -58,6 +58,7 @@ public sealed record CompanionPlaceCardDto(
     string Name,
     double? DistanceMeters,
     string? PhotoUrl,
+    IReadOnlyList<string> PhotoUrls,
     string? FormattedAddress,
     string? ShortFormattedAddress,
     double? Rating,

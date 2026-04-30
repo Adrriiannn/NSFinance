@@ -1035,6 +1035,7 @@ public sealed class StructuredExplorationHandler(
             .Select(item =>
             {
                 var opensInMinutes = TryComputeFutureMinutes(item.OpeningHours?.NextOpenTimeUtc);
+                var photoUrls = BuildPlacePhotoUrls(item.Photos);
                 return new CompanionPlaceCardResult(
                     Id: item.PlaceId,
                     Name: item.Name,
@@ -1042,7 +1043,8 @@ public sealed class StructuredExplorationHandler(
                         locationContext?.Latitude,
                         locationContext?.Longitude,
                         item.Location),
-                    PhotoUrl: null,
+                    PhotoUrl: photoUrls.FirstOrDefault(),
+                    PhotoUrls: photoUrls,
                     FormattedAddress: item.FormattedAddress,
                     ShortFormattedAddress: item.ShortFormattedAddress,
                     Rating: item.Rating,
@@ -1063,6 +1065,21 @@ public sealed class StructuredExplorationHandler(
         return cards.Length == 0
             ? null
             : new CompanionStructuredResults("places", cards);
+    }
+
+    private static IReadOnlyList<string> BuildPlacePhotoUrls(IReadOnlyList<PlacePhotoSummary>? photos)
+    {
+        if (photos is null || photos.Count == 0)
+        {
+            return [];
+        }
+
+        return photos
+            .Where(photo => !string.IsNullOrWhiteSpace(photo.Name))
+            .Select(photo => $"/api/ai/places/photo?name={Uri.EscapeDataString(photo.Name)}&maxWidthPx=1200")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToArray();
     }
 
     private static int? TryComputeFutureMinutes(DateTimeOffset? futureUtc)
