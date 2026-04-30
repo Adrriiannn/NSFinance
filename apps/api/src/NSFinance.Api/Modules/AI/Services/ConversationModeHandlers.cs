@@ -274,6 +274,7 @@ public sealed class StructuredExplorationHandler(
             Entities: selectedEntities,
             SummaryFacts: BuildStructuredFacts(selectedItems),
             Warnings: warnings.ToArray());
+        var structuredResults = BuildStructuredPlaceResults(selectedItems, locationContext);
 
         return new ConversationModeExecutionResult(
             CompositionRequest: new ResponseCompositionRequest(
@@ -295,7 +296,8 @@ public sealed class StructuredExplorationHandler(
             ResultContext: persistedResultContext,
             Warnings: warnings.ToArray(),
             FollowUpIntentHints: ["refine_place_preferences", "compare_options"],
-            Succeeded: true);
+            Succeeded: true,
+            StructuredResults: structuredResults);
     }
 
     private static IReadOnlyList<string> BuildMissingConstraints(
@@ -905,6 +907,70 @@ public sealed class StructuredExplorationHandler(
                 Label: item.Name,
                 Value: BuildPlaceFact(item)))
             .ToArray();
+    }
+
+    private static CompanionStructuredResults? BuildStructuredPlaceResults(
+        IReadOnlyList<PlaceSearchItem> selectedItems,
+        PlaceSearchLocationContext? locationContext)
+    {
+        var cards = selectedItems
+            .Where(static item => !string.IsNullOrWhiteSpace(item.PlaceId) && !string.IsNullOrWhiteSpace(item.Name))
+            .Select(item =>
+            {
+                var opensInMinutes = TryComputeFutureMinutes(item.OpeningHours?.NextOpenTimeUtc);
+                return new CompanionPlaceCardResult(
+                    Id: item.PlaceId,
+                    Name: item.Name,
+                    DistanceMeters: TryComputeDistanceMeters(
+                        locationContext?.Latitude,
+                        locationContext?.Longitude,
+                        item.Location),
+                    PhotoUrl: null,
+                    FormattedAddress: item.FormattedAddress,
+                    ShortFormattedAddress: item.ShortFormattedAddress,
+                    Rating: item.Rating,
+                    OpenNow: item.OpeningHours?.OpenNow,
+                    PriceLevel: item.PriceLevel,
+                    WebsiteUrl: item.WebsiteUri,
+                    Category: ResolveCategoryFromPlaces(item),
+                    PrimaryTypeDisplayName: item.PrimaryTypeDisplayName,
+                    ClosesInMinutes: null,
+                    OpensInMinutes: item.OpeningHours?.OpenNow == false ? opensInMinutes : null,
+                    PhoneNumber: item.NationalPhoneNumber,
+                    MenuUrl: TryResolveMenuUrl(item.WebsiteUri),
+                    GoogleMapsUri: item.GoogleMapsUri,
+                    Latitude: item.Location?.Latitude,
+                    Longitude: item.Location?.Longitude);
+            })
+            .ToArray();
+        return cards.Length == 0
+            ? null
+            : new CompanionStructuredResults("places", cards);
+    }
+
+    private static int? TryComputeFutureMinutes(DateTimeOffset? futureUtc)
+    {
+        if (!futureUtc.HasValue)
+        {
+            return null;
+        }
+
+        var minutes = (int)Math.Ceiling((futureUtc.Value - DateTimeOffset.UtcNow).TotalMinutes);
+        return minutes > 0 && minutes < (7 * 24 * 60)
+            ? minutes
+            : null;
+    }
+
+    private static string? TryResolveMenuUrl(string? websiteUri)
+    {
+        if (string.IsNullOrWhiteSpace(websiteUri))
+        {
+            return null;
+        }
+
+        return websiteUri.Contains("menu", StringComparison.OrdinalIgnoreCase)
+            ? websiteUri.Trim()
+            : null;
     }
 
     private static string BuildPlaceFact(PlaceSearchItem item)

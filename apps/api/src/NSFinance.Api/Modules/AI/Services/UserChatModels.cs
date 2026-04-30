@@ -65,4 +65,5 @@ public sealed record UserChatResponse(
     Guid? ConversationTurnId = null,
     ConversationTurnStatus? TurnStatus = null,
     bool IsDuplicateRequest = false,
-    bool IsTurnInProgress = false);
+    bool IsTurnInProgress = false,
+    CompanionStructuredResults? StructuredResults = null);

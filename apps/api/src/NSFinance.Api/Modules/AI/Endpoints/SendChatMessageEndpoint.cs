@@ -103,7 +103,8 @@ public static class SendChatMessageEndpoint
             SuggestedStateUpdates: result.SuggestedStructuredStateUpdates,
             Warnings: result.Warnings,
             FollowUpIntentHints: result.FollowUpIntentHints,
-            ContextSummary: result.ReferencedContextSummary);
+            ContextSummary: result.ReferencedContextSummary,
+            StructuredResults: MapStructuredResults(result.StructuredResults));
 
         logger.LogInformation(
             "AI chat endpoint completed userId={UserId} threadId={ThreadId} turnId={TurnId} requestId={RequestId} deduped={Deduped} inProgress={InProgress} succeeded={Succeeded} taskClass={TaskClass} model={Model} fallbackUsed={FallbackUsed} failure={Failure} warnings={Warnings}",
@@ -207,6 +208,39 @@ public static class SendChatMessageEndpoint
         }
 
         return response.TurnStatus?.ToString().ToLowerInvariant() ?? "failed";
+    }
+
+    private static CompanionStructuredResultsDto? MapStructuredResults(CompanionStructuredResults? results)
+    {
+        if (results is null || results.Items.Count == 0)
+        {
+            return null;
+        }
+
+        return new CompanionStructuredResultsDto(
+            Type: results.Type,
+            Items: results.Items
+                .Select(item => new CompanionPlaceCardDto(
+                    Id: item.Id,
+                    Name: item.Name,
+                    DistanceMeters: item.DistanceMeters,
+                    PhotoUrl: item.PhotoUrl,
+                    FormattedAddress: item.FormattedAddress,
+                    ShortFormattedAddress: item.ShortFormattedAddress,
+                    Rating: item.Rating,
+                    OpenNow: item.OpenNow,
+                    PriceLevel: item.PriceLevel,
+                    WebsiteUrl: item.WebsiteUrl,
+                    Category: item.Category,
+                    PrimaryTypeDisplayName: item.PrimaryTypeDisplayName,
+                    ClosesInMinutes: item.ClosesInMinutes,
+                    OpensInMinutes: item.OpensInMinutes,
+                    PhoneNumber: item.PhoneNumber,
+                    MenuUrl: item.MenuUrl,
+                    GoogleMapsUri: item.GoogleMapsUri,
+                    Latitude: item.Latitude,
+                    Longitude: item.Longitude))
+                .ToArray());
     }
 
     private static int ResolveFailureStatusCode(string? failureCode)

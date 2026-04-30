@@ -24,6 +24,7 @@ import { getDockAwareContentBottomInset } from "../layout/contentFrame";
 import { getEffectiveBottomSystemInset } from "../theme/insets";
 import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../theme/tokens";
 import { sendAIChatMessage } from "../features/ai/aiChatApi";
+import { PlaceCardCarousel } from "../features/ai/components/PlaceCardCarousel";
 import {
   buildNearbyGroundingDiagnosticsMetadata,
   buildChatLocationMetadata,
@@ -792,7 +793,8 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
           id: `${Date.now()}-a`,
           role: "assistant",
           text: replyText,
-          createdUtc: new Date().toISOString()
+          createdUtc: new Date().toISOString(),
+          structuredResults: response.structuredResults ?? null
         };
         appendMessageToChat(activeChat.id, assistantMessage);
       } else if (!response.inProgress) {
@@ -1401,6 +1403,9 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
                   >
                     <Text style={styles.chatText}>{item.text}</Text>
                   </GlassCard>
+                  {item.role === "assistant" && item.structuredResults?.type === "places" ? (
+                    <PlaceCardCarousel places={item.structuredResults.items} />
+                  ) : null}
                 </View>
               )}
             />

@@ -46,7 +46,33 @@ public sealed record SendChatMessageResponse(
     IReadOnlyDictionary<string, string> SuggestedStateUpdates,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> FollowUpIntentHints,
-    string? ContextSummary);
+    string? ContextSummary,
+    CompanionStructuredResultsDto? StructuredResults = null);
+
+public sealed record CompanionStructuredResultsDto(
+    string Type,
+    IReadOnlyList<CompanionPlaceCardDto> Items);
+
+public sealed record CompanionPlaceCardDto(
+    string Id,
+    string Name,
+    double? DistanceMeters,
+    string? PhotoUrl,
+    string? FormattedAddress,
+    string? ShortFormattedAddress,
+    double? Rating,
+    bool? OpenNow,
+    string? PriceLevel,
+    string? WebsiteUrl,
+    string? Category,
+    string? PrimaryTypeDisplayName,
+    int? ClosesInMinutes,
+    int? OpensInMinutes,
+    string? PhoneNumber,
+    string? MenuUrl,
+    string? GoogleMapsUri,
+    double? Latitude,
+    double? Longitude);
 
 public sealed record ChatThreadSummaryDto(
     Guid ThreadId,

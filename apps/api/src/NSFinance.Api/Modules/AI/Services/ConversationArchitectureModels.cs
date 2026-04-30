@@ -383,6 +383,31 @@ public sealed record PlaceFollowUpCandidate(
     IReadOnlyList<string> MatchedReasons,
     IReadOnlyList<string> MissingEvidence);
 
+public sealed record CompanionStructuredResults(
+    string Type,
+    IReadOnlyList<CompanionPlaceCardResult> Items);
+
+public sealed record CompanionPlaceCardResult(
+    string Id,
+    string Name,
+    double? DistanceMeters,
+    string? PhotoUrl,
+    string? FormattedAddress,
+    string? ShortFormattedAddress,
+    double? Rating,
+    bool? OpenNow,
+    string? PriceLevel,
+    string? WebsiteUrl,
+    string? Category,
+    string? PrimaryTypeDisplayName,
+    int? ClosesInMinutes,
+    int? OpensInMinutes,
+    string? PhoneNumber,
+    string? MenuUrl,
+    string? GoogleMapsUri,
+    double? Latitude,
+    double? Longitude);
+
 public sealed record ResponseCompositionResult(
     string ReplyText,
     IReadOnlyDictionary<string, string> SuggestedStructuredStateUpdates,
@@ -406,7 +431,8 @@ public sealed record ConversationModeExecutionResult(
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> FollowUpIntentHints,
     bool Succeeded,
-    string? FailureReason = null);
+    string? FailureReason = null,
+    CompanionStructuredResults? StructuredResults = null);
 
 public sealed record ConversationDirectResponse(
     string ReplyText,

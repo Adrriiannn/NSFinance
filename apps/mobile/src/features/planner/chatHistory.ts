@@ -3,6 +3,7 @@ import {
   readJsonFileStorage,
   writeJsonFileStorage
 } from "../../lib/storage/jsonFileStore";
+import type { CompanionStructuredResults } from "../../types/api";
 
 const CHAT_HISTORY_KEY = "nsfinance.planner.companion.chat_history";
 const COMPANION_TOOLTIP_SEEN_KEY = "nsfinance.planner.companion.tooltip_seen";
@@ -19,6 +20,7 @@ export type CompanionMessage = {
   role: "user" | "assistant";
   text: string;
   createdUtc: string;
+  structuredResults?: CompanionStructuredResults | null;
 };
 
 export type CompanionChatColor =
@@ -73,7 +75,9 @@ function normalizeChat(raw: Partial<CompanionChat>): CompanionChat {
     title: typeof raw.title === "string" && raw.title.trim() ? raw.title.trim() : "New conversation",
     createdUtc,
     updatedUtc,
-    messages: Array.isArray(raw.messages) ? raw.messages : [],
+    messages: Array.isArray(raw.messages)
+      ? raw.messages.map(normalizeMessage)
+      : [],
     conversationThreadId:
       typeof raw.conversationThreadId === "string" && raw.conversationThreadId.trim()
         ? raw.conversationThreadId
@@ -100,10 +104,44 @@ function normalizeChat(raw: Partial<CompanionChat>): CompanionChat {
   };
 }
 
+function normalizeMessage(raw: Partial<CompanionMessage>): CompanionMessage {
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : `message-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    role: raw.role === "assistant" ? "assistant" : "user",
+    text: typeof raw.text === "string" ? raw.text : "",
+    createdUtc: typeof raw.createdUtc === "string" && raw.createdUtc ? raw.createdUtc : new Date().toISOString(),
+    structuredResults: normalizeStructuredResults(raw.structuredResults)
+  };
+}
+
+function normalizeStructuredResults(value: CompanionStructuredResults | null | undefined): CompanionStructuredResults | null {
+  if (!value || value.type !== "places" || !Array.isArray(value.items)) {
+    return null;
+  }
+
+  const items = value.items.filter((item) =>
+    typeof item?.id === "string" &&
+    item.id.trim().length > 0 &&
+    typeof item?.name === "string" &&
+    item.name.trim().length > 0
+  );
+  return items.length > 0
+    ? { type: "places", items }
+    : null;
+}
+
 function cloneChats(chats: CompanionChat[]): CompanionChat[] {
   return chats.map((chat) => ({
     ...chat,
-    messages: [...chat.messages]
+    messages: chat.messages.map((message) => ({
+      ...message,
+      structuredResults: message.structuredResults
+        ? {
+            ...message.structuredResults,
+            items: [...message.structuredResults.items]
+          }
+        : null
+    }))
   }));
 }
 

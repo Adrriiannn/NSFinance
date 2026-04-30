@@ -935,6 +935,34 @@ export type SendAIChatMessageResponse = {
   warnings: string[];
   followUpIntentHints: string[];
   contextSummary: string | null;
+  structuredResults?: CompanionStructuredResults | null;
+};
+
+export type CompanionStructuredResults = {
+  type: "places" | string;
+  items: CompanionPlaceCardResult[];
+};
+
+export type CompanionPlaceCardResult = {
+  id: string;
+  name: string;
+  distanceMeters?: number | null;
+  photoUrl?: string | null;
+  formattedAddress?: string | null;
+  shortFormattedAddress?: string | null;
+  rating?: number | null;
+  openNow?: boolean | null;
+  priceLevel?: number | string | null;
+  websiteUrl?: string | null;
+  category?: string | null;
+  primaryTypeDisplayName?: string | null;
+  closesInMinutes?: number | null;
+  opensInMinutes?: number | null;
+  phoneNumber?: string | null;
+  menuUrl?: string | null;
+  googleMapsUri?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 

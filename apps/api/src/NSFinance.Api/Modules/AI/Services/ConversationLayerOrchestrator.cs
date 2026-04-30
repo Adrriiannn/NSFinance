@@ -976,7 +976,8 @@ public sealed class ConversationLayerOrchestrator(
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray(),
                 Succeeded: true,
-                FailureReason: null);
+                FailureReason: null,
+                StructuredResults: modeResult.StructuredResults);
 
             return new OrchestratedConversationResult(
                 Response: reply,
@@ -1065,7 +1066,8 @@ public sealed class ConversationLayerOrchestrator(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             Succeeded: true,
-            FailureReason: null);
+            FailureReason: null,
+            StructuredResults: modeResult.StructuredResults);
 
         return new OrchestratedConversationResult(
             Response: routedReply,
