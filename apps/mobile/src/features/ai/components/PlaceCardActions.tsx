@@ -50,7 +50,7 @@ function ActionButton({
       style={({ pressed }) => [styles.button, pressed ? styles.pressed : null]}
       onPress={onPress}
     >
-      <Ionicons name={icon} size={16} color="#FFFFFF" />
+      <Ionicons name={icon} size={13} color="#FFFFFF" />
       <Text style={styles.label}>{label}</Text>
     </Pressable>
   );
@@ -59,12 +59,12 @@ function ActionButton({
 const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
-    gap: spacing[10],
-    marginTop: spacing[10]
+    gap: spacing[6],
+    marginTop: spacing[8]
   },
   button: {
     flex: 1,
-    minHeight: 46,
+    minHeight: 36,
     borderRadius: radius.medium,
     backgroundColor: palette.success,
     alignItems: "center",
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: "#FFFFFF",
-    ...typography.button,
+    ...typography.caption,
     fontWeight: "700"
   },
   pressed: {

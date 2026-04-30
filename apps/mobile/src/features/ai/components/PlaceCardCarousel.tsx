@@ -10,7 +10,7 @@ import {
   View,
   Pressable
 } from "react-native";
-import { layout, spacing, useThemeTokens } from "../../../theme/tokens";
+import { spacing, useThemeTokens } from "../../../theme/tokens";
 import { PlaceCardActions } from "./PlaceCardActions";
 import { PlaceResultCard } from "./PlaceResultCard";
 import {
@@ -25,8 +25,8 @@ type PlaceCardCarouselProps = {
   places: CompanionPlaceCard[];
 };
 
-const arrowSpace = 38;
-const maxCardWidth = 360;
+const arrowGutter = 28;
+const cardWidthRatio = 0.6;
 
 export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const tokens = useThemeTokens();
@@ -35,7 +35,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const slide = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
-  const cardWidth = Math.min(width - (layout.screenHorizontalPadding * 2) - arrowSpace, maxCardWidth);
+  const cardWidth = Math.floor(width * cardWidthRatio);
   const currentPlace = places[currentIndex];
 
   const canGoPrevious = currentIndex > 0;
@@ -146,7 +146,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   }
 
   return (
-    <View style={[styles.wrapper, { width: cardWidth + arrowSpace }]}>
+    <View style={[styles.wrapper, { width: cardWidth + (arrowGutter * 2) }]}>
       <View style={styles.viewport}>
         {canGoPrevious ? (
           <ArrowButton
@@ -161,6 +161,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
             styles.animatedCard,
             {
               width: cardWidth,
+              marginLeft: arrowGutter,
               transform: [{ translateX: slide }, { scale }],
               opacity
             }
@@ -187,7 +188,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
           />
         ) : null}
       </View>
-      <View style={[styles.actionsWrap, { width: cardWidth }]}>
+      <View style={[styles.actionsWrap, { width: cardWidth, marginLeft: arrowGutter }]}>
         <PlaceCardActions
           place={currentPlace}
           onDirections={(place) => {
@@ -223,9 +224,10 @@ function ArrowButton({
       onPress={onPress}
     >
       <Ionicons
-        name={direction === "left" ? "chevron-back" : "chevron-forward"}
-        size={86}
+        name="chevron-back"
+        size={58}
         color={color}
+        style={direction === "right" ? styles.rightArrowIcon : null}
       />
     </Pressable>
   );
@@ -234,11 +236,11 @@ function ArrowButton({
 const styles = StyleSheet.create({
   wrapper: {
     alignItems: "flex-start",
-    marginTop: spacing[8]
+    marginTop: spacing[8],
+    marginLeft: spacing[8]
   },
   viewport: {
     position: "relative",
-    minHeight: 410,
     alignItems: "flex-start",
     justifyContent: "center"
   },
@@ -250,18 +252,22 @@ const styles = StyleSheet.create({
   },
   arrow: {
     position: "absolute",
-    top: "38%",
+    top: 0,
+    bottom: 0,
     zIndex: 4,
-    width: 44,
-    minHeight: 96,
+    width: 32,
+    minHeight: 44,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent"
   },
   leftArrow: {
-    left: -34
+    left: -2
   },
   rightArrow: {
-    right: -34
+    right: -2
+  },
+  rightArrowIcon: {
+    transform: [{ rotate: "180deg" }]
   }
 });

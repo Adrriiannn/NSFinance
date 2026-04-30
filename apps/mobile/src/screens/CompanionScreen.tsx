@@ -287,6 +287,16 @@ const formatChatTitle = (chat: CompanionChat) => {
     : firstUserMessage;
 };
 
+const getStructuredPlacesIntroText = (text: string) => {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const firstNonListLine = lines.find((line) => !/^\d+[\).]\s+/.test(line));
+
+  return firstNonListLine || "I found these matching options:";
+};
+
 function pickPromptPair(lastIntro?: string): IntroPromptPair {
   const filtered = introPromptPairs.filter((item) => item.intro !== lastIntro);
   const nextPool = filtered.length > 0 ? filtered : introPromptPairs;
@@ -1401,7 +1411,11 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
                       item.role === "assistant" ? styles.assistantBubble : styles.userBubble
                     ]}
                   >
-                    <Text style={styles.chatText}>{item.text}</Text>
+                    <Text style={styles.chatText}>
+                      {item.role === "assistant" && item.structuredResults?.type === "places"
+                        ? getStructuredPlacesIntroText(item.text)
+                        : item.text}
+                    </Text>
                   </GlassCard>
                   {item.role === "assistant" && item.structuredResults?.type === "places" ? (
                     <PlaceCardCarousel places={item.structuredResults.items} />

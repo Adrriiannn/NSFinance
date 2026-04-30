@@ -27,23 +27,14 @@ export function PlaceResultCard({
   onCall
 }: PlaceResultCardProps) {
   const tokens = useThemeTokens();
-  const cardColors = tokens.isDarkTheme
-    ? {
-        background: "#EEE8DC",
-        border: "rgba(255,255,255,0.18)",
-        text: "#1F2328",
-        secondary: "#62666D",
-        separator: "rgba(33,37,41,0.16)",
-        placeholder: "rgba(31,35,40,0.07)"
-      }
-    : {
-        background: tokens.surfaces.card,
-        border: tokens.palette.border,
-        text: tokens.palette.textPrimary,
-        secondary: tokens.palette.textSecondary,
-        separator: tokens.palette.border,
-        placeholder: tokens.surfaces.field
-      };
+  const cardColors = {
+    background: tokens.surfaces.card,
+    border: tokens.isDarkTheme ? "rgba(255,190,122,0.3)" : tokens.palette.border,
+    text: tokens.palette.textPrimary,
+    secondary: tokens.palette.textSecondary,
+    separator: tokens.palette.border,
+    placeholder: tokens.surfaces.field
+  };
   const distanceText = formatDistanceKm(place.distanceMeters);
   const address = place.formattedAddress || place.shortFormattedAddress;
   const category = humanizeCategory(place.primaryTypeDisplayName || place.category);
@@ -86,7 +77,7 @@ export function PlaceResultCard({
         />
       ) : (
         <View style={[styles.photo, styles.placeholder, { backgroundColor: cardColors.placeholder }]}>
-          <Ionicons name="location-outline" size={28} color={cardColors.secondary} />
+          <Ionicons name="location-outline" size={20} color={cardColors.secondary} />
           <Text style={[styles.placeholderText, { color: cardColors.secondary }]}>
             No photo available
           </Text>
@@ -119,7 +110,7 @@ export function PlaceResultCard({
             <DetailRow
               icon="time-outline"
               label="Open now"
-              value={place.openNow ? "Currently open" : "Closed"}
+              value={place.openNow ? "Open" : "Closed"}
               valueColor={place.openNow ? tokens.palette.success : tokens.palette.negative}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
@@ -225,9 +216,9 @@ function DetailRow({
   const content = (
     <>
       {iconFamily === "material" ? (
-        <MaterialCommunityIcons name={icon as keyof typeof MaterialCommunityIcons.glyphMap} size={15} color={mutedColor} />
+        <MaterialCommunityIcons name={icon as keyof typeof MaterialCommunityIcons.glyphMap} size={13} color={mutedColor} />
       ) : (
-        <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={15} color={mutedColor} />
+        <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={13} color={mutedColor} />
       )}
       <View style={styles.detailTextWrap}>
         <Text style={[styles.detailLabel, { color: textColor }]} numberOfLines={1}>
@@ -267,7 +258,7 @@ function PriceRow({
 }) {
   return (
     <View style={styles.detailRow}>
-      <Ionicons name="cash-outline" size={15} color={mutedColor} />
+      <Ionicons name="cash-outline" size={13} color={mutedColor} />
       <View style={styles.detailTextWrap}>
         <Text style={[styles.detailLabel, { color: textColor }]} numberOfLines={1}>
           Price range
@@ -291,35 +282,35 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: radius.medium,
     borderWidth: 1,
-    padding: spacing[14],
+    padding: spacing[10],
     shadowColor: "#000",
     shadowOpacity: 0.18,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 5
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3
   },
   header: {
-    minHeight: 42,
+    minHeight: 30,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: spacing[12]
+    gap: spacing[8]
   },
   title: {
     flex: 1,
-    ...typography.cardTitle,
-    fontWeight: "700",
-    lineHeight: 23
-  },
-  distance: {
     ...typography.bodyStrong,
     fontWeight: "700",
-    paddingTop: 2
+    lineHeight: 18
+  },
+  distance: {
+    ...typography.caption,
+    fontWeight: "700",
+    paddingTop: 1
   },
   photo: {
     width: "100%",
-    aspectRatio: 1.58,
-    borderRadius: radius.medium,
-    marginTop: spacing[10]
+    aspectRatio: 1.62,
+    borderRadius: radius.small,
+    marginTop: spacing[8]
   },
   placeholder: {
     alignItems: "center",
@@ -333,34 +324,35 @@ const styles = StyleSheet.create({
   addressRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: spacing[6],
-    marginTop: spacing[10]
+    gap: spacing[4],
+    marginTop: spacing[8]
   },
   addressText: {
     flex: 1,
     ...typography.caption,
-    lineHeight: 16
+    fontSize: 11,
+    lineHeight: 14
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    marginVertical: spacing[12]
+    marginVertical: spacing[8]
   },
   detailGrid: {
     flexDirection: "row",
-    gap: spacing[10]
+    gap: spacing[6]
   },
   detailColumn: {
     flex: 1,
-    gap: spacing[10]
+    gap: spacing[6]
   },
   verticalDivider: {
     width: StyleSheet.hairlineWidth
   },
   detailRow: {
-    minHeight: 42,
+    minHeight: 32,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: spacing[6]
+    gap: spacing[4]
   },
   detailTextWrap: {
     flex: 1,
@@ -368,17 +360,19 @@ const styles = StyleSheet.create({
   },
   detailLabel: {
     ...typography.caption,
+    fontSize: 11,
     fontWeight: "700",
-    lineHeight: 15
+    lineHeight: 13
   },
   detailValue: {
     ...typography.caption,
-    lineHeight: 15,
+    fontSize: 11,
+    lineHeight: 13,
     marginTop: 1
   },
   priceValue: {
-    ...typography.bodyStrong,
-    lineHeight: 18,
+    ...typography.caption,
+    lineHeight: 13,
     marginTop: 1
   },
   pressed: {

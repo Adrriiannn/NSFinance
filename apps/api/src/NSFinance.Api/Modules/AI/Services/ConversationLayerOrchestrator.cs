@@ -954,7 +954,9 @@ public sealed class ConversationLayerOrchestrator(
         if (!string.IsNullOrWhiteSpace(modeResult.DeterministicReplyText))
         {
             var reply = new UserChatResponse(
-                ReplyText: modeResult.DeterministicReplyText!,
+                ReplyText: CollapseReplyForStructuredResults(
+                    modeResult.DeterministicReplyText!,
+                    modeResult.StructuredResults),
                 ModelUsed: "deterministic-mode-handler",
                 ReasoningClass: AIModelClass.Fast,
                 SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
@@ -1042,7 +1044,9 @@ public sealed class ConversationLayerOrchestrator(
         responseCompositionDurationMs = routedCompositionStopwatch.ElapsedMilliseconds;
 
         var routedReply = new UserChatResponse(
-            ReplyText: routedComposition.ReplyText,
+            ReplyText: CollapseReplyForStructuredResults(
+                routedComposition.ReplyText,
+                modeResult.StructuredResults),
             ModelUsed: routedComposition.ModelUsed,
             ReasoningClass: routedComposition.ReasoningClass,
             SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
@@ -1101,6 +1105,43 @@ public sealed class ConversationLayerOrchestrator(
             ResponseFallbackUsed: routedComposition.FallbackUsed,
             ResponseRecoveryReason: routedComposition.RecoveryReason,
             ResponseUsedModelInvocation: routedComposition.UsedModelInvocation);
+    }
+
+    private static string CollapseReplyForStructuredResults(
+        string replyText,
+        CompanionStructuredResults? structuredResults)
+    {
+        if (structuredResults?.Type is not "places" || structuredResults.Items.Count == 0)
+        {
+            return replyText;
+        }
+
+        var firstUsefulLine = replyText
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(line => !IsNumberedResultLine(line));
+
+        return string.IsNullOrWhiteSpace(firstUsefulLine)
+            ? "I found these matching options:"
+            : firstUsefulLine;
+    }
+
+    private static bool IsNumberedResultLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        if (trimmed.Length < 3 || !char.IsDigit(trimmed[0]))
+        {
+            return false;
+        }
+
+        var index = 1;
+        while (index < trimmed.Length && char.IsDigit(trimmed[index]))
+        {
+            index++;
+        }
+
+        return index < trimmed.Length - 1
+               && (trimmed[index] == '.' || trimmed[index] == ')')
+               && char.IsWhiteSpace(trimmed[index + 1]);
     }
 
     private static IReadOnlyDictionary<string, string> MergeConversationIntelligenceMetadata(
