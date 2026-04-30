@@ -39,7 +39,7 @@ public sealed class CompanionPlaceDiscoveryServiceTests
         Assert.True(result.Succeeded);
         Assert.Equal(8, result.Candidates.Count);
         Assert.Equal(8, result.Metadata.RequestedCandidateCount);
-        Assert.Equal("companion_discovery_v1", result.Metadata.FieldMaskVariant);
+        Assert.Equal("companion_discovery_v2_photos", result.Metadata.FieldMaskVariant);
         Assert.Equal(fieldMasks.CompanionDiscoverySearchMask, Assert.Single(fakeClient.SearchRequests).FieldMask);
     }
 
@@ -253,7 +253,7 @@ public sealed class CompanionPlaceDiscoveryServiceTests
 
         Assert.True(first.Succeeded);
         Assert.True(second.Succeeded);
-        Assert.Equal("companion_nearby_v1", first.Metadata.FieldMaskVariant);
+        Assert.Equal("companion_nearby_v2_photos", first.Metadata.FieldMaskVariant);
         Assert.False(first.Metadata.FromCache);
         Assert.True(second.Metadata.FromCache);
         var nearbyRequest = Assert.Single(fakeClient.NearbyRequests);

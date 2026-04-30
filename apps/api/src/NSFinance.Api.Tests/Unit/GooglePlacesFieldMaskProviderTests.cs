@@ -7,7 +7,7 @@ public sealed class GooglePlacesFieldMaskProviderTests
     private readonly GooglePlacesFieldMaskProvider sut = new();
 
     [Fact]
-public void CompanionDiscoveryMask_IsExplicitAndIncludesCardPhotoMetadata()
+    public void CompanionDiscoveryMask_IsExplicitAndIncludesCardPhotoMetadata()
     {
         var mask = sut.CompanionDiscoverySearchMask;
 
@@ -17,7 +17,9 @@ public void CompanionDiscoveryMask_IsExplicitAndIncludesCardPhotoMetadata()
         Assert.Contains("places.paymentOptions", mask, StringComparison.Ordinal);
         Assert.Contains("places.accessibilityOptions", mask, StringComparison.Ordinal);
         Assert.DoesNotContain("places.reviews", mask, StringComparison.Ordinal);
-        Assert.Contains("places.photos", mask, StringComparison.Ordinal);
+        Assert.Contains("places.photos.name", mask, StringComparison.Ordinal);
+        Assert.Contains("places.photos.widthPx", mask, StringComparison.Ordinal);
+        Assert.Contains("places.photos.heightPx", mask, StringComparison.Ordinal);
         Assert.DoesNotContain("places.regularOpeningHours.periods", mask, StringComparison.Ordinal);
     }
 
@@ -44,6 +46,8 @@ public void CompanionDiscoveryMask_IsExplicitAndIncludesCardPhotoMetadata()
         Assert.Contains("places.displayName", nearbyMask, StringComparison.Ordinal);
         Assert.Contains("places.location", nearbyMask, StringComparison.Ordinal);
         Assert.DoesNotContain("places.reviews", nearbyMask, StringComparison.Ordinal);
-        Assert.Contains("places.photos", nearbyMask, StringComparison.Ordinal);
+        Assert.Contains("places.photos.name", nearbyMask, StringComparison.Ordinal);
+        Assert.Contains("places.photos.widthPx", nearbyMask, StringComparison.Ordinal);
+        Assert.Contains("places.photos.heightPx", nearbyMask, StringComparison.Ordinal);
     }
 }

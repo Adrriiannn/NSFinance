@@ -28,6 +28,7 @@ type PlaceCardCarouselProps = {
 const arrowGap = 6;
 const arrowWidth = 30;
 const cardWidthRatio = 0.75;
+const cardHeightRatio = 1.68;
 
 export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const tokens = useThemeTokens();
@@ -37,7 +38,9 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
   const cardWidth = Math.floor(width * cardWidthRatio);
+  const cardHeight = Math.round(cardWidth * cardHeightRatio);
   const sideGutter = arrowWidth + arrowGap;
+  const carouselWidth = cardWidth + (sideGutter * 2);
   const currentPlace = places[currentIndex];
 
   const canGoPrevious = currentIndex > 0;
@@ -148,8 +151,8 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   }
 
   return (
-    <View style={[styles.wrapper, { width: cardWidth + (sideGutter * 2) }]}>
-      <View style={styles.viewport}>
+    <View style={styles.wrapper}>
+      <View style={[styles.viewport, { width: carouselWidth }]}>
         {canGoPrevious ? (
           <ArrowButton
             direction="left"
@@ -171,6 +174,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
         >
           <PlaceResultCard
             place={currentPlace}
+            height={cardHeight}
             onOpenWebsite={(place) => {
               void openExternalUrl(place.websiteUrl ?? null);
             }}
@@ -190,7 +194,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
           />
         ) : null}
       </View>
-      <View style={[styles.actionsWrap, { width: cardWidth, marginLeft: sideGutter }]}>
+      <View style={[styles.actionsWrap, { width: cardWidth }]}>
         <PlaceCardActions
           place={currentPlace}
           onDirections={(place) => {
@@ -237,20 +241,21 @@ function ArrowButton({
 
 const styles = StyleSheet.create({
   wrapper: {
-    alignItems: "flex-start",
-    marginTop: spacing[8],
-    marginLeft: spacing[8]
+    width: "100%",
+    alignItems: "center",
+    marginTop: spacing[8]
   },
   viewport: {
     position: "relative",
     alignItems: "flex-start",
-    justifyContent: "center"
+    justifyContent: "center",
+    alignSelf: "center"
   },
   animatedCard: {
     alignSelf: "flex-start"
   },
   actionsWrap: {
-    alignSelf: "flex-start"
+    alignSelf: "center"
   },
   arrow: {
     position: "absolute",
@@ -264,10 +269,10 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent"
   },
   leftArrow: {
-    left: -2
+    left: 0
   },
   rightArrow: {
-    right: -2
+    right: 0
   },
   rightArrowIcon: {
     transform: [{ rotate: "180deg" }]

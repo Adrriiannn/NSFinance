@@ -24,7 +24,9 @@ public static class GetPlacePhotoEndpoint
 
         var width = Math.Clamp(maxWidthPx ?? 1200, 100, 1600);
         var height = maxHeightPx.HasValue ? Math.Clamp(maxHeightPx.Value, 100, 1600) : (int?)null;
-        var escapedName = Uri.EscapeDataString(name.Trim());
+        var escapedName = string.Join(
+            '/',
+            name.Trim().Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.EscapeDataString));
         var dimensionQuery = height.HasValue
             ? $"maxHeightPx={height.Value}"
             : $"maxWidthPx={width}";
@@ -40,6 +42,7 @@ public static class GetPlacePhotoEndpoint
         return trimmed.StartsWith("places/", StringComparison.Ordinal)
                && trimmed.Contains("/photos/", StringComparison.Ordinal)
                && !trimmed.Contains("..", StringComparison.Ordinal)
+               && trimmed.Split('/', StringSplitOptions.RemoveEmptyEntries).Length == 4
                && trimmed.Length <= 256;
     }
 }

@@ -57,7 +57,9 @@ public sealed class GooglePlacesFieldMaskProvider : IGooglePlacesFieldMaskProvid
             "places.goodForWatchingSports",
             "places.paymentOptions",
             "places.accessibilityOptions",
-            "places.photos",
+            "places.photos.name",
+            "places.photos.widthPx",
+            "places.photos.heightPx",
             "places.location"
         ]);
 
@@ -108,7 +110,9 @@ public sealed class GooglePlacesFieldMaskProvider : IGooglePlacesFieldMaskProvid
             "places.goodForWatchingSports",
             "places.paymentOptions",
             "places.accessibilityOptions",
-            "places.photos",
+            "places.photos.name",
+            "places.photos.widthPx",
+            "places.photos.heightPx",
             "places.location"
         ]);
 
@@ -179,7 +183,9 @@ public sealed class GooglePlacesFieldMaskProvider : IGooglePlacesFieldMaskProvid
             "goodForWatchingSports",
             "paymentOptions",
             "accessibilityOptions",
-            "photos",
+            "photos.name",
+            "photos.widthPx",
+            "photos.heightPx",
             "location"
         ]);
 }

@@ -19,6 +19,7 @@ import {
 
 type PlaceResultCardProps = {
   place: CompanionPlaceCard;
+  height?: number;
   onOpenWebsite?: (place: CompanionPlaceCard) => void;
   onOpenMenu?: (place: CompanionPlaceCard) => void;
   onCall?: (place: CompanionPlaceCard) => void;
@@ -26,6 +27,7 @@ type PlaceResultCardProps = {
 
 export function PlaceResultCard({
   place,
+  height,
   onOpenWebsite,
   onOpenMenu,
   onCall
@@ -33,6 +35,7 @@ export function PlaceResultCard({
   const tokens = useThemeTokens();
   const [photoIndex, setPhotoIndex] = useState(0);
   const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
+  const [failedPhotoUrls, setFailedPhotoUrls] = useState<Set<string>>(() => new Set());
   const cardColors = {
     background: tokens.surfaces.card,
     border: tokens.isDarkTheme ? "rgba(255,190,122,0.3)" : tokens.palette.border,
@@ -58,8 +61,10 @@ export function PlaceResultCard({
       place.photoUrl
     ].filter((url): url is string => Boolean(url?.trim()));
 
-    return Array.from(new Set(source)).map(resolvePhotoUrl);
-  }, [place.photoUrl, place.photoUrls]);
+    return Array.from(new Set(source))
+      .map(resolvePhotoUrl)
+      .filter((url) => !failedPhotoUrls.has(url));
+  }, [failedPhotoUrls, place.photoUrl, place.photoUrls]);
   const activePhoto = photos[Math.min(photoIndex, Math.max(photos.length - 1, 0))];
   const photoPanResponder = useMemo(
     () =>
@@ -83,7 +88,8 @@ export function PlaceResultCard({
         styles.card,
         {
           backgroundColor: cardColors.background,
-          borderColor: cardColors.border
+          borderColor: cardColors.border,
+          height
         }
       ]}
     >
@@ -110,6 +116,9 @@ export function PlaceResultCard({
             resizeMode="cover"
             style={styles.photo}
             accessibilityLabel={`Photo of ${place.name}`}
+            onError={() => {
+              setFailedPhotoUrls((current) => new Set(current).add(activePhoto));
+            }}
           />
         </Pressable>
       ) : (
@@ -121,14 +130,12 @@ export function PlaceResultCard({
         </View>
       )}
 
-      {address ? (
-        <View style={styles.addressRow}>
-          <Ionicons name="location-outline" size={16} color={cardColors.secondary} />
-          <Text style={[styles.addressText, { color: cardColors.secondary }]} numberOfLines={2}>
-            {address}
-          </Text>
-        </View>
-      ) : null}
+      <View style={styles.addressRow}>
+        <Ionicons name="location-outline" size={16} color={cardColors.secondary} style={!address ? styles.invisible : null} />
+        <Text style={[styles.addressText, { color: cardColors.secondary }, !address ? styles.invisible : null]} numberOfLines={2}>
+          {address ?? "Address unavailable"}
+        </Text>
+      </View>
 
       <View style={[styles.divider, { backgroundColor: cardColors.separator }]} />
 
@@ -143,24 +150,31 @@ export function PlaceResultCard({
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
           {typeof place.openNow === "boolean" ? (
             <DetailRow
               icon="time-outline"
               label="Open now"
               value={place.openNow ? "Open" : "Closed"}
-              valueColor={place.openNow ? tokens.palette.success : tokens.palette.negative}
+              valueColor={place.openNow ? accentColor : tokens.palette.negative}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
           {price ? (
             <PriceRow
               activeCount={price.activeCount}
+              activeColor={accentColor}
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
           {websiteDisplay ? (
             <DetailRow
               icon="globe-outline"
@@ -172,7 +186,9 @@ export function PlaceResultCard({
               accessibilityLabel={`Open website for ${place.name}`}
               onPress={() => onOpenWebsite?.(place)}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
         </View>
 
         <View style={[styles.verticalDivider, { backgroundColor: cardColors.separator }]} />
@@ -187,7 +203,9 @@ export function PlaceResultCard({
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
           {closesIn || opensIn ? (
             <DetailRow
               icon="alarm-outline"
@@ -197,7 +215,9 @@ export function PlaceResultCard({
               textColor={cardColors.text}
               mutedColor={cardColors.secondary}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
           {phoneDisplay ? (
             <DetailRow
               icon="call-outline"
@@ -209,7 +229,9 @@ export function PlaceResultCard({
               accessibilityLabel={`Call ${place.name}`}
               onPress={() => onCall?.(place)}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
           {menuDisplay ? (
             <DetailRow
               icon="silverware-fork-knife"
@@ -222,7 +244,9 @@ export function PlaceResultCard({
               accessibilityLabel={`Open menu for ${place.name}`}
               onPress={() => onOpenMenu?.(place)}
             />
-          ) : null}
+          ) : (
+            <DetailRowPlaceholder />
+          )}
         </View>
       </View>
       <PlacePhotoViewer
@@ -404,7 +428,7 @@ function DetailRow({
         <Text style={[styles.detailLabel, { color: textColor }]} numberOfLines={1}>
           {label}
         </Text>
-        <Text style={[styles.detailValue, { color: valueColor ?? mutedColor }]} numberOfLines={2}>
+        <Text style={[styles.detailValue, { color: valueColor ?? mutedColor }]} numberOfLines={1}>
           {value}
         </Text>
       </View>
@@ -427,12 +451,18 @@ function DetailRow({
   return <View style={styles.detailRow}>{content}</View>;
 }
 
+function DetailRowPlaceholder() {
+  return <View style={[styles.detailRow, styles.invisible]} />;
+}
+
 function PriceRow({
   activeCount,
+  activeColor,
   textColor,
   mutedColor
 }: {
   activeCount: 1 | 2 | 3;
+  activeColor: string;
   textColor: string;
   mutedColor: string;
 }) {
@@ -447,9 +477,9 @@ function PriceRow({
           {[0, 1, 2].map((index) => (
             <Text
               key={index}
-              style={{ color: index < activeCount ? "#D79A24" : "rgba(117,117,117,0.48)" }}
+              style={{ color: index < activeCount ? activeColor : "rgba(117,117,117,0.48)" }}
             >
-              €
+              {"\u20ac"}
             </Text>
           ))}
         </Text>
@@ -463,6 +493,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     borderWidth: 1,
     padding: spacing[10],
+    overflow: "hidden",
     shadowColor: "#000",
     shadowOpacity: 0.18,
     shadowRadius: 12,
@@ -470,7 +501,7 @@ const styles = StyleSheet.create({
     elevation: 3
   },
   header: {
-    minHeight: 30,
+    minHeight: 40,
     flexDirection: "row",
     alignItems: "flex-start",
     gap: spacing[8]
@@ -502,6 +533,7 @@ const styles = StyleSheet.create({
     fontWeight: "500"
   },
   addressRow: {
+    minHeight: 34,
     flexDirection: "row",
     alignItems: "flex-start",
     gap: spacing[4],
@@ -557,6 +589,9 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.72
+  },
+  invisible: {
+    opacity: 0
   },
   viewerBackdrop: {
     flex: 1,

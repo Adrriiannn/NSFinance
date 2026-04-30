@@ -101,9 +101,10 @@ public sealed class GooglePlacesCacheKeyBuilder : IGooglePlacesCacheKeyBuilder
             ? request.Longitude.Value.ToString("0.#######", CultureInfo.InvariantCulture)
             : string.Empty;
         var radius = request.RadiusMeters?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        var fieldMaskVariant = NormalizeText(request.FieldMaskVariant);
         return BuildHashedKey(
             "companion_discovery",
-            $"{query}|{region}|{language}|{maxCandidates}|{latitude}|{longitude}|{radius}");
+            $"{query}|{region}|{language}|{maxCandidates}|{latitude}|{longitude}|{radius}|{fieldMaskVariant}");
     }
 
     public string BuildCompanionNearbyKey(CompanionNearbyDiscoveryRequest request, int maxCandidates)
@@ -113,6 +114,7 @@ public sealed class GooglePlacesCacheKeyBuilder : IGooglePlacesCacheKeyBuilder
         var latitude = request.Latitude.ToString("0.#######", CultureInfo.InvariantCulture);
         var longitude = request.Longitude.ToString("0.#######", CultureInfo.InvariantCulture);
         var radius = request.RadiusMeters.ToString(CultureInfo.InvariantCulture);
+        var fieldMaskVariant = NormalizeText(request.FieldMaskVariant);
         var types = request.IncludedTypes.Count == 0
             ? string.Empty
             : string.Join(
@@ -125,7 +127,7 @@ public sealed class GooglePlacesCacheKeyBuilder : IGooglePlacesCacheKeyBuilder
 
         return BuildHashedKey(
             "companion_nearby",
-            $"{region}|{language}|{maxCandidates}|{latitude}|{longitude}|{radius}|{types}");
+            $"{region}|{language}|{maxCandidates}|{latitude}|{longitude}|{radius}|{types}|{fieldMaskVariant}");
     }
 
     public string BuildMerchantLookupKey(MerchantPlaceLookupRequest request, int maxCandidates)

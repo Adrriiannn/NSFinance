@@ -12,9 +12,9 @@ public sealed class CompanionPlaceDiscoveryService(
     ILogger<CompanionPlaceDiscoveryService> logger) : ICompanionPlaceDiscoveryService
 {
     private const string DiscoveryUseCase = "companion_discovery";
-    private const string CompanionFieldMaskVariant = "companion_discovery_v1";
+    private const string CompanionFieldMaskVariant = "companion_discovery_v2_photos";
     private const string NearbyDiscoveryUseCase = "companion_discovery_nearby";
-    private const string CompanionNearbyFieldMaskVariant = "companion_nearby_v1";
+    private const string CompanionNearbyFieldMaskVariant = "companion_nearby_v2_photos";
     private readonly GooglePlacesOptions placesOptions = options.Value;
 
     public async Task<CompanionPlaceDiscoveryResult> DiscoverAsync(
@@ -550,6 +550,10 @@ public sealed class GooglePlacesCompanionSearchService(
     IOptions<GooglePlacesOptions> options,
     ILogger<GooglePlacesCompanionSearchService> logger) : IPlacesSearchService
 {
+    private const string CompanionFieldMaskVariant = "companion_discovery_v2_photos";
+    private const string CompanionNearbyFieldMaskVariant = "companion_nearby_v2_photos";
+    private const string CompanionHybridFieldMaskVariant = "companion_hybrid_v2_photos";
+
     private readonly GooglePlacesOptions placesOptions = options.Value;
 
     public async Task<PlaceSearchResult> SearchAsync(
@@ -670,7 +674,10 @@ public sealed class GooglePlacesCompanionSearchService(
                 else
                 {
                     warnings.Add("places_retrieval:nearby_search_used");
-                    var nearbyRequest = nearbyRequestBuild.Request;
+                    var nearbyRequest = nearbyRequestBuild.Request with
+                    {
+                        FieldMaskVariant = CompanionNearbyFieldMaskVariant
+                    };
                     logger.LogInformation(
                         "Companion places nearby search includedTypes={IncludedTypes} radiusMeters={RadiusMeters} country={CountryCode}",
                         string.Join(',', nearbyRequest.IncludedTypes),
@@ -943,7 +950,7 @@ public sealed class GooglePlacesCompanionSearchService(
                 FromCache: false,
                 RequestedCandidateCount: 0,
                 ReturnedCandidateCount: 0,
-                FieldMaskVariant: "companion_discovery_v1",
+                FieldMaskVariant: CompanionFieldMaskVariant,
                 Elapsed: TimeSpan.Zero,
                 TimedOut: false,
                 ProviderErrorCode: failureCode),
@@ -1056,7 +1063,8 @@ public sealed class GooglePlacesCompanionSearchService(
             Latitude: locationContext?.Latitude,
             Longitude: locationContext?.Longitude,
             RadiusMeters: locationContext?.RadiusMeters,
-            MaxCandidates: maxCandidates);
+            MaxCandidates: maxCandidates,
+            FieldMaskVariant: CompanionFieldMaskVariant);
     }
 
     private static string? NormalizeCountryCode(string? countryCode)
@@ -1299,7 +1307,7 @@ public sealed class GooglePlacesCompanionSearchService(
             Metadata: baseMetadata with
             {
                 UseCase = "companion_hybrid",
-                FieldMaskVariant = "companion_hybrid_v1",
+                FieldMaskVariant = CompanionHybridFieldMaskVariant,
                 RequestedCandidateCount = Math.Max(
                     textResult.Metadata.RequestedCandidateCount,
                     nearbyResult.Metadata.RequestedCandidateCount),

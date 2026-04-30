@@ -93,7 +93,8 @@ public sealed record CompanionPlaceDiscoveryRequest(
     double? Latitude = null,
     double? Longitude = null,
     int? RadiusMeters = null,
-    int? MaxCandidates = null);
+    int? MaxCandidates = null,
+    string? FieldMaskVariant = null);
 
 public sealed record CompanionNearbyDiscoveryRequest(
     double Latitude,
@@ -102,7 +103,8 @@ public sealed record CompanionNearbyDiscoveryRequest(
     IReadOnlyList<string> IncludedTypes,
     string? CountryCode = null,
     string? LanguageCode = null,
-    int? MaxCandidates = null);
+    int? MaxCandidates = null,
+    string? FieldMaskVariant = null);
 
 public sealed record CompanionPlaceDiscoveryResult(
     bool Succeeded,
