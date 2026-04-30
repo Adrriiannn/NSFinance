@@ -34,6 +34,8 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const tokens = useThemeTokens();
   const { width } = useWindowDimensions();
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [photoViewerActive, setPhotoViewerActive] = useState(false);
+  const [photoGestureActive, setPhotoGestureActive] = useState(false);
   const slide = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
@@ -42,6 +44,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const sideGutter = arrowWidth + arrowGap;
   const carouselWidth = cardWidth + (sideGutter * 2);
   const currentPlace = places[currentIndex];
+  const carouselGestureBlocked = photoViewerActive || photoGestureActive;
 
   const canGoPrevious = currentIndex > 0;
   const canGoNext = currentIndex < places.length - 1;
@@ -96,8 +99,15 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 14 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          !carouselGestureBlocked
+          && Math.abs(gesture.dx) > 14
+          && Math.abs(gesture.dx) > Math.abs(gesture.dy),
         onPanResponderRelease: (_event, gesture) => {
+          if (carouselGestureBlocked) {
+            return;
+          }
+
           if (gesture.dx < -42 && canGoNext) {
             navigate(1);
           } else if (gesture.dx > 42 && canGoPrevious) {
@@ -105,7 +115,7 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
           }
         }
       }),
-    [canGoNext, canGoPrevious, navigate]
+    [canGoNext, canGoPrevious, carouselGestureBlocked, navigate]
   );
 
   if (!currentPlace || places.length === 0) {
@@ -184,6 +194,8 @@ export function PlaceCardCarousel({ places }: PlaceCardCarouselProps) {
             onCall={(place) => {
               void handleCall(place);
             }}
+            onPhotoViewerActiveChange={setPhotoViewerActive}
+            onPhotoGestureActiveChange={setPhotoGestureActive}
           />
         </Animated.View>
         {canGoNext ? (

@@ -23,6 +23,8 @@ type PlaceResultCardProps = {
   onOpenWebsite?: (place: CompanionPlaceCard) => void;
   onOpenMenu?: (place: CompanionPlaceCard) => void;
   onCall?: (place: CompanionPlaceCard) => void;
+  onPhotoViewerActiveChange?: (active: boolean) => void;
+  onPhotoGestureActiveChange?: (active: boolean) => void;
 };
 
 export function PlaceResultCard({
@@ -30,7 +32,9 @@ export function PlaceResultCard({
   height,
   onOpenWebsite,
   onOpenMenu,
-  onCall
+  onCall,
+  onPhotoViewerActiveChange,
+  onPhotoGestureActiveChange
 }: PlaceResultCardProps) {
   const tokens = useThemeTokens();
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -163,19 +167,51 @@ export function PlaceResultCard({
       .filter((url) => !failedPhotoUrls.has(url));
   }, [failedPhotoUrls, place.photoUrl, place.photoUrls]);
   const activePhoto = photos[Math.min(photoIndex, Math.max(photos.length - 1, 0))];
+  const releasePhotoGesture = useCallback(() => {
+    onPhotoGestureActiveChange?.(false);
+  }, [onPhotoGestureActiveChange]);
+  const openPhotoViewer = useCallback(() => {
+    setPhotoViewerOpen(true);
+    onPhotoViewerActiveChange?.(true);
+  }, [onPhotoViewerActiveChange]);
+  const closePhotoViewer = useCallback(() => {
+    setPhotoViewerOpen(false);
+    onPhotoViewerActiveChange?.(false);
+  }, [onPhotoViewerActiveChange]);
+
+  useEffect(() => {
+    return () => {
+      onPhotoViewerActiveChange?.(false);
+      onPhotoGestureActiveChange?.(false);
+    };
+  }, [onPhotoGestureActiveChange, onPhotoViewerActiveChange]);
+
+  useEffect(() => {
+    setPhotoIndex(0);
+    setFailedPhotoUrls(new Set());
+    setPhotoViewerOpen(false);
+    onPhotoViewerActiveChange?.(false);
+    onPhotoGestureActiveChange?.(false);
+  }, [onPhotoGestureActiveChange, onPhotoViewerActiveChange, place.id]);
+
   const photoPanResponder = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_event, gesture) => photos.length > 1 && Math.abs(gesture.dx) > 16 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderGrant: () => {
+          onPhotoGestureActiveChange?.(true);
+        },
         onPanResponderRelease: (_event, gesture) => {
           if (gesture.dx < -36) {
             setPhotoIndex((current) => Math.min(photos.length - 1, current + 1));
           } else if (gesture.dx > 36) {
             setPhotoIndex((current) => Math.max(0, current - 1));
           }
-        }
+          releasePhotoGesture();
+        },
+        onPanResponderTerminate: releasePhotoGesture
       }),
-    [photos.length]
+    [onPhotoGestureActiveChange, photos.length, releasePhotoGesture]
   );
 
   return (
@@ -205,7 +241,13 @@ export function PlaceResultCard({
         <Pressable
           accessibilityRole="imagebutton"
           accessibilityLabel={`Open photo of ${place.name}`}
-          onPress={() => setPhotoViewerOpen(true)}
+          onPress={openPhotoViewer}
+          onPressIn={() => {
+            if (photos.length > 1) {
+              onPhotoGestureActiveChange?.(true);
+            }
+          }}
+          onPressOut={releasePhotoGesture}
           {...photoPanResponder.panHandlers}
         >
           <Image
@@ -253,7 +295,7 @@ export function PlaceResultCard({
         initialIndex={photoIndex}
         placeName={place.name}
         onIndexChange={setPhotoIndex}
-        onClose={() => setPhotoViewerOpen(false)}
+        onClose={closePhotoViewer}
       />
     </View>
   );
@@ -367,6 +409,28 @@ function PlacePhotoViewer({
               }
             ]}
           />
+          {photos.length > 1 && index > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Previous photo"
+              hitSlop={12}
+              style={[styles.viewerNav, styles.viewerNavLeft]}
+              onPress={() => moveToIndex(index - 1)}
+            >
+              <Ionicons name="chevron-back" size={52} color="rgba(255,255,255,0.68)" />
+            </Pressable>
+          ) : null}
+          {photos.length > 1 && index < photos.length - 1 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Next photo"
+              hitSlop={12}
+              style={[styles.viewerNav, styles.viewerNavRight]}
+              onPress={() => moveToIndex(index + 1)}
+            >
+              <Ionicons name="chevron-forward" size={52} color="rgba(255,255,255,0.68)" />
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Close photo"
@@ -600,6 +664,20 @@ const styles = StyleSheet.create({
   viewerImage: {
     width: "100%",
     height: "100%"
+  },
+  viewerNav: {
+    position: "absolute",
+    top: "45%",
+    width: 56,
+    height: 72,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  viewerNavLeft: {
+    left: spacing[10]
+  },
+  viewerNavRight: {
+    right: spacing[10]
   },
   viewerClose: {
     position: "absolute",
