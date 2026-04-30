@@ -158,6 +158,28 @@ public sealed class ConversationArchitectureGuardTests
         Assert.Equal(CompanionActionKind.SortPreviousResults, action.Kind);
         Assert.Equal("distance", action.SortGoal);
         Assert.False(action.RequiresClarification);
+        Assert.Contains("single_best", action.Preferences);
+    }
+
+    [Theory]
+    [InlineData("thanks")]
+    [InlineData("never mind")]
+    [InlineData("stop")]
+    public void CompanionActionResolver_ClosesObviousClosingTurns(string userMessage)
+    {
+        var resolver = new CompanionActionResolver();
+
+        var action = resolver.Resolve(
+            BuildUserChatRequest(userMessage),
+            CreateDefaultState(),
+            EmptyResultContextReadResult(),
+            interpretation: null,
+            retrievalPlan: null,
+            intelligence: null);
+
+        Assert.Equal(CompanionActionKind.CloseConversation, action.Kind);
+        Assert.False(action.RequiresToolExecution);
+        Assert.False(action.RequiresClarification);
     }
 
     [Fact]
@@ -1662,6 +1684,81 @@ public sealed class ConversationArchitectureGuardTests
     }
 
     [Fact]
+    public async Task ConversationLayerOrchestrator_ExecutesResolvedNewPlaceSearchDirectly_ReturnsStructuredCards()
+    {
+        var order = new List<string>();
+        var telemetry = new RecordingChatTelemetry();
+        var interpretation = BuildPlaceInterpretation(
+            canonicalConcept: "coffee shop",
+            brandTerms: ["Starbucks"],
+            includeTypes: ["cafe"]);
+        var orchestrator = new ConversationLayerOrchestrator(
+            contextService: new StubConversationContextService(),
+            behaviorEngine: new StubBehaviorEngine(order),
+            modeRouter: new StructuredCardsModeRouter(order),
+            responseComposer: new ActionOnlyResponseComposer(order),
+            logger: NullLogger<ConversationLayerOrchestrator>.Instance,
+            options: Options.Create(new AIIntegrationOptions
+            {
+                ChatTurns = new ChatTurnOptions
+                {
+                    MaxUserMessageChars = 4000,
+                    MaxClientRequestIdLength = 128
+                },
+                Architecture = new ConversationArchitectureOptions
+                {
+                    EmitTelemetryEvents = true,
+                    InterpretationEnabled = true,
+                    ConversationIntelligenceEnabled = true,
+                    CompanionActionResolverEnabled = true,
+                    ResolvedActionDirectExecutionEnabled = true,
+                    UnifiedPlaceCardsEnabled = true
+                }
+            }),
+            telemetry: telemetry,
+            turnInterpretationEngine: new FixedTurnInterpretationEngine(interpretation),
+            placeRetrievalPlanner: new PlaceRetrievalPlanner(),
+            conversationIntelligenceService: new FixedConversationIntelligenceService(
+                BuildConversationIntelligence(
+                    phase: "start",
+                    nextAction: "execute_search",
+                    shouldExecuteTool: true)),
+            companionActionResolver: new CompanionActionResolver());
+
+        var response = await orchestrator.ExecuteAsync(
+            new UserChatRequest(
+                UserMessage: "starbucks near me",
+                RecentTurns: [],
+                State: CreateDefaultState(),
+                CorrelationId: "corr-direct-starbucks",
+                Metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [CompanionLocationMetadataKeys.Latitude] = "53.3498053",
+                    [CompanionLocationMetadataKeys.Longitude] = "-6.2603097",
+                    [CompanionLocationMetadataKeys.Source] = "gps"
+                },
+                ClientRequestId: "client-direct-starbucks",
+                UserId: null,
+                ConversationThreadId: null,
+                UsePersistentMemory: false,
+                AllowTransientFallbackOnPersistentFailure: false),
+            CancellationToken.None);
+
+        Assert.True(response.Succeeded);
+        Assert.Equal(["mode", "compose"], order);
+        Assert.Equal("I found these matching options:", response.ReplyText);
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Starbucks One", card.Name);
+
+        var decision = telemetry.Single("chat.turn.companion_action_execution_decision");
+        Assert.Equal("NewPlaceSearch", decision["resolvedActionKind"]);
+        Assert.Equal(true, decision["executedDirectly"]);
+        Assert.Equal(false, decision["fellThroughToBehaviorEngine"]);
+        Assert.Equal(true, decision["structuredResultsReturned"]);
+        Assert.Equal(1, decision["structuredResultCount"]);
+    }
+
+    [Fact]
     public async Task ConversationLayerOrchestrator_EmitsPerTurnModelUsageSummary()
     {
         var order = new List<string>();
@@ -2430,6 +2527,41 @@ public sealed class ConversationArchitectureGuardTests
         }
     }
 
+    private sealed class FixedTurnInterpretationEngine(TurnInterpretationV2 interpretation) : ITurnInterpretationEngine
+    {
+        public Task<TurnInterpretationResult> InterpretAsync(
+            TurnInterpretationPromptInput input,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(
+                new TurnInterpretationResult(
+                    Interpretation: interpretation,
+                    UsedModelInvocation: false,
+                    UsedFallback: false,
+                    SelectionReason: "fixed_turn_interpretation",
+                    Warnings: []));
+        }
+    }
+
+    private sealed class FixedConversationIntelligenceService(ConversationIntelligenceResult intelligence)
+        : IConversationIntelligenceService
+    {
+        public Task<ConversationIntelligenceEvaluationResult> EvaluateAsync(
+            ConversationIntelligencePromptInput input,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(
+                new ConversationIntelligenceEvaluationResult(
+                    Intelligence: intelligence,
+                    Route: null,
+                    UsedModelInvocation: false,
+                    FallbackUsed: false,
+                    Warnings: []));
+        }
+    }
+
     private sealed class FixedPlaceDetailsService(PlaceDetailsResult details) : IPlaceDetailsService
     {
         public Task<PlaceDetailsResult> GetDetailsAsync(string placeId, CancellationToken cancellationToken)
@@ -2438,6 +2570,76 @@ public sealed class ConversationArchitectureGuardTests
             {
                 PlaceId = placeId
             });
+        }
+    }
+
+    private sealed class StructuredCardsModeRouter(ICollection<string> order) : IModeRouter
+    {
+        public Task<ConversationModeExecutionResult> RouteAsync(
+            ConversationModeRequest request,
+            CancellationToken cancellationToken)
+        {
+            order.Add("mode");
+            Assert.Equal(ConversationBehaviorStrategy.ToolReadyHandoff, request.StrategyDecision.Strategy);
+            var retrievalPlan = TurnInterpretationMetadataMapper.ReadRetrievalPlan(request.ClientMetadata);
+            Assert.Equal("Starbucks", retrievalPlan?.BrandTerm);
+
+            var structuredResults = new CompanionStructuredResults(
+                "places",
+                [
+                    new CompanionPlaceCardResult(
+                        Id: "starbucks-1",
+                        Name: "Starbucks One",
+                        DistanceMeters: 220d,
+                        PhotoUrl: null,
+                        PhotoUrls: [],
+                        FormattedAddress: "1 Test Street",
+                        ShortFormattedAddress: "1 Test Street",
+                        Rating: 4.4d,
+                        OpenNow: true,
+                        PriceLevel: null,
+                        WebsiteUrl: null,
+                        Category: "Coffee shop",
+                        PrimaryTypeDisplayName: "Coffee shop",
+                        ClosesInMinutes: null,
+                        OpensInMinutes: null,
+                        PhoneNumber: null,
+                        MenuUrl: null,
+                        GoogleMapsUri: "https://maps.example/starbucks-1",
+                        Latitude: 53.3499d,
+                        Longitude: -6.2604d)
+                ]);
+
+            return Task.FromResult(
+                new ConversationModeExecutionResult(
+                    CompositionRequest: new ResponseCompositionRequest(
+                        ResponseType: ResponseCompositionType.ResultSummary,
+                        ToneDirective: ResponseToneDirective.Neutral,
+                        Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                        Mode: ConversationMode.Exploration,
+                        ReadinessLevel: ConversationReadinessLevel.R4_ToolReady,
+                        UserMessage: request.Request.UserMessage,
+                        GroundedData: new GroundedDataEnvelope(
+                            Entities: [new ConversationSuggestedEntity("starbucks-1", "Starbucks One", 1)],
+                            SummaryFacts: [new GroundedDataPoint("Starbucks One", "Coffee shop, rating 4.4")],
+                            Warnings: []),
+                        Constraints: request.State.Constraints,
+                        MissingConstraints: [],
+                        MaxLengthHint: 220,
+                        ClarificationQuestion: null,
+                        SuggestedOptions: []),
+                    DeterministicReplyText: null,
+                    SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    State: request.State with
+                    {
+                        ActiveMode = ConversationMode.Exploration,
+                        ReadinessLevel = ConversationReadinessLevel.R4_ToolReady
+                    },
+                    ResultContext: null,
+                    Warnings: [],
+                    FollowUpIntentHints: [],
+                    Succeeded: true,
+                    StructuredResults: structuredResults));
         }
     }
 
@@ -2545,6 +2747,32 @@ public sealed class ConversationArchitectureGuardTests
                     UsedDeterministicPath: false,
                     FallbackUsed: false,
                     SelectionReason: "stub_response_composition",
+                    RecoveryReason: null,
+                    Warnings: [],
+                    FollowUpIntentHints: []));
+        }
+    }
+
+    private sealed class ActionOnlyResponseComposer(ICollection<string> order) : IResponseComposer
+    {
+        public Task<ResponseCompositionResult> ComposeAsync(
+            ResponseCompositionRequest request,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            order.Add("compose");
+
+            return Task.FromResult(
+                new ResponseCompositionResult(
+                    ReplyText: "I'll look for Starbucks locations within about 1200 meters of your current location.",
+                    SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    ModelUsed: "stub-model",
+                    DeploymentUsed: "stub-deployment",
+                    ReasoningClass: AIModelClass.Fast,
+                    UsedModelInvocation: true,
+                    UsedDeterministicPath: false,
+                    FallbackUsed: false,
+                    SelectionReason: "stub_action_only_response",
                     RecoveryReason: null,
                     Warnings: [],
                     FollowUpIntentHints: []));

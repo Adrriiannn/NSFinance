@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -697,6 +698,43 @@ public sealed class ConversationLayerOrchestrator(
         }
 
         if (resolvedAction is not null
+            && options.Value.Architecture.ResolvedActionDirectExecutionEnabled
+            && ShouldExecuteResolvedActionDirectly(resolvedAction, resultContextReadResult.ActiveResultContext))
+        {
+            if (resolvedAction.Kind == CompanionActionKind.CloseConversation)
+            {
+                await TrackResolvedActionExecutionDecisionAsync(
+                    request,
+                    resolvedAction,
+                    executedDirectly: true,
+                    fellThroughToBehaviorEngine: false,
+                    resultContextReadResult.ActiveResultContext is not null,
+                    structuredResultsReturned: false,
+                    structuredResultCount: 0,
+                    reason: "resolved_action_close_conversation_completed",
+                    cancellationToken);
+            }
+
+            return await ExecuteResolvedActionDirectlyAsync(
+                request,
+                contextMessages,
+                contextSummary,
+                interpretedState,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                clientMetadata,
+                resolvedAction,
+                conversationIntelligence,
+                turnInterpretation,
+                retrievalPlan,
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken);
+        }
+
+        if (resolvedAction is not null
             && options.Value.Architecture.PlacesFollowUpExecutionEnabled
             && placeResultFollowUpService is not null
             && resultContextReadResult.ActiveResultContext is not null
@@ -719,6 +757,20 @@ public sealed class ConversationLayerOrchestrator(
                 intelligenceModelCallCount,
                 intelligenceFastModelCallCount,
                 intelligenceHeavyModelCallCount,
+                cancellationToken);
+        }
+
+        if (resolvedAction is not null)
+        {
+            await TrackResolvedActionExecutionDecisionAsync(
+                request,
+                resolvedAction,
+                executedDirectly: false,
+                fellThroughToBehaviorEngine: true,
+                resultContextReadResult.ActiveResultContext is not null,
+                structuredResultsReturned: false,
+                structuredResultCount: 0,
+                reason: ResolveActionFallthroughReason(resolvedAction, resultContextReadResult.ActiveResultContext),
                 cancellationToken);
         }
 
@@ -1107,6 +1159,416 @@ public sealed class ConversationLayerOrchestrator(
             ResponseUsedModelInvocation: routedComposition.UsedModelInvocation);
     }
 
+    private bool ShouldExecuteResolvedActionDirectly(
+        CompanionResolvedAction action,
+        ResultContextSnapshot? activeResultContext)
+    {
+        if (action.Kind == CompanionActionKind.CloseConversation)
+        {
+            return true;
+        }
+
+        if (action.Kind == CompanionActionKind.NewPlaceSearch)
+        {
+            return action.RequiresToolExecution && !action.RequiresClarification;
+        }
+
+        if (action.Kind is CompanionActionKind.FilterPreviousResults
+            or CompanionActionKind.SortPreviousResults
+            or CompanionActionKind.EnrichPreviousResults
+            or CompanionActionKind.ComparePreviousResults)
+        {
+            return options.Value.Architecture.PlacesFollowUpExecutionEnabled
+                   && placeResultFollowUpService is not null
+                   && activeResultContext is not null;
+        }
+
+        return false;
+    }
+
+    private async Task<OrchestratedConversationResult> ExecuteResolvedActionDirectlyAsync(
+        UserChatRequest request,
+        IReadOnlyList<AIMessage> contextMessages,
+        string? contextSummary,
+        ConversationStateSnapshot state,
+        ResultContextReadResult resultContextReadResult,
+        IReadOnlyList<string> existingWarnings,
+        IReadOnlyList<string> intelligenceWarnings,
+        IReadOnlyDictionary<string, string> clientMetadata,
+        CompanionResolvedAction resolvedAction,
+        ConversationIntelligenceResult? conversationIntelligence,
+        TurnInterpretationV2? turnInterpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        int intelligenceModelCallCount,
+        int intelligenceFastModelCallCount,
+        int intelligenceHeavyModelCallCount,
+        CancellationToken cancellationToken)
+    {
+        return resolvedAction.Kind switch
+        {
+            CompanionActionKind.CloseConversation => BuildResolvedDirectResponse(
+                request,
+                contextSummary,
+                state with
+                {
+                    NeedsFollowUp = false,
+                    PendingClarification = null,
+                    LastSuggestedOptions = []
+                },
+                existingWarnings.Concat(intelligenceWarnings).ToArray(),
+                BuildCloseReply(request.UserMessage),
+                "resolved_action_close_conversation"),
+            CompanionActionKind.FilterPreviousResults
+                or CompanionActionKind.SortPreviousResults
+                or CompanionActionKind.EnrichPreviousResults
+                or CompanionActionKind.ComparePreviousResults => await ExecutePlaceFollowUpPathAsync(
+                    request,
+                    contextSummary,
+                    state,
+                    resultContextReadResult,
+                    existingWarnings,
+                    intelligenceWarnings,
+                    resolvedAction,
+                    conversationIntelligence,
+                    turnInterpretation,
+                    retrievalPlan,
+                    intelligenceModelCallCount,
+                    intelligenceFastModelCallCount,
+                    intelligenceHeavyModelCallCount,
+                    cancellationToken),
+            CompanionActionKind.NewPlaceSearch => await ExecuteResolvedNewPlaceSearchPathAsync(
+                request,
+                contextMessages,
+                contextSummary,
+                state,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                clientMetadata,
+                resolvedAction,
+                conversationIntelligence,
+                turnInterpretation,
+                retrievalPlan,
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken),
+            _ => BuildResolvedDirectResponse(
+                request,
+                contextSummary,
+                state,
+                existingWarnings.Concat(intelligenceWarnings).ToArray(),
+                "I can help with that, but I need one more detail before taking action.",
+                "resolved_action_direct_fallback")
+        };
+    }
+
+    private async Task<OrchestratedConversationResult> ExecuteResolvedNewPlaceSearchPathAsync(
+        UserChatRequest request,
+        IReadOnlyList<AIMessage> contextMessages,
+        string? contextSummary,
+        ConversationStateSnapshot state,
+        ResultContextReadResult resultContextReadResult,
+        IReadOnlyList<string> existingWarnings,
+        IReadOnlyList<string> intelligenceWarnings,
+        IReadOnlyDictionary<string, string> clientMetadata,
+        CompanionResolvedAction resolvedAction,
+        ConversationIntelligenceResult? conversationIntelligence,
+        TurnInterpretationV2? turnInterpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        int intelligenceModelCallCount,
+        int intelligenceFastModelCallCount,
+        int intelligenceHeavyModelCallCount,
+        CancellationToken cancellationToken)
+    {
+        var executionState = ApplyResolvedActionToState(state, resolvedAction);
+        var actionMetadata = MergeResolvedActionMetadata(clientMetadata, turnInterpretation, retrievalPlan, resolvedAction);
+        var strategy = new ConversationTurnStrategyDecision(
+            Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+            ModeCandidate: ConversationMode.Exploration,
+            Readiness: new ReadinessTransition(state.ReadinessLevel, ConversationReadinessLevel.R4_ToolReady),
+            Confidence: conversationIntelligence?.UserIntentConfidence ?? turnInterpretation?.Confidence ?? 0.86d,
+            FollowUpBindingType: FollowUpBindingType.NewTopic,
+            ClarificationQuestion: null,
+            SuggestedOptions: [],
+            ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+            ReasonCodes: ["resolved_action_direct_place_search"]);
+        var subtype = new ExplorationSubtypeDecision(
+            Subtype: ExplorationSubtype.Structured,
+            Confidence: strategy.Confidence,
+            ToolPathEligible: true,
+            PrimaryWhy: resolvedAction.Reason,
+            MissingConstraints: [],
+            ReasonCodes: ["resolved_action_direct_structured_exploration"]);
+
+        await telemetry.TrackAsync(
+            "chat.turn.mode_handoff",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["mode"] = ConversationMode.Exploration.ToString(),
+                ["explorationSubtype"] = ExplorationSubtype.Structured.ToString(),
+                ["readiness"] = ConversationReadinessLevel.R4_ToolReady.ToString(),
+                ["handoffReason"] = "resolved_action_direct_place_search"
+            },
+            cancellationToken);
+
+        var modeStopwatch = Stopwatch.StartNew();
+        var modeResult = await modeRouter.RouteAsync(
+            new ConversationModeRequest(
+                Request: request,
+                ContextMessages: contextMessages,
+                ContextSummary: contextSummary,
+                State: executionState,
+                ResultContext: resultContextReadResult.ActiveResultContext,
+                StrategyDecision: strategy,
+                ExplorationSubtypeDecision: subtype,
+                ClientMetadata: actionMetadata,
+                ConversationIntelligence: conversationIntelligence),
+            cancellationToken);
+        modeStopwatch.Stop();
+
+        var finalState = RefreshExplorationContextUsage(ApplyConversationMemoryTtl(modeResult.State));
+        var currentResultContext = modeResult.ResultContext ?? resultContextReadResult.ActiveResultContext;
+        await TrackResolvedActionExecutionDecisionAsync(
+            request,
+            resolvedAction,
+            executedDirectly: true,
+            fellThroughToBehaviorEngine: false,
+            hasResultContext: currentResultContext is not null,
+            structuredResultsReturned: modeResult.StructuredResults?.Items.Count > 0,
+            structuredResultCount: modeResult.StructuredResults?.Items.Count ?? 0,
+            reason: "resolved_action_direct_place_search_completed",
+            cancellationToken);
+
+        if (!modeResult.Succeeded)
+        {
+            var failureResponse = new UserChatResponse(
+                ReplyText: "I couldn't complete that search safely.",
+                ModelUsed: "deterministic-resolved-action-mode-failure",
+                ReasoningClass: AIModelClass.Fast,
+                SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ReferencedContextSummary: contextSummary,
+                Warnings: existingWarnings
+                    .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(intelligenceWarnings)
+                    .Concat(resolvedAction.Warnings)
+                    .Concat(modeResult.Warnings)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                FollowUpIntentHints: modeResult.FollowUpIntentHints,
+                Succeeded: false,
+                FailureReason: modeResult.FailureReason ?? "resolved_action_mode_execution_failed");
+
+            return BuildResolvedActionResult(
+                failureResponse,
+                finalState,
+                "resolved_action_mode_execution_failed",
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                modeStopwatch.ElapsedMilliseconds,
+                responseCompositionDurationMs: 0,
+                responseFallbackUsed: true,
+                responseUsedModelInvocation: false);
+        }
+
+        if (!string.IsNullOrWhiteSpace(modeResult.DeterministicReplyText))
+        {
+            var deterministicReply = CollapseReplyForStructuredResults(
+                SanitizeUserFacingReply(modeResult.DeterministicReplyText!, modeResult.StructuredResults, resolvedAction),
+                modeResult.StructuredResults);
+            var reply = new UserChatResponse(
+                ReplyText: deterministicReply,
+                ModelUsed: "deterministic-resolved-action-mode-handler",
+                ReasoningClass: AIModelClass.Fast,
+                SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                    finalState,
+                    currentResultContext,
+                    strategy,
+                    finalState.LastSuggestedOptions,
+                    modeResult.SuggestedStructuredStateUpdates,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)),
+                ReferencedContextSummary: contextSummary,
+                Warnings: existingWarnings
+                    .Concat(resultContextReadResult.ReasonCodes)
+                    .Concat(intelligenceWarnings)
+                    .Concat(resolvedAction.Warnings)
+                    .Concat(modeResult.Warnings)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                FollowUpIntentHints: modeResult.FollowUpIntentHints
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                Succeeded: true,
+                FailureReason: null,
+                StructuredResults: modeResult.StructuredResults);
+
+            return BuildResolvedActionResult(
+                reply,
+                finalState,
+                "resolved_action_mode_handler_deterministic_response",
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                modeStopwatch.ElapsedMilliseconds,
+                responseCompositionDurationMs: 0,
+                responseFallbackUsed: false,
+                responseUsedModelInvocation: false);
+        }
+
+        var compositionRequest = EnrichCompositionRequest(
+            modeResult.CompositionRequest ?? new ResponseCompositionRequest(
+                ResponseType: ResponseCompositionType.ResultSummary,
+                ToneDirective: ResolveToneDirective(conversationIntelligence),
+                Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+                Mode: ConversationMode.Exploration,
+                ReadinessLevel: finalState.ReadinessLevel,
+                UserMessage: request.UserMessage,
+                GroundedData: new GroundedDataEnvelope([], [], modeResult.Warnings),
+                Constraints: finalState.Constraints,
+                MissingConstraints: finalState.MissingConstraints ?? [],
+                MaxLengthHint: modeResult.StructuredResults?.Items.Count > 0 ? 220 : 420,
+                ClarificationQuestion: null,
+                SuggestedOptions: []),
+            conversationIntelligence,
+            turnInterpretation,
+            retrievalPlan,
+            currentResultContext,
+            resolvedAction,
+            followUpExecutionResult: null);
+
+        var compositionStopwatch = Stopwatch.StartNew();
+        var composed = await responseComposer.ComposeAsync(
+            compositionRequest,
+            request.CorrelationId,
+            cancellationToken);
+        compositionStopwatch.Stop();
+        var replyText = CollapseReplyForStructuredResults(
+            SanitizeUserFacingReply(composed.ReplyText, modeResult.StructuredResults, resolvedAction),
+            modeResult.StructuredResults);
+        var response = new UserChatResponse(
+            ReplyText: replyText,
+            ModelUsed: composed.ModelUsed,
+            ReasoningClass: composed.ReasoningClass,
+            SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                finalState,
+                currentResultContext,
+                strategy,
+                finalState.LastSuggestedOptions,
+                modeResult.SuggestedStructuredStateUpdates,
+                composed.SuggestedStructuredStateUpdates),
+            ReferencedContextSummary: contextSummary,
+            Warnings: existingWarnings
+                .Concat(resultContextReadResult.ReasonCodes)
+                .Concat(intelligenceWarnings)
+                .Concat(resolvedAction.Warnings)
+                .Concat(modeResult.Warnings)
+                .Concat(composed.Warnings)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            FollowUpIntentHints: modeResult.FollowUpIntentHints
+                .Concat(composed.FollowUpIntentHints)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            Succeeded: true,
+            FailureReason: null,
+            StructuredResults: modeResult.StructuredResults);
+
+        return BuildResolvedActionResult(
+            response,
+            finalState,
+            composed.SelectionReason,
+            intelligenceModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
+            intelligenceFastModelCallCount + (composed.UsedModelInvocation ? 1 : 0),
+            intelligenceHeavyModelCallCount,
+            modeStopwatch.ElapsedMilliseconds,
+            compositionStopwatch.ElapsedMilliseconds,
+            composed.FallbackUsed,
+            composed.UsedModelInvocation,
+            routeModel: composed.ModelUsed,
+            routeDeployment: composed.DeploymentUsed,
+            routeClass: composed.ReasoningClass,
+            usedDeterministicPath: composed.UsedDeterministicPath,
+            responseRecoveryReason: composed.RecoveryReason);
+    }
+
+    private OrchestratedConversationResult BuildResolvedDirectResponse(
+        UserChatRequest request,
+        string? contextSummary,
+        ConversationStateSnapshot state,
+        IReadOnlyList<string> warnings,
+        string replyText,
+        string routeReason)
+    {
+        var response = new UserChatResponse(
+            ReplyText: replyText,
+            ModelUsed: "deterministic-resolved-action",
+            ReasoningClass: AIModelClass.Fast,
+            SuggestedStructuredStateUpdates: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            ReferencedContextSummary: contextSummary,
+            Warnings: warnings.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            FollowUpIntentHints: [],
+            Succeeded: true,
+            FailureReason: null);
+
+        return BuildResolvedActionResult(
+            response,
+            state,
+            routeReason,
+            totalModelCallCount: 0,
+            fastModelCallCount: 0,
+            heavyModelCallCount: 0,
+            modeExecutionDurationMs: 0,
+            responseCompositionDurationMs: 0,
+            responseFallbackUsed: false,
+            responseUsedModelInvocation: false);
+    }
+
+    private static OrchestratedConversationResult BuildResolvedActionResult(
+        UserChatResponse response,
+        ConversationStateSnapshot state,
+        string selectionReason,
+        int totalModelCallCount,
+        int fastModelCallCount,
+        int heavyModelCallCount,
+        long modeExecutionDurationMs,
+        long responseCompositionDurationMs,
+        bool responseFallbackUsed,
+        bool responseUsedModelInvocation,
+        string routeModel = "deterministic-resolved-action",
+        string routeDeployment = "deterministic-resolved-action",
+        AIModelClass routeClass = AIModelClass.Fast,
+        bool usedDeterministicPath = true,
+        string? responseRecoveryReason = null)
+    {
+        return new OrchestratedConversationResult(
+            Response: response,
+            State: state,
+            AssistantRoute: new AIModelRoute(
+                TaskType: AITaskType.ResponseComposition,
+                ModelClass: routeClass,
+                Model: routeModel,
+                Deployment: routeDeployment,
+                IsFallback: routeModel.StartsWith("deterministic", StringComparison.OrdinalIgnoreCase),
+                Reason: selectionReason,
+                Notes: []),
+            TotalModelCallCount: totalModelCallCount,
+            HeavyModelCallCount: heavyModelCallCount,
+            FastModelCallCount: fastModelCallCount,
+            UsedDeterministicPath: usedDeterministicPath,
+            UsedDeterministicRecovery: false,
+            BehaviorDurationMs: 0,
+            ModeExecutionDurationMs: modeExecutionDurationMs,
+            ResponseCompositionDurationMs: responseCompositionDurationMs,
+            SelectionReasons: BuildSelectionReasons(selectionReason),
+            EscalationJustifications: [],
+            ResponseSelectionReason: selectionReason,
+            ResponseFallbackUsed: responseFallbackUsed,
+            ResponseRecoveryReason: responseRecoveryReason,
+            ResponseUsedModelInvocation: responseUsedModelInvocation);
+    }
+
     private static string CollapseReplyForStructuredResults(
         string replyText,
         CompanionStructuredResults? structuredResults)
@@ -1120,7 +1582,7 @@ public sealed class ConversationLayerOrchestrator(
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .FirstOrDefault(line => !IsNumberedResultLine(line));
 
-        return string.IsNullOrWhiteSpace(firstUsefulLine)
+        return string.IsNullOrWhiteSpace(firstUsefulLine) || IsActionOnlyAcknowledgement(firstUsefulLine)
             ? "I found these matching options:"
             : firstUsefulLine;
     }
@@ -1142,6 +1604,18 @@ public sealed class ConversationLayerOrchestrator(
         return index < trimmed.Length - 1
                && (trimmed[index] == '.' || trimmed[index] == ')')
                && char.IsWhiteSpace(trimmed[index + 1]);
+    }
+
+    private static bool IsActionOnlyAcknowledgement(string line)
+    {
+        var normalized = line.Trim().ToLowerInvariant();
+        return normalized.StartsWith("i'll look", StringComparison.Ordinal)
+               || normalized.StartsWith("i will look", StringComparison.Ordinal)
+               || normalized.StartsWith("i'll show", StringComparison.Ordinal)
+               || normalized.StartsWith("i will show", StringComparison.Ordinal)
+               || normalized.StartsWith("i can look", StringComparison.Ordinal)
+               || normalized.StartsWith("i can show", StringComparison.Ordinal)
+               || normalized.Contains("next helpful step", StringComparison.Ordinal);
     }
 
     private static IReadOnlyDictionary<string, string> MergeConversationIntelligenceMetadata(
@@ -1191,6 +1665,121 @@ public sealed class ConversationLayerOrchestrator(
             ResolvedAction = resolvedAction,
             FollowUpExecutionResult = followUpExecutionResult
         };
+    }
+
+    private static ConversationStateSnapshot ApplyResolvedActionToState(
+        ConversationStateSnapshot state,
+        CompanionResolvedAction action)
+    {
+        var constraints = new Dictionary<string, string>(state.Constraints, StringComparer.OrdinalIgnoreCase)
+        {
+            [ConversationConstraintKeys.SemanticFamily] = ConversationSemanticFamilies.Exploration
+        };
+
+        if (!string.IsNullOrWhiteSpace(action.PlaceQuery))
+        {
+            constraints[ConversationConstraintKeys.ExplorationCanonicalConcept] = action.PlaceQuery.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(action.LocationQuery))
+        {
+            constraints[ConversationConstraintKeys.ExplorationArea] = action.LocationQuery.Trim();
+        }
+
+        if (action.ExcludeConcepts.Count > 0)
+        {
+            constraints[ConversationConstraintKeys.ExplorationExcludeTypes] = string.Join('|', action.ExcludeConcepts);
+        }
+
+        if (action.Preferences.Count > 0)
+        {
+            constraints[ConversationConstraintKeys.ExplorationPreferences] = string.Join('|', action.Preferences);
+        }
+
+        if (action.TimeFilters.Count > 0)
+        {
+            constraints[ConversationConstraintKeys.ExplorationTime] = string.Join('|', action.TimeFilters);
+        }
+
+        return state with
+        {
+            ActiveMode = ConversationMode.Exploration,
+            ModeCandidate = ConversationMode.Exploration,
+            ReadinessLevel = ConversationReadinessLevel.R4_ToolReady,
+            Constraints = constraints,
+            MissingConstraints = [],
+            PendingClarification = null,
+            NeedsFollowUp = true,
+            FollowUpBindingType = FollowUpBindingType.NewTopic
+        };
+    }
+
+    private static IReadOnlyDictionary<string, string> MergeResolvedActionMetadata(
+        IReadOnlyDictionary<string, string> clientMetadata,
+        TurnInterpretationV2? turnInterpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        CompanionResolvedAction action)
+    {
+        if (action.Kind != CompanionActionKind.NewPlaceSearch)
+        {
+            return clientMetadata;
+        }
+
+        var effectivePlan = retrievalPlan ?? new PlaceRetrievalPlanV1(
+            Version: "place_retrieval_plan_v1",
+            SearchScope: "concept_first",
+            PlannerAuthoritative: !string.IsNullOrWhiteSpace(action.PlaceQuery),
+            BrandTerm: null,
+            CanonicalConcept: action.PlaceQuery,
+            SelectedDomain: null,
+            IntentFamily: RealWorldIntentFamily.PlaceDiscovery,
+            IncludedTypes: action.IncludeConcepts,
+            ExcludedTypes: action.ExcludeConcepts,
+            Preferences: action.Preferences,
+            TimeFilters: action.TimeFilters,
+            AudienceFilters: [],
+            NearMeSemantic: string.Equals(action.LocationQuery, "near me", StringComparison.OrdinalIgnoreCase),
+            RequiresLocation: !string.IsNullOrWhiteSpace(action.LocationQuery),
+            ResolvedAreaHint: string.Equals(action.LocationQuery, "near me", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : action.LocationQuery,
+            ReasonCodes: ["resolved_action_synthesized_retrieval_plan"]);
+
+        if (retrievalPlan is not null)
+        {
+            effectivePlan = retrievalPlan with
+            {
+                PlannerAuthoritative = retrievalPlan.PlannerAuthoritative || !string.IsNullOrWhiteSpace(action.PlaceQuery),
+                CanonicalConcept = !string.IsNullOrWhiteSpace(retrievalPlan.CanonicalConcept)
+                    ? retrievalPlan.CanonicalConcept
+                    : action.PlaceQuery,
+                IncludedTypes = retrievalPlan.IncludedTypes.Count > 0
+                    ? retrievalPlan.IncludedTypes
+                    : action.IncludeConcepts,
+                ExcludedTypes = retrievalPlan.ExcludedTypes.Count > 0
+                    ? retrievalPlan.ExcludedTypes
+                    : action.ExcludeConcepts,
+                Preferences = retrievalPlan.Preferences.Count > 0
+                    ? retrievalPlan.Preferences
+                    : action.Preferences,
+                TimeFilters = retrievalPlan.TimeFilters.Count > 0
+                    ? retrievalPlan.TimeFilters
+                    : action.TimeFilters,
+                NearMeSemantic = retrievalPlan.NearMeSemantic
+                               || string.Equals(action.LocationQuery, "near me", StringComparison.OrdinalIgnoreCase),
+                ResolvedAreaHint = !string.IsNullOrWhiteSpace(retrievalPlan.ResolvedAreaHint)
+                    ? retrievalPlan.ResolvedAreaHint
+                    : string.Equals(action.LocationQuery, "near me", StringComparison.OrdinalIgnoreCase)
+                        ? null
+                        : action.LocationQuery,
+                ReasonCodes = retrievalPlan.ReasonCodes
+                    .Concat(["resolved_action_retrieval_plan_enriched"])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+        }
+
+        return TurnInterpretationMetadataMapper.Merge(clientMetadata, turnInterpretation, effectivePlan);
     }
 
     private async Task<OrchestratedConversationResult> ExecutePlaceFollowUpPathAsync(
@@ -1288,9 +1877,14 @@ public sealed class ConversationLayerOrchestrator(
             request.CorrelationId,
             cancellationToken);
         responseCompositionStopwatch.Stop();
+        var structuredResults = options.Value.Architecture.UnifiedPlaceCardsEnabled
+            ? BuildFollowUpStructuredResults(followUpResult, activeResult, resolvedAction)
+            : null;
 
         var reply = new UserChatResponse(
-            ReplyText: composed.ReplyText,
+            ReplyText: CollapseReplyForStructuredResults(
+                SanitizeUserFacingReply(composed.ReplyText, structuredResults, resolvedAction),
+                structuredResults),
             ModelUsed: composed.ModelUsed,
             ReasoningClass: composed.ReasoningClass,
             SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
@@ -1313,7 +1907,19 @@ public sealed class ConversationLayerOrchestrator(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             Succeeded: true,
-            FailureReason: null);
+            FailureReason: null,
+            StructuredResults: structuredResults);
+
+        await TrackResolvedActionExecutionDecisionAsync(
+            request,
+            resolvedAction,
+            executedDirectly: true,
+            fellThroughToBehaviorEngine: false,
+            hasResultContext: true,
+            structuredResultsReturned: structuredResults?.Items.Count > 0,
+            structuredResultCount: structuredResults?.Items.Count ?? 0,
+            reason: "resolved_action_prior_result_follow_up_completed",
+            cancellationToken);
 
         return new OrchestratedConversationResult(
             Response: reply,
@@ -1374,23 +1980,186 @@ public sealed class ConversationLayerOrchestrator(
 
     private static string BuildFollowUpFact(PlaceFollowUpCandidate candidate)
     {
-        var parts = new List<string>();
-        if (candidate.MatchedReasons.Count > 0)
+        if (candidate.MatchedReasons.Any(static reason => reason.Contains("parking", StringComparison.OrdinalIgnoreCase)))
         {
-            parts.Add($"matched {string.Join(", ", candidate.MatchedReasons.Take(3))}");
+            return "parking evidence found from available place details";
         }
 
-        if (candidate.MissingEvidence.Count > 0)
+        if (candidate.MissingEvidence.Any(static reason => reason.Contains("parking", StringComparison.OrdinalIgnoreCase)
+                                                         || reason.Contains("confirmed", StringComparison.OrdinalIgnoreCase)))
         {
-            parts.Add($"missing {string.Join(", ", candidate.MissingEvidence.Take(3))}");
+            return "parking evidence unclear";
         }
 
-        if (candidate.Score.HasValue)
+        return "matched the requested refinement using available place details";
+    }
+
+    private static CompanionStructuredResults? BuildFollowUpStructuredResults(
+        PlaceFollowUpExecutionResult followUpResult,
+        ResultContextSnapshot resultContext,
+        CompanionResolvedAction action)
+    {
+        if (followUpResult.Candidates.Count == 0 || resultContext.SuggestedEntities.Count == 0)
         {
-            parts.Add($"score {candidate.Score.Value:0.00}");
+            return null;
         }
 
-        return parts.Count == 0 ? "no additional evidence" : string.Join("; ", parts);
+        var entityById = resultContext.SuggestedEntities
+            .Where(static entity => !string.IsNullOrWhiteSpace(entity.EntityId))
+            .GroupBy(static entity => entity.EntityId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        var maxCount = action.Preferences.Contains("single_best", StringComparer.OrdinalIgnoreCase)
+            ? 1
+            : 8;
+        var cards = followUpResult.Candidates
+            .Where(candidate => entityById.ContainsKey(candidate.PlaceId))
+            .Take(maxCount)
+            .Select(candidate => BuildFollowUpCard(candidate, entityById[candidate.PlaceId]))
+            .Where(static card => card is not null)
+            .Select(static card => card!)
+            .ToArray();
+
+        return cards.Length == 0
+            ? null
+            : new CompanionStructuredResults("places", cards);
+    }
+
+    private static CompanionPlaceCardResult? BuildFollowUpCard(
+        PlaceFollowUpCandidate candidate,
+        ResultContextEntity entity)
+    {
+        var attributes = entity.Attributes ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var photoUrls = ReadStringList(attributes, "photo_urls");
+        var photoUrl = ReadString(attributes, "photo_url") ?? photoUrls.FirstOrDefault();
+        if (photoUrls.Count == 0 && !string.IsNullOrWhiteSpace(photoUrl))
+        {
+            photoUrls = [photoUrl!];
+        }
+
+        return new CompanionPlaceCardResult(
+            Id: candidate.PlaceId,
+            Name: candidate.Name,
+            DistanceMeters: ReadDouble(attributes, "distance_meters"),
+            PhotoUrl: photoUrl,
+            PhotoUrls: photoUrls,
+            FormattedAddress: ReadString(attributes, "formatted_address"),
+            ShortFormattedAddress: ReadString(attributes, "short_address"),
+            Rating: ReadDouble(attributes, "rating"),
+            OpenNow: ReadBool(attributes, "open_now"),
+            PriceLevel: ReadString(attributes, "price_level"),
+            WebsiteUrl: ReadString(attributes, "website_url"),
+            Category: entity.Category,
+            PrimaryTypeDisplayName: ReadString(attributes, "primary_type_display_name"),
+            ClosesInMinutes: null,
+            OpensInMinutes: ReadInt(attributes, "opens_in_minutes"),
+            PhoneNumber: ReadString(attributes, "phone_number"),
+            MenuUrl: ReadString(attributes, "menu_url"),
+            GoogleMapsUri: ReadString(attributes, "google_maps_uri") ?? entity.StableReference,
+            Latitude: ReadDouble(attributes, "latitude"),
+            Longitude: ReadDouble(attributes, "longitude"));
+    }
+
+    private static string? ReadString(IReadOnlyDictionary<string, string> attributes, string key)
+    {
+        return attributes.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
+    }
+
+    private static IReadOnlyList<string> ReadStringList(IReadOnlyDictionary<string, string> attributes, string key)
+    {
+        var value = ReadString(attributes, key);
+        return string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(static item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+    }
+
+    private static double? ReadDouble(IReadOnlyDictionary<string, string> attributes, string key)
+    {
+        return attributes.TryGetValue(key, out var raw)
+               && double.TryParse(raw, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static int? ReadInt(IReadOnlyDictionary<string, string> attributes, string key)
+    {
+        return attributes.TryGetValue(key, out var raw)
+               && int.TryParse(raw, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static bool? ReadBool(IReadOnlyDictionary<string, string> attributes, string key)
+    {
+        return attributes.TryGetValue(key, out var raw)
+               && bool.TryParse(raw, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static string BuildCloseReply(string userMessage)
+    {
+        var normalized = userMessage.Trim().ToLowerInvariant();
+        if (normalized.Contains("stop", StringComparison.Ordinal)
+            || normalized.Contains("never mind", StringComparison.Ordinal)
+            || normalized.Contains("nevermind", StringComparison.Ordinal))
+        {
+            return "No problem - I'll leave it there.";
+        }
+
+        return "No problem.";
+    }
+
+    private static string SanitizeUserFacingReply(
+        string replyText,
+        CompanionStructuredResults? structuredResults,
+        CompanionResolvedAction? action)
+    {
+        if (!ContainsInternalSignal(replyText))
+        {
+            return replyText;
+        }
+
+        if (structuredResults?.Type == "places" && structuredResults.Items.Count > 0)
+        {
+            if (string.Equals(action?.Requirement, "parking", StringComparison.OrdinalIgnoreCase))
+            {
+                return "These are the strongest parking matches I can infer from available place data:";
+            }
+
+            if (action?.Kind == CompanionActionKind.SortPreviousResults)
+            {
+                return action.Preferences.Contains("single_best", StringComparer.OrdinalIgnoreCase)
+                    ? "The closest match is:"
+                    : "I sorted those results by distance:";
+            }
+
+            if (action?.Kind is CompanionActionKind.FilterPreviousResults or CompanionActionKind.EnrichPreviousResults)
+            {
+                return "I filtered those results:";
+            }
+
+            return "I found these matching options:";
+        }
+
+        return "I used the available place details to refine those results.";
+    }
+
+    private static bool ContainsInternalSignal(string value)
+    {
+        return value.Contains("_signal", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("concept_match:", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("excluded_concept:", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("place_follow_up_", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("resolved_action_", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("score:", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("score ", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("ReasonCodes", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyDictionary<string, object?> BuildResolvedActionTelemetry(
@@ -1413,6 +2182,68 @@ public sealed class ConversationLayerOrchestrator(
             ["excludeConceptCount"] = action.ExcludeConcepts.Count,
             ["warningCount"] = action.Warnings.Count
         };
+    }
+
+    private async Task TrackResolvedActionExecutionDecisionAsync(
+        UserChatRequest request,
+        CompanionResolvedAction action,
+        bool executedDirectly,
+        bool fellThroughToBehaviorEngine,
+        bool hasResultContext,
+        bool structuredResultsReturned,
+        int structuredResultCount,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        await telemetry.TrackAsync(
+            "chat.turn.companion_action_execution_decision",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["resolvedActionKind"] = action.Kind.ToString(),
+                ["requiresToolExecution"] = action.RequiresToolExecution,
+                ["requiresClarification"] = action.RequiresClarification,
+                ["executedDirectly"] = executedDirectly,
+                ["fellThroughToBehaviorEngine"] = fellThroughToBehaviorEngine,
+                ["placeQuery"] = action.PlaceQuery,
+                ["locationQuery"] = action.LocationQuery,
+                ["hasGps"] = HasGpsMetadata(request.Metadata),
+                ["hasActiveResultContext"] = hasResultContext,
+                ["requirement"] = action.Requirement,
+                ["sortGoal"] = action.SortGoal,
+                ["structuredResultsReturned"] = structuredResultsReturned,
+                ["structuredResultCount"] = structuredResultCount,
+                ["reason"] = reason
+            },
+            cancellationToken);
+    }
+
+    private static string ResolveActionFallthroughReason(
+        CompanionResolvedAction action,
+        ResultContextSnapshot? activeResultContext)
+    {
+        if (!action.RequiresToolExecution)
+        {
+            return "not_tool_action";
+        }
+
+        if ((action.Kind is CompanionActionKind.FilterPreviousResults
+                or CompanionActionKind.SortPreviousResults
+                or CompanionActionKind.EnrichPreviousResults
+                or CompanionActionKind.ComparePreviousResults)
+            && activeResultContext is null)
+        {
+            return "missing_result_context";
+        }
+
+        return "guard_or_feature_flag";
+    }
+
+    private static bool HasGpsMetadata(IReadOnlyDictionary<string, string>? metadata)
+    {
+        return metadata is not null
+               && metadata.ContainsKey(CompanionLocationMetadataKeys.Latitude)
+               && metadata.ContainsKey(CompanionLocationMetadataKeys.Longitude);
     }
 
     private bool CanUsePersistentMemory(UserChatRequest request)

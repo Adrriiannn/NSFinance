@@ -257,7 +257,7 @@ public sealed class StructuredExplorationHandler(
                             Rank: index + 1,
                             StableReference: item.GoogleMapsUri,
                             Category: ResolveCategoryFromPlaces(item),
-                            Attributes: BuildResultContextAttributes(item, locationContext)))
+                            Attributes: BuildResultContextAttributes(item, locationContext, photoService)))
                         .ToArray(),
                     SelectedEntityId: null,
                     ParentResultSetId: request.ResultContext?.ResultSetId,
@@ -1146,7 +1146,8 @@ public sealed class StructuredExplorationHandler(
 
     private static IReadOnlyDictionary<string, string> BuildResultContextAttributes(
         PlaceSearchItem item,
-        PlaceSearchLocationContext? locationContext)
+        PlaceSearchLocationContext? locationContext,
+        IGooglePlacesPhotoService? photoService)
     {
         var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         AddIfPresent("primary_type", item.PrimaryType);
@@ -1155,10 +1156,17 @@ public sealed class StructuredExplorationHandler(
         AddIfPresent("short_address", item.ShortFormattedAddress);
         AddIfPresent("formatted_address", item.FormattedAddress);
         AddIfPresent("price_level", item.PriceLevel);
+        AddIfPresent("website_url", item.WebsiteUri);
+        AddIfPresent("phone_number", item.NationalPhoneNumber);
+        AddIfPresent("google_maps_uri", item.GoogleMapsUri);
+        AddIfPresent("menu_url", TryResolveMenuUrl(item.WebsiteUri));
         AddIfPresent("business_status", item.BusinessStatus);
         AddIfPresent("rating", item.Rating?.ToString("0.0", CultureInfo.InvariantCulture));
         AddIfPresent("user_rating_count", item.UserRatingCount?.ToString(CultureInfo.InvariantCulture));
         AddIfPresent("open_now", item.OpeningHours?.OpenNow?.ToString());
+        AddIfPresent("opens_in_minutes", item.OpeningHours?.OpenNow == false
+            ? TryComputeFutureMinutes(item.OpeningHours.NextOpenTimeUtc)?.ToString(CultureInfo.InvariantCulture)
+            : null);
         AddIfPresent("takeout", item.Takeout?.ToString());
         AddIfPresent("delivery", item.Delivery?.ToString());
         AddIfPresent("dine_in", item.DineIn?.ToString());
@@ -1172,6 +1180,11 @@ public sealed class StructuredExplorationHandler(
             locationContext?.Longitude,
             item.Location);
         AddIfPresent("distance_meters", distanceMeters?.ToString("0", CultureInfo.InvariantCulture));
+        AddIfPresent("latitude", item.Location?.Latitude.ToString(CultureInfo.InvariantCulture));
+        AddIfPresent("longitude", item.Location?.Longitude.ToString(CultureInfo.InvariantCulture));
+        var photoUrls = BuildPlacePhotoUrls(item.Photos, photoService);
+        AddIfPresent("photo_url", photoUrls.FirstOrDefault());
+        AddIfPresent("photo_urls", photoUrls.Count > 0 ? string.Join("|", photoUrls) : null);
         return attributes;
 
         void AddIfPresent(string key, string? value)

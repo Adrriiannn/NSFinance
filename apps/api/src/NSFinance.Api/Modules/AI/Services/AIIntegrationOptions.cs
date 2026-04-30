@@ -145,6 +145,8 @@ public sealed class ConversationArchitectureOptions
     public bool PlacesBrandFirstEnabled { get; set; } = true;
     public bool PlacesOpenWorldConceptRankingEnabled { get; set; } = true;
     public bool ResponseCompositionAIScriptlessEnabled { get; set; } = true;
+    public bool ResolvedActionDirectExecutionEnabled { get; set; } = true;
+    public bool UnifiedPlaceCardsEnabled { get; set; } = true;
     public int ResultContextActiveMinutes { get; set; } = 30;
     public int ResultContextPersistedHours { get; set; } = 24;
     public int ExplorationConstraintTtlMinutes { get; set; } = 30;

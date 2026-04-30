@@ -30,9 +30,6 @@ public sealed partial class CompanionActionResolver : ICompanionActionResolver
 
         var activeResult = resultContext.ActiveResultContext;
         var nextAction = intelligence?.NextAction.Type;
-        var targetPreviousResults = activeResult is not null
-                                    && (intelligence?.TaskState.TargetPreviousResults == true
-                                        || IsPriorResultAction(nextAction));
         var reason = intelligence?.NextAction.Reason
                      ?? interpretation?.RecommendedNextStep
                      ?? "Resolved from turn interpretation and conversation state.";
@@ -45,13 +42,19 @@ public sealed partial class CompanionActionResolver : ICompanionActionResolver
         var preferences = MergeDistinct(
             interpretation?.PlacePlan.Preferences,
             retrievalPlan?.Preferences,
-            requirement is null ? [] : [requirement]);
+            requirement is null ? [] : [requirement],
+            IsSingleBestTurn(request.UserMessage) ? ["single_best"] : []);
         var timeFilters = MergeDistinct(
             interpretation?.PlacePlan.TimeFilters,
             retrievalPlan?.TimeFilters);
         var targetResultSetId = activeResult?.ResultSetId.ToString("D", CultureInfo.InvariantCulture);
+        var targetPreviousResults = activeResult is not null
+                                    && (intelligence?.TaskState.TargetPreviousResults == true
+                                        || IsPriorResultAction(nextAction)
+                                        || IsPriorResultRefinementTurn(request.UserMessage, sortGoal, requirement));
 
-        if (string.Equals(intelligence?.ConversationPhase, "closing", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(intelligence?.ConversationPhase, "closing", StringComparison.OrdinalIgnoreCase)
+            || IsClosingTurn(request.UserMessage))
         {
             return Build(
                 CompanionActionKind.CloseConversation,
@@ -163,6 +166,28 @@ public sealed partial class CompanionActionResolver : ICompanionActionResolver
     private static bool IsPriorResultAction(string? nextAction)
     {
         return nextAction is "filter_previous_results" or "sort_previous_results" or "enrich_details";
+    }
+
+    private static bool IsPriorResultRefinementTurn(
+        string userMessage,
+        string? sortGoal,
+        string? requirement)
+    {
+        var stripped = StripLocationAndRefinementNoise(userMessage);
+        if (IsResultOnlyFollowUp(stripped))
+        {
+            return true;
+        }
+
+        var normalized = Normalize(stripped);
+        if (!string.IsNullOrWhiteSpace(sortGoal)
+            && normalized is "closest" or "nearest" or "distance")
+        {
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(requirement)
+               && normalized is "parking" or "with parking" or "has parking";
     }
 
     private static string? ResolvePlaceQuery(
@@ -376,10 +401,43 @@ public sealed partial class CompanionActionResolver : ICompanionActionResolver
     private static bool IsResultOnlyFollowUp(string value)
     {
         var normalized = Normalize(value);
-        return normalized is "which one" or "closest only" or "just the closest please" or "closest please" or "open now"
+        return normalized is "which one"
+               or "closest"
+               or "nearest"
+               or "closest only"
+               or "just the closest"
+               or "just the closest please"
+               or "closest please"
+               or "open now"
+               or "parking"
+               or "with parking"
+               or "has parking"
                || normalized.StartsWith("which one ", StringComparison.Ordinal)
                || normalized.StartsWith("just ", StringComparison.Ordinal)
                || normalized.StartsWith("not ", StringComparison.Ordinal);
+    }
+
+    private static bool IsSingleBestTurn(string value)
+    {
+        var normalized = Normalize(value);
+        return normalized.Contains("just the closest", StringComparison.Ordinal)
+               || normalized.Contains("closest only", StringComparison.Ordinal)
+               || normalized.Contains("nearest only", StringComparison.Ordinal);
+    }
+
+    private static bool IsClosingTurn(string value)
+    {
+        var normalized = Normalize(value).Trim('.', '!', '?');
+        return normalized is "thanks"
+               or "thank you"
+               or "cheers"
+               or "nice one"
+               or "that's all"
+               or "thats all"
+               or "all good"
+               or "never mind"
+               or "nevermind"
+               or "stop";
     }
 
     private static string Normalize(string? value)
