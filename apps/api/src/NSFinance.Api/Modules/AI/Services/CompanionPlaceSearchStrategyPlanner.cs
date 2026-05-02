@@ -2,12 +2,12 @@ using System.Text.RegularExpressions;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
-public sealed class CompanionPlaceSearchStrategyPlanner(IChatTelemetry telemetry) : ICompanionPlaceSearchStrategyPlanner
+public sealed class DeterministicCompanionPlaceSearchStrategyFallback(IChatTelemetry telemetry) : IDeterministicCompanionPlaceSearchStrategyFallback
 {
     private const int DefaultPoolSize = 50;
     private const int DefaultVisibleCards = 10;
 
-    public CompanionPlaceSearchStrategy Plan(UserChatRequest request, CompanionSemanticIntent intent)
+    public CompanionPlaceSearchStrategy Plan(UserChatRequest request, CompanionSemanticIntent intent, string fallbackReason)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(intent);
@@ -31,13 +31,14 @@ public sealed class CompanionPlaceSearchStrategyPlanner(IChatTelemetry telemetry
             MaxCandidatePoolSize: DefaultPoolSize,
             MaxVisibleCards: Math.Clamp(intent.RequestedMaxResults ?? DefaultVisibleCards, 1, DefaultVisibleCards),
             Confidence: intent.Confidence,
-            Warnings: []);
+            Warnings: [fallbackReason]);
 
         _ = telemetry.TrackAsync(
-            "places.search_strategy.planned",
+            "places.search_strategy.fallback_used",
             new Dictionary<string, object?>
             {
                 ["originalMessage"] = request.UserMessage,
+                ["fallbackReason"] = fallbackReason,
                 ["canonicalQuery"] = strategy.CanonicalQuery,
                 ["rawEntityText"] = strategy.Entity?.RawEntityText,
                 ["canonicalEntity"] = strategy.Entity?.CanonicalName,

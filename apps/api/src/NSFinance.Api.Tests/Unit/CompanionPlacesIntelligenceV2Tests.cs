@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Persistence;
@@ -265,9 +266,10 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_AibBanks_SplitsEntityAndRole()
     {
-        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("AIB banks near me"),
-            BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB banks" });
+            BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB banks" },
+            "test");
 
         Assert.Equal("AIB", strategy.Entity?.CanonicalName);
         Assert.Equal("bank_branch", strategy.Role.RequestedRole);
@@ -275,11 +277,72 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     }
 
     [Fact]
+    public void AIPlanner_ParsesValidJson()
+    {
+        var parser = new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer());
+        var response = SuccessfulAiResponse(AibBankStrategyJson());
+
+        var parsed = parser.TryParse(
+            response,
+            BuildRequest("AIB banks near me"),
+            BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance"),
+            out var strategy,
+            out _,
+            out _);
+
+        Assert.True(parsed);
+        Assert.Equal("AIB bank", strategy?.CanonicalQuery);
+        Assert.Equal("AIB", strategy?.Entity?.CanonicalName);
+        Assert.Equal("bank_branch", strategy?.Role.RequestedRole);
+    }
+
+    [Fact]
+    public async Task AIPlanner_RejectsInvalidJsonAndFallsBack()
+    {
+        var telemetry = new RecordingTelemetry();
+        var planner = BuildAiPlanner("not json", telemetry);
+
+        var strategy = await planner.PlanAsync(
+            BuildRequest("AIB banks near me"),
+            BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB banks" },
+            CancellationToken.None);
+
+        Assert.Equal("AIB", strategy.Entity?.CanonicalName);
+        Assert.Contains(strategy.Warnings, item => item.Contains("invalid_json", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.ai_parse_failed");
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.finalized"
+                                                  && item.Properties.TryGetValue("source", out var source)
+                                                  && string.Equals(source?.ToString(), "fallback", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void AIPlanner_RejectsOverBroadVariants()
+    {
+        var validator = new CompanionPlaceSearchVariantValidator(new NoOpChatTelemetry());
+        var strategy = new CompanionPlaceSearchStrategy(
+            "bike shops near me",
+            "bike shops",
+            null,
+            new CompanionPlaceRoleIntent("bicycle_store", ["bicycle_store"], ["bicycle_store"], [], [], "compatible"),
+            [
+                new CompanionPlaceSearchVariant("bike shops", "primary", false, true, 0.9),
+                new CompanionPlaceSearchVariant("local places", "provider_probe", false, false, 0.2)
+            ],
+            [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "intent_fit_then_distance", 50, 10, 0.9, []);
+
+        var variants = validator.Validate(strategy);
+
+        Assert.Single(variants);
+        Assert.Equal("bike shops", variants[0].Query);
+    }
+
+    [Fact]
     public void SearchStrategy_AibAtms_SplitsEntityAndAtmRole()
     {
-        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("AIB ATMs near me"),
-            BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB ATMs" });
+            BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB ATMs" },
+            "test");
 
         Assert.Equal("AIB", strategy.Entity?.CanonicalName);
         Assert.Equal("atm", strategy.Role.RequestedRole);
@@ -289,9 +352,10 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_FineDining_HasNoEntityAndRestaurantModifier()
     {
-        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("fine dining restaurants near me"),
-            BuildIntent(placeQuery: "fine dining restaurants", rankingGoal: "concept_fit_then_distance", softPreferences: ["upscale"]) with { BrandOrEntity = "fine dining" });
+            BuildIntent(placeQuery: "fine dining restaurants", rankingGoal: "concept_fit_then_distance", softPreferences: ["upscale"]) with { BrandOrEntity = "fine dining" },
+            "test");
 
         Assert.Null(strategy.Entity);
         Assert.Equal("restaurant", strategy.Role.RequestedRole);
@@ -302,9 +366,10 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_CarParks_HasNoEntityAndParkingRole()
     {
-        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("car parks near me"),
-            BuildIntent(placeQuery: "car parks", rankingGoal: "parking_match_then_distance") with { BrandOrEntity = "car parks" });
+            BuildIntent(placeQuery: "car parks", rankingGoal: "parking_match_then_distance") with { BrandOrEntity = "car parks" },
+            "test");
 
         Assert.Null(strategy.Entity);
         Assert.Equal("parking", strategy.Role.RequestedRole);
@@ -314,9 +379,10 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_CoffeeShops_AllowsCafeVariants()
     {
-        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("coffee shops near me"),
-            BuildIntent(placeQuery: "coffee shops", rankingGoal: "intent_fit_then_distance"));
+            BuildIntent(placeQuery: "coffee shops", rankingGoal: "intent_fit_then_distance"),
+            "test");
 
         Assert.Null(strategy.Entity);
         Assert.Equal("coffee_shop", strategy.Role.RequestedRole);
@@ -326,12 +392,46 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_Ikea_AllowsSingleVariant()
     {
-        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("IKEA near me"),
-            BuildIntent(placeQuery: "IKEA", rankingGoal: "brand_match_then_distance"));
+            BuildIntent(placeQuery: "IKEA", rankingGoal: "brand_match_then_distance"),
+            "test");
 
         Assert.Equal("IKEA", strategy.Entity?.CanonicalName);
         Assert.Single(strategy.SearchVariants);
+    }
+
+    [Fact]
+    public void ApplegreenPetrol_AIParser_BrandAndGasStationRole()
+    {
+        var strategy = ParseStrategy("""
+{"canonicalQuery":"Applegreen petrol station","entity":{"rawEntityText":"Applegreen","canonicalName":"Applegreen","aliases":["Applegreen"],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.91},"role":{"requestedRole":"gas_station","requiredCoreRoles":["gas_station"],"acceptableSubRoles":["gas_station"],"excludedSiblingRoles":["car_wash"],"modifiers":[],"categoryStrictness":"strict"},"searchVariants":[{"query":"Applegreen petrol station","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.92},{"query":"Applegreen fuel station","purpose":"role_disambiguation","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.8}],"hardRequirements":[],"negativeRequirements":["car_wash"],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.91,"warnings":[]}
+""", "Applegreen petrol stations near me");
+
+        Assert.Equal("Applegreen", strategy.Entity?.CanonicalName);
+        Assert.Equal("gas_station", strategy.Role.RequestedRole);
+    }
+
+    [Fact]
+    public void FacebookOffice_AIParser_BrandEntityOfficeRole()
+    {
+        var strategy = ParseStrategy("""
+{"canonicalQuery":"Facebook office Dublin","entity":{"rawEntityText":"Facebook","canonicalName":"Facebook","aliases":["Facebook","Meta"],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.82},"role":{"requestedRole":"office","requiredCoreRoles":[],"acceptableSubRoles":[],"excludedSiblingRoles":[],"modifiers":[],"categoryStrictness":"loose"},"searchVariants":[{"query":"Facebook office Dublin","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":false,"confidence":0.84},{"query":"Meta office Dublin","purpose":"alias","requiresEntityMatch":true,"requiresRoleMatch":false,"confidence":0.75}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_relevance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.82,"warnings":[]}
+""", "Facebook office Dublin");
+
+        Assert.Equal("Facebook", strategy.Entity?.CanonicalName);
+        Assert.Equal("office", strategy.Role.RequestedRole);
+    }
+
+    [Fact]
+    public void BikeShops_AIParser_GenericCategoryNoBrand()
+    {
+        var strategy = ParseStrategy("""
+{"canonicalQuery":"bike shops","entity":null,"role":{"requestedRole":"bicycle_store","requiredCoreRoles":["bicycle_store"],"acceptableSubRoles":["bicycle_store","sporting_goods_store"],"excludedSiblingRoles":[],"modifiers":[],"categoryStrictness":"compatible"},"searchVariants":[{"query":"bike shops","purpose":"primary","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.9}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"intent_fit_then_distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.9,"warnings":[]}
+""", "bike shops near me");
+
+        Assert.Null(strategy.Entity);
+        Assert.Equal("bicycle_store", strategy.Role.RequestedRole);
     }
 
     [Fact]
@@ -796,6 +896,67 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             Photos: null);
     }
 
+    private static CompanionPlaceSearchStrategy ParseStrategy(string json, string message)
+    {
+        var parser = new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer());
+        var success = parser.TryParse(
+            SuccessfulAiResponse(json),
+            BuildRequest(message),
+            BuildIntent(placeQuery: message, rankingGoal: "intent_fit_then_distance"),
+            out var strategy,
+            out _,
+            out var failure);
+        Assert.True(success, failure);
+        return strategy!;
+    }
+
+    private static AICompanionPlaceSearchStrategyPlanner BuildAiPlanner(string payload, RecordingTelemetry telemetry)
+    {
+        return new AICompanionPlaceSearchStrategyPlanner(
+            new CompanionPlaceSearchStrategyPromptBuilder(),
+            new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
+            new FixedModelRouter(),
+            new FixedAIClient(payload),
+            new DeterministicCompanionPlaceSearchStrategyFallback(telemetry),
+            Options.Create(new AIIntegrationOptions
+            {
+                Architecture = new ConversationArchitectureOptions
+                {
+                    PlacesStrategyPlannerV2Enabled = true,
+                    PlacesStrategyPlannerModelBacked = true,
+                    PlacesStrategyPlannerFallbackEnabled = true,
+                    PlacesStrategyPlannerTimeoutMs = 2500
+                }
+            }),
+            telemetry,
+            NullLogger<AICompanionPlaceSearchStrategyPlanner>.Instance);
+    }
+
+    private static AIResponse SuccessfulAiResponse(string payload)
+    {
+        return new AIResponse(
+            Content: payload,
+            StructuredPayloadJson: payload,
+            FinishReason: "stop",
+            Provider: "test",
+            Model: "test-model",
+            Deployment: "test-deployment",
+            InputTokenEstimate: null,
+            OutputTokenEstimate: null,
+            LatencyMs: 1,
+            WasMocked: true,
+            RawDiagnostics: null,
+            Succeeded: true,
+            FailureReason: null);
+    }
+
+    private static string AibBankStrategyJson()
+    {
+        return """
+{"canonicalQuery":"AIB bank","entity":{"rawEntityText":"AIB","canonicalName":"AIB","aliases":["AIB","Allied Irish Bank"],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.92},"role":{"requestedRole":"bank_branch","requiredCoreRoles":["bank","financial_institution"],"acceptableSubRoles":["bank"],"excludedSiblingRoles":["atm"],"modifiers":[],"categoryStrictness":"strict"},"searchVariants":[{"query":"AIB bank","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.93},{"query":"Allied Irish Bank","purpose":"alias","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.88}],"hardRequirements":[],"negativeRequirements":["atm"],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.91,"warnings":[]}
+""";
+    }
+
     private static ResultContextSnapshot Snapshot(Guid id, string placeQuery)
     {
         return new ResultContextSnapshot(
@@ -929,6 +1090,29 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FixedModelRouter : IAIModelRouter
+    {
+        public AIModelRoute Resolve(AITaskType taskType, AIModelClass preferredModelClass, string? complexityHint = null)
+        {
+            return new AIModelRoute(
+                taskType,
+                preferredModelClass,
+                "test-model",
+                "test-deployment",
+                IsFallback: false,
+                Reason: complexityHint ?? "test",
+                Notes: []);
+        }
+    }
+
+    private sealed class FixedAIClient(string payload) : IAIClient
+    {
+        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(SuccessfulAiResponse(payload));
         }
     }
 

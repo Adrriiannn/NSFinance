@@ -43,9 +43,42 @@ public sealed record CompanionPlaceEntityVerificationResult(
 
 public interface ICompanionPlaceSearchStrategyPlanner
 {
+    Task<CompanionPlaceSearchStrategy> PlanAsync(
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        CancellationToken cancellationToken);
+}
+
+public interface IDeterministicCompanionPlaceSearchStrategyFallback
+{
     CompanionPlaceSearchStrategy Plan(
         UserChatRequest request,
-        CompanionSemanticIntent intent);
+        CompanionSemanticIntent intent,
+        string fallbackReason);
+}
+
+public interface ICompanionPlaceSearchStrategyPromptBuilder
+{
+    PromptBuildResult BuildPrompt(UserChatRequest request, CompanionSemanticIntent intent);
+}
+
+public interface ICompanionPlaceSearchStrategyJsonParser
+{
+    bool TryParse(
+        AIResponse response,
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        out CompanionPlaceSearchStrategy? strategy,
+        out IReadOnlyList<string> reasonCodes,
+        out string? failureReason);
+}
+
+public interface ICompanionPlaceSearchStrategySanitizer
+{
+    CompanionPlaceSearchStrategy Sanitize(
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        CompanionPlaceSearchStrategy strategy);
 }
 
 public interface ICompanionPlaceEntityVerificationService

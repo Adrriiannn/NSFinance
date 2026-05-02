@@ -1283,7 +1283,7 @@ public sealed class ConversationLayerOrchestrator(
         var effectiveBaseIntent = baseIntent;
         if (baseIntent.ActionKind == "new_place_search")
         {
-            var plannedStrategy = companionPlaceSearchStrategyPlanner!.Plan(request, baseIntent);
+            var plannedStrategy = await companionPlaceSearchStrategyPlanner!.PlanAsync(request, baseIntent, cancellationToken);
             var verification = await companionPlaceEntityVerificationService!.VerifyAsync(plannedStrategy, cancellationToken);
             if (verification.Status == "rejected")
             {

@@ -181,6 +181,29 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
     }
 
     [Fact]
+    public async Task AibBanksNearMe_ModelStrategy_NoAtms()
+    {
+        var telemetry = new RecordingTelemetry();
+        var pool = new FixedPoolService(
+            [
+                Candidate("aib-atm", "AIB ATM", "atm", ["atm"], 100, "ATM"),
+                Candidate("aib-branch", "Allied Irish Bank Santry", "bank", ["bank"], 300, "Bank")
+            ]);
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "AIB banks", locationQuery: "near me"),
+            pool,
+            telemetry: telemetry,
+            strategyPlanner: BuildAiStrategyPlanner(AibBankStrategyJson(), telemetry));
+
+        var response = await orchestrator.ExecuteAsync(Request("AIB banks near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Allied Irish Bank Santry", card.Name);
+        Assert.DoesNotContain(pool.LastQueryPasses, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.ai_invocation_completed");
+    }
+
+    [Fact]
     public async Task AibAtmsNearMe_AllowsAtms()
     {
         var orchestrator = CreateOrchestrator(
@@ -218,7 +241,8 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         CompanionResolvedAction action,
         FixedPoolService pool,
         FixedSessionMemoryService? session = null,
-        RecordingTelemetry? telemetry = null)
+        RecordingTelemetry? telemetry = null,
+        ICompanionPlaceSearchStrategyPlanner? strategyPlanner = null)
     {
         telemetry ??= new RecordingTelemetry();
         var details = new Dictionary<string, PlaceDetailsResult>(StringComparer.OrdinalIgnoreCase);
@@ -266,7 +290,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             companionPlaceDuplicateClusterService: new CompanionPlaceDuplicateClusterService(telemetry),
             companionPlaceCategoryCompatibilityService: new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
             companionPlaceBrandIdentityService: new CompanionPlaceBrandIdentityService(telemetry),
-            companionPlaceSearchStrategyPlanner: new CompanionPlaceSearchStrategyPlanner(telemetry),
+            companionPlaceSearchStrategyPlanner: strategyPlanner ?? new DeterministicStrategyPlanner(new DeterministicCompanionPlaceSearchStrategyFallback(telemetry)),
             companionPlaceEntityVerificationService: new CompanionPlaceEntityVerificationService(new EmptyDiscoveryService(), new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
             companionPlaceSearchVariantValidator: new CompanionPlaceSearchVariantValidator(telemetry));
     }
@@ -321,6 +345,35 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             Preferences: preferences ?? [],
             TimeFilters: timeFilters ?? [],
             Warnings: []);
+    }
+
+    private static ICompanionPlaceSearchStrategyPlanner BuildAiStrategyPlanner(string payload, RecordingTelemetry telemetry)
+    {
+        return new AICompanionPlaceSearchStrategyPlanner(
+            new CompanionPlaceSearchStrategyPromptBuilder(),
+            new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
+            new FixedModelRouter(),
+            new FixedAIClient(payload),
+            new DeterministicCompanionPlaceSearchStrategyFallback(telemetry),
+            Options.Create(new AIIntegrationOptions
+            {
+                Architecture = new ConversationArchitectureOptions
+                {
+                    PlacesStrategyPlannerV2Enabled = true,
+                    PlacesStrategyPlannerModelBacked = true,
+                    PlacesStrategyPlannerFallbackEnabled = true,
+                    PlacesStrategyPlannerTimeoutMs = 2500
+                }
+            }),
+            telemetry,
+            NullLogger<AICompanionPlaceSearchStrategyPlanner>.Instance);
+    }
+
+    private static string AibBankStrategyJson()
+    {
+        return """
+{"canonicalQuery":"AIB bank","entity":{"rawEntityText":"AIB","canonicalName":"AIB","aliases":["AIB","Allied Irish Bank"],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.92},"role":{"requestedRole":"bank_branch","requiredCoreRoles":["bank","financial_institution"],"acceptableSubRoles":["bank"],"excludedSiblingRoles":["atm"],"modifiers":[],"categoryStrictness":"strict"},"searchVariants":[{"query":"AIB bank","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.93},{"query":"Allied Irish Bank","purpose":"alias","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.88}],"hardRequirements":[],"negativeRequirements":["atm"],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.91,"warnings":[]}
+""";
     }
 
     private static CompanionPlacePoolCandidate Candidate(
@@ -410,6 +463,46 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             ConversationIntelligenceResult? intelligence)
         {
             return action;
+        }
+    }
+
+    private sealed class FixedModelRouter : IAIModelRouter
+    {
+        public AIModelRoute Resolve(AITaskType taskType, AIModelClass preferredModelClass, string? complexityHint = null)
+        {
+            return new AIModelRoute(taskType, preferredModelClass, "test-model", "test-deployment", false, complexityHint ?? "test", []);
+        }
+    }
+
+    private sealed class FixedAIClient(string payload) : IAIClient
+    {
+        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new AIResponse(
+                Content: payload,
+                StructuredPayloadJson: payload,
+                FinishReason: "stop",
+                Provider: "test",
+                Model: route.Model,
+                Deployment: route.Deployment,
+                InputTokenEstimate: null,
+                OutputTokenEstimate: null,
+                LatencyMs: 1,
+                WasMocked: true,
+                RawDiagnostics: null,
+                Succeeded: true,
+                FailureReason: null));
+        }
+    }
+
+    private sealed class DeterministicStrategyPlanner(IDeterministicCompanionPlaceSearchStrategyFallback fallback) : ICompanionPlaceSearchStrategyPlanner
+    {
+        public Task<CompanionPlaceSearchStrategy> PlanAsync(
+            UserChatRequest request,
+            CompanionSemanticIntent intent,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(fallback.Plan(request, intent, "test_fallback"));
         }
     }
 
