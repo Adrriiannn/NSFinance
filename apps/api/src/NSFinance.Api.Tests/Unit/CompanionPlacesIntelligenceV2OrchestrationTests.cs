@@ -32,6 +32,13 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
     [Fact]
     public async Task FineDining_RemovesFastFoodAndDoesNotPadRejectedCandidates()
     {
+        var pool = new FixedPoolService(
+            [
+                Candidate("mcd", "McDonald's", "fast_food_restaurant", ["fast_food_restaurant"], 300, "Fast food restaurant"),
+                Candidate("takeaway", "City Takeaway", "meal_takeaway", ["meal_takeaway"], 200, "Meal takeaway"),
+                Candidate("chapter", "Chapter One", "restaurant", ["restaurant"], 5_000, "Fine dining restaurant", priceLevel: "PRICE_LEVEL_EXPENSIVE"),
+                Candidate("patrick", "Restaurant Patrick Guilbaud", "restaurant", ["restaurant"], 6_000, "Fine dining restaurant", priceLevel: "PRICE_LEVEL_EXPENSIVE")
+            ]);
         var orchestrator = CreateOrchestrator(
             Action(
                 CompanionActionKind.NewPlaceSearch,
@@ -39,18 +46,13 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
                 locationQuery: "near me",
                 excludeConcepts: ["fast_food", "takeaway"],
                 preferences: ["upscale"]),
-            new FixedPoolService(
-                [
-                    Candidate("mcd", "McDonald's", "fast_food_restaurant", ["fast_food_restaurant"], 300, "Fast food restaurant"),
-                    Candidate("takeaway", "City Takeaway", "meal_takeaway", ["meal_takeaway"], 200, "Meal takeaway"),
-                    Candidate("chapter", "Chapter One", "restaurant", ["restaurant"], 5_000, "Fine dining restaurant", priceLevel: "PRICE_LEVEL_EXPENSIVE"),
-                    Candidate("patrick", "Restaurant Patrick Guilbaud", "restaurant", ["restaurant"], 6_000, "Fine dining restaurant", priceLevel: "PRICE_LEVEL_EXPENSIVE")
-                ]));
+            pool);
 
         var response = await orchestrator.ExecuteAsync(Request("fine dining restaurants near me"), CancellationToken.None);
 
         var names = response.StructuredResults?.Items.Select(item => item.Name).ToArray() ?? [];
         Assert.Equal(["Chapter One", "Restaurant Patrick Guilbaud"], names);
+        Assert.DoesNotContain(pool.LastQueryPasses, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -162,18 +164,20 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
     [Fact]
     public async Task AibBanksNearMe_RejectsAtms()
     {
+        var pool = new FixedPoolService(
+            [
+                Candidate("aib-atm", "AIB ATM", "atm", ["atm"], 100, "ATM"),
+                Candidate("aib-branch", "AIB Bank Santry", "bank", ["bank"], 300, "Bank")
+            ]);
         var orchestrator = CreateOrchestrator(
             Action(CompanionActionKind.NewPlaceSearch, placeQuery: "AIB banks", locationQuery: "near me"),
-            new FixedPoolService(
-                [
-                    Candidate("aib-atm", "AIB ATM", "atm", ["atm"], 100, "ATM"),
-                    Candidate("aib-branch", "AIB Bank Santry", "bank", ["bank"], 300, "Bank")
-                ]));
+            pool);
 
         var response = await orchestrator.ExecuteAsync(Request("AIB banks near me"), CancellationToken.None);
 
         var card = Assert.Single(response.StructuredResults?.Items ?? []);
         Assert.Equal("AIB Bank Santry", card.Name);
+        Assert.DoesNotContain(pool.LastQueryPasses, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -191,6 +195,23 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
 
         var card = Assert.Single(response.StructuredResults?.Items ?? []);
         Assert.Equal("AIB ATM", card.Name);
+    }
+
+    [Fact]
+    public async Task CarParksNearMe_AcceptsParkingTypeCandidates()
+    {
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "car parks", locationQuery: "near me"),
+            new FixedPoolService(
+                [
+                    Candidate("parking", "Omni Park Car Park", "parking_lot", ["parking_lot"], 100, "Parking Lot"),
+                    Candidate("leisure", "Omni Park Playground", "park", ["park"], 110, "Park")
+                ]));
+
+        var response = await orchestrator.ExecuteAsync(Request("car parks near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Omni Park Car Park", card.Name);
     }
 
     private static ConversationLayerOrchestrator CreateOrchestrator(
@@ -243,8 +264,11 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             companionPlaceResultContextBinder: new CompanionPlaceResultContextBinder(telemetry),
             companionPlaceParkingEvidenceService: new CompanionPlaceParkingEvidenceService(new EmptyDiscoveryService(), telemetry),
             companionPlaceDuplicateClusterService: new CompanionPlaceDuplicateClusterService(telemetry),
-            companionPlaceCategoryCompatibilityService: new CompanionPlaceCategoryCompatibilityService(telemetry),
-            companionPlaceBrandIdentityService: new CompanionPlaceBrandIdentityService(telemetry));
+            companionPlaceCategoryCompatibilityService: new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
+            companionPlaceBrandIdentityService: new CompanionPlaceBrandIdentityService(telemetry),
+            companionPlaceSearchStrategyPlanner: new CompanionPlaceSearchStrategyPlanner(telemetry),
+            companionPlaceEntityVerificationService: new CompanionPlaceEntityVerificationService(new EmptyDiscoveryService(), new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
+            companionPlaceSearchVariantValidator: new CompanionPlaceSearchVariantValidator(telemetry));
     }
 
     private static UserChatRequest Request(string message)
@@ -393,6 +417,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
     {
         public IReadOnlyList<CompanionPlacePoolCandidate> Candidates { get; } = candidates;
         public int CallCount { get; private set; }
+        public IReadOnlyList<string> LastQueryPasses { get; private set; } = [];
 
         public Task<CompanionPlaceCandidatePoolResult> BuildPoolAsync(
             CompanionSemanticIntent intent,
@@ -400,7 +425,19 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             CancellationToken cancellationToken)
         {
             CallCount++;
+            LastQueryPasses = ["legacy"];
             return Task.FromResult(new CompanionPlaceCandidatePoolResult(Candidates, ["test"], [], false, null));
+        }
+
+        public Task<CompanionPlaceCandidatePoolResult> BuildPoolAsync(
+            CompanionSemanticIntent intent,
+            UserChatRequest request,
+            CompanionPlaceSearchStrategy strategy,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            LastQueryPasses = strategy.SearchVariants.Select(static item => item.Query).ToArray();
+            return Task.FromResult(new CompanionPlaceCandidatePoolResult(Candidates, strategy.SearchVariants.Select(static item => item.Query).ToArray(), [], false, null));
         }
     }
 

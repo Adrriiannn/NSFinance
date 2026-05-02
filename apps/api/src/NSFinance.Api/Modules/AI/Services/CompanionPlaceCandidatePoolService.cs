@@ -24,9 +24,18 @@ public sealed class CompanionPlaceCandidatePoolService(
         UserChatRequest request,
         CancellationToken cancellationToken)
     {
+        return await BuildPoolAsync(intent, request, strategy: null, cancellationToken);
+    }
+
+    public async Task<CompanionPlaceCandidatePoolResult> BuildPoolAsync(
+        CompanionSemanticIntent intent,
+        UserChatRequest request,
+        CompanionPlaceSearchStrategy? strategy,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(intent);
         var diagnostics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var queryPasses = BuildQueryPasses(intent);
+        var queryPasses = BuildQueryPasses(intent, strategy);
         var queryPassesUsed = new List<string>();
         var candidatesById = new Dictionary<string, CompanionPlacePoolCandidate>(StringComparer.OrdinalIgnoreCase);
         var country = ResolveCountryCode(request);
@@ -139,8 +148,26 @@ public sealed class CompanionPlaceCandidatePoolService(
             FailureReason: candidates.Length == 0 ? "places_pool_empty" : null);
     }
 
-    private IReadOnlyList<string> BuildQueryPasses(CompanionSemanticIntent intent)
+    private IReadOnlyList<string> BuildQueryPasses(CompanionSemanticIntent intent, CompanionPlaceSearchStrategy? strategy)
     {
+        if (strategy is not null && strategy.SearchVariants.Count > 0)
+        {
+            var strategyPasses = new List<string>();
+            if (strategy.Role.RequestedRole == "parking"
+                && strategy.Location.Latitude.HasValue
+                && strategy.Location.Longitude.HasValue)
+            {
+                strategyPasses.Add("nearby:parking");
+            }
+
+            strategyPasses.AddRange(strategy.SearchVariants.Select(static variant => variant.Query));
+            return strategyPasses
+                .Where(static pass => !string.IsNullOrWhiteSpace(pass))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(6)
+                .ToArray();
+        }
+
         var passes = new List<string>();
         if (intent.PlaceQuery is not null && IsParkingIntent(intent))
         {

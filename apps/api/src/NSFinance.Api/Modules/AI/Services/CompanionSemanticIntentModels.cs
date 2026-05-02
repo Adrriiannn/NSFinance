@@ -111,6 +111,12 @@ public interface ICompanionPlaceCandidatePoolService
         CompanionSemanticIntent intent,
         UserChatRequest request,
         CancellationToken cancellationToken);
+
+    Task<CompanionPlaceCandidatePoolResult> BuildPoolAsync(
+        CompanionSemanticIntent intent,
+        UserChatRequest request,
+        CompanionPlaceSearchStrategy strategy,
+        CancellationToken cancellationToken);
 }
 
 public interface ICompanionPlaceConstraintEngine
@@ -231,5 +237,6 @@ public interface ICompanionPlaceBrandIdentityService
 {
     CompanionBrandIdentityResult Apply(
         CompanionSemanticIntent intent,
-        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates,
+        CompanionPlaceSearchStrategy? strategy = null);
 }

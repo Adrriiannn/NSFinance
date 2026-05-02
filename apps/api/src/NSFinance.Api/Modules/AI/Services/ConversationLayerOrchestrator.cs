@@ -40,7 +40,10 @@ public sealed class ConversationLayerOrchestrator(
     ICompanionPlaceParkingEvidenceService? companionPlaceParkingEvidenceService = null,
     ICompanionPlaceDuplicateClusterService? companionPlaceDuplicateClusterService = null,
     ICompanionPlaceCategoryCompatibilityService? companionPlaceCategoryCompatibilityService = null,
-    ICompanionPlaceBrandIdentityService? companionPlaceBrandIdentityService = null) : IUserChatOrchestrator
+    ICompanionPlaceBrandIdentityService? companionPlaceBrandIdentityService = null,
+    ICompanionPlaceSearchStrategyPlanner? companionPlaceSearchStrategyPlanner = null,
+    ICompanionPlaceEntityVerificationService? companionPlaceEntityVerificationService = null,
+    ICompanionPlaceSearchVariantValidator? companionPlaceSearchVariantValidator = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -1207,7 +1210,10 @@ public sealed class ConversationLayerOrchestrator(
             || companionPlaceParkingEvidenceService is null
             || companionPlaceDuplicateClusterService is null
             || companionPlaceCategoryCompatibilityService is null
-            || companionPlaceBrandIdentityService is null)
+            || companionPlaceBrandIdentityService is null
+            || companionPlaceSearchStrategyPlanner is null
+            || companionPlaceEntityVerificationService is null
+            || companionPlaceSearchVariantValidator is null)
         {
             return false;
         }
@@ -1273,6 +1279,44 @@ public sealed class ConversationLayerOrchestrator(
             return null;
         }
 
+        CompanionPlaceSearchStrategy? searchStrategy = null;
+        var effectiveBaseIntent = baseIntent;
+        if (baseIntent.ActionKind == "new_place_search")
+        {
+            var plannedStrategy = companionPlaceSearchStrategyPlanner!.Plan(request, baseIntent);
+            var verification = await companionPlaceEntityVerificationService!.VerifyAsync(plannedStrategy, cancellationToken);
+            if (verification.Status == "rejected")
+            {
+                return await BuildPlacesNoMatchResultAsync(
+                    request,
+                    contextSummary,
+                    state,
+                    resultContextReadResult,
+                    existingWarnings,
+                    intelligenceWarnings,
+                    resolvedAction,
+                    baseIntent,
+                    verification.Warnings.Concat(verification.Evidence).ToArray(),
+                    "entity_verification_rejected",
+                    intelligenceModelCallCount,
+                    intelligenceFastModelCallCount,
+                    intelligenceHeavyModelCallCount,
+                    cancellationToken);
+            }
+
+            searchStrategy = plannedStrategy with
+            {
+                Entity = verification.Entity,
+                SearchVariants = companionPlaceSearchVariantValidator!.Validate(plannedStrategy with
+                {
+                    Entity = verification.Entity,
+                    SearchVariants = verification.VerifiedVariants
+                }),
+                Warnings = plannedStrategy.Warnings.Concat(verification.Warnings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            };
+            effectiveBaseIntent = ApplySearchStrategyToIntent(baseIntent, searchStrategy);
+        }
+
         ResultContextSnapshot? latestPlacesV2Context = null;
         if (request.UserId.HasValue && request.ConversationThreadId.HasValue && resultContextService is not null)
         {
@@ -1286,10 +1330,10 @@ public sealed class ConversationLayerOrchestrator(
             request,
             resultContextReadResult,
             latestPlacesV2Context,
-            baseIntent);
+            effectiveBaseIntent);
 
         CompanionPlaceSearchContext? previousContext = null;
-        if (baseIntent.ActionKind is "filter_previous_results" or "sort_previous_results")
+        if (effectiveBaseIntent.ActionKind is "filter_previous_results" or "sort_previous_results")
         {
             previousContext = await companionPlaceSessionMemoryService!.LoadActiveSearchContextAsync(
                 request,
@@ -1303,8 +1347,8 @@ public sealed class ConversationLayerOrchestrator(
         }
 
         var intent = previousContext is null
-            ? baseIntent
-            : MergeFollowUpIntent(previousContext.Intent, baseIntent);
+            ? effectiveBaseIntent
+            : MergeFollowUpIntent(previousContext.Intent, effectiveBaseIntent);
         IReadOnlyList<CompanionPlacePoolCandidate> pool;
         IReadOnlyList<string> diagnostics;
         if (previousContext is not null)
@@ -1314,10 +1358,16 @@ public sealed class ConversationLayerOrchestrator(
         }
         else
         {
-            var poolResult = await companionPlaceCandidatePoolService!.BuildPoolAsync(
-                intent,
-                request,
-                cancellationToken);
+            var poolResult = searchStrategy is null
+                ? await companionPlaceCandidatePoolService!.BuildPoolAsync(
+                    intent,
+                    request,
+                    cancellationToken)
+                : await companionPlaceCandidatePoolService!.BuildPoolAsync(
+                    intent,
+                    request,
+                    searchStrategy,
+                    cancellationToken);
             if (poolResult.Candidates.Count == 0)
             {
                 return await BuildPlacesNoMatchResultAsync(
@@ -1341,7 +1391,7 @@ public sealed class ConversationLayerOrchestrator(
             diagnostics = poolResult.Diagnostics;
         }
 
-        var brandFiltered = companionPlaceBrandIdentityService!.Apply(intent, pool);
+        var brandFiltered = companionPlaceBrandIdentityService!.Apply(intent, pool, searchStrategy);
         var categoryFiltered = companionPlaceCategoryCompatibilityService!.Apply(intent, brandFiltered.Candidates);
         var constrained = companionPlaceConstraintEngine!.Apply(intent, categoryFiltered.Candidates);
         await telemetry.TrackAsync(
@@ -1565,6 +1615,25 @@ public sealed class ConversationLayerOrchestrator(
                 : followUp.RankingGoal,
             RequestedMaxResults = followUp.RequestedMaxResults ?? previous.RequestedMaxResults,
             Confidence = Math.Max(previous.Confidence, followUp.Confidence)
+        };
+    }
+
+    private static CompanionSemanticIntent ApplySearchStrategyToIntent(
+        CompanionSemanticIntent intent,
+        CompanionPlaceSearchStrategy strategy)
+    {
+        return intent with
+        {
+            PlaceQuery = string.IsNullOrWhiteSpace(strategy.CanonicalQuery) ? intent.PlaceQuery : strategy.CanonicalQuery,
+            BrandOrEntity = strategy.Entity?.VerificationStatus == "rejected" ? null : strategy.Entity?.CanonicalName,
+            Role = strategy.Role,
+            HardFilters = strategy.HardRequirements,
+            NegativeFilters = strategy.NegativeRequirements,
+            SoftPreferences = strategy.SoftPreferences,
+            NonSearchablePreferences = strategy.NonSearchablePreferences,
+            RankingGoal = strategy.RankingGoal,
+            RequestedMaxResults = strategy.MaxVisibleCards == 10 ? intent.RequestedMaxResults : strategy.MaxVisibleCards,
+            Confidence = Math.Max(intent.Confidence, strategy.Confidence)
         };
     }
 

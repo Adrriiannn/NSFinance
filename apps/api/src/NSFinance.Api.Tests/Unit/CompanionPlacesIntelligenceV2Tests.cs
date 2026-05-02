@@ -218,7 +218,8 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void CategoryCompatibility_BanksRejectAtmsButAtmsAllowAtms()
     {
-        var service = new CompanionPlaceCategoryCompatibilityService(new NoOpChatTelemetry());
+        var telemetry = new NoOpChatTelemetry();
+        var service = new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry);
         var bankIntent = BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with
         {
             Role = new CompanionPlaceRoleIntent("bank_branch", ["bank", "financial_institution"], ["bank"], ["atm"], [], "strict")
@@ -259,6 +260,196 @@ public sealed class CompanionPlacesIntelligenceV2Tests
 
         Assert.Equal("starbucks", Assert.Single(starbucks.Candidates).PlaceId);
         Assert.Equal("aib", Assert.Single(aib.Candidates).PlaceId);
+    }
+
+    [Fact]
+    public void SearchStrategy_AibBanks_SplitsEntityAndRole()
+    {
+        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+            BuildRequest("AIB banks near me"),
+            BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB banks" });
+
+        Assert.Equal("AIB", strategy.Entity?.CanonicalName);
+        Assert.Equal("bank_branch", strategy.Role.RequestedRole);
+        Assert.DoesNotContain(strategy.SearchVariants, item => item.Query.Contains("coffee", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void SearchStrategy_AibAtms_SplitsEntityAndAtmRole()
+    {
+        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+            BuildRequest("AIB ATMs near me"),
+            BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB ATMs" });
+
+        Assert.Equal("AIB", strategy.Entity?.CanonicalName);
+        Assert.Equal("atm", strategy.Role.RequestedRole);
+        Assert.All(strategy.SearchVariants, item => Assert.Contains("ATM", item.Query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void SearchStrategy_FineDining_HasNoEntityAndRestaurantModifier()
+    {
+        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+            BuildRequest("fine dining restaurants near me"),
+            BuildIntent(placeQuery: "fine dining restaurants", rankingGoal: "concept_fit_then_distance", softPreferences: ["upscale"]) with { BrandOrEntity = "fine dining" });
+
+        Assert.Null(strategy.Entity);
+        Assert.Equal("restaurant", strategy.Role.RequestedRole);
+        Assert.Contains("fine_dining", strategy.Role.Modifiers);
+        Assert.DoesNotContain(strategy.SearchVariants, item => item.Query.Contains("coffee", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void SearchStrategy_CarParks_HasNoEntityAndParkingRole()
+    {
+        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+            BuildRequest("car parks near me"),
+            BuildIntent(placeQuery: "car parks", rankingGoal: "parking_match_then_distance") with { BrandOrEntity = "car parks" });
+
+        Assert.Null(strategy.Entity);
+        Assert.Equal("parking", strategy.Role.RequestedRole);
+        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("parking", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void SearchStrategy_CoffeeShops_AllowsCafeVariants()
+    {
+        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+            BuildRequest("coffee shops near me"),
+            BuildIntent(placeQuery: "coffee shops", rankingGoal: "intent_fit_then_distance"));
+
+        Assert.Null(strategy.Entity);
+        Assert.Equal("coffee_shop", strategy.Role.RequestedRole);
+        Assert.Contains(strategy.SearchVariants, item => string.Equals(item.Query, "cafe", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void SearchStrategy_Ikea_AllowsSingleVariant()
+    {
+        var strategy = new CompanionPlaceSearchStrategyPlanner(new NoOpChatTelemetry()).Plan(
+            BuildRequest("IKEA near me"),
+            BuildIntent(placeQuery: "IKEA", rankingGoal: "brand_match_then_distance"));
+
+        Assert.Equal("IKEA", strategy.Entity?.CanonicalName);
+        Assert.Single(strategy.SearchVariants);
+    }
+
+    [Fact]
+    public void VariantValidator_RejectsCoffeeVariantsForBanksAndFineDining()
+    {
+        var validator = new CompanionPlaceSearchVariantValidator(new NoOpChatTelemetry());
+        var bank = new CompanionPlaceSearchStrategy(
+            "AIB banks near me",
+            "AIB bank",
+            new CompanionPlaceEntityIntent("AIB", "AIB", ["AIB"], true, true, true, "verified", 0.9),
+            new CompanionPlaceRoleIntent("bank_branch", ["bank"], ["bank"], ["atm"], [], "strict"),
+            [
+                new CompanionPlaceSearchVariant("AIB bank", "primary", true, true, 0.9),
+                new CompanionPlaceSearchVariant("AIB banks coffee", "role_disambiguation", true, true, 0.2)
+            ],
+            [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "brand_match_then_distance", 50, 10, 0.9, []);
+        var fineDining = bank with
+        {
+            OriginalUserMessage = "fine dining restaurants near me",
+            CanonicalQuery = "fine dining restaurants",
+            Entity = null,
+            Role = new CompanionPlaceRoleIntent("restaurant", ["restaurant"], ["restaurant"], ["fast_food_restaurant"], ["fine_dining"], "compatible"),
+            SearchVariants =
+            [
+                new CompanionPlaceSearchVariant("fine dining restaurants", "primary", false, true, 0.9),
+                new CompanionPlaceSearchVariant("fine dining cafe", "role_disambiguation", false, true, 0.2)
+            ]
+        };
+
+        Assert.DoesNotContain(validator.Validate(bank), item => item.Query.Contains("coffee", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(validator.Validate(fineDining), item => item.Query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void VariantValidator_AllowsCoffeeVariantsForCoffeeIntentAndDoesNotPad()
+    {
+        var validator = new CompanionPlaceSearchVariantValidator(new NoOpChatTelemetry());
+        var strategy = new CompanionPlaceSearchStrategy(
+            "coffee shops near me",
+            "coffee shops",
+            null,
+            new CompanionPlaceRoleIntent("coffee_shop", ["coffee_shop", "cafe"], ["coffee_shop", "cafe"], [], [], "compatible"),
+            [new CompanionPlaceSearchVariant("coffee", "primary", false, true, 0.9)],
+            [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "intent_fit_then_distance", 50, 10, 0.9, []);
+
+        var variants = validator.Validate(strategy);
+
+        Assert.Single(variants);
+        Assert.Equal("coffee", variants[0].Query);
+    }
+
+    [Fact]
+    public async Task EntityVerification_VerifiesAnPostFromProviderEvidence()
+    {
+        var discovery = new LookupDiscoveryService(
+            new Dictionary<string, IReadOnlyList<CompanionPlaceCandidate>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ANPOST post office"] = [ProviderCandidate("an-post", "An Post Office", "post_office", ["post_office"])]
+            });
+        var telemetry = new NoOpChatTelemetry();
+        var verifier = new CompanionPlaceEntityVerificationService(discovery, new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry);
+        var strategy = new CompanionPlaceSearchStrategy(
+            "ANPOST post offices near me",
+            "ANPOST post office",
+            new CompanionPlaceEntityIntent("ANPOST", "ANPOST", ["ANPOST"], true, true, true, "pending", 0.75),
+            new CompanionPlaceRoleIntent("post_office", ["post_office"], ["post_office"], ["mailbox"], [], "strict"),
+            [new CompanionPlaceSearchVariant("ANPOST post office", "primary", true, true, 0.9)],
+            [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "brand_match_then_distance", 50, 10, 0.9, []);
+
+        var result = await verifier.VerifyAsync(strategy, CancellationToken.None);
+
+        Assert.Equal("verified", result.Status);
+        Assert.Contains(result.Entity!.Aliases, item => item.Contains("An Post", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task EntityVerification_RejectsUnknownEntityWhenNoEvidence()
+    {
+        var telemetry = new NoOpChatTelemetry();
+        var verifier = new CompanionPlaceEntityVerificationService(new LookupDiscoveryService(new Dictionary<string, IReadOnlyList<CompanionPlaceCandidate>>()), new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry);
+        var strategy = new CompanionPlaceSearchStrategy(
+            "unknown thing near me",
+            "unknown thing",
+            new CompanionPlaceEntityIntent("unknown thing", "unknown thing", ["unknown thing"], true, true, true, "pending", 0.45),
+            new CompanionPlaceRoleIntent("store", [], [], [], [], "loose"),
+            [new CompanionPlaceSearchVariant("unknown thing", "primary", true, false, 0.9)],
+            [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "brand_match_then_distance", 50, 10, 0.9, []);
+
+        var result = await verifier.VerifyAsync(strategy, CancellationToken.None);
+
+        Assert.Equal("rejected", result.Status);
+    }
+
+    [Fact]
+    public async Task CandidatePool_WithValidatedStrategy_DoesNotInventCoffeeVariantsForBanks()
+    {
+        var discovery = new MultipassDiscoveryService();
+        var pool = new CompanionPlaceCandidatePoolService(
+            discovery,
+            new NoOpPlaceRegistryService(),
+            Options.Create(new GooglePlacesOptions()),
+            new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "AIB bank", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB" };
+        var strategy = new CompanionPlaceSearchStrategy(
+            "AIB banks near me",
+            "AIB bank",
+            new CompanionPlaceEntityIntent("AIB", "AIB", ["AIB", "Allied Irish Bank"], true, true, true, "verified", 0.9),
+            new CompanionPlaceRoleIntent("bank_branch", ["bank"], ["bank"], ["atm"], [], "strict"),
+            [
+                new CompanionPlaceSearchVariant("AIB bank", "primary", true, true, 0.9),
+                new CompanionPlaceSearchVariant("Allied Irish Bank", "alias", true, true, 0.85)
+            ],
+            [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "brand_match_then_distance", 50, 10, 0.9, []);
+
+        await pool.BuildPoolAsync(intent, BuildRequest("AIB banks near me"), strategy, CancellationToken.None);
+
+        Assert.DoesNotContain(discovery.TextQueries, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("AIB bank", discovery.TextQueries);
     }
 
     [Fact]
@@ -552,6 +743,59 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             LightweightAttributes: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
     }
 
+    private static CompanionPlaceCandidate ProviderCandidate(
+        string id,
+        string name,
+        string? primaryType,
+        IReadOnlyList<string> types)
+    {
+        return new CompanionPlaceCandidate(
+            PlaceId: id,
+            ResourceName: $"places/{id}",
+            DisplayName: name,
+            PrimaryType: primaryType,
+            PrimaryTypeDisplayName: primaryType,
+            Types: types,
+            NationalPhoneNumber: null,
+            FormattedAddress: null,
+            ShortFormattedAddress: "Test Street",
+            Rating: 4.5,
+            UserRatingCount: 100,
+            GoogleMapsUri: null,
+            WebsiteUri: null,
+            OpeningHours: new PlaceOpeningHoursSummary(true, [], null),
+            BusinessStatus: "OPERATIONAL",
+            PriceLevel: null,
+            IconMaskBaseUri: null,
+            IconBackgroundColor: null,
+            Takeout: null,
+            Delivery: null,
+            DineIn: null,
+            Reservable: null,
+            ServesBreakfast: null,
+            ServesLunch: null,
+            ServesDinner: null,
+            ServesBeer: null,
+            ServesWine: null,
+            ServesBrunch: null,
+            ServesVegetarianFood: null,
+            OutdoorSeating: null,
+            LiveMusic: null,
+            MenuForChildren: null,
+            ServesCocktails: null,
+            ServesDessert: null,
+            ServesCoffee: null,
+            AllowsDogs: null,
+            Restroom: null,
+            GoodForGroups: null,
+            GoodForWatchingSports: null,
+            PaymentOptions: new PlacePaymentOptionsSummary(null, null, null, null),
+            AccessibilityOptions: new PlaceAccessibilitySummary(null, null, null, null),
+            EditorialSummary: new PlaceEditorialSummary(null, null),
+            Location: new PlaceLocationSummary(53.3, -6.2),
+            Photos: null);
+    }
+
     private static ResultContextSnapshot Snapshot(Guid id, string placeQuery)
     {
         return new ResultContextSnapshot(
@@ -762,6 +1006,35 @@ public sealed class CompanionPlacesIntelligenceV2Tests
                 Candidates: candidates,
                 Metadata: new PlaceSearchMetadata("test", false, count, candidates.Length, "test", TimeSpan.Zero, false),
                 Warnings: []);
+        }
+    }
+
+    private sealed class LookupDiscoveryService(IReadOnlyDictionary<string, IReadOnlyList<CompanionPlaceCandidate>> results) : ICompanionPlaceDiscoveryService
+    {
+        public int CallCount { get; private set; }
+
+        public Task<CompanionPlaceDiscoveryResult> DiscoverAsync(
+            CompanionPlaceDiscoveryRequest request,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            var candidates = results.TryGetValue(request.Query, out var value) ? value : [];
+            return Task.FromResult(new CompanionPlaceDiscoveryResult(
+                Succeeded: true,
+                Candidates: candidates,
+                Metadata: new PlaceSearchMetadata("test", false, request.MaxCandidates ?? 5, candidates.Count, "test", TimeSpan.Zero, false),
+                Warnings: []));
+        }
+
+        public Task<CompanionPlaceDiscoveryResult> DiscoverNearbyAsync(
+            CompanionNearbyDiscoveryRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new CompanionPlaceDiscoveryResult(
+                Succeeded: true,
+                Candidates: [],
+                Metadata: new PlaceSearchMetadata("test", false, request.MaxCandidates ?? 5, 0, "test", TimeSpan.Zero, false),
+                Warnings: []));
         }
     }
 

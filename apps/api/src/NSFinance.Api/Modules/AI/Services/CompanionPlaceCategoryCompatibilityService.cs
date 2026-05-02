@@ -1,6 +1,8 @@
 namespace NSFinance.Api.Modules.AI.Services;
 
-public sealed class CompanionPlaceCategoryCompatibilityService(IChatTelemetry telemetry) : ICompanionPlaceCategoryCompatibilityService
+public sealed class CompanionPlaceCategoryCompatibilityService(
+    ICompanionPlaceTypeFamilyClassifier typeFamilyClassifier,
+    IChatTelemetry telemetry) : ICompanionPlaceCategoryCompatibilityService
 {
     public CompanionCategoryCompatibilityResult Apply(
         CompanionSemanticIntent intent,
@@ -17,8 +19,8 @@ public sealed class CompanionPlaceCategoryCompatibilityService(IChatTelemetry te
         var rejected = new List<CompanionPlaceRejectedCandidate>();
         foreach (var candidate in candidates)
         {
-            var haystack = Haystack(candidate);
-            var excluded = intent.Role.ExcludedSiblingRoles.FirstOrDefault(role => ContainsRole(haystack, role));
+            var families = typeFamilyClassifier.ClassifyFamilies(candidate);
+            var excluded = intent.Role.ExcludedSiblingRoles.FirstOrDefault(role => ContainsRole(families, role));
             if (!string.IsNullOrWhiteSpace(excluded))
             {
                 rejected.Add(new CompanionPlaceRejectedCandidate(candidate.PlaceId, candidate.DisplayName, $"excluded_sibling_role:{excluded}"));
@@ -26,8 +28,8 @@ public sealed class CompanionPlaceCategoryCompatibilityService(IChatTelemetry te
             }
 
             if (intent.Role.CategoryStrictness == "strict"
-                && !intent.Role.RequiredCoreRoles.Any(role => ContainsRole(haystack, role))
-                && !intent.Role.AcceptableSubRoles.Any(role => ContainsRole(haystack, role)))
+                && !intent.Role.RequiredCoreRoles.Any(role => ContainsRole(families, role))
+                && !intent.Role.AcceptableSubRoles.Any(role => ContainsRole(families, role)))
             {
                 rejected.Add(new CompanionPlaceRejectedCandidate(candidate.PlaceId, candidate.DisplayName, "category_role_mismatch"));
                 continue;
@@ -35,8 +37,8 @@ public sealed class CompanionPlaceCategoryCompatibilityService(IChatTelemetry te
 
             if (intent.Role.CategoryStrictness == "compatible"
                 && intent.Role.RequiredCoreRoles.Count > 0
-                && !intent.Role.RequiredCoreRoles.Any(role => ContainsRole(haystack, role))
-                && !intent.Role.AcceptableSubRoles.Any(role => ContainsRole(haystack, role)))
+                && !intent.Role.RequiredCoreRoles.Any(role => ContainsRole(families, role))
+                && !intent.Role.AcceptableSubRoles.Any(role => ContainsRole(families, role)))
             {
                 rejected.Add(new CompanionPlaceRejectedCandidate(candidate.PlaceId, candidate.DisplayName, "category_role_mismatch"));
                 continue;
@@ -62,27 +64,26 @@ public sealed class CompanionPlaceCategoryCompatibilityService(IChatTelemetry te
             rejected.Count > 0 ? ["places_category_compatibility_applied"] : []);
     }
 
-    private static bool ContainsRole(string haystack, string role)
+    private static bool ContainsRole(IReadOnlySet<string> families, string role)
     {
         var normalized = Normalize(role);
         if (normalized == "financial institution")
         {
-            return haystack.Contains("bank", StringComparison.Ordinal)
-                   || haystack.Contains("financial institution", StringComparison.Ordinal);
+            return families.Contains("bank")
+                   || families.Contains("financial_institution");
         }
 
-        if (normalized == "parking")
+        if (normalized is "parking" or "parking lot" or "parking garage")
         {
-            return haystack.Contains("parking", StringComparison.Ordinal)
-                   || haystack.Contains("car park", StringComparison.Ordinal);
+            return families.Contains("parking");
         }
 
-        return haystack.Contains(normalized, StringComparison.Ordinal);
-    }
+        if (normalized is "cafe" or "coffee shop")
+        {
+            return families.Contains("cafe") || families.Contains("coffee_shop");
+        }
 
-    private static string Haystack(CompanionPlacePoolCandidate candidate)
-    {
-        return Normalize(string.Join(' ', candidate.DisplayName, candidate.PrimaryType, candidate.PrimaryTypeDisplayName, string.Join(' ', candidate.Types)));
+        return families.Contains(normalized.Replace(' ', '_')) || families.Contains(normalized);
     }
 
     private static string Normalize(string? value)
