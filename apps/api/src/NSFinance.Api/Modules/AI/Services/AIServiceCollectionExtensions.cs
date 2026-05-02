@@ -150,6 +150,14 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IConversationIntelligenceService, ConversationIntelligenceService>();
         services.AddScoped<ICompanionActionResolver, CompanionActionResolver>();
         services.AddScoped<IPlaceResultFollowUpService, PlaceResultFollowUpService>();
+        services.AddScoped<ICompanionSemanticIntentService, CompanionSemanticIntentService>();
+        services.AddScoped<ICompanionPlaceCandidatePoolService, CompanionPlaceCandidatePoolService>();
+        services.AddScoped<ICompanionPlaceConstraintEngine, CompanionPlaceConstraintEngine>();
+        services.AddScoped<ICompanionPlaceIntelligenceRankingService, CompanionPlaceIntelligenceRankingService>();
+        services.AddScoped<ICompanionPlaceFinalistEnrichmentService, CompanionPlaceFinalistEnrichmentService>();
+        services.AddScoped<ICompanionPlaceSessionMemoryService, CompanionPlaceSessionMemoryService>();
+        services.AddScoped<IPlacesShortLivedCache, PlacesShortLivedCache>();
+        services.AddScoped<IPlaceRegistryService, PlaceRegistryService>();
         services.AddScoped<ITurnInterpretationPromptBuilder, TurnInterpretationPromptBuilder>();
         services.AddScoped<ITurnInterpretationParser, TurnInterpretationParser>();
         services.AddScoped<ITurnInterpretationEngine, TurnInterpretationEngine>();

@@ -29,7 +29,13 @@ public sealed class ConversationLayerOrchestrator(
     IPlaceRetrievalPlanner? placeRetrievalPlanner = null,
     IConversationIntelligenceService? conversationIntelligenceService = null,
     ICompanionActionResolver? companionActionResolver = null,
-    IPlaceResultFollowUpService? placeResultFollowUpService = null) : IUserChatOrchestrator
+    IPlaceResultFollowUpService? placeResultFollowUpService = null,
+    ICompanionSemanticIntentService? companionSemanticIntentService = null,
+    ICompanionPlaceCandidatePoolService? companionPlaceCandidatePoolService = null,
+    ICompanionPlaceConstraintEngine? companionPlaceConstraintEngine = null,
+    ICompanionPlaceIntelligenceRankingService? companionPlaceRankingServiceV2 = null,
+    ICompanionPlaceFinalistEnrichmentService? companionPlaceFinalistEnrichmentService = null,
+    ICompanionPlaceSessionMemoryService? companionPlaceSessionMemoryService = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -698,6 +704,31 @@ public sealed class ConversationLayerOrchestrator(
         }
 
         if (resolvedAction is not null
+            && options.Value.Architecture.PlacesIntelligenceV2Enabled
+            && CanExecutePlacesIntelligenceV2(resolvedAction))
+        {
+            var v2Result = await TryExecutePlacesIntelligenceV2Async(
+                request,
+                contextSummary,
+                interpretedState,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                resolvedAction,
+                conversationIntelligence,
+                turnInterpretation,
+                retrievalPlan,
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken);
+            if (v2Result is not null)
+            {
+                return v2Result;
+            }
+        }
+
+        if (resolvedAction is not null
             && options.Value.Architecture.ResolvedActionDirectExecutionEnabled
             && ShouldExecuteResolvedActionDirectly(resolvedAction, resultContextReadResult.ActiveResultContext))
         {
@@ -1157,6 +1188,271 @@ public sealed class ConversationLayerOrchestrator(
             ResponseFallbackUsed: routedComposition.FallbackUsed,
             ResponseRecoveryReason: routedComposition.RecoveryReason,
             ResponseUsedModelInvocation: routedComposition.UsedModelInvocation);
+    }
+
+    private bool CanExecutePlacesIntelligenceV2(CompanionResolvedAction action)
+    {
+        if (companionSemanticIntentService is null
+            || companionPlaceCandidatePoolService is null
+            || companionPlaceConstraintEngine is null
+            || companionPlaceRankingServiceV2 is null
+            || companionPlaceFinalistEnrichmentService is null
+            || companionPlaceSessionMemoryService is null)
+        {
+            return false;
+        }
+
+        return action.Kind is CompanionActionKind.NewPlaceSearch
+            or CompanionActionKind.FilterPreviousResults
+            or CompanionActionKind.SortPreviousResults
+            or CompanionActionKind.EnrichPreviousResults
+            or CompanionActionKind.ComparePreviousResults;
+    }
+
+    private async Task<OrchestratedConversationResult?> TryExecutePlacesIntelligenceV2Async(
+        UserChatRequest request,
+        string? contextSummary,
+        ConversationStateSnapshot state,
+        ResultContextReadResult resultContextReadResult,
+        IReadOnlyList<string> existingWarnings,
+        IReadOnlyList<string> intelligenceWarnings,
+        CompanionResolvedAction resolvedAction,
+        ConversationIntelligenceResult? conversationIntelligence,
+        TurnInterpretationV2? turnInterpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        int intelligenceModelCallCount,
+        int intelligenceFastModelCallCount,
+        int intelligenceHeavyModelCallCount,
+        CancellationToken cancellationToken)
+    {
+        var baseIntent = companionSemanticIntentService!.Build(
+            request,
+            state,
+            resultContextReadResult.ActiveResultContext,
+            turnInterpretation,
+            retrievalPlan,
+            conversationIntelligence,
+            resolvedAction);
+        await telemetry.TrackAsync(
+            "places.semantic_intent",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["actionKind"] = baseIntent.ActionKind,
+                ["placeQuery"] = baseIntent.PlaceQuery,
+                ["brandOrEntity"] = baseIntent.BrandOrEntity,
+                ["hardFilterCount"] = baseIntent.HardFilters.Count,
+                ["softPreferenceCount"] = baseIntent.SoftPreferences.Count,
+                ["negativeFilterCount"] = baseIntent.NegativeFilters.Count,
+                ["rankingGoal"] = baseIntent.RankingGoal,
+                ["confidence"] = baseIntent.Confidence
+            },
+            cancellationToken);
+
+        if (baseIntent.ActionKind == "new_place_search" && baseIntent.Location.RequiresLocation)
+        {
+            return null;
+        }
+
+        CompanionPlaceSearchContext? previousContext = null;
+        if (baseIntent.ActionKind is "filter_previous_results" or "sort_previous_results")
+        {
+            previousContext = await companionPlaceSessionMemoryService!.LoadActiveSearchContextAsync(
+                request,
+                resultContextReadResult.ActiveResultContext,
+                cancellationToken);
+            if (previousContext is null || previousContext.CandidatePool.Count == 0)
+            {
+                return null;
+            }
+        }
+
+        var intent = previousContext is null
+            ? baseIntent
+            : MergeFollowUpIntent(previousContext.Intent, baseIntent);
+        IReadOnlyList<CompanionPlacePoolCandidate> pool;
+        IReadOnlyList<string> diagnostics;
+        if (previousContext is not null)
+        {
+            pool = previousContext.CandidatePool;
+            diagnostics = ["places_session_memory_pool_used"];
+        }
+        else
+        {
+            var poolResult = await companionPlaceCandidatePoolService!.BuildPoolAsync(
+                intent,
+                request,
+                cancellationToken);
+            if (poolResult.Candidates.Count == 0)
+            {
+                return null;
+            }
+
+            pool = poolResult.Candidates;
+            diagnostics = poolResult.Diagnostics;
+        }
+
+        var constrained = companionPlaceConstraintEngine!.Apply(intent, pool);
+        await telemetry.TrackAsync(
+            "places.constraint.rejected_count",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["rejectedByHardFilterCount"] = constrained.Rejected.Count
+            },
+            cancellationToken);
+        var ranked = companionPlaceRankingServiceV2!.Rank(intent, constrained.Candidates);
+        await telemetry.TrackAsync(
+            "places.ranking.completed",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["rankedCount"] = ranked.RankedCandidates.Count
+            },
+            cancellationToken);
+
+        var maxCards = Math.Clamp(intent.RequestedMaxResults ?? 10, 1, 10);
+        await telemetry.TrackAsync(
+            "places.finalists.selected",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["visibleCardCount"] = Math.Min(maxCards, ranked.RankedCandidates.Count)
+            },
+            cancellationToken);
+        var finalists = await companionPlaceFinalistEnrichmentService!.EnrichAsync(
+            intent,
+            ranked.RankedCandidates,
+            maxCards,
+            cancellationToken);
+        if (finalists.StructuredResults?.Items.Count is null or 0)
+        {
+            return null;
+        }
+
+        await companionPlaceSessionMemoryService!.SaveSearchContextAsync(
+            request,
+            state,
+            intent,
+            pool,
+            finalists.StructuredResults,
+            cancellationToken);
+
+        var nextState = state with
+        {
+            ActiveMode = ConversationMode.Exploration,
+            ModeCandidate = ConversationMode.Exploration,
+            ReadinessLevel = ConversationReadinessLevel.R4_ToolReady,
+            NeedsFollowUp = true,
+            FollowUpBindingType = FollowUpBindingType.Refine,
+            PendingClarification = null
+        };
+        var strategy = new ConversationTurnStrategyDecision(
+            Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+            ModeCandidate: ConversationMode.Exploration,
+            Readiness: new ReadinessTransition(state.ReadinessLevel, ConversationReadinessLevel.R4_ToolReady),
+            Confidence: intent.Confidence,
+            FollowUpBindingType: previousContext is null ? FollowUpBindingType.NewTopic : FollowUpBindingType.Refine,
+            ClarificationQuestion: null,
+            SuggestedOptions: [],
+            ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+            ReasonCodes: ["places_intelligence_v2_executed"]);
+        var response = new UserChatResponse(
+            ReplyText: BuildPlacesIntelligenceReply(intent),
+            ModelUsed: "deterministic-places-intelligence-v2",
+            ReasoningClass: AIModelClass.Fast,
+            SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                nextState,
+                resultContextReadResult.ActiveResultContext,
+                strategy,
+                [],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)),
+            ReferencedContextSummary: contextSummary,
+            Warnings: existingWarnings
+                .Concat(resultContextReadResult.ReasonCodes)
+                .Concat(intelligenceWarnings)
+                .Concat(resolvedAction.Warnings)
+                .Concat(diagnostics)
+                .Concat(constrained.Diagnostics)
+                .Concat(ranked.Diagnostics)
+                .Concat(finalists.Diagnostics)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            FollowUpIntentHints: ["refine_place_preferences", "compare_options"],
+            Succeeded: true,
+            FailureReason: null,
+            StructuredResults: finalists.StructuredResults);
+
+        await TrackResolvedActionExecutionDecisionAsync(
+            request,
+            resolvedAction,
+            executedDirectly: true,
+            fellThroughToBehaviorEngine: false,
+            hasResultContext: previousContext?.ResultContext is not null || resultContextReadResult.ActiveResultContext is not null,
+            structuredResultsReturned: true,
+            structuredResultCount: finalists.StructuredResults.Items.Count,
+            reason: "places_intelligence_v2_completed",
+            cancellationToken);
+
+        return BuildResolvedActionResult(
+            response,
+            nextState,
+            "places_intelligence_v2_response",
+            totalModelCallCount: intelligenceModelCallCount,
+            fastModelCallCount: intelligenceFastModelCallCount,
+            heavyModelCallCount: intelligenceHeavyModelCallCount,
+            modeExecutionDurationMs: 0,
+            responseCompositionDurationMs: 0,
+            responseFallbackUsed: false,
+            responseUsedModelInvocation: false);
+    }
+
+    private static CompanionSemanticIntent MergeFollowUpIntent(
+        CompanionSemanticIntent previous,
+        CompanionSemanticIntent followUp)
+    {
+        return previous with
+        {
+            ActionKind = followUp.ActionKind,
+            HardFilters = previous.HardFilters.Concat(followUp.HardFilters).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            NegativeFilters = previous.NegativeFilters.Concat(followUp.NegativeFilters).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            SoftPreferences = previous.SoftPreferences.Concat(followUp.SoftPreferences).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            NonSearchablePreferences = previous.NonSearchablePreferences.Concat(followUp.NonSearchablePreferences).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            RequestedDetailFields = previous.RequestedDetailFields.Concat(followUp.RequestedDetailFields).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            RankingGoal = followUp.RankingGoal == "intent_fit_then_distance"
+                ? previous.RankingGoal
+                : followUp.RankingGoal,
+            RequestedMaxResults = followUp.RequestedMaxResults ?? previous.RequestedMaxResults,
+            Confidence = Math.Max(previous.Confidence, followUp.Confidence)
+        };
+    }
+
+    private static string BuildPlacesIntelligenceReply(CompanionSemanticIntent intent)
+    {
+        if (intent.RequestedMaxResults == 1 || intent.RankingGoal == "distance")
+        {
+            return "Here’s the closest one I found:";
+        }
+
+        if (intent.RequestedDetailFields.Contains("parking", StringComparer.OrdinalIgnoreCase)
+            || intent.HardFilters.Any(static filter => filter.Contains("parking", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "These are the strongest parking matches I found:";
+        }
+
+        if (intent.ActionKind is "filter_previous_results" or "sort_previous_results")
+        {
+            return "I filtered those results:";
+        }
+
+        if (intent.PlaceQuery?.Contains("fine dining", StringComparison.OrdinalIgnoreCase) == true
+            || intent.SoftPreferences.Contains("upscale", StringComparer.OrdinalIgnoreCase))
+        {
+            return "I found the strongest fine-dining matches nearby:";
+        }
+
+        return "I found these matching options:";
     }
 
     private bool ShouldExecuteResolvedActionDirectly(

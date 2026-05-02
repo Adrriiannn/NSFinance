@@ -705,7 +705,7 @@ public sealed class ResponseComposer(
             ResponseCompositionType.Placeholder => "I can help with that, but I need to guide the conversation a little further before taking action.",
             ResponseCompositionType.Fallback => "I can still help from here without taking action yet." + missing + options,
             ResponseCompositionType.Clarify => (request.ClarificationQuestion ?? "Could you clarify what you want to focus on?") + options,
-            _ => "Here’s the next helpful step based on what you shared." + missing + options
+            _ => "I can help with that." + missing + options
         };
 
         if (request.ResponseType == ResponseCompositionType.ResultSummary)

@@ -32,6 +32,8 @@ public interface ILocalDiscoveryQueryShaper
         LocalDiscoveryConstraintExtractionResult? constraints = null);
 }
 
+// Fallback-only lexical guard. Do not use this as primary Companion Places intent authority.
+// Primary semantic intent flows through TurnInterpretationV2 / CompanionSemanticIntent.
 public sealed partial class LocalDiscoveryConstraintExtractor : ILocalDiscoveryConstraintExtractor
 {
     private static readonly string[] NearMePhrases =

@@ -13,6 +13,8 @@ public interface ICompanionPlacesVocabularyNormalizer
 
 public sealed class CompanionPlacesVocabularyNormalizer : ICompanionPlacesVocabularyNormalizer
 {
+    // Typo cleanup only. This normalizer must not collapse open-world place intent into
+    // a fixed keyword map; CompanionSemanticIntent owns user intent.
     private static readonly IReadOnlyDictionary<string, string> GenericCorrections =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
