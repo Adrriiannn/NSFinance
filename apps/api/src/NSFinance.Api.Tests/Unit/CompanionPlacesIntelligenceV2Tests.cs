@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
 using NSFinance.Api.Persistence;
+using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Tests.Unit;
 
@@ -76,6 +77,40 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             resolvedAction: action);
 
         Assert.Equal(["takeaway"], intent.NegativeFilters);
+    }
+
+    [Fact]
+    public void SemanticIntent_ExtractsRatingFilter_WhenOtherHardFilterExists()
+    {
+        var service = new CompanionSemanticIntentService();
+        var action = new CompanionResolvedAction(
+            CompanionActionKind.FilterPreviousResults,
+            Reason: "parking and rating",
+            RequiresToolExecution: true,
+            RequiresClarification: false,
+            ClarificationNeed: null,
+            PlaceQuery: null,
+            LocationQuery: null,
+            Requirement: "parking",
+            SortGoal: null,
+            TargetResultSetId: "active_result_set",
+            IncludeConcepts: [],
+            ExcludeConcepts: [],
+            Preferences: [],
+            TimeFilters: [],
+            Warnings: []);
+
+        var intent = service.Build(
+            BuildRequest("only 4.7 rating and up please"),
+            BuildState(),
+            resultContext: null,
+            interpretation: null,
+            retrievalPlan: null,
+            intelligence: null,
+            resolvedAction: action);
+
+        Assert.Contains("parking", intent.HardFilters);
+        Assert.Contains("rating>=4.7", intent.HardFilters);
     }
 
     [Fact]
@@ -166,6 +201,112 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         Assert.Empty(result.Candidates);
         Assert.Equal(2, result.Rejected.Count);
         Assert.Contains("no_hard_filter_matches", result.Diagnostics);
+    }
+
+    [Fact]
+    public void ConstraintEngine_RatingThresholdRejectsMissingRating()
+    {
+        var engine = new CompanionPlaceConstraintEngine(new NoOpChatTelemetry());
+        var result = engine.Apply(
+            BuildIntent(placeQuery: "restaurants", rankingGoal: "intent_fit_then_distance", hardFilters: ["rating>=4.7"]),
+            [Candidate("missing", "Missing Rating", "restaurant", ["restaurant"], 100, rating: null)]);
+
+        Assert.Empty(result.Candidates);
+        Assert.Single(result.Rejected);
+    }
+
+    [Fact]
+    public void CategoryCompatibility_BanksRejectAtmsButAtmsAllowAtms()
+    {
+        var service = new CompanionPlaceCategoryCompatibilityService(new NoOpChatTelemetry());
+        var bankIntent = BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("bank_branch", ["bank", "financial_institution"], ["bank"], ["atm"], [], "strict")
+        };
+        var atmIntent = BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("atm", ["atm"], ["atm"], [], [], "strict")
+        };
+        var candidates = new[]
+        {
+            Candidate("atm", "AIB ATM", "atm", ["atm"], 100, "ATM"),
+            Candidate("bank", "AIB Bank", "bank", ["bank"], 200, "Bank")
+        };
+
+        var banks = service.Apply(bankIntent, candidates);
+        var atms = service.Apply(atmIntent, candidates);
+
+        Assert.Equal("bank", Assert.Single(banks.Candidates).PlaceId);
+        Assert.Equal("atm", Assert.Single(atms.Candidates).PlaceId);
+    }
+
+    [Fact]
+    public void BrandIdentity_RejectsCompetitorBrandsAndSupportsAibAlias()
+    {
+        var service = new CompanionPlaceBrandIdentityService(new NoOpChatTelemetry());
+        var starbucks = service.Apply(
+            BuildIntent(placeQuery: "Starbucks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "Starbucks" },
+            [
+                Candidate("starbucks", "Starbucks Coffee", "cafe", ["cafe"], 100),
+                Candidate("costa", "Costa Coffee", "cafe", ["cafe"], 200)
+            ]);
+        var aib = service.Apply(
+            BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB" },
+            [
+                Candidate("aib", "Allied Irish Bank", "bank", ["bank"], 100),
+                Candidate("boi", "Bank of Ireland", "bank", ["bank"], 200)
+            ]);
+
+        Assert.Equal("starbucks", Assert.Single(starbucks.Candidates).PlaceId);
+        Assert.Equal("aib", Assert.Single(aib.Candidates).PlaceId);
+    }
+
+    [Fact]
+    public void DuplicateCluster_CollapsesNearbyCarParkDuplicates()
+    {
+        var service = new CompanionPlaceDuplicateClusterService(new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "car parks", rankingGoal: "parking_match_then_distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("parking", ["parking"], ["parking"], [], [], "strict")
+        };
+        var result = service.Cluster(
+            intent,
+            [
+                Candidate("one", "Omni Park Car Park", "parking", ["parking"], 100, latitude: 53.400000, longitude: -6.250000, shortAddress: "Omni Park"),
+                Candidate("two", "Omni Park Parking", "parking", ["parking"], 110, latitude: 53.400030, longitude: -6.250030, shortAddress: "Omni Park")
+            ]);
+
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public async Task ParkingEvidence_ShoppingCentreAddressCountsAsLikelyParking()
+    {
+        var service = new CompanionPlaceParkingEvidenceService(new MultipassDiscoveryService(), new NoOpChatTelemetry());
+        var result = await service.EvaluateAsync(
+            BuildIntent(placeQuery: "coffee shops", rankingGoal: "distance", hardFilters: ["parking"]),
+            [Candidate("coffee", "Coffee Shop", "cafe", ["cafe"], 100, shortAddress: "Omni Shopping Centre")],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId.Values);
+        Assert.Equal("likely_on_site", evidence.EvidenceLevel);
+    }
+
+    [Fact]
+    public void ResultContextBinder_PrefersLatestPlacesV2ForFollowUps()
+    {
+        var binder = new CompanionPlaceResultContextBinder(new NoOpChatTelemetry());
+        var active = Snapshot(Guid.NewGuid(), "Starbucks");
+        var latest = Snapshot(Guid.NewGuid(), "fine dining restaurants");
+        var binding = binder.Bind(
+            BuildRequest("only 4.7 rating and up please"),
+            new ResultContextReadResult(active, ResultContextBindingClassification.Refine, UsedClientResultSetId: true, ExpiredBindingCleared: false, ReasonCodes: []),
+            latest,
+            BuildIntent(placeQuery: "restaurants", rankingGoal: "intent_fit_then_distance") with { ActionKind = "filter_previous_results" });
+
+        Assert.Equal(latest.ResultSetId, binding.Context?.ResultSetId);
+        Assert.True(binding.ClientContextWasStale);
+        Assert.Equal("latest_v2", binding.Source);
     }
 
     [Fact]
@@ -291,6 +432,41 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         Assert.Null(row.LastRefreshedAtUtc);
     }
 
+    [Fact]
+    public async Task ConversationStateService_WhenSnapshotVersionConflict_Retries()
+    {
+        var userId = Guid.NewGuid();
+        var threadId = Guid.NewGuid();
+        await using var db = new ConflictOnceAppDbContext(
+            new DbContextOptionsBuilder<AppDbContext>()
+                .UseInMemoryDatabase($"state-conflict-{Guid.NewGuid():N}")
+                .Options);
+        db.ConversationThreads.Add(new ConversationThread
+        {
+            Id = threadId,
+            UserId = userId,
+            StartedUtc = DateTime.UtcNow,
+            LastMessageUtc = DateTime.UtcNow,
+            CreatedUtc = DateTime.UtcNow,
+            UpdatedUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        db.ThrowNextStateSnapshotSave = true;
+        var telemetry = new RecordingTelemetry();
+        var service = new ConversationStateService(db, Options.Create(new AIIntegrationOptions()), telemetry);
+
+        var saved = await service.SaveSnapshotAsync(
+            userId,
+            threadId,
+            BuildState(),
+            ConversationStateSnapshotReason.AssistantTurn,
+            CancellationToken.None);
+
+        Assert.Equal(1, saved.StateVersion);
+        Assert.Equal(3, db.SaveChangesCallCount);
+        Assert.Contains(telemetry.Events, item => item.Name == "conversation_state.snapshot_version_conflict_retry");
+    }
+
     private static UserChatRequest BuildRequest(string message)
     {
         return new UserChatRequest(
@@ -308,9 +484,9 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             ConversationThreadId: Guid.NewGuid());
     }
 
-    private static ConversationStateSnapshot BuildState()
+    private static NSFinance.Api.Modules.AI.Services.ConversationStateSnapshot BuildState()
     {
-        return new ConversationStateSnapshot(
+        return new NSFinance.Api.Modules.AI.Services.ConversationStateSnapshot(
             ActiveTopic: null,
             UserIntent: null,
             Constraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -334,6 +510,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             PlaceQuery: placeQuery,
             BrandOrEntity: null,
             Location: new CompanionLocationIntent("near_me", null, 53.3498, -6.2603, RequiresLocation: false),
+            Role: new CompanionPlaceRoleIntent(null, [], [], [], [], "loose"),
             HardFilters: hardFilters ?? [],
             NegativeFilters: negativeFilters ?? [],
             SoftPreferences: softPreferences ?? [],
@@ -353,7 +530,10 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         double? distanceMeters,
         string? primaryTypeDisplayName = null,
         double? rating = 4.5,
-        string? priceLevel = null)
+        string? priceLevel = null,
+        double? latitude = 53.3,
+        double? longitude = -6.2,
+        string? shortAddress = "Test Street")
     {
         return new CompanionPlacePoolCandidate(
             PlaceId: id,
@@ -361,15 +541,37 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             PrimaryType: primaryType,
             PrimaryTypeDisplayName: primaryTypeDisplayName ?? primaryType,
             Types: types,
-            Latitude: 53.3,
-            Longitude: -6.2,
+            Latitude: latitude,
+            Longitude: longitude,
             DistanceMeters: distanceMeters,
-            ShortFormattedAddress: "Test Street",
+            ShortFormattedAddress: shortAddress,
             Rating: rating,
             UserRatingCount: 100,
             PriceLevel: priceLevel,
             OpenNow: true,
             LightweightAttributes: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static ResultContextSnapshot Snapshot(Guid id, string placeQuery)
+    {
+        return new ResultContextSnapshot(
+            ResultSetId: id,
+            ParentResultSetId: null,
+            BranchRootResultSetId: id,
+            SourceMode: ConversationMode.Exploration,
+            SourceSubtype: ExplorationSubtype.Structured,
+            QueryFingerprint: placeQuery,
+            NormalizedConstraints: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["pipeline"] = "places_intelligence_v2",
+                ["semantic_place_query"] = placeQuery
+            },
+            SuggestedEntities: [],
+            SelectedEntityId: null,
+            ActiveUntilUtc: DateTime.UtcNow.AddMinutes(10),
+            ExpiresUtc: DateTime.UtcNow.AddHours(1),
+            IsExpired: false,
+            IsActiveWindowExpired: false);
     }
 
     private sealed class NoOpChatTelemetry : IChatTelemetry
@@ -380,6 +582,42 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingTelemetry : IChatTelemetry
+    {
+        public List<(string Name, IReadOnlyDictionary<string, object?> Properties)> Events { get; } = [];
+
+        public Task TrackAsync(
+            string eventName,
+            IReadOnlyDictionary<string, object?> properties,
+            CancellationToken cancellationToken)
+        {
+            Events.Add((eventName, new Dictionary<string, object?>(properties)));
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ConflictOnceAppDbContext(DbContextOptions<AppDbContext> options) : AppDbContext(options)
+    {
+        public bool ThrowNextStateSnapshotSave { get; set; }
+        public int SaveChangesCallCount { get; private set; }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            if (ThrowNextStateSnapshotSave
+                && ChangeTracker.Entries<NSFinance.Api.Persistence.Entities.ConversationStateSnapshot>().Any(entry => entry.State == EntityState.Added))
+            {
+                ThrowNextStateSnapshotSave = false;
+                SaveChangesCallCount++;
+                throw new DbUpdateException(
+                    "IX_ConversationStateSnapshots_ConversationThreadId_StateVersion duplicate key",
+                    new InvalidOperationException("IX_ConversationStateSnapshots_ConversationThreadId_StateVersion duplicate key"));
+            }
+
+            SaveChangesCallCount++;
+            return base.SaveChangesAsync(cancellationToken);
         }
     }
 
@@ -583,6 +821,14 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             CancellationToken cancellationToken)
         {
             return Task.FromResult<ResultContextWriteResult?>(null);
+        }
+
+        public Task<ResultContextSnapshot?> GetLatestPlacesV2ContextAsync(
+            Guid userId,
+            Guid conversationThreadId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<ResultContextSnapshot?>(null);
         }
 
         public Task ClearExpiredBindingsAsync(Guid conversationThreadId, CancellationToken cancellationToken)

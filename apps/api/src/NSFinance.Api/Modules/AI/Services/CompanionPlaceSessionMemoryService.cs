@@ -89,7 +89,7 @@ public sealed class CompanionPlaceSessionMemoryService(
         {
             try
             {
-                intent = JsonSerializer.Deserialize<CompanionSemanticIntent>(intentJson, JsonOptions);
+                intent = NormalizeIntent(JsonSerializer.Deserialize<CompanionSemanticIntent>(intentJson, JsonOptions));
             }
             catch (JsonException)
             {
@@ -185,6 +185,7 @@ public sealed class CompanionPlaceSessionMemoryService(
             PlaceQuery: placeQuery,
             BrandOrEntity: null,
             Location: new CompanionLocationIntent("previous_place", null, null, null, false),
+            Role: new CompanionPlaceRoleIntent(null, [], [], [], [], "loose"),
             HardFilters: [],
             NegativeFilters: [],
             SoftPreferences: [],
@@ -194,6 +195,19 @@ public sealed class CompanionPlaceSessionMemoryService(
             RequestedMaxResults: null,
             Confidence: 0.65d,
             Ambiguities: []);
+    }
+
+    private static CompanionSemanticIntent? NormalizeIntent(CompanionSemanticIntent? intent)
+    {
+        if (intent is null || intent.Role is not null)
+        {
+            return intent;
+        }
+
+        return intent with
+        {
+            Role = new CompanionPlaceRoleIntent(null, [], [], [], [], "loose")
+        };
     }
 
     private static string BuildFingerprint(CompanionSemanticIntent intent)

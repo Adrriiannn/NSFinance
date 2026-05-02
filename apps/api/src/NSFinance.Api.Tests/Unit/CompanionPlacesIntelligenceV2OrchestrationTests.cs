@@ -24,7 +24,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
 
         Assert.True(response.Succeeded);
         Assert.Equal("places", response.StructuredResults?.Type);
-        Assert.Contains(response.StructuredResults!.Items, item => item.Name.Contains("Starbucks", StringComparison.OrdinalIgnoreCase));
+        Assert.All(response.StructuredResults!.Items, item => Assert.Contains("Starbucks", item.Name, StringComparison.OrdinalIgnoreCase));
         Assert.Equal(1, pool.CallCount);
         Assert.Contains(telemetry.Events, item => item.Name == "places.v2.used");
     }
@@ -159,6 +159,40 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         Assert.Equal("I couldn’t find any strong matches for that exact requirement nearby.", response.ReplyText);
     }
 
+    [Fact]
+    public async Task AibBanksNearMe_RejectsAtms()
+    {
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "AIB banks", locationQuery: "near me"),
+            new FixedPoolService(
+                [
+                    Candidate("aib-atm", "AIB ATM", "atm", ["atm"], 100, "ATM"),
+                    Candidate("aib-branch", "AIB Bank Santry", "bank", ["bank"], 300, "Bank")
+                ]));
+
+        var response = await orchestrator.ExecuteAsync(Request("AIB banks near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("AIB Bank Santry", card.Name);
+    }
+
+    [Fact]
+    public async Task AibAtmsNearMe_AllowsAtms()
+    {
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "AIB ATMs", locationQuery: "near me"),
+            new FixedPoolService(
+                [
+                    Candidate("aib-atm", "AIB ATM", "atm", ["atm"], 100, "ATM"),
+                    Candidate("aib-branch", "AIB Bank Santry", "bank", ["bank"], 300, "Bank")
+                ]));
+
+        var response = await orchestrator.ExecuteAsync(Request("AIB ATMs near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("AIB ATM", card.Name);
+    }
+
     private static ConversationLayerOrchestrator CreateOrchestrator(
         CompanionResolvedAction action,
         FixedPoolService pool,
@@ -205,7 +239,12 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
                 new InMemoryPlacesShortLivedCache(),
                 Options.Create(new GooglePlacesOptions()),
                 telemetry),
-            companionPlaceSessionMemoryService: session ?? new FixedSessionMemoryService(null));
+            companionPlaceSessionMemoryService: session ?? new FixedSessionMemoryService(null),
+            companionPlaceResultContextBinder: new CompanionPlaceResultContextBinder(telemetry),
+            companionPlaceParkingEvidenceService: new CompanionPlaceParkingEvidenceService(new EmptyDiscoveryService(), telemetry),
+            companionPlaceDuplicateClusterService: new CompanionPlaceDuplicateClusterService(telemetry),
+            companionPlaceCategoryCompatibilityService: new CompanionPlaceCategoryCompatibilityService(telemetry),
+            companionPlaceBrandIdentityService: new CompanionPlaceBrandIdentityService(telemetry));
     }
 
     private static UserChatRequest Request(string message)
@@ -297,6 +336,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
                 "restaurants",
                 null,
                 new CompanionLocationIntent("near_me", null, 53.3498, -6.2603, false),
+                new CompanionPlaceRoleIntent(null, [], [], [], [], "loose"),
                 [],
                 [],
                 [],
@@ -361,6 +401,32 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         {
             CallCount++;
             return Task.FromResult(new CompanionPlaceCandidatePoolResult(Candidates, ["test"], [], false, null));
+        }
+    }
+
+    private sealed class EmptyDiscoveryService : ICompanionPlaceDiscoveryService
+    {
+        public Task<CompanionPlaceDiscoveryResult> DiscoverAsync(
+            CompanionPlaceDiscoveryRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(Result(request.MaxCandidates ?? 0));
+        }
+
+        public Task<CompanionPlaceDiscoveryResult> DiscoverNearbyAsync(
+            CompanionNearbyDiscoveryRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(Result(0));
+        }
+
+        private static CompanionPlaceDiscoveryResult Result(int requested)
+        {
+            return new CompanionPlaceDiscoveryResult(
+                Succeeded: true,
+                Candidates: [],
+                Metadata: new PlaceSearchMetadata("test", false, requested, 0, "test", TimeSpan.Zero, false),
+                Warnings: []);
         }
     }
 

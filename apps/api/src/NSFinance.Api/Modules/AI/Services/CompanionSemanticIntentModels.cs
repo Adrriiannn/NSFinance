@@ -15,6 +15,7 @@ public sealed record CompanionSemanticIntent(
     string? PlaceQuery,
     string? BrandOrEntity,
     CompanionLocationIntent Location,
+    CompanionPlaceRoleIntent Role,
     IReadOnlyList<string> HardFilters,
     IReadOnlyList<string> NegativeFilters,
     IReadOnlyList<string> SoftPreferences,
@@ -24,6 +25,14 @@ public sealed record CompanionSemanticIntent(
     int? RequestedMaxResults,
     double Confidence,
     IReadOnlyList<string> Ambiguities);
+
+public sealed record CompanionPlaceRoleIntent(
+    string? RequestedRole,
+    IReadOnlyList<string> RequiredCoreRoles,
+    IReadOnlyList<string> AcceptableSubRoles,
+    IReadOnlyList<string> ExcludedSiblingRoles,
+    IReadOnlyList<string> Modifiers,
+    string CategoryStrictness);
 
 public sealed record CompanionLocationIntent(
     string Mode,
@@ -156,4 +165,71 @@ public interface IPlaceRegistryService
         string providerPlaceId,
         IReadOnlyList<string> internalTags,
         CancellationToken cancellationToken);
+}
+
+public sealed record CompanionPlaceResultContextBinding(
+    ResultContextSnapshot? Context,
+    string Source,
+    string Reason,
+    bool ClientContextWasStale);
+
+public interface ICompanionPlaceResultContextBinder
+{
+    CompanionPlaceResultContextBinding Bind(
+        UserChatRequest request,
+        ResultContextReadResult readResult,
+        ResultContextSnapshot? latestPlacesV2Context,
+        CompanionSemanticIntent currentIntent);
+}
+
+public sealed record CompanionParkingEvidence(
+    string PlaceId,
+    string EvidenceLevel,
+    double Confidence,
+    string? NearestParkingPlaceId,
+    double? NearestParkingDistanceMeters,
+    IReadOnlyList<string> Reasons);
+
+public sealed record CompanionParkingEvidenceResult(
+    IReadOnlyDictionary<string, CompanionParkingEvidence> EvidenceByPlaceId,
+    IReadOnlyList<string> QueryPasses,
+    IReadOnlyList<string> Diagnostics);
+
+public interface ICompanionPlaceParkingEvidenceService
+{
+    Task<CompanionParkingEvidenceResult> EvaluateAsync(
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates,
+        CancellationToken cancellationToken);
+}
+
+public interface ICompanionPlaceDuplicateClusterService
+{
+    IReadOnlyList<CompanionPlacePoolCandidate> Cluster(
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
+}
+
+public sealed record CompanionCategoryCompatibilityResult(
+    IReadOnlyList<CompanionPlacePoolCandidate> Candidates,
+    IReadOnlyList<CompanionPlaceRejectedCandidate> Rejected,
+    IReadOnlyList<string> Diagnostics);
+
+public interface ICompanionPlaceCategoryCompatibilityService
+{
+    CompanionCategoryCompatibilityResult Apply(
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
+}
+
+public sealed record CompanionBrandIdentityResult(
+    IReadOnlyList<CompanionPlacePoolCandidate> Candidates,
+    IReadOnlyList<CompanionPlaceRejectedCandidate> Rejected,
+    IReadOnlyList<string> Diagnostics);
+
+public interface ICompanionPlaceBrandIdentityService
+{
+    CompanionBrandIdentityResult Apply(
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
 }

@@ -72,6 +72,11 @@ public interface IResultContextService
         string selectedEntityId,
         CancellationToken cancellationToken);
 
+    Task<ResultContextSnapshot?> GetLatestPlacesV2ContextAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        CancellationToken cancellationToken);
+
     Task ClearExpiredBindingsAsync(
         Guid conversationThreadId,
         CancellationToken cancellationToken);

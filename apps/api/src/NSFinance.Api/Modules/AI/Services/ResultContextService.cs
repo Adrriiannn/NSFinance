@@ -184,6 +184,40 @@ public sealed class ResultContextService(
             ReasonCodes: ["result_context_selected_entity_updated"]);
     }
 
+    public async Task<ResultContextSnapshot?> GetLatestPlacesV2ContextAsync(
+        Guid userId,
+        Guid conversationThreadId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await EnsureThreadOwnershipAsync(userId, conversationThreadId, cancellationToken);
+        var nowUtc = DateTime.UtcNow;
+        var contexts = await dbContext.ConversationResultContexts
+            .AsNoTracking()
+            .Where(x => x.ConversationThreadId == conversationThreadId
+                        && x.ExpiresUtc > nowUtc)
+            .OrderByDescending(x => x.CreatedUtc)
+            .Take(12)
+            .ToListAsync(cancellationToken);
+        foreach (var context in contexts)
+        {
+            var snapshot = Deserialize(context.SnapshotJson);
+            if (snapshot.SourceMode == ConversationMode.Exploration
+                && snapshot.SourceSubtype == ExplorationSubtype.Structured
+                && snapshot.NormalizedConstraints.TryGetValue("pipeline", out var pipeline)
+                && string.Equals(pipeline, "places_intelligence_v2", StringComparison.OrdinalIgnoreCase))
+            {
+                return snapshot with
+                {
+                    IsExpired = context.ExpiresUtc <= nowUtc,
+                    IsActiveWindowExpired = context.ActiveUntilUtc <= nowUtc
+                };
+            }
+        }
+
+        return null;
+    }
+
     public async Task ClearExpiredBindingsAsync(
         Guid conversationThreadId,
         CancellationToken cancellationToken)

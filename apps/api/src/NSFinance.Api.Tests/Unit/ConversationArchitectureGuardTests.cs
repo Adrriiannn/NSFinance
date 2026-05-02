@@ -2430,6 +2430,14 @@ public sealed class ConversationArchitectureGuardTests
             return Task.FromResult<ResultContextWriteResult?>(null);
         }
 
+        public Task<ResultContextSnapshot?> GetLatestPlacesV2ContextAsync(
+            Guid userId,
+            Guid conversationThreadId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<ResultContextSnapshot?>(null);
+        }
+
         public Task ClearExpiredBindingsAsync(
             Guid conversationThreadId,
             CancellationToken cancellationToken)

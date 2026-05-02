@@ -35,7 +35,12 @@ public sealed class ConversationLayerOrchestrator(
     ICompanionPlaceConstraintEngine? companionPlaceConstraintEngine = null,
     ICompanionPlaceIntelligenceRankingService? companionPlaceRankingServiceV2 = null,
     ICompanionPlaceFinalistEnrichmentService? companionPlaceFinalistEnrichmentService = null,
-    ICompanionPlaceSessionMemoryService? companionPlaceSessionMemoryService = null) : IUserChatOrchestrator
+    ICompanionPlaceSessionMemoryService? companionPlaceSessionMemoryService = null,
+    ICompanionPlaceResultContextBinder? companionPlaceResultContextBinder = null,
+    ICompanionPlaceParkingEvidenceService? companionPlaceParkingEvidenceService = null,
+    ICompanionPlaceDuplicateClusterService? companionPlaceDuplicateClusterService = null,
+    ICompanionPlaceCategoryCompatibilityService? companionPlaceCategoryCompatibilityService = null,
+    ICompanionPlaceBrandIdentityService? companionPlaceBrandIdentityService = null) : IUserChatOrchestrator
 {
     public async Task<UserChatResponse> ExecuteAsync(UserChatRequest request, CancellationToken cancellationToken)
     {
@@ -1197,7 +1202,12 @@ public sealed class ConversationLayerOrchestrator(
             || companionPlaceConstraintEngine is null
             || companionPlaceRankingServiceV2 is null
             || companionPlaceFinalistEnrichmentService is null
-            || companionPlaceSessionMemoryService is null)
+            || companionPlaceSessionMemoryService is null
+            || companionPlaceResultContextBinder is null
+            || companionPlaceParkingEvidenceService is null
+            || companionPlaceDuplicateClusterService is null
+            || companionPlaceCategoryCompatibilityService is null
+            || companionPlaceBrandIdentityService is null)
         {
             return false;
         }
@@ -1263,12 +1273,27 @@ public sealed class ConversationLayerOrchestrator(
             return null;
         }
 
+        ResultContextSnapshot? latestPlacesV2Context = null;
+        if (request.UserId.HasValue && request.ConversationThreadId.HasValue && resultContextService is not null)
+        {
+            latestPlacesV2Context = await resultContextService.GetLatestPlacesV2ContextAsync(
+                request.UserId.Value,
+                request.ConversationThreadId.Value,
+                cancellationToken);
+        }
+
+        var binding = companionPlaceResultContextBinder!.Bind(
+            request,
+            resultContextReadResult,
+            latestPlacesV2Context,
+            baseIntent);
+
         CompanionPlaceSearchContext? previousContext = null;
         if (baseIntent.ActionKind is "filter_previous_results" or "sort_previous_results")
         {
             previousContext = await companionPlaceSessionMemoryService!.LoadActiveSearchContextAsync(
                 request,
-                resultContextReadResult.ActiveResultContext,
+                binding.Context,
                 cancellationToken);
             if (previousContext is null || previousContext.CandidatePool.Count == 0)
             {
@@ -1316,7 +1341,9 @@ public sealed class ConversationLayerOrchestrator(
             diagnostics = poolResult.Diagnostics;
         }
 
-        var constrained = companionPlaceConstraintEngine!.Apply(intent, pool);
+        var brandFiltered = companionPlaceBrandIdentityService!.Apply(intent, pool);
+        var categoryFiltered = companionPlaceCategoryCompatibilityService!.Apply(intent, brandFiltered.Candidates);
+        var constrained = companionPlaceConstraintEngine!.Apply(intent, categoryFiltered.Candidates);
         await telemetry.TrackAsync(
             "places.constraint.rejected_count",
             new Dictionary<string, object?>
@@ -1344,7 +1371,8 @@ public sealed class ConversationLayerOrchestrator(
                 cancellationToken);
         }
 
-        var ranked = companionPlaceRankingServiceV2!.Rank(intent, constrained.Candidates);
+        var clustered = companionPlaceDuplicateClusterService!.Cluster(intent, constrained.Candidates);
+        var ranked = companionPlaceRankingServiceV2!.Rank(intent, clustered);
         await telemetry.TrackAsync(
             "places.ranking.completed",
             new Dictionary<string, object?>
@@ -1354,18 +1382,51 @@ public sealed class ConversationLayerOrchestrator(
             },
             cancellationToken);
 
+        var parkingEvidenceCount = (int?)null;
+        var finalCandidates = ranked.RankedCandidates;
+        if (RequiresParkingEvidence(intent))
+        {
+            var evidence = await companionPlaceParkingEvidenceService!.EvaluateAsync(
+                intent,
+                ranked.RankedCandidates,
+                cancellationToken);
+            parkingEvidenceCount = evidence.EvidenceByPlaceId.Count;
+            finalCandidates = ranked.RankedCandidates
+                .Where(candidate => evidence.EvidenceByPlaceId.TryGetValue(candidate.PlaceId, out var item)
+                                    && item.EvidenceLevel is "confirmed_on_site" or "likely_on_site" or "nearby_parking")
+                .ToArray();
+            if (finalCandidates.Count == 0)
+            {
+                return await BuildPlacesNoMatchResultAsync(
+                    request,
+                    contextSummary,
+                    state,
+                    resultContextReadResult,
+                    existingWarnings,
+                    intelligenceWarnings,
+                    resolvedAction,
+                    intent,
+                    diagnostics.Concat(constrained.Diagnostics).Concat(ranked.Diagnostics).Concat(evidence.Diagnostics).ToArray(),
+                    "parking_evidence_not_found",
+                    intelligenceModelCallCount,
+                    intelligenceFastModelCallCount,
+                    intelligenceHeavyModelCallCount,
+                    cancellationToken);
+            }
+        }
+
         var maxCards = Math.Clamp(intent.RequestedMaxResults ?? 10, 1, 10);
         await telemetry.TrackAsync(
             "places.finalists.selected",
             new Dictionary<string, object?>
             {
                 ["correlationId"] = request.CorrelationId,
-                ["visibleCardCount"] = Math.Min(maxCards, ranked.RankedCandidates.Count)
+                ["visibleCardCount"] = Math.Min(maxCards, finalCandidates.Count)
             },
             cancellationToken);
         var finalists = await companionPlaceFinalistEnrichmentService!.EnrichAsync(
             intent,
-            ranked.RankedCandidates,
+            finalCandidates,
             maxCards,
             cancellationToken);
         if (finalists.StructuredResults?.Items.Count is null or 0)
@@ -1431,6 +1492,8 @@ public sealed class ConversationLayerOrchestrator(
                 .Concat(intelligenceWarnings)
                 .Concat(resolvedAction.Warnings)
                 .Concat(diagnostics)
+                .Concat(brandFiltered.Diagnostics)
+                .Concat(categoryFiltered.Diagnostics)
                 .Concat(constrained.Diagnostics)
                 .Concat(ranked.Diagnostics)
                 .Concat(finalists.Diagnostics)
@@ -1450,6 +1513,26 @@ public sealed class ConversationLayerOrchestrator(
             structuredResultsReturned: true,
             structuredResultCount: finalists.StructuredResults.Items.Count,
             reason: "places_intelligence_v2_completed",
+            cancellationToken);
+
+        await telemetry.TrackAsync(
+            "places.v2.final_decision",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["actionKind"] = intent.ActionKind,
+                ["placeQuery"] = intent.PlaceQuery,
+                ["brandOrEntity"] = intent.BrandOrEntity,
+                ["chosenResultSetId"] = binding.Context?.ResultSetId,
+                ["candidatePoolCount"] = pool.Count,
+                ["afterBrandFilterCount"] = brandFiltered.Candidates.Count,
+                ["afterCategoryFilterCount"] = categoryFiltered.Candidates.Count,
+                ["afterHardFilterCount"] = constrained.Candidates.Count,
+                ["afterDuplicateClusterCount"] = clustered.Count,
+                ["afterParkingEvidenceCount"] = parkingEvidenceCount,
+                ["returnedCardCount"] = finalists.StructuredResults.Items.Count,
+                ["noMatchReason"] = null
+            },
             cancellationToken);
 
         return BuildResolvedActionResult(
@@ -1510,6 +1593,12 @@ public sealed class ConversationLayerOrchestrator(
         }
 
         return "I found these matching options:";
+    }
+
+    private static bool RequiresParkingEvidence(CompanionSemanticIntent intent)
+    {
+        return intent.HardFilters.Any(static filter => filter.Contains("parking", StringComparison.OrdinalIgnoreCase))
+               || intent.RequestedDetailFields.Contains("parking", StringComparer.OrdinalIgnoreCase);
     }
 
     private async Task TrackPlacesV2SkippedAsync(
@@ -1594,6 +1683,20 @@ public sealed class ConversationLayerOrchestrator(
             structuredResultsReturned: false,
             structuredResultCount: 0,
             reason: reason,
+            cancellationToken);
+
+        await telemetry.TrackAsync(
+            "places.v2.final_decision",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["actionKind"] = intent.ActionKind,
+                ["placeQuery"] = intent.PlaceQuery,
+                ["brandOrEntity"] = intent.BrandOrEntity,
+                ["chosenResultSetId"] = resultContextReadResult.ActiveResultContext?.ResultSetId,
+                ["returnedCardCount"] = 0,
+                ["noMatchReason"] = reason
+            },
             cancellationToken);
 
         return BuildResolvedActionResult(
@@ -2815,12 +2918,22 @@ public sealed class ConversationLayerOrchestrator(
                 cancellationToken);
         }
 
-        await conversationStateService!.SaveSnapshotAsync(
-            userId,
-            conversationThreadId,
-            state,
-            ConversationStateSnapshotReason.AssistantTurn,
-            cancellationToken);
+        try
+        {
+            await conversationStateService!.SaveSnapshotAsync(
+                userId,
+                conversationThreadId,
+                state,
+                ConversationStateSnapshotReason.AssistantTurn,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Assistant response succeeded but conversation state snapshot persistence failed threadId={ThreadId}",
+                conversationThreadId);
+        }
 
         try
         {

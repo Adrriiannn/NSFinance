@@ -48,13 +48,31 @@ public sealed class CompanionSemanticIntentService(IChatTelemetry? telemetry = n
             retrievalPlan?.BrandTerm,
             interpretation?.PlacePlan.BrandOrEntityTerms.FirstOrDefault(),
             IsSingleTokenEntity(resolvedAction?.PlaceQuery) ? resolvedAction?.PlaceQuery : null,
-            resolvedAction?.IncludeConcepts.FirstOrDefault(IsLikelyBrand));
+            resolvedAction?.IncludeConcepts.FirstOrDefault(IsLikelyBrand),
+            ExtractBrandFallback(request.UserMessage, placeQuery));
         var location = BuildLocationIntent(request, state, interpretation, retrievalPlan, resolvedAction);
         var hardFilters = MergeDistinct(
             resolvedAction?.Requirement is null ? [] : [resolvedAction.Requirement],
             resolvedAction?.TimeFilters,
             interpretation?.PlacePlan.TimeFilters,
             retrievalPlan?.TimeFilters);
+        var ratingFilter = ExtractRatingThresholdFilter(request.UserMessage);
+        if (ratingFilter is not null)
+        {
+            hardFilters = MergeDistinct(hardFilters, [ratingFilter]);
+            if (telemetry is not null)
+            {
+                _ = telemetry.TrackAsync(
+                    "places.semantic_intent.rating_filter_extracted",
+                    new Dictionary<string, object?>
+                    {
+                        ["correlationId"] = request.CorrelationId,
+                        ["filter"] = ratingFilter
+                    },
+                    CancellationToken.None);
+            }
+        }
+
         var fallbackHardFilters = hardFilters.Count == 0;
         if (fallbackHardFilters)
         {
@@ -94,6 +112,7 @@ public sealed class CompanionSemanticIntentService(IChatTelemetry? telemetry = n
             PlaceQuery: normalizedPlaceQuery,
             BrandOrEntity: brand,
             Location: location,
+            Role: ResolveRole(normalizedPlaceQuery, brand, hardFilters, negativeFilters, softPreferences),
             HardFilters: hardFilters,
             NegativeFilters: negativeFilters,
             SoftPreferences: softPreferences,
@@ -206,10 +225,10 @@ public sealed class CompanionSemanticIntentService(IChatTelemetry? telemetry = n
     {
         var normalized = Normalize(message);
         var filters = new List<string>();
-        var rating = Regex.Match(normalized, @"(?:rated\s*)?([0-5](?:\.\d)?)\s*(?:\+|and up|or higher)");
-        if (rating.Success)
+        var ratingFilter = ExtractRatingThresholdFilter(message);
+        if (ratingFilter is not null)
         {
-            filters.Add($"rating>={rating.Groups[1].Value}");
+            filters.Add(ratingFilter);
         }
 
         if (normalized.Contains("open now", StringComparison.Ordinal))
@@ -223,6 +242,30 @@ public sealed class CompanionSemanticIntentService(IChatTelemetry? telemetry = n
         }
 
         return filters;
+    }
+
+    private static string? ExtractRatingThresholdFilter(string message)
+    {
+        var normalized = Normalize(message);
+        var patterns = new[]
+        {
+            @"(?:rated\s*)?([0-5](?:\.\d)?)\s*(?:\+|and up|or higher)",
+            @"(?:minimum|at least)\s*([0-5](?:\.\d)?)\s*(?:stars?|rating)?",
+            @"(?:above|over)\s*([0-5](?:\.\d)?)",
+            @"only\s*([0-5](?:\.\d)?)\s*(?:rating\s*)?(?:and up|or higher)?"
+        };
+        foreach (var pattern in patterns)
+        {
+            var match = Regex.Match(normalized, pattern, RegexOptions.IgnoreCase);
+            if (match.Success
+                && double.TryParse(match.Groups[1].Value, CultureInfo.InvariantCulture, out var threshold)
+                && threshold is >= 0d and <= 5d)
+            {
+                return $"rating>={threshold.ToString("0.0", CultureInfo.InvariantCulture)}";
+            }
+        }
+
+        return null;
     }
 
     private static IReadOnlyList<string> ExtractNegativeFiltersFallback(string message, string? placeQuery)
@@ -392,6 +435,81 @@ public sealed class CompanionSemanticIntentService(IChatTelemetry? telemetry = n
         }
 
         return value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 4;
+    }
+
+    private static string? ExtractBrandFallback(string message, string? placeQuery)
+    {
+        var normalized = Normalize($"{message} {placeQuery}");
+        if (normalized.Contains("starbucks", StringComparison.Ordinal))
+        {
+            return "Starbucks";
+        }
+
+        if (Regex.IsMatch(normalized, @"\baib\b", RegexOptions.IgnoreCase)
+            || normalized.Contains("allied irish bank", StringComparison.Ordinal))
+        {
+            return "AIB";
+        }
+
+        return null;
+    }
+
+    private static CompanionPlaceRoleIntent ResolveRole(
+        string? placeQuery,
+        string? brand,
+        IReadOnlyList<string> hardFilters,
+        IReadOnlyList<string> negativeFilters,
+        IReadOnlyList<string> softPreferences)
+    {
+        var normalized = Normalize($"{placeQuery} {brand}");
+        if (normalized.Contains("atm", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("atm", ["atm"], ["atm"], [], [], "strict");
+        }
+
+        if (normalized.Contains("bank", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("bank_branch", ["bank", "financial institution"], ["bank"], ["atm"], [], "strict");
+        }
+
+        if (normalized.Contains("car park", StringComparison.Ordinal) || normalized.Contains("parking", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("parking", ["parking"], ["parking_lot", "parking_garage", "parking"], ["park", "tourist_attraction"], [], "strict");
+        }
+
+        if (normalized.Contains("fine dining", StringComparison.Ordinal)
+            || softPreferences.Contains("upscale", StringComparer.OrdinalIgnoreCase))
+        {
+            return new CompanionPlaceRoleIntent(
+                "restaurant",
+                ["restaurant"],
+                ["fine_dining_restaurant", "irish_restaurant", "french_restaurant", "asian_restaurant", "european_restaurant", "italian_restaurant", "seafood_restaurant", "restaurant"],
+                ["fast_food_restaurant", "meal_takeaway", "cafe"],
+                ["fine_dining", "upscale"],
+                "compatible");
+        }
+
+        if (normalized.Contains("pharmacy", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("pharmacy", ["pharmacy"], ["pharmacy"], ["hospital"], [], "strict");
+        }
+
+        if (normalized.Contains("petrol", StringComparison.Ordinal) || normalized.Contains("gas station", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("petrol_station", ["gas_station"], ["gas_station"], ["car_wash"], [], "strict");
+        }
+
+        if (normalized.Contains("post office", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("post_office", ["post_office"], ["post_office"], ["mailbox"], [], "strict");
+        }
+
+        if (normalized.Contains("hotel", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("hotel", ["lodging"], ["hotel", "lodging"], ["restaurant", "bar"], [], "strict");
+        }
+
+        return new CompanionPlaceRoleIntent(null, [], [], [], [], "loose");
     }
 
     private static bool IsSingleTokenEntity(string? value)

@@ -113,19 +113,9 @@ public sealed class CompanionPlaceConstraintEngine(IChatTelemetry telemetry) : I
             {
                 return "hard_filter:rating";
             }
-            else if (normalized.Contains("parking", StringComparison.Ordinal)
-                     && HasParkingEvidence(candidate) == false)
-            {
-                return "hard_filter:parking";
-            }
         }
 
         return null;
-    }
-
-    private static bool HasParkingEvidence(CompanionPlacePoolCandidate candidate)
-    {
-        return BuildHaystack(candidate).Contains("parking", StringComparison.Ordinal);
     }
 
     private static string BuildHaystack(CompanionPlacePoolCandidate candidate)

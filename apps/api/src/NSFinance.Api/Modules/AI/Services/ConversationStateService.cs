@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
 
@@ -8,7 +9,9 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed class ConversationStateService(
     AppDbContext dbContext,
-    IOptions<AIIntegrationOptions> options) : IConversationStateService
+    IOptions<AIIntegrationOptions> options,
+    IChatTelemetry? telemetry = null,
+    ILogger<ConversationStateService>? logger = null) : IConversationStateService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -45,26 +48,73 @@ public sealed class ConversationStateService(
         CancellationToken cancellationToken)
     {
         await EnsureThreadOwnershipAsync(userId, conversationThreadId, cancellationToken);
-        var nextVersion = (await dbContext.ConversationStateSnapshots
-                               .Where(x => x.ConversationThreadId == conversationThreadId)
-                               .Select(x => (int?)x.StateVersion)
-                               .MaxAsync(cancellationToken) ?? 0) + 1;
-
-        var now = DateTime.UtcNow;
-        var entity = new Persistence.Entities.ConversationStateSnapshot
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
-            Id = Guid.NewGuid(),
-            ConversationThreadId = conversationThreadId,
-            StateJson = SerializeState(NormalizeState(state)),
-            StateVersion = nextVersion,
-            Reason = reason,
-            CreatedUtc = now
-        };
+            var nextVersion = (await dbContext.ConversationStateSnapshots
+                                   .Where(x => x.ConversationThreadId == conversationThreadId)
+                                   .Select(x => (int?)x.StateVersion)
+                                   .MaxAsync(cancellationToken) ?? 0) + 1;
 
-        dbContext.ConversationStateSnapshots.Add(entity);
-        await dbContext.SaveChangesAsync(cancellationToken);
+            var now = DateTime.UtcNow;
+            var entity = new Persistence.Entities.ConversationStateSnapshot
+            {
+                Id = Guid.NewGuid(),
+                ConversationThreadId = conversationThreadId,
+                StateJson = SerializeState(NormalizeState(state)),
+                StateVersion = nextVersion,
+                Reason = reason,
+                CreatedUtc = now
+            };
 
-        return new PersistedConversationState(DeserializeState(entity.StateJson), entity.StateVersion, entity.CreatedUtc);
+            dbContext.ConversationStateSnapshots.Add(entity);
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+                return new PersistedConversationState(DeserializeState(entity.StateJson), entity.StateVersion, entity.CreatedUtc);
+            }
+            catch (DbUpdateException ex) when (IsStateVersionUniqueViolation(ex) && attempt < 3)
+            {
+                dbContext.ChangeTracker.Clear();
+                logger?.LogWarning(
+                    ex,
+                    "Conversation state snapshot version conflict threadId={ThreadId} attempt={Attempt} stateVersion={StateVersion}",
+                    conversationThreadId,
+                    attempt,
+                    nextVersion);
+                if (telemetry is not null)
+                {
+                    await telemetry.TrackAsync(
+                        "conversation_state.snapshot_version_conflict_retry",
+                        new Dictionary<string, object?>
+                        {
+                            ["threadId"] = conversationThreadId,
+                            ["attempt"] = attempt,
+                            ["stateVersion"] = nextVersion
+                        },
+                        cancellationToken);
+                }
+            }
+            catch (DbUpdateException ex) when (IsStateVersionUniqueViolation(ex))
+            {
+                dbContext.ChangeTracker.Clear();
+                if (telemetry is not null)
+                {
+                    await telemetry.TrackAsync(
+                        "conversation_state.snapshot_version_conflict_failed",
+                        new Dictionary<string, object?>
+                        {
+                            ["threadId"] = conversationThreadId,
+                            ["attempt"] = attempt,
+                            ["stateVersion"] = nextVersion
+                        },
+                        cancellationToken);
+                }
+
+                throw;
+            }
+        }
+
+        throw new InvalidOperationException("Failed to save conversation state snapshot due to repeated version conflicts.");
     }
 
     public async Task<PersistedConversationState> MergeStateUpdatesAsync(
@@ -495,5 +545,34 @@ public sealed class ConversationStateService(
         {
             throw new InvalidOperationException("Conversation thread not found for user.");
         }
+    }
+
+    private static bool IsStateVersionUniqueViolation(DbUpdateException ex)
+    {
+        var message = ex.InnerException?.Message ?? ex.Message;
+        if (message.Contains(
+                "IX_ConversationStateSnapshots_ConversationThreadId_StateVersion",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var current = ex.InnerException;
+        while (current is not null)
+        {
+            if (current is PostgresException postgresException
+                && postgresException.SqlState == PostgresErrorCodes.UniqueViolation
+                && string.Equals(
+                    postgresException.ConstraintName,
+                    "IX_ConversationStateSnapshots_ConversationThreadId_StateVersion",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            current = current.InnerException;
+        }
+
+        return false;
     }
 }
