@@ -57,6 +57,7 @@ public sealed class CompanionPlaceBrandIdentityService(IChatTelemetry telemetry)
             return entity.Aliases
                 .Append(entity.CanonicalName)
                 .Append(entity.RawEntityText)
+                .Concat(entity.RelationshipAliases.Select(static item => item.Name))
                 .Where(static value => !string.IsNullOrWhiteSpace(value))
                 .Select(static value => value!.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)

@@ -237,6 +237,48 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         Assert.Equal("Omni Park Car Park", card.Name);
     }
 
+    [Fact]
+    public async Task BikeShopsNearMe_WhenPlannerFallsBack_ReturnsBikeShops()
+    {
+        var pool = new FixedPoolService(
+            [
+                Candidate("bike", "Dublin Bike Shop", "bicycle_store", ["bicycle_store", "store"], 400, "Bicycle store"),
+                Candidate("coffee", "Bike Lane Coffee", "cafe", ["cafe"], 200, "Cafe")
+            ]);
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "bike shops", locationQuery: "near me"),
+            pool);
+
+        var response = await orchestrator.ExecuteAsync(Request("bike shops near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Dublin Bike Shop", card.Name);
+        Assert.DoesNotContain(pool.LastQueryPasses, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(pool.LastQueryPasses, query => query.Contains("bicycle store", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task FacebookOfficeDublin_ReturnsMetaOfficeCandidate()
+    {
+        var telemetry = new RecordingTelemetry();
+        var pool = new FixedPoolService(
+            [
+                Candidate("meta", "Meta Dublin", "establishment", ["establishment", "point_of_interest"], 2_000, "Establishment"),
+                Candidate("google", "Google Dublin", "establishment", ["establishment", "point_of_interest"], 1_000, "Establishment")
+            ]);
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "Facebook office", locationQuery: "Dublin"),
+            pool,
+            telemetry: telemetry,
+            strategyPlanner: BuildAiStrategyPlanner(FacebookOfficeStrategyJson(), telemetry));
+
+        var response = await orchestrator.ExecuteAsync(Request("Facebook office Dublin"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Meta Dublin", card.Name);
+        Assert.DoesNotContain(pool.LastQueryPasses, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static ConversationLayerOrchestrator CreateOrchestrator(
         CompanionResolvedAction action,
         FixedPoolService pool,
@@ -290,7 +332,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             companionPlaceDuplicateClusterService: new CompanionPlaceDuplicateClusterService(telemetry),
             companionPlaceCategoryCompatibilityService: new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
             companionPlaceBrandIdentityService: new CompanionPlaceBrandIdentityService(telemetry),
-            companionPlaceSearchStrategyPlanner: strategyPlanner ?? new DeterministicStrategyPlanner(new DeterministicCompanionPlaceSearchStrategyFallback(telemetry)),
+            companionPlaceSearchStrategyPlanner: strategyPlanner ?? new DeterministicStrategyPlanner(new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), telemetry)),
             companionPlaceEntityVerificationService: new CompanionPlaceEntityVerificationService(new EmptyDiscoveryService(), new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
             companionPlaceSearchVariantValidator: new CompanionPlaceSearchVariantValidator(telemetry));
     }
@@ -354,7 +396,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
             new FixedModelRouter(),
             new FixedAIClient(payload),
-            new DeterministicCompanionPlaceSearchStrategyFallback(telemetry),
+            new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), telemetry),
             Options.Create(new AIIntegrationOptions
             {
                 Architecture = new ConversationArchitectureOptions
@@ -362,7 +404,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
                     PlacesStrategyPlannerV2Enabled = true,
                     PlacesStrategyPlannerModelBacked = true,
                     PlacesStrategyPlannerFallbackEnabled = true,
-                    PlacesStrategyPlannerTimeoutMs = 2500
+                    PlacesStrategyPlannerTimeoutMs = 4500
                 }
             }),
             telemetry,
@@ -373,6 +415,13 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
     {
         return """
 {"canonicalQuery":"AIB bank","entity":{"rawEntityText":"AIB","canonicalName":"AIB","aliases":["AIB","Allied Irish Bank"],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.92},"role":{"requestedRole":"bank_branch","requiredCoreRoles":["bank","financial_institution"],"acceptableSubRoles":["bank"],"excludedSiblingRoles":["atm"],"modifiers":[],"categoryStrictness":"strict"},"searchVariants":[{"query":"AIB bank","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.93},{"query":"Allied Irish Bank","purpose":"alias","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.88}],"hardRequirements":[],"negativeRequirements":["atm"],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.91,"warnings":[]}
+""";
+    }
+
+    private static string FacebookOfficeStrategyJson()
+    {
+        return """
+{"canonicalQuery":"Facebook office Dublin","entity":{"rawEntityText":"Facebook","canonicalName":"Facebook","aliases":["Facebook"],"relationshipAliases":[{"name":"Meta","relationshipType":"parent_company"}],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.86},"role":{"requestedRole":"office","requiredCoreRoles":["office"],"acceptableSubRoles":["corporate_office","headquarters"],"excludedSiblingRoles":[],"modifiers":[],"categoryStrictness":"compatible"},"searchVariants":[{"query":"Facebook office Dublin","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.84},{"query":"Meta office Dublin","purpose":"alias","requiresEntityMatch":true,"requiresRoleMatch":true,"confidence":0.8}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_relevance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.86,"warnings":[]}
 """;
     }
 

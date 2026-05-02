@@ -118,6 +118,54 @@ public sealed class CompanionPlaceTypeFamilyClassifier(IChatTelemetry telemetry)
             families.Add("hotel");
             families.Add("lodging");
         }
+
+        if (normalized.Contains("bicycle", StringComparison.Ordinal)
+            || normalized.Contains("bike shop", StringComparison.Ordinal)
+            || normalized.Contains("cycle shop", StringComparison.Ordinal)
+            || normalized.Contains("bike repair", StringComparison.Ordinal)
+            || normalized.Contains("cycle repair", StringComparison.Ordinal))
+        {
+            families.Add("bicycle_store");
+            families.Add("bike_shop");
+            families.Add("cycle_shop");
+            if (normalized.Contains("repair", StringComparison.Ordinal))
+            {
+                families.Add("bicycle_repair_shop");
+            }
+        }
+
+        if (normalized.Contains("store", StringComparison.Ordinal) || normalized.Contains("shop", StringComparison.Ordinal))
+        {
+            families.Add("store");
+        }
+
+        if (normalized.Contains("office", StringComparison.Ordinal)
+            || normalized.Contains("corporate office", StringComparison.Ordinal)
+            || normalized.Contains("headquarters", StringComparison.Ordinal)
+            || normalized.Contains("business center", StringComparison.Ordinal)
+            || normalized.Contains("business centre", StringComparison.Ordinal))
+        {
+            families.Add("office");
+            families.Add("corporate_office");
+            if (normalized.Contains("headquarters", StringComparison.Ordinal))
+            {
+                families.Add("headquarters");
+            }
+
+            if (normalized.Contains("business center", StringComparison.Ordinal)
+                || normalized.Contains("business centre", StringComparison.Ordinal))
+            {
+                families.Add("business_center");
+            }
+        }
+
+        if (normalized.Contains("establishment", StringComparison.Ordinal)
+            || normalized.Contains("point of interest", StringComparison.Ordinal)
+            || normalized.Contains("point_of_interest", StringComparison.Ordinal))
+        {
+            families.Add("establishment");
+            families.Add("point_of_interest");
+        }
     }
 
     private static void AddWeakDisplayNameFamilies(HashSet<string> families, string displayName)
@@ -131,6 +179,13 @@ public sealed class CompanionPlaceTypeFamilyClassifier(IChatTelemetry telemetry)
         if (normalized.Contains("atm", StringComparison.Ordinal))
         {
             families.Add("atm");
+        }
+
+        if (normalized.Contains("office", StringComparison.Ordinal)
+            || normalized.Contains("headquarters", StringComparison.Ordinal)
+            || normalized.Contains(" hq", StringComparison.Ordinal))
+        {
+            families.Add("office");
         }
     }
 

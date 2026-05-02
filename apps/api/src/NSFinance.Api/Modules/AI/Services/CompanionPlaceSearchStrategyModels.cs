@@ -21,11 +21,16 @@ public sealed record CompanionPlaceEntityIntent(
     string? RawEntityText,
     string? CanonicalName,
     IReadOnlyList<string> Aliases,
+    IReadOnlyList<CompanionEntityRelationshipAlias> RelationshipAliases,
     bool IsBrandOrNamedEntity,
     bool RequiresEntityLock,
     bool VerificationRequired,
     string VerificationStatus,
     double Confidence);
+
+public sealed record CompanionEntityRelationshipAlias(
+    string Name,
+    string RelationshipType);
 
 public sealed record CompanionPlaceSearchVariant(
     string Query,
@@ -97,4 +102,18 @@ public interface ICompanionPlaceSearchVariantValidator
 public interface ICompanionPlaceTypeFamilyClassifier
 {
     IReadOnlySet<string> ClassifyFamilies(CompanionPlacePoolCandidate candidate);
+}
+
+public sealed record CompanionFallbackCategoryClassification(
+    bool Matched,
+    string? CanonicalQuery,
+    CompanionPlaceRoleIntent Role,
+    IReadOnlyList<CompanionPlaceSearchVariant> SearchVariants,
+    IReadOnlyList<string> NegativeRequirements);
+
+public interface ICompanionGenericPlaceCategoryFallbackClassifier
+{
+    CompanionFallbackCategoryClassification Classify(
+        string userMessage,
+        CompanionSemanticIntent intent);
 }

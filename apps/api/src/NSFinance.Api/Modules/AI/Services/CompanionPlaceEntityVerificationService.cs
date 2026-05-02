@@ -52,12 +52,27 @@ public sealed class CompanionPlaceEntityVerificationService(
                 cancellationToken);
             foreach (var candidate in result.Candidates)
             {
-                if (!MatchesEntity(strategy.Entity, candidate.DisplayName))
+                if (!MatchesEntity(strategy.Entity, candidate.DisplayName, out var matchedAlias))
                 {
                     continue;
                 }
 
                 matchedEntity.Add(candidate);
+                if (matchedAlias?.RelationshipType is not null)
+                {
+                    evidence.Add($"relationship_alias_match:{matchedAlias.Name}:{matchedAlias.RelationshipType}");
+                    _ = telemetry.TrackAsync(
+                        "places.entity_alias.relationship_matched",
+                        new Dictionary<string, object?>
+                        {
+                            ["canonicalEntity"] = strategy.Entity.CanonicalName,
+                            ["matchedAlias"] = matchedAlias.Name,
+                            ["aliasRelationshipType"] = matchedAlias.RelationshipType,
+                            ["candidateName"] = candidate.DisplayName
+                        },
+                        cancellationToken);
+                }
+
                 if (MatchesRole(strategy.Role, candidate))
                 {
                     matchedRole.Add(candidate);
@@ -98,6 +113,11 @@ public sealed class CompanionPlaceEntityVerificationService(
             };
         }
 
+        if (IsOfficeRole(strategy.Role) && matchedEntity.Count > 0 && matchedRole.Count == 0)
+        {
+            warnings.Add("role_evidence_weak_entity_match_strong");
+        }
+
         if (status is "pending" or "ambiguous")
         {
             warnings.Add($"entity_verification_{status}");
@@ -112,7 +132,9 @@ public sealed class CompanionPlaceEntityVerificationService(
                 ["requestedRole"] = strategy.Role.RequestedRole,
                 ["verificationStatus"] = status,
                 ["entityEvidenceCount"] = matchedEntity.Count,
-                ["roleEvidenceCount"] = matchedRole.Count
+                ["roleEvidenceCount"] = matchedRole.Count,
+                ["matchedAlias"] = ExtractMatchedAliasEvidence(evidence),
+                ["aliasRelationshipType"] = ExtractMatchedAliasRelationship(evidence)
             },
             cancellationToken);
 
@@ -136,6 +158,11 @@ public sealed class CompanionPlaceEntityVerificationService(
 
         if (matchedEntity.Count > 0)
         {
+            if (IsOfficeRole(strategy.Role))
+            {
+                return "verified";
+            }
+
             return strategy.Role.CategoryStrictness == "loose" ? "verified" : "ambiguous";
         }
 
@@ -160,6 +187,7 @@ public sealed class CompanionPlaceEntityVerificationService(
             "post_office" => "post office",
             "coffee_shop" => "coffee shop",
             "restaurant" => "restaurant",
+            "office" or "corporate_office" or "headquarters" or "hq" => "office",
             _ => strategy.Role.RequestedRole
         };
         return entity.Aliases
@@ -207,11 +235,12 @@ public sealed class CompanionPlaceEntityVerificationService(
             .Any(families.Contains);
     }
 
-    private static bool MatchesEntity(CompanionPlaceEntityIntent entity, string candidateName)
+    private static bool MatchesEntity(CompanionPlaceEntityIntent entity, string candidateName, out CompanionEntityRelationshipAlias? matchedRelationshipAlias)
     {
+        matchedRelationshipAlias = null;
         var candidate = Normalize(candidateName);
         var compactCandidate = Compact(candidateName);
-        return entity.Aliases
+        var direct = entity.Aliases
             .Append(entity.CanonicalName)
             .Append(entity.RawEntityText)
             .Where(static alias => !string.IsNullOrWhiteSpace(alias))
@@ -221,6 +250,23 @@ public sealed class CompanionPlaceEntityVerificationService(
                 return candidate.Contains(normalizedAlias, StringComparison.Ordinal)
                        || compactCandidate.Contains(Compact(alias), StringComparison.Ordinal);
             });
+        if (direct)
+        {
+            return true;
+        }
+
+        foreach (var relationshipAlias in entity.RelationshipAliases)
+        {
+            var normalizedAlias = Normalize(relationshipAlias.Name);
+            if (candidate.Contains(normalizedAlias, StringComparison.Ordinal)
+                || compactCandidate.Contains(Compact(relationshipAlias.Name), StringComparison.Ordinal))
+            {
+                matchedRelationshipAlias = relationshipAlias;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string? InferEntityName(CompanionPlaceEntityIntent entity, CompanionPlaceCandidate candidate)
@@ -246,6 +292,25 @@ public sealed class CompanionPlaceEntityVerificationService(
     }
 
     private static string NormalizeRole(string value) => Normalize(value).Replace("financial institution", "financial_institution").Replace(' ', '_');
+
+    private static bool IsOfficeRole(CompanionPlaceRoleIntent role)
+    {
+        return role.RequestedRole is "office" or "corporate_office" or "headquarters" or "hq";
+    }
+
+    private static string? ExtractMatchedAliasEvidence(IReadOnlyList<string> evidence)
+    {
+        return evidence.FirstOrDefault(static item => item.StartsWith("relationship_alias_match:", StringComparison.OrdinalIgnoreCase))
+            ?.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ElementAtOrDefault(1);
+    }
+
+    private static string? ExtractMatchedAliasRelationship(IReadOnlyList<string> evidence)
+    {
+        return evidence.FirstOrDefault(static item => item.StartsWith("relationship_alias_match:", StringComparison.OrdinalIgnoreCase))
+            ?.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ElementAtOrDefault(2);
+    }
 
     private static string Normalize(string? value)
     {

@@ -266,7 +266,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_AibBanks_SplitsEntityAndRole()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
             BuildRequest("AIB banks near me"),
             BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB banks" },
             "test");
@@ -339,7 +339,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_AibAtms_SplitsEntityAndAtmRole()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
             BuildRequest("AIB ATMs near me"),
             BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB ATMs" },
             "test");
@@ -352,7 +352,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_FineDining_HasNoEntityAndRestaurantModifier()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
             BuildRequest("fine dining restaurants near me"),
             BuildIntent(placeQuery: "fine dining restaurants", rankingGoal: "concept_fit_then_distance", softPreferences: ["upscale"]) with { BrandOrEntity = "fine dining" },
             "test");
@@ -366,7 +366,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_CarParks_HasNoEntityAndParkingRole()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
             BuildRequest("car parks near me"),
             BuildIntent(placeQuery: "car parks", rankingGoal: "parking_match_then_distance") with { BrandOrEntity = "car parks" },
             "test");
@@ -379,7 +379,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_CoffeeShops_AllowsCafeVariants()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
             BuildRequest("coffee shops near me"),
             BuildIntent(placeQuery: "coffee shops", rankingGoal: "intent_fit_then_distance"),
             "test");
@@ -389,10 +389,52 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         Assert.Contains(strategy.SearchVariants, item => string.Equals(item.Query, "cafe", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Theory]
+    [InlineData("bike shops near me")]
+    [InlineData("bicycle shops near me")]
+    [InlineData("cycle shops near me")]
+    public void Fallback_BikeShops_NoEntity_UsesBicycleStoreRole(string message)
+    {
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+            BuildRequest(message),
+            BuildIntent(placeQuery: message, rankingGoal: "intent_fit_then_distance") with { BrandOrEntity = "bike" },
+            "places_search_strategy_ai_timeout");
+
+        Assert.Null(strategy.Entity);
+        Assert.Equal("bicycle_store", strategy.Role.RequestedRole);
+        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("bike shop", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("bicycle store", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("cycle shop", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Fallback_BikeRepair_UsesBicycleRepairVariants()
+    {
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+            BuildRequest("bike repair near me"),
+            BuildIntent(placeQuery: "bike repair", rankingGoal: "intent_fit_then_distance") with { BrandOrEntity = "bike" },
+            "places_search_strategy_ai_timeout");
+
+        Assert.Null(strategy.Entity);
+        Assert.Equal("bicycle_store", strategy.Role.RequestedRole);
+        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("bicycle repair shop", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Fallback_DistinctiveBrand_StillCanBeEntity()
+    {
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+            BuildRequest("IKEA near me"),
+            BuildIntent(placeQuery: "IKEA", rankingGoal: "brand_match_then_distance"),
+            "places_search_strategy_ai_timeout");
+
+        Assert.Equal("IKEA", strategy.Entity?.CanonicalName);
+    }
+
     [Fact]
     public void SearchStrategy_Ikea_AllowsSingleVariant()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new NoOpChatTelemetry()).Plan(
+        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
             BuildRequest("IKEA near me"),
             BuildIntent(placeQuery: "IKEA", rankingGoal: "brand_match_then_distance"),
             "test");
@@ -416,11 +458,14 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     public void FacebookOffice_AIParser_BrandEntityOfficeRole()
     {
         var strategy = ParseStrategy("""
-{"canonicalQuery":"Facebook office Dublin","entity":{"rawEntityText":"Facebook","canonicalName":"Facebook","aliases":["Facebook","Meta"],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.82},"role":{"requestedRole":"office","requiredCoreRoles":[],"acceptableSubRoles":[],"excludedSiblingRoles":[],"modifiers":[],"categoryStrictness":"loose"},"searchVariants":[{"query":"Facebook office Dublin","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":false,"confidence":0.84},{"query":"Meta office Dublin","purpose":"alias","requiresEntityMatch":true,"requiresRoleMatch":false,"confidence":0.75}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_relevance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.82,"warnings":[]}
+{"canonicalQuery":"Facebook office Dublin","entity":{"rawEntityText":"Facebook","canonicalName":"Facebook","aliases":["Facebook"],"relationshipAliases":[{"name":"Meta","relationshipType":"parent_company"}],"isBrandOrNamedEntity":true,"requiresEntityLock":true,"verificationRequired":true,"confidence":0.82},"role":{"requestedRole":"office","requiredCoreRoles":[],"acceptableSubRoles":[],"excludedSiblingRoles":[],"modifiers":[],"categoryStrictness":"loose"},"searchVariants":[{"query":"Facebook office Dublin","purpose":"primary","requiresEntityMatch":true,"requiresRoleMatch":false,"confidence":0.84},{"query":"Meta office Dublin","purpose":"alias","requiresEntityMatch":true,"requiresRoleMatch":false,"confidence":0.75}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"brand_match_then_relevance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.82,"warnings":[]}
 """, "Facebook office Dublin");
 
         Assert.Equal("Facebook", strategy.Entity?.CanonicalName);
         Assert.Equal("office", strategy.Role.RequestedRole);
+        var alias = Assert.Single(strategy.Entity!.RelationshipAliases);
+        Assert.Equal("Meta", alias.Name);
+        Assert.Equal("parent_company", alias.RelationshipType);
     }
 
     [Fact]
@@ -441,7 +486,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         var bank = new CompanionPlaceSearchStrategy(
             "AIB banks near me",
             "AIB bank",
-            new CompanionPlaceEntityIntent("AIB", "AIB", ["AIB"], true, true, true, "verified", 0.9),
+            new CompanionPlaceEntityIntent("AIB", "AIB", ["AIB"], [], true, true, true, "verified", 0.9),
             new CompanionPlaceRoleIntent("bank_branch", ["bank"], ["bank"], ["atm"], [], "strict"),
             [
                 new CompanionPlaceSearchVariant("AIB bank", "primary", true, true, 0.9),
@@ -496,7 +541,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         var strategy = new CompanionPlaceSearchStrategy(
             "ANPOST post offices near me",
             "ANPOST post office",
-            new CompanionPlaceEntityIntent("ANPOST", "ANPOST", ["ANPOST"], true, true, true, "pending", 0.75),
+            new CompanionPlaceEntityIntent("ANPOST", "ANPOST", ["ANPOST"], [], true, true, true, "pending", 0.75),
             new CompanionPlaceRoleIntent("post_office", ["post_office"], ["post_office"], ["mailbox"], [], "strict"),
             [new CompanionPlaceSearchVariant("ANPOST post office", "primary", true, true, 0.9)],
             [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "brand_match_then_distance", 50, 10, 0.9, []);
@@ -515,7 +560,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         var strategy = new CompanionPlaceSearchStrategy(
             "unknown thing near me",
             "unknown thing",
-            new CompanionPlaceEntityIntent("unknown thing", "unknown thing", ["unknown thing"], true, true, true, "pending", 0.45),
+            new CompanionPlaceEntityIntent("unknown thing", "unknown thing", ["unknown thing"], [], true, true, true, "pending", 0.45),
             new CompanionPlaceRoleIntent("store", [], [], [], [], "loose"),
             [new CompanionPlaceSearchVariant("unknown thing", "primary", true, false, 0.9)],
             [], [], [], [], new CompanionLocationIntent("near_me", null, 53.3, -6.2, false), "brand_match_then_distance", 50, 10, 0.9, []);
@@ -523,6 +568,81 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         var result = await verifier.VerifyAsync(strategy, CancellationToken.None);
 
         Assert.Equal("rejected", result.Status);
+    }
+
+    [Fact]
+    public async Task EntityVerification_FacebookOffice_MetaAlias_VerifiesWithWeakRoleEvidence()
+    {
+        var discovery = new LookupDiscoveryService(
+            new Dictionary<string, IReadOnlyList<CompanionPlaceCandidate>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Meta office Dublin"] = [ProviderCandidate("meta", "Meta Dublin", "establishment", ["establishment", "point_of_interest"])]
+            });
+        var telemetry = new RecordingTelemetry();
+        var verifier = new CompanionPlaceEntityVerificationService(discovery, new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry);
+        var strategy = new CompanionPlaceSearchStrategy(
+            "Facebook office Dublin",
+            "Facebook office Dublin",
+            new CompanionPlaceEntityIntent(
+                "Facebook",
+                "Facebook",
+                ["Facebook"],
+                [new CompanionEntityRelationshipAlias("Meta", "parent_company")],
+                true,
+                true,
+                true,
+                "pending",
+                0.82),
+            new CompanionPlaceRoleIntent("office", ["office"], ["corporate_office"], [], [], "compatible"),
+            [new CompanionPlaceSearchVariant("Meta office Dublin", "alias", true, true, 0.8)],
+            [], [], [], [], new CompanionLocationIntent("typed_area", "Dublin", null, null, false), "brand_match_then_relevance", 50, 10, 0.82, []);
+
+        var result = await verifier.VerifyAsync(strategy, CancellationToken.None);
+
+        Assert.Equal("verified", result.Status);
+        Assert.Contains("role_evidence_weak_entity_match_strong", result.Warnings);
+        Assert.Contains(result.Evidence, item => item.Contains("relationship_alias_match:Meta:parent_company", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(telemetry.Events, item => item.Name == "places.entity_alias.relationship_matched");
+    }
+
+    [Fact]
+    public void CategoryCompatibility_OfficeRole_StrongEntityAllowsGenericTypeButRejectsWrongEntity()
+    {
+        var telemetry = new NoOpChatTelemetry();
+        var service = new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry);
+        var intent = BuildIntent(placeQuery: "Facebook office Dublin", rankingGoal: "brand_match_then_relevance") with
+        {
+            BrandOrEntity = "Facebook",
+            Role = new CompanionPlaceRoleIntent("office", ["office"], ["corporate_office"], [], [], "compatible")
+        };
+        var strategy = new CompanionPlaceSearchStrategy(
+            "Facebook office Dublin",
+            "Facebook office Dublin",
+            new CompanionPlaceEntityIntent(
+                "Facebook",
+                "Facebook",
+                ["Facebook"],
+                [new CompanionEntityRelationshipAlias("Meta", "parent_company")],
+                true,
+                true,
+                true,
+                "verified",
+                0.9),
+            intent.Role,
+            [new CompanionPlaceSearchVariant("Meta office Dublin", "alias", true, true, 0.8)],
+            [], [], [], [], intent.Location, "brand_match_then_relevance", 50, 10, 0.9, []);
+
+        var result = service.Apply(
+            intent,
+            [
+                Candidate("meta", "Meta Dublin", "establishment", ["establishment", "point_of_interest"], 1_000, "Establishment"),
+                Candidate("google", "Google Dublin", "establishment", ["establishment", "point_of_interest"], 900, "Establishment")
+            ],
+            strategy);
+
+        var card = Assert.Single(result.Candidates);
+        Assert.Equal("meta", card.PlaceId);
+        Assert.Contains(result.Rejected, item => item.PlaceId == "google" && item.Reason == "office_entity_mismatch");
     }
 
     [Fact]
@@ -538,7 +658,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         var strategy = new CompanionPlaceSearchStrategy(
             "AIB banks near me",
             "AIB bank",
-            new CompanionPlaceEntityIntent("AIB", "AIB", ["AIB", "Allied Irish Bank"], true, true, true, "verified", 0.9),
+            new CompanionPlaceEntityIntent("AIB", "AIB", ["AIB", "Allied Irish Bank"], [], true, true, true, "verified", 0.9),
             new CompanionPlaceRoleIntent("bank_branch", ["bank"], ["bank"], ["atm"], [], "strict"),
             [
                 new CompanionPlaceSearchVariant("AIB bank", "primary", true, true, 0.9),
@@ -917,7 +1037,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
             new FixedModelRouter(),
             new FixedAIClient(payload),
-            new DeterministicCompanionPlaceSearchStrategyFallback(telemetry),
+            new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), telemetry),
             Options.Create(new AIIntegrationOptions
             {
                 Architecture = new ConversationArchitectureOptions
@@ -925,7 +1045,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
                     PlacesStrategyPlannerV2Enabled = true,
                     PlacesStrategyPlannerModelBacked = true,
                     PlacesStrategyPlannerFallbackEnabled = true,
-                    PlacesStrategyPlannerTimeoutMs = 2500
+                    PlacesStrategyPlannerTimeoutMs = 4500
                 }
             }),
             telemetry,

@@ -161,6 +161,7 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ICompanionPlaceDuplicateClusterService, CompanionPlaceDuplicateClusterService>();
         services.AddScoped<ICompanionPlaceCategoryCompatibilityService, CompanionPlaceCategoryCompatibilityService>();
         services.AddScoped<ICompanionPlaceBrandIdentityService, CompanionPlaceBrandIdentityService>();
+        services.AddScoped<ICompanionGenericPlaceCategoryFallbackClassifier, CompanionGenericPlaceCategoryFallbackClassifier>();
         services.AddScoped<IDeterministicCompanionPlaceSearchStrategyFallback, DeterministicCompanionPlaceSearchStrategyFallback>();
         services.AddScoped<ICompanionPlaceSearchStrategyPlanner, AICompanionPlaceSearchStrategyPlanner>();
         services.AddScoped<ICompanionPlaceSearchStrategyPromptBuilder, CompanionPlaceSearchStrategyPromptBuilder>();

@@ -225,7 +225,8 @@ public interface ICompanionPlaceCategoryCompatibilityService
 {
     CompanionCategoryCompatibilityResult Apply(
         CompanionSemanticIntent intent,
-        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates,
+        CompanionPlaceSearchStrategy? strategy = null);
 }
 
 public sealed record CompanionBrandIdentityResult(

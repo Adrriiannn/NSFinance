@@ -2,7 +2,9 @@ using System.Text.RegularExpressions;
 
 namespace NSFinance.Api.Modules.AI.Services;
 
-public sealed class DeterministicCompanionPlaceSearchStrategyFallback(IChatTelemetry telemetry) : IDeterministicCompanionPlaceSearchStrategyFallback
+public sealed class DeterministicCompanionPlaceSearchStrategyFallback(
+    ICompanionGenericPlaceCategoryFallbackClassifier genericCategoryClassifier,
+    IChatTelemetry telemetry) : IDeterministicCompanionPlaceSearchStrategyFallback
 {
     private const int DefaultPoolSize = 50;
     private const int DefaultVisibleCards = 10;
@@ -12,10 +14,15 @@ public sealed class DeterministicCompanionPlaceSearchStrategyFallback(IChatTelem
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(intent);
 
-        var role = ResolveRole(request.UserMessage, intent);
-        var entity = ResolveEntity(request.UserMessage, intent, role);
-        var canonicalQuery = BuildCanonicalQuery(intent, role, entity);
-        var variants = BuildVariants(canonicalQuery, role, entity);
+        var genericCategory = genericCategoryClassifier.Classify(request.UserMessage, intent);
+        var role = genericCategory.Matched ? genericCategory.Role : ResolveRole(request.UserMessage, intent);
+        var entity = genericCategory.Matched ? null : ResolveEntity(request.UserMessage, intent, role);
+        var canonicalQuery = genericCategory.Matched ? genericCategory.CanonicalQuery! : BuildCanonicalQuery(intent, role, entity);
+        var variants = genericCategory.Matched ? genericCategory.SearchVariants : BuildVariants(canonicalQuery, role, entity);
+        var negativeRequirements = intent.NegativeFilters
+            .Concat(genericCategory.NegativeRequirements)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         var strategy = new CompanionPlaceSearchStrategy(
             OriginalUserMessage: request.UserMessage,
             CanonicalQuery: canonicalQuery,
@@ -23,7 +30,7 @@ public sealed class DeterministicCompanionPlaceSearchStrategyFallback(IChatTelem
             Role: role,
             SearchVariants: variants,
             HardRequirements: intent.HardFilters,
-            NegativeRequirements: intent.NegativeFilters,
+            NegativeRequirements: negativeRequirements,
             SoftPreferences: intent.SoftPreferences,
             NonSearchablePreferences: intent.NonSearchablePreferences,
             Location: intent.Location,
@@ -47,6 +54,19 @@ public sealed class DeterministicCompanionPlaceSearchStrategyFallback(IChatTelem
                 ["variantCount"] = strategy.SearchVariants.Count
             },
             CancellationToken.None);
+        if (genericCategory.Matched)
+        {
+            _ = telemetry.TrackAsync(
+                "places.search_strategy.fallback_category_classified",
+                new Dictionary<string, object?>
+                {
+                    ["message"] = request.UserMessage,
+                    ["requestedRole"] = strategy.Role.RequestedRole,
+                    ["entity"] = strategy.Entity?.CanonicalName,
+                    ["variants"] = strategy.SearchVariants.Select(static item => item.Query).ToArray()
+                },
+                CancellationToken.None);
+        }
 
         return strategy;
     }
@@ -117,6 +137,7 @@ public sealed class DeterministicCompanionPlaceSearchStrategyFallback(IChatTelem
             RawEntityText: candidate,
             CanonicalName: CanonicalizeEntityText(candidate),
             Aliases: aliases,
+            RelationshipAliases: [],
             IsBrandOrNamedEntity: true,
             RequiresEntityLock: true,
             VerificationRequired: true,

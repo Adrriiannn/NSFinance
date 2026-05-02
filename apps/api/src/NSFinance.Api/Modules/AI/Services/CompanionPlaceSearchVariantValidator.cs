@@ -115,9 +115,10 @@ public sealed class CompanionPlaceSearchVariantValidator(IChatTelemetry telemetr
 
     private static bool ContainsEntityOrAlias(CompanionPlaceEntityIntent entity, string normalizedQuery)
     {
-        return entity.Aliases
+            return entity.Aliases
             .Append(entity.CanonicalName)
             .Append(entity.RawEntityText)
+            .Concat(entity.RelationshipAliases.Select(static item => item.Name))
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(Normalize)
             .Any(alias => normalizedQuery.Contains(alias, StringComparison.Ordinal));

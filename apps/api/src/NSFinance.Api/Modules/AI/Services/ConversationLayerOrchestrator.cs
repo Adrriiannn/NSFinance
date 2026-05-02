@@ -1392,7 +1392,7 @@ public sealed class ConversationLayerOrchestrator(
         }
 
         var brandFiltered = companionPlaceBrandIdentityService!.Apply(intent, pool, searchStrategy);
-        var categoryFiltered = companionPlaceCategoryCompatibilityService!.Apply(intent, brandFiltered.Candidates);
+        var categoryFiltered = companionPlaceCategoryCompatibilityService!.Apply(intent, brandFiltered.Candidates, searchStrategy);
         var constrained = companionPlaceConstraintEngine!.Apply(intent, categoryFiltered.Candidates);
         await telemetry.TrackAsync(
             "places.constraint.rejected_count",

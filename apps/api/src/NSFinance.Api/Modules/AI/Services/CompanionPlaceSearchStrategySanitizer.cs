@@ -17,6 +17,20 @@ public sealed class CompanionPlaceSearchStrategySanitizer : ICompanionPlaceSearc
         {
             entity = null;
         }
+        else if (entity is not null)
+        {
+            entity = entity with
+            {
+                Aliases = Clean(entity.Aliases),
+                RelationshipAliases = entity.RelationshipAliases
+                    .Where(static item => !string.IsNullOrWhiteSpace(item.Name))
+                    .Select(static item => new CompanionEntityRelationshipAlias(
+                        item.Name.Trim(),
+                        string.IsNullOrWhiteSpace(item.RelationshipType) ? "common_alias" : item.RelationshipType.Trim()))
+                    .DistinctBy(static item => $"{item.Name}:{item.RelationshipType}", StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+            };
+        }
 
         var variants = strategy.SearchVariants
             .Where(static item => !string.IsNullOrWhiteSpace(item.Query))
@@ -56,7 +70,9 @@ public sealed class CompanionPlaceSearchStrategySanitizer : ICompanionPlaceSearc
                || role.RequiredCoreRoles.Concat(role.AcceptableSubRoles).Concat(role.Modifiers)
                    .Select(Normalize)
                    .Any(item => raw == item || raw.Contains(item, StringComparison.Ordinal))
-               || raw is "fine dining" or "car parks" or "coffee shops" or "restaurants" or "parking" or "cafe";
+               || raw is "bike" or "bicycle" or "cycle" or "bike shops" or "bicycle store" or "cycle shop"
+                   or "fine dining" or "car parks" or "coffee shops" or "restaurants" or "parking" or "cafe"
+                   or "office" or "corporate office" or "headquarters";
     }
 
     private static IReadOnlyList<string> Clean(IReadOnlyList<string> values)

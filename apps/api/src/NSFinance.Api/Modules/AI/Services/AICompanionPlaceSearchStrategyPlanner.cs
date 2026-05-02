@@ -49,7 +49,7 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var timeoutMs = Math.Clamp(architecture.PlacesStrategyPlannerTimeoutMs <= 0 ? 2500 : architecture.PlacesStrategyPlannerTimeoutMs, 250, 15_000);
+            var timeoutMs = Math.Clamp(architecture.PlacesStrategyPlannerTimeoutMs <= 0 ? 4500 : architecture.PlacesStrategyPlannerTimeoutMs, 250, 15_000);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
             response = await aiClient.SendAsync(
                 AIRequest.Create(
@@ -68,6 +68,16 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Places search strategy planner timed out correlationId={CorrelationId}", request.CorrelationId);
+            await telemetry.TrackAsync(
+                "places.search_strategy.ai_timeout",
+                new Dictionary<string, object?>
+                {
+                    ["correlationId"] = request.CorrelationId,
+                    ["timeoutMs"] = Math.Clamp(architecture.PlacesStrategyPlannerTimeoutMs <= 0 ? 4500 : architecture.PlacesStrategyPlannerTimeoutMs, 250, 15_000),
+                    ["placeQuery"] = intent.PlaceQuery,
+                    ["fallbackEnabled"] = architecture.PlacesStrategyPlannerFallbackEnabled
+                },
+                cancellationToken);
             return await UseFallbackAsync(request, intent, "places_search_strategy_ai_timeout", cancellationToken);
         }
         catch (Exception ex)

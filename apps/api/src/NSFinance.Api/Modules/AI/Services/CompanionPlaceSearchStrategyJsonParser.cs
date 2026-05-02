@@ -70,6 +70,10 @@ public sealed class CompanionPlaceSearchStrategyJsonParser(
                 payload.Entity.RawEntityText,
                 payload.Entity.CanonicalName,
                 CleanList(payload.Entity.Aliases),
+                payload.Entity.RelationshipAliases?
+                    .Where(static item => !string.IsNullOrWhiteSpace(item.Name))
+                    .Select(static item => new CompanionEntityRelationshipAlias(item.Name!.Trim(), string.IsNullOrWhiteSpace(item.RelationshipType) ? "common_alias" : item.RelationshipType!.Trim()))
+                    .ToArray() ?? [],
                 payload.Entity.IsBrandOrNamedEntity,
                 payload.Entity.RequiresEntityLock,
                 payload.Entity.VerificationRequired,
@@ -160,10 +164,15 @@ public sealed class CompanionPlaceSearchStrategyJsonParser(
         string? RawEntityText,
         string? CanonicalName,
         IReadOnlyList<string>? Aliases,
+        IReadOnlyList<RelationshipAliasPayload>? RelationshipAliases,
         bool IsBrandOrNamedEntity,
         bool RequiresEntityLock,
         bool VerificationRequired,
         double? Confidence);
+
+    private sealed record RelationshipAliasPayload(
+        string? Name,
+        string? RelationshipType);
 
     private sealed record RolePayload(
         string? RequestedRole,

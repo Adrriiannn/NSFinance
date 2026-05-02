@@ -23,6 +23,7 @@ Rules:
 - Do not add coffee/cafe unless the requested role is coffee_shop/cafe.
 - If a named entity may have multiple roles, specify the requested role and excluded sibling roles.
 - If uncertain about a named entity, set verificationRequired=true and lower confidence.
+- For named entities that may operate under a parent company, renamed brand, subsidiary, or operating brand, include only strongly-known relationshipAliases and matching search variants. Examples: Facebook office may use Meta, YouTube office may use Google, Instagram/WhatsApp/Oculus office may use Meta.
 - Use categoryStrictness strict for banks/ATMs/parking/post offices/pharmacies/petrol stations when the user asked for that role.
 - Use categoryStrictness compatible for restaurant subtypes such as fine dining.
 """;
@@ -48,7 +49,7 @@ coffee shops near me ->
 IKEA near me -> entity IKEA, role store/loose, one variant "IKEA".
 Applegreen petrol stations near me -> entity Applegreen, role gas_station strict.
 An Post post offices near me -> entity An Post, role post_office strict.
-Facebook office Dublin -> entity Facebook, role office compatible or loose.
+Facebook office Dublin -> entity Facebook with relationshipAliases [{"name":"Meta","relationshipType":"parent_company"}], role office compatible or loose, variants may include "Facebook office Dublin" and "Meta office Dublin".
 bike shops near me -> no entity, role bicycle_store/shop compatible.
 dog-friendly cafes around me -> no entity, role coffee_shop/cafe, soft preference dog_friendly.
 late-night pharmacies in Dublin 2 -> no entity, role pharmacy strict, hard/time requirement open_late.
