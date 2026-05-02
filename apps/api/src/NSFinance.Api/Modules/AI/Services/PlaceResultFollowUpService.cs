@@ -8,6 +8,8 @@ public interface IPlaceResultFollowUpService
         CancellationToken cancellationToken);
 }
 
+// Legacy fallback used only when Places v2 session-pool follow-up is unavailable or disabled.
+// Normal Companion Places follow-ups must flow through CompanionPlaceSessionMemoryService.
 public sealed class PlaceResultFollowUpService(
     IPlaceDetailsService placeDetailsService,
     ILogger<PlaceResultFollowUpService> logger) : IPlaceResultFollowUpService

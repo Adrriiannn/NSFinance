@@ -186,7 +186,8 @@ public sealed record PlaceDetailsResult(
     PlacePaymentOptionsSummary? PaymentOptions = null,
     PlaceAccessibilitySummary? AccessibilityOptions = null,
     PlaceEditorialSummary? EditorialSummary = null,
-    PlaceLocationSummary? Location = null);
+    PlaceLocationSummary? Location = null,
+    IReadOnlyList<PlacePhotoSummary>? Photos = null);
 
 public sealed record ReviewInsightsResult(
     string PlaceId,

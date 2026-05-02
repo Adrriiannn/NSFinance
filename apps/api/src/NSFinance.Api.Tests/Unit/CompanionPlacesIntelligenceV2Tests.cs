@@ -46,6 +46,85 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     }
 
     [Fact]
+    public void SemanticIntent_FallbackFiltersDoNotOverrideStructuredFilters()
+    {
+        var service = new CompanionSemanticIntentService();
+        var action = new CompanionResolvedAction(
+            CompanionActionKind.FilterPreviousResults,
+            Reason: "structured correction",
+            RequiresToolExecution: true,
+            RequiresClarification: false,
+            ClarificationNeed: null,
+            PlaceQuery: null,
+            LocationQuery: null,
+            Requirement: null,
+            SortGoal: null,
+            TargetResultSetId: "active_result_set",
+            IncludeConcepts: [],
+            ExcludeConcepts: ["takeaway"],
+            Preferences: [],
+            TimeFilters: [],
+            Warnings: []);
+
+        var intent = service.Build(
+            BuildRequest("not fast food"),
+            BuildState(),
+            resultContext: null,
+            interpretation: null,
+            retrievalPlan: null,
+            intelligence: null,
+            resolvedAction: action);
+
+        Assert.Equal(["takeaway"], intent.NegativeFilters);
+    }
+
+    [Fact]
+    public async Task CandidatePool_UsesMultipleIntentionalPassesToApproachFifty()
+    {
+        var discovery = new MultipassDiscoveryService();
+        var pool = new CompanionPlaceCandidatePoolService(
+            discovery,
+            new NoOpPlaceRegistryService(),
+            Options.Create(new GooglePlacesOptions()),
+            new NoOpChatTelemetry());
+
+        var result = await pool.BuildPoolAsync(
+            BuildIntent(placeQuery: "Starbucks", rankingGoal: "brand_match_then_distance") with
+            {
+                BrandOrEntity = "Starbucks"
+            },
+            BuildRequest("Starbucks near me"),
+            CancellationToken.None);
+
+        Assert.Equal(50, result.Candidates.Count);
+        Assert.Contains("Starbucks coffee", result.QueryPasses);
+        Assert.Contains("Starbucks cafe", result.QueryPasses);
+        Assert.True(discovery.TextQueries.Count >= 3);
+    }
+
+    [Fact]
+    public async Task CandidatePool_KeepsFirstStageCandidatesLightweight()
+    {
+        var discovery = new MultipassDiscoveryService(includeRichFields: true);
+        var pool = new CompanionPlaceCandidatePoolService(
+            discovery,
+            new NoOpPlaceRegistryService(),
+            Options.Create(new GooglePlacesOptions()),
+            new NoOpChatTelemetry());
+
+        var result = await pool.BuildPoolAsync(
+            BuildIntent(placeQuery: "coffee shops", rankingGoal: "distance"),
+            BuildRequest("coffee shops near me"),
+            CancellationToken.None);
+
+        var candidate = Assert.Single(result.Candidates, item => item.PlaceId == "coffee shops-1");
+        Assert.DoesNotContain("website_url", candidate.LightweightAttributes.Keys);
+        Assert.DoesNotContain("phone_number", candidate.LightweightAttributes.Keys);
+        Assert.DoesNotContain("photos_json", candidate.LightweightAttributes.Keys);
+        Assert.DoesNotContain("editorial_summary", candidate.LightweightAttributes.Keys);
+    }
+
+    [Fact]
     public void ConstraintEngine_HardFiltersFastFoodAndTakeawayForFineDining()
     {
         var engine = new CompanionPlaceConstraintEngine(new NoOpChatTelemetry());
@@ -66,6 +145,27 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         Assert.Equal("chapter", result.Candidates[0].PlaceId);
         Assert.Contains(result.Rejected, item => item.PlaceId == "mcd" && item.Reason.Contains("fast_food", StringComparison.Ordinal));
         Assert.Contains(result.Rejected, item => item.PlaceId == "takeaway" && item.Reason.Contains("takeaway", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConstraintEngine_DoesNotReAddRejectedCandidatesWhenAllFail()
+    {
+        var engine = new CompanionPlaceConstraintEngine(new NoOpChatTelemetry());
+        var intent = BuildIntent(
+            placeQuery: "restaurants",
+            rankingGoal: "intent_fit_then_distance",
+            hardFilters: ["rating>=4.7"]);
+
+        var result = engine.Apply(
+            intent,
+            [
+                Candidate("one", "One", "restaurant", ["restaurant"], 100, rating: 4.2),
+                Candidate("two", "Two", "restaurant", ["restaurant"], 200, rating: 4.4)
+            ]);
+
+        Assert.Empty(result.Candidates);
+        Assert.Equal(2, result.Rejected.Count);
+        Assert.Contains("no_hard_filter_matches", result.Diagnostics);
     }
 
     [Fact]
@@ -335,6 +435,95 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         private static string Key(string provider, string placeId, string fieldMaskHash)
         {
             return $"{provider}:{placeId}:{fieldMaskHash}";
+        }
+    }
+
+    private sealed class NoOpPlaceRegistryService : IPlaceRegistryService
+    {
+        public Task RegisterSeenAsync(
+            string provider,
+            string providerPlaceId,
+            IReadOnlyList<string> internalTags,
+            CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class MultipassDiscoveryService(bool includeRichFields = false) : ICompanionPlaceDiscoveryService
+    {
+        public List<string> TextQueries { get; } = [];
+
+        public Task<CompanionPlaceDiscoveryResult> DiscoverAsync(
+            CompanionPlaceDiscoveryRequest request,
+            CancellationToken cancellationToken)
+        {
+            TextQueries.Add(request.Query);
+            return Task.FromResult(Result(request.Query, request.MaxCandidates ?? 20));
+        }
+
+        public Task<CompanionPlaceDiscoveryResult> DiscoverNearbyAsync(
+            CompanionNearbyDiscoveryRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(Result("nearby", request.MaxCandidates ?? 20));
+        }
+
+        private CompanionPlaceDiscoveryResult Result(string prefix, int count)
+        {
+            var candidates = Enumerable.Range(1, count)
+                .Select(index => new CompanionPlaceCandidate(
+                    PlaceId: $"{prefix}-{index}",
+                    ResourceName: $"places/{prefix}-{index}",
+                    DisplayName: $"{prefix} {index}",
+                    PrimaryType: "cafe",
+                    PrimaryTypeDisplayName: "Cafe",
+                    Types: ["cafe"],
+                    NationalPhoneNumber: includeRichFields ? "01 234 5678" : null,
+                    FormattedAddress: includeRichFields ? "1 Rich Street" : null,
+                    ShortFormattedAddress: "Short Street",
+                    Rating: 4.5,
+                    UserRatingCount: 100,
+                    GoogleMapsUri: includeRichFields ? "https://maps.example" : null,
+                    WebsiteUri: includeRichFields ? "https://example.com" : null,
+                    OpeningHours: new PlaceOpeningHoursSummary(true, [], null),
+                    BusinessStatus: "OPERATIONAL",
+                    PriceLevel: null,
+                    IconMaskBaseUri: null,
+                    IconBackgroundColor: null,
+                    Takeout: includeRichFields,
+                    Delivery: includeRichFields,
+                    DineIn: includeRichFields,
+                    Reservable: includeRichFields,
+                    ServesBreakfast: null,
+                    ServesLunch: null,
+                    ServesDinner: null,
+                    ServesBeer: null,
+                    ServesWine: includeRichFields,
+                    ServesBrunch: null,
+                    ServesVegetarianFood: null,
+                    OutdoorSeating: null,
+                    LiveMusic: null,
+                    MenuForChildren: null,
+                    ServesCocktails: null,
+                    ServesDessert: null,
+                    ServesCoffee: null,
+                    AllowsDogs: null,
+                    Restroom: null,
+                    GoodForGroups: null,
+                    GoodForWatchingSports: null,
+                    PaymentOptions: new PlacePaymentOptionsSummary(null, null, null, null),
+                    AccessibilityOptions: new PlaceAccessibilitySummary(null, null, null, null),
+                    EditorialSummary: new PlaceEditorialSummary(includeRichFields ? "Rich details" : null, null),
+                    Location: new PlaceLocationSummary(53.3, -6.2),
+                    Photos: includeRichFields ? [new PlacePhotoSummary("places/photo", 100, 100)] : null))
+                .ToArray();
+
+            return new CompanionPlaceDiscoveryResult(
+                Succeeded: true,
+                Candidates: candidates,
+                Metadata: new PlaceSearchMetadata("test", false, count, candidates.Length, "test", TimeSpan.Zero, false),
+                Warnings: []);
         }
     }
 

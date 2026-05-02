@@ -1234,6 +1234,14 @@ public sealed class ConversationLayerOrchestrator(
             conversationIntelligence,
             resolvedAction);
         await telemetry.TrackAsync(
+            "places.v2.used",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["resolvedActionKind"] = resolvedAction.Kind.ToString()
+            },
+            cancellationToken);
+        await telemetry.TrackAsync(
             "places.semantic_intent",
             new Dictionary<string, object?>
             {
@@ -1251,6 +1259,7 @@ public sealed class ConversationLayerOrchestrator(
 
         if (baseIntent.ActionKind == "new_place_search" && baseIntent.Location.RequiresLocation)
         {
+            await TrackPlacesV2SkippedAsync(request, "missing_location", cancellationToken);
             return null;
         }
 
@@ -1263,6 +1272,7 @@ public sealed class ConversationLayerOrchestrator(
                 cancellationToken);
             if (previousContext is null || previousContext.CandidatePool.Count == 0)
             {
+                await TrackPlacesV2SkippedAsync(request, "missing_session_pool", cancellationToken);
                 return null;
             }
         }
@@ -1285,7 +1295,21 @@ public sealed class ConversationLayerOrchestrator(
                 cancellationToken);
             if (poolResult.Candidates.Count == 0)
             {
-                return null;
+                return await BuildPlacesNoMatchResultAsync(
+                    request,
+                    contextSummary,
+                    state,
+                    resultContextReadResult,
+                    existingWarnings,
+                    intelligenceWarnings,
+                    resolvedAction,
+                    intent,
+                    poolResult.Diagnostics,
+                    "places_pool_empty",
+                    intelligenceModelCallCount,
+                    intelligenceFastModelCallCount,
+                    intelligenceHeavyModelCallCount,
+                    cancellationToken);
             }
 
             pool = poolResult.Candidates;
@@ -1301,6 +1325,25 @@ public sealed class ConversationLayerOrchestrator(
                 ["rejectedByHardFilterCount"] = constrained.Rejected.Count
             },
             cancellationToken);
+        if (constrained.Candidates.Count == 0)
+        {
+            return await BuildPlacesNoMatchResultAsync(
+                request,
+                contextSummary,
+                state,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                resolvedAction,
+                intent,
+                diagnostics.Concat(constrained.Diagnostics).ToArray(),
+                "no_hard_filter_matches",
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken);
+        }
+
         var ranked = companionPlaceRankingServiceV2!.Rank(intent, constrained.Candidates);
         await telemetry.TrackAsync(
             "places.ranking.completed",
@@ -1327,7 +1370,21 @@ public sealed class ConversationLayerOrchestrator(
             cancellationToken);
         if (finalists.StructuredResults?.Items.Count is null or 0)
         {
-            return null;
+            return await BuildPlacesNoMatchResultAsync(
+                request,
+                contextSummary,
+                state,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                resolvedAction,
+                intent,
+                diagnostics.Concat(constrained.Diagnostics).Concat(ranked.Diagnostics).Concat(finalists.Diagnostics).ToArray(),
+                "places_no_finalists",
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken);
         }
 
         await companionPlaceSessionMemoryService!.SaveSearchContextAsync(
@@ -1432,7 +1489,7 @@ public sealed class ConversationLayerOrchestrator(
     {
         if (intent.RequestedMaxResults == 1 || intent.RankingGoal == "distance")
         {
-            return "Here’s the closest one I found:";
+            return "Here's the closest one I found:";
         }
 
         if (intent.RequestedDetailFields.Contains("parking", StringComparer.OrdinalIgnoreCase)
@@ -1453,6 +1510,103 @@ public sealed class ConversationLayerOrchestrator(
         }
 
         return "I found these matching options:";
+    }
+
+    private async Task TrackPlacesV2SkippedAsync(
+        UserChatRequest request,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        await telemetry.TrackAsync(
+            "places.v2.skipped",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["reason"] = reason
+            },
+            cancellationToken);
+    }
+
+    private async Task<OrchestratedConversationResult> BuildPlacesNoMatchResultAsync(
+        UserChatRequest request,
+        string? contextSummary,
+        ConversationStateSnapshot state,
+        ResultContextReadResult resultContextReadResult,
+        IReadOnlyList<string> existingWarnings,
+        IReadOnlyList<string> intelligenceWarnings,
+        CompanionResolvedAction resolvedAction,
+        CompanionSemanticIntent intent,
+        IReadOnlyList<string> diagnostics,
+        string reason,
+        int intelligenceModelCallCount,
+        int intelligenceFastModelCallCount,
+        int intelligenceHeavyModelCallCount,
+        CancellationToken cancellationToken)
+    {
+        var nextState = state with
+        {
+            ActiveMode = ConversationMode.Exploration,
+            ModeCandidate = ConversationMode.Exploration,
+            NeedsFollowUp = true,
+            FollowUpBindingType = FollowUpBindingType.Refine,
+            PendingClarification = null
+        };
+        var strategy = new ConversationTurnStrategyDecision(
+            Strategy: ConversationBehaviorStrategy.ToolReadyHandoff,
+            ModeCandidate: ConversationMode.Exploration,
+            Readiness: new ReadinessTransition(state.ReadinessLevel, ConversationReadinessLevel.R3_StructuredIncomplete),
+            Confidence: intent.Confidence,
+            FollowUpBindingType: FollowUpBindingType.Refine,
+            ClarificationQuestion: null,
+            SuggestedOptions: [],
+            ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
+            ReasonCodes: ["places_intelligence_v2_no_matches", reason]);
+        var response = new UserChatResponse(
+            ReplyText: "I couldn’t find any strong matches for that exact requirement nearby.",
+            ModelUsed: "deterministic-places-intelligence-v2",
+            ReasoningClass: AIModelClass.Fast,
+            SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
+                nextState,
+                resultContextReadResult.ActiveResultContext,
+                strategy,
+                [],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)),
+            ReferencedContextSummary: contextSummary,
+            Warnings: existingWarnings
+                .Concat(resultContextReadResult.ReasonCodes)
+                .Concat(intelligenceWarnings)
+                .Concat(resolvedAction.Warnings)
+                .Concat(diagnostics)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            FollowUpIntentHints: [],
+            Succeeded: true,
+            FailureReason: null,
+            StructuredResults: null);
+
+        await TrackResolvedActionExecutionDecisionAsync(
+            request,
+            resolvedAction,
+            executedDirectly: true,
+            fellThroughToBehaviorEngine: false,
+            hasResultContext: resultContextReadResult.ActiveResultContext is not null,
+            structuredResultsReturned: false,
+            structuredResultCount: 0,
+            reason: reason,
+            cancellationToken);
+
+        return BuildResolvedActionResult(
+            response,
+            nextState,
+            "places_intelligence_v2_no_match_response",
+            totalModelCallCount: intelligenceModelCallCount,
+            fastModelCallCount: intelligenceFastModelCallCount,
+            heavyModelCallCount: intelligenceHeavyModelCallCount,
+            modeExecutionDurationMs: 0,
+            responseCompositionDurationMs: 0,
+            responseFallbackUsed: false,
+            responseUsedModelInvocation: false);
     }
 
     private bool ShouldExecuteResolvedActionDirectly(
@@ -2096,6 +2250,15 @@ public sealed class ConversationLayerOrchestrator(
     {
         var activeResult = resultContextReadResult.ActiveResultContext
                            ?? throw new InvalidOperationException("Place follow-up path requires an active result context.");
+        await telemetry.TrackAsync(
+            "places.legacy_follow_up_service.used",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["resolvedActionKind"] = resolvedAction.Kind.ToString(),
+                ["reason"] = "v2_session_pool_unavailable_or_disabled"
+            },
+            cancellationToken);
         var followUpStopwatch = Stopwatch.StartNew();
         var followUpResult = await placeResultFollowUpService!.ExecuteAsync(
             resolvedAction,

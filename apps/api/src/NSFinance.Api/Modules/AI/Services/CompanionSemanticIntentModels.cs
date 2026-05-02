@@ -1,0 +1,159 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using NSFinance.Api.Persistence;
+using NSFinance.Api.Persistence.Entities;
+namespace NSFinance.Api.Modules.AI.Services;
+
+public sealed record CompanionSemanticIntent(
+    string IntentFamily,
+    string ActionKind,
+    string? PlaceQuery,
+    string? BrandOrEntity,
+    CompanionLocationIntent Location,
+    IReadOnlyList<string> HardFilters,
+    IReadOnlyList<string> NegativeFilters,
+    IReadOnlyList<string> SoftPreferences,
+    IReadOnlyList<string> NonSearchablePreferences,
+    IReadOnlyList<string> RequestedDetailFields,
+    string RankingGoal,
+    int? RequestedMaxResults,
+    double Confidence,
+    IReadOnlyList<string> Ambiguities);
+
+public sealed record CompanionLocationIntent(
+    string Mode,
+    string? AreaText,
+    double? Latitude,
+    double? Longitude,
+    bool RequiresLocation);
+
+public sealed record CompanionPlacePoolCandidate(
+    string PlaceId,
+    string DisplayName,
+    string? PrimaryType,
+    string? PrimaryTypeDisplayName,
+    IReadOnlyList<string> Types,
+    double? Latitude,
+    double? Longitude,
+    double? DistanceMeters,
+    string? ShortFormattedAddress,
+    double? Rating,
+    int? UserRatingCount,
+    string? PriceLevel,
+    bool? OpenNow,
+    IReadOnlyDictionary<string, string> LightweightAttributes);
+
+public sealed record CompanionPlaceCandidatePoolResult(
+    IReadOnlyList<CompanionPlacePoolCandidate> Candidates,
+    IReadOnlyList<string> QueryPasses,
+    IReadOnlyList<string> Diagnostics,
+    bool UsedCache,
+    string? FailureReason);
+
+public sealed record CompanionPlaceRejectedCandidate(
+    string PlaceId,
+    string DisplayName,
+    string Reason);
+
+public sealed record CompanionPlaceConstraintResult(
+    IReadOnlyList<CompanionPlacePoolCandidate> Candidates,
+    IReadOnlyList<CompanionPlaceRejectedCandidate> Rejected,
+    IReadOnlyList<string> AppliedHardFilters,
+    IReadOnlyList<string> AppliedSoftPreferences,
+    IReadOnlyList<string> NonSearchablePreferences,
+    IReadOnlyList<string> Diagnostics);
+
+public sealed record CompanionPlaceIntelligenceRankingResult(
+    IReadOnlyList<CompanionPlacePoolCandidate> RankedCandidates,
+    IReadOnlyList<string> Diagnostics);
+
+public sealed record CompanionPlaceFinalistResult(
+    CompanionStructuredResults? StructuredResults,
+    IReadOnlyList<CompanionPlacePoolCandidate> Finalists,
+    IReadOnlyList<string> Diagnostics,
+    int EnrichedCount);
+
+public sealed record CompanionPlaceSearchContext(
+    CompanionSemanticIntent Intent,
+    IReadOnlyList<CompanionPlacePoolCandidate> CandidatePool,
+    CompanionStructuredResults? VisibleCards,
+    ResultContextSnapshot? ResultContext);
+
+public interface ICompanionSemanticIntentService
+{
+    CompanionSemanticIntent Build(
+        UserChatRequest request,
+        ConversationStateSnapshot state,
+        ResultContextSnapshot? resultContext,
+        TurnInterpretationV2? interpretation,
+        PlaceRetrievalPlanV1? retrievalPlan,
+        ConversationIntelligenceResult? intelligence,
+        CompanionResolvedAction? resolvedAction);
+}
+
+public interface ICompanionPlaceCandidatePoolService
+{
+    Task<CompanionPlaceCandidatePoolResult> BuildPoolAsync(
+        CompanionSemanticIntent intent,
+        UserChatRequest request,
+        CancellationToken cancellationToken);
+}
+
+public interface ICompanionPlaceConstraintEngine
+{
+    CompanionPlaceConstraintResult Apply(
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
+}
+
+public interface ICompanionPlaceIntelligenceRankingService
+{
+    CompanionPlaceIntelligenceRankingResult Rank(
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
+}
+
+public interface ICompanionPlaceFinalistEnrichmentService
+{
+    Task<CompanionPlaceFinalistResult> EnrichAsync(
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> rankedCandidates,
+        int maxCards,
+        CancellationToken cancellationToken);
+}
+
+public interface ICompanionPlaceSessionMemoryService
+{
+    Task SaveSearchContextAsync(
+        UserChatRequest request,
+        ConversationStateSnapshot state,
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidatePool,
+        CompanionStructuredResults? visibleCards,
+        CancellationToken cancellationToken);
+
+    Task<CompanionPlaceSearchContext?> LoadActiveSearchContextAsync(
+        UserChatRequest request,
+        ResultContextSnapshot? activeResultContext,
+        CancellationToken cancellationToken);
+}
+
+public interface IPlacesShortLivedCache
+{
+    Task<T?> GetAsync<T>(string provider, string placeId, string fieldMaskHash, CancellationToken ct);
+    Task SetAsync<T>(string provider, string placeId, string fieldMaskHash, T payload, TimeSpan ttl, CancellationToken ct);
+}
+
+public interface IPlaceRegistryService
+{
+    Task RegisterSeenAsync(
+        string provider,
+        string providerPlaceId,
+        IReadOnlyList<string> internalTags,
+        CancellationToken cancellationToken);
+}

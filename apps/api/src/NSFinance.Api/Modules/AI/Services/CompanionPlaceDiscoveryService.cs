@@ -1582,7 +1582,8 @@ public sealed class GooglePlacesPlaceDetailsService(
             PaymentOptions: place.PaymentOptions,
             AccessibilityOptions: place.AccessibilityOptions,
             EditorialSummary: place.EditorialSummary,
-            Location: place.Location);
+            Location: place.Location,
+            Photos: place.Photos);
         cache.Set(
             cacheKey,
             success,
