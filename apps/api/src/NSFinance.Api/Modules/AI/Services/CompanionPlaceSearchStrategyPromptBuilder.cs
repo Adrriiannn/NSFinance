@@ -26,6 +26,7 @@ Rules:
 - For named entities that may operate under a parent company, renamed brand, subsidiary, or operating brand, include only strongly-known relationshipAliases and matching search variants. Examples: Facebook office may use Meta, YouTube office may use Google, Instagram/WhatsApp/Oculus office may use Meta.
 - Use categoryStrictness strict for banks/ATMs/parking/post offices/pharmacies/petrol stations when the user asked for that role.
 - Use categoryStrictness compatible for restaurant subtypes such as fine dining.
+- Accommodation roles must stay precise. "hotel" is not the same as generic "lodging"; "motel" is not a hotel; "lodging" is generic accommodation. Use strict hotel/motel roles for exact hotel/motel requests. Use compatible accommodation only for broad phrasing like "places to stay" or "accommodation".
 """;
 
         var examples = """
@@ -45,6 +46,15 @@ car parks near me ->
 
 coffee shops near me ->
 {"canonicalQuery":"coffee shops","entity":null,"role":{"requestedRole":"coffee_shop","requiredCoreRoles":["coffee_shop","cafe"],"acceptableSubRoles":["coffee_shop","cafe"],"excludedSiblingRoles":[],"modifiers":[],"categoryStrictness":"compatible"},"searchVariants":[{"query":"coffee shops","purpose":"primary","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.9},{"query":"cafe","purpose":"role_disambiguation","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.78},{"query":"coffee","purpose":"role_disambiguation","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.72}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"intent_fit_then_distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.9,"warnings":[]}
+
+hotels near me ->
+{"canonicalQuery":"hotel","entity":null,"role":{"requestedRole":"hotel","requiredCoreRoles":["hotel"],"acceptableSubRoles":[],"excludedSiblingRoles":["motel","lodging","guesthouse","bed_and_breakfast","hostel","private_accommodation","vacation_rental","student_accommodation","campground"],"modifiers":[],"categoryStrictness":"strict"},"searchVariants":[{"query":"hotel","purpose":"primary","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.9}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.9,"warnings":[]}
+
+places to stay near me ->
+{"canonicalQuery":"places to stay","entity":null,"role":{"requestedRole":"accommodation","requiredCoreRoles":["accommodation"],"acceptableSubRoles":["hotel","motel","lodging","aparthotel","serviced_apartment","guesthouse","bed_and_breakfast","hostel","private_accommodation","vacation_rental","student_accommodation","campground","resort"],"excludedSiblingRoles":[],"modifiers":[],"categoryStrictness":"compatible"},"searchVariants":[{"query":"places to stay","purpose":"primary","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.82},{"query":"accommodation","purpose":"role_disambiguation","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.76},{"query":"hotel","purpose":"role_disambiguation","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.7}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"intent_fit_then_distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.84,"warnings":[]}
+
+motels near me ->
+{"canonicalQuery":"motel","entity":null,"role":{"requestedRole":"motel","requiredCoreRoles":["motel"],"acceptableSubRoles":[],"excludedSiblingRoles":["hotel","lodging","guesthouse","bed_and_breakfast","hostel","private_accommodation","vacation_rental","student_accommodation","campground"],"modifiers":[],"categoryStrictness":"strict"},"searchVariants":[{"query":"motel","purpose":"primary","requiresEntityMatch":false,"requiresRoleMatch":true,"confidence":0.9}],"hardRequirements":[],"negativeRequirements":[],"softPreferences":[],"nonSearchablePreferences":[],"rankingGoal":"distance","maxCandidatePoolSize":50,"maxVisibleCards":10,"confidence":0.9,"warnings":[]}
 
 IKEA near me -> entity IKEA, role store/loose, one variant "IKEA".
 Applegreen petrol stations near me -> entity Applegreen, role gas_station strict.

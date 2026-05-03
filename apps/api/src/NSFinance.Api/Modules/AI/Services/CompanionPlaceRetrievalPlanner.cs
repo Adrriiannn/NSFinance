@@ -9,6 +9,8 @@ public sealed class CompanionPlaceRetrievalPlanner(
     private static readonly IReadOnlyDictionary<string, string> RoleToGoogleType = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["hotel"] = "lodging",
+        ["motel"] = "lodging",
+        ["accommodation"] = "lodging",
         ["lodging"] = "lodging",
         ["ev_charging"] = "electric_vehicle_charging_station",
         ["ev_charging_station"] = "electric_vehicle_charging_station",
@@ -137,6 +139,8 @@ public sealed class CompanionPlaceRetrievalPlanner(
 
         var query = Normalize($"{intent.PlaceQuery} {strategy?.CanonicalQuery}");
         if (query.Contains("hotel", StringComparison.Ordinal)) return "lodging";
+        if (query.Contains("motel", StringComparison.Ordinal)) return "lodging";
+        if (query.Contains("places_to_stay", StringComparison.Ordinal) || query.Contains("accommodation", StringComparison.Ordinal)) return "lodging";
         if (query.Contains("ev charging", StringComparison.Ordinal) || query.Contains("electric vehicle", StringComparison.Ordinal)) return "electric_vehicle_charging_station";
         if (query.Contains("atm", StringComparison.Ordinal)) return "atm";
         if (query.Contains("car park", StringComparison.Ordinal) || query.Contains("parking", StringComparison.Ordinal)) return "parking";

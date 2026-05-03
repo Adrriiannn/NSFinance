@@ -10,6 +10,8 @@ public sealed class CompanionPlaceTypeFamilyClassifier(IChatTelemetry telemetry)
         foreach (var source in candidate.Types
                      .Append(candidate.PrimaryType)
                      .Append(candidate.PrimaryTypeDisplayName)
+                     .Concat(candidate.RetrievalIncludedTypes)
+                     .Concat(candidate.RetrievalRoleFamilies)
                      .Where(static value => !string.IsNullOrWhiteSpace(value)))
         {
             AddFamiliesFromSource(families, source!);
@@ -130,10 +132,17 @@ public sealed class CompanionPlaceTypeFamilyClassifier(IChatTelemetry telemetry)
             families.Add("car_wash");
         }
 
-        if (normalized.Contains("hotel", StringComparison.Ordinal) || normalized.Contains("lodging", StringComparison.Ordinal))
+        AddAccommodationFamilies(families, normalized);
+
+        if (normalized.Contains("electric vehicle charging station", StringComparison.Ordinal)
+            || normalized.Contains("electric vehicle charging", StringComparison.Ordinal)
+            || normalized.Contains("ev charging", StringComparison.Ordinal)
+            || normalized.Contains("ev charger", StringComparison.Ordinal)
+            || normalized.Contains("ev_charging", StringComparison.Ordinal)
+            || normalized.Contains("electric_vehicle_charging_station", StringComparison.Ordinal))
         {
-            families.Add("hotel");
-            families.Add("lodging");
+            families.Add("ev_charging");
+            families.Add("electric_vehicle_charging_station");
         }
 
         if (normalized.Contains("bicycle", StringComparison.Ordinal)
@@ -185,6 +194,92 @@ public sealed class CompanionPlaceTypeFamilyClassifier(IChatTelemetry telemetry)
         }
     }
 
+    private static void AddAccommodationFamilies(HashSet<string> families, string normalized)
+    {
+        if (HasPhrase(normalized, "student accommodation"))
+        {
+            families.Add("student_accommodation");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "aparthotel") || HasPhrase(normalized, "apartment hotel"))
+        {
+            families.Add("aparthotel");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "serviced apartment") || HasPhrase(normalized, "serviced apartments"))
+        {
+            families.Add("serviced_apartment");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "guesthouse") || HasPhrase(normalized, "guesthouses") || HasPhrase(normalized, "guest house") || HasPhrase(normalized, "guest houses"))
+        {
+            families.Add("guesthouse");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "bed and breakfast") || HasPhrase(normalized, "b&b") || HasPhrase(normalized, "b b"))
+        {
+            families.Add("bed_and_breakfast");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "hostel") || HasPhrase(normalized, "hostels"))
+        {
+            families.Add("hostel");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "motel") || HasPhrase(normalized, "motels"))
+        {
+            families.Add("motel");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "vacation rental")
+            || HasPhrase(normalized, "holiday rental")
+            || HasPhrase(normalized, "short term rental")
+            || HasPhrase(normalized, "private room")
+            || HasPhrase(normalized, "room rental")
+            || HasPhrase(normalized, "airbnb"))
+        {
+            families.Add("private_accommodation");
+            families.Add("vacation_rental");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "campground") || HasPhrase(normalized, "camp site") || HasPhrase(normalized, "campsite"))
+        {
+            families.Add("campground");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "resort"))
+        {
+            families.Add("resort");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "lodging"))
+        {
+            families.Add("lodging");
+            families.Add("accommodation");
+        }
+
+        if (HasPhrase(normalized, "accommodation"))
+        {
+            families.Add("accommodation");
+        }
+
+        if ((HasPhrase(normalized, "hotel") || HasPhrase(normalized, "hotels")) && !HasPhrase(normalized, "aparthotel") && !HasPhrase(normalized, "apartment hotel"))
+        {
+            families.Add("hotel");
+            families.Add("accommodation");
+        }
+    }
+
     private static void AddWeakDisplayNameFamilies(HashSet<string> families, string displayName)
     {
         var normalized = Normalize(displayName);
@@ -204,6 +299,11 @@ public sealed class CompanionPlaceTypeFamilyClassifier(IChatTelemetry telemetry)
         {
             families.Add("office");
         }
+    }
+
+    private static bool HasPhrase(string normalized, string phrase)
+    {
+        return Regex.IsMatch(normalized, $@"(^|\s){Regex.Escape(phrase)}($|\s)", RegexOptions.IgnoreCase);
     }
 
     private static string Normalize(string? value)

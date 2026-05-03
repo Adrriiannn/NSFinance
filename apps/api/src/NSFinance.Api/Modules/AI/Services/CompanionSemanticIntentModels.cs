@@ -55,7 +55,16 @@ public sealed record CompanionPlacePoolCandidate(
     int? UserRatingCount,
     string? PriceLevel,
     bool? OpenNow,
-    IReadOnlyDictionary<string, string> LightweightAttributes);
+    IReadOnlyDictionary<string, string> LightweightAttributes)
+{
+    public IReadOnlyList<string> RetrievalIncludedTypes { get; init; } = [];
+    public IReadOnlyList<string> RetrievalExcludedTypes { get; init; } = [];
+    public IReadOnlyList<string> RetrievalRoleFamilies { get; init; } = [];
+    public string? RetrievalPassKind { get; init; }
+    public string? RetrievalVariant { get; init; }
+    public bool HasProviderTypedRoleEvidence { get; init; }
+    public IReadOnlyList<PlacePhotoSummary> Photos { get; init; } = [];
+}
 
 public sealed record CompanionPlaceCandidatePoolResult(
     IReadOnlyList<CompanionPlacePoolCandidate> Candidates,

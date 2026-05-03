@@ -18,13 +18,37 @@ public sealed class CompanionPlaceCategoryCompatibilityService(
 
         var accepted = new List<CompanionPlacePoolCandidate>();
         var rejected = new List<CompanionPlaceRejectedCandidate>();
+        if (IsAccommodationRole(intent.Role))
+        {
+            _ = telemetry.TrackAsync(
+                "places.accommodation_role.normalized",
+                new Dictionary<string, object?>
+                {
+                    ["requestedRole"] = intent.Role.RequestedRole,
+                    ["categoryStrictness"] = intent.Role.CategoryStrictness,
+                    ["requiredCoreRoles"] = intent.Role.RequiredCoreRoles.ToArray(),
+                    ["acceptableSubRoles"] = intent.Role.AcceptableSubRoles.ToArray(),
+                    ["excludedSiblingRoles"] = intent.Role.ExcludedSiblingRoles.ToArray()
+                },
+                CancellationToken.None);
+        }
+
         foreach (var candidate in candidates)
         {
             var families = typeFamilyClassifier.ClassifyFamilies(candidate);
-            var hasRequiredRole = intent.Role.RequiredCoreRoles.Any(role => ContainsRole(families, role))
-                                  || intent.Role.AcceptableSubRoles.Any(role => ContainsRole(families, role));
-            var excluded = intent.Role.ExcludedSiblingRoles.FirstOrDefault(role => ContainsRole(families, role));
-            if (!string.IsNullOrWhiteSpace(excluded) && !hasRequiredRole)
+            var detailsFamilies = candidate.HasProviderTypedRoleEvidence
+                ? typeFamilyClassifier.ClassifyFamilies(candidate with
+                {
+                    RetrievalIncludedTypes = [],
+                    RetrievalRoleFamilies = [],
+                    HasProviderTypedRoleEvidence = false
+                })
+                : families;
+            var hasRequiredByDetails = intent.Role.RequiredCoreRoles.Any(role => ContainsRole(detailsFamilies, role))
+                                       || intent.Role.AcceptableSubRoles.Any(role => ContainsRole(detailsFamilies, role));
+            var hasProviderTypedRoleEvidence = RoleSatisfiedByRetrievalEvidence(intent.Role, candidate);
+            var excluded = intent.Role.ExcludedSiblingRoles.FirstOrDefault(role => ContainsRole(detailsFamilies, role));
+            if (!string.IsNullOrWhiteSpace(excluded) && !hasRequiredByDetails)
             {
                 if (IsAtmRole(intent.Role)
                     && families.Contains("bank")
@@ -82,23 +106,38 @@ public sealed class CompanionPlaceCategoryCompatibilityService(
             }
 
             if (intent.Role.CategoryStrictness == "strict"
-                && !intent.Role.RequiredCoreRoles.Any(role => ContainsRole(families, role))
-                && !intent.Role.AcceptableSubRoles.Any(role => ContainsRole(families, role)))
+                && !hasRequiredByDetails)
             {
+                if (hasProviderTypedRoleEvidence && !HasConfirmedRoleConflict(intent.Role, detailsFamilies))
+                {
+                    accepted.Add(candidate);
+                    TrackProviderTypedEvidenceAccepted(intent, candidate, families);
+                    continue;
+                }
+
                 rejected.Add(new CompanionPlaceRejectedCandidate(candidate.PlaceId, candidate.DisplayName, "category_role_mismatch"));
+                TrackAccommodationCandidate(intent.Role, candidate, families, accepted: false, "category_role_mismatch");
                 continue;
             }
 
             if (intent.Role.CategoryStrictness == "compatible"
                 && intent.Role.RequiredCoreRoles.Count > 0
-                && !intent.Role.RequiredCoreRoles.Any(role => ContainsRole(families, role))
-                && !intent.Role.AcceptableSubRoles.Any(role => ContainsRole(families, role)))
+                && !hasRequiredByDetails)
             {
+                if (hasProviderTypedRoleEvidence && !HasConfirmedRoleConflict(intent.Role, detailsFamilies))
+                {
+                    accepted.Add(candidate);
+                    TrackProviderTypedEvidenceAccepted(intent, candidate, families);
+                    continue;
+                }
+
                 rejected.Add(new CompanionPlaceRejectedCandidate(candidate.PlaceId, candidate.DisplayName, "category_role_mismatch"));
+                TrackAccommodationCandidate(intent.Role, candidate, families, accepted: false, "category_role_mismatch");
                 continue;
             }
 
             accepted.Add(candidate);
+            TrackAccommodationCandidate(intent.Role, candidate, families, accepted: true, null);
         }
 
         _ = telemetry.TrackAsync(
@@ -121,6 +160,7 @@ public sealed class CompanionPlaceCategoryCompatibilityService(
     private static bool ContainsRole(IReadOnlySet<string> families, string role)
     {
         var normalized = Normalize(role);
+        var compact = normalized.Replace(' ', '_');
         if (normalized == "financial institution")
         {
             return families.Contains("bank")
@@ -137,7 +177,106 @@ public sealed class CompanionPlaceCategoryCompatibilityService(
             return families.Contains("cafe") || families.Contains("coffee_shop");
         }
 
-        return families.Contains(normalized.Replace(' ', '_')) || families.Contains(normalized);
+        if (normalized is "ev charging" or "ev charger" or "electric vehicle charging station")
+        {
+            return families.Contains("ev_charging") || families.Contains("electric_vehicle_charging_station");
+        }
+
+        return families.Contains(compact) || families.Contains(normalized);
+    }
+
+    private void TrackProviderTypedEvidenceAccepted(
+        CompanionSemanticIntent intent,
+        CompanionPlacePoolCandidate candidate,
+        IReadOnlySet<string> families)
+    {
+        _ = telemetry.TrackAsync(
+            "places.category_compatibility.provider_typed_evidence_accepted",
+            new Dictionary<string, object?>
+            {
+                ["placeId"] = candidate.PlaceId,
+                ["name"] = candidate.DisplayName,
+                ["requestedRole"] = intent.Role.RequestedRole,
+                ["requiredCoreRoles"] = intent.Role.RequiredCoreRoles.ToArray(),
+                ["retrievalIncludedTypes"] = candidate.RetrievalIncludedTypes.ToArray(),
+                ["retrievalRoleFamilies"] = candidate.RetrievalRoleFamilies.ToArray(),
+                ["detailsFamilies"] = families.ToArray()
+            },
+            CancellationToken.None);
+    }
+
+    private void TrackAccommodationCandidate(
+        CompanionPlaceRoleIntent role,
+        CompanionPlacePoolCandidate candidate,
+        IReadOnlySet<string> families,
+        bool accepted,
+        string? rejectionReason)
+    {
+        if (!IsAccommodationRole(role))
+        {
+            return;
+        }
+
+        _ = telemetry.TrackAsync(
+            "places.accommodation_candidate.classified",
+            new Dictionary<string, object?>
+            {
+                ["placeId"] = candidate.PlaceId,
+                ["name"] = candidate.DisplayName,
+                ["primaryType"] = candidate.PrimaryType,
+                ["primaryTypeDisplayName"] = candidate.PrimaryTypeDisplayName,
+                ["types"] = candidate.Types.ToArray(),
+                ["families"] = families.ToArray(),
+                ["accepted"] = accepted,
+                ["rejectionReason"] = rejectionReason
+            },
+            CancellationToken.None);
+    }
+
+    private static bool RoleSatisfiedByRetrievalEvidence(CompanionPlaceRoleIntent role, CompanionPlacePoolCandidate candidate)
+    {
+        if (!candidate.HasProviderTypedRoleEvidence)
+        {
+            return false;
+        }
+
+        var retrievalFamilies = candidate.RetrievalRoleFamilies.Concat(candidate.RetrievalIncludedTypes.Select(Normalize)).ToArray();
+        bool Has(string value) => retrievalFamilies.Any(item => string.Equals(Normalize(item).Replace(' ', '_'), Normalize(value).Replace(' ', '_'), StringComparison.OrdinalIgnoreCase));
+
+        if (IsStrictHotelRole(role))
+        {
+            return false;
+        }
+
+        return role.RequiredCoreRoles.Concat(role.AcceptableSubRoles).Any(roleValue =>
+                   Has(roleValue)
+                   || (Normalize(roleValue) is "ev charging" or "electric vehicle charging station" && Has("ev_charging")))
+               || (role.RequestedRole is not null && Has(role.RequestedRole));
+    }
+
+    private static bool HasConfirmedRoleConflict(CompanionPlaceRoleIntent role, IReadOnlySet<string> families)
+    {
+        if (role.RequestedRole is "ev_charging" or "ev_charging_station" or "electric_vehicle_charging_station")
+        {
+            return families.Contains("restaurant")
+                   || families.Contains("cafe")
+                   || families.Contains("hotel")
+                   || families.Contains("motel");
+        }
+
+        return role.ExcludedSiblingRoles.Any(excluded => ContainsRole(families, excluded));
+    }
+
+    private static bool IsAccommodationRole(CompanionPlaceRoleIntent role)
+    {
+        return role.RequestedRole is "hotel" or "motel" or "lodging" or "accommodation" or "guesthouse" or "aparthotel"
+               || role.RequiredCoreRoles.Concat(role.AcceptableSubRoles).Concat(role.ExcludedSiblingRoles)
+                   .Any(static item => item is "hotel" or "motel" or "lodging" or "accommodation" or "guesthouse" or "aparthotel" or "private_accommodation" or "student_accommodation");
+    }
+
+    private static bool IsStrictHotelRole(CompanionPlaceRoleIntent role)
+    {
+        return role.CategoryStrictness == "strict" && role.RequestedRole == "hotel";
     }
 
     private static bool IsOfficeRole(CompanionPlaceRoleIntent role)

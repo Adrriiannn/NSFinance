@@ -1322,6 +1322,7 @@ public sealed class ConversationLayerOrchestrator(
                 }),
                 Warnings = plannedStrategy.Warnings.Concat(verification.Warnings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
             };
+            searchStrategy = ApplyAccommodationRoleFromUserText(searchStrategy);
             effectiveBaseIntent = ApplySearchStrategyToIntent(baseIntent, searchStrategy);
         }
 
@@ -1679,11 +1680,12 @@ public sealed class ConversationLayerOrchestrator(
         CompanionSemanticIntent intent,
         CompanionPlaceSearchStrategy strategy)
     {
+        var role = NormalizeAccommodationRoleFromUserText(strategy.OriginalUserMessage, strategy.Role);
         return intent with
         {
             PlaceQuery = string.IsNullOrWhiteSpace(strategy.CanonicalQuery) ? intent.PlaceQuery : strategy.CanonicalQuery,
             BrandOrEntity = strategy.Entity?.VerificationStatus == "rejected" ? null : strategy.Entity?.CanonicalName,
-            Role = strategy.Role,
+            Role = role,
             HardFilters = strategy.HardRequirements,
             NegativeFilters = strategy.NegativeRequirements,
             SoftPreferences = strategy.SoftPreferences,
@@ -1692,6 +1694,114 @@ public sealed class ConversationLayerOrchestrator(
             RequestedMaxResults = strategy.MaxVisibleCards == 10 ? intent.RequestedMaxResults : strategy.MaxVisibleCards,
             Confidence = Math.Max(intent.Confidence, strategy.Confidence)
         };
+    }
+
+    private static CompanionPlaceSearchStrategy ApplyAccommodationRoleFromUserText(CompanionPlaceSearchStrategy strategy)
+    {
+        var role = NormalizeAccommodationRoleFromUserText(strategy.OriginalUserMessage, strategy.Role);
+        if (ReferenceEquals(role, strategy.Role))
+        {
+            return strategy;
+        }
+
+        var variants = strategy.SearchVariants;
+        if (role.RequestedRole == "hotel" && role.CategoryStrictness == "strict")
+        {
+            variants = variants
+                .Where(static variant => !IsStrictHotelDisallowedVariant(variant.Query))
+                .DefaultIfEmpty(new CompanionPlaceSearchVariant("hotel", "primary", false, true, 0.8d))
+                .ToArray();
+        }
+        else if (role.RequestedRole == "motel" && role.CategoryStrictness == "strict")
+        {
+            variants = variants
+                .Where(static variant => ContainsToken(NormalizeForPhraseMatch(variant.Query), "motel"))
+                .DefaultIfEmpty(new CompanionPlaceSearchVariant("motel", "primary", false, true, 0.8d))
+                .ToArray();
+        }
+
+        return strategy with { Role = role, SearchVariants = variants };
+    }
+
+    private static CompanionPlaceRoleIntent NormalizeAccommodationRoleFromUserText(string? userText, CompanionPlaceRoleIntent role)
+    {
+        var normalized = NormalizeForPhraseMatch(userText);
+        if (MentionsBroadAccommodation(normalized))
+        {
+            return new CompanionPlaceRoleIntent(
+                "accommodation",
+                ["accommodation"],
+                ["hotel", "motel", "lodging", "aparthotel", "serviced_apartment", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground", "resort"],
+                [],
+                role.Modifiers,
+                "compatible");
+        }
+
+        if (ContainsToken(normalized, "motel") || ContainsToken(normalized, "motels"))
+        {
+            return new CompanionPlaceRoleIntent(
+                "motel",
+                ["motel"],
+                [],
+                ["hotel", "lodging", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground"],
+                role.Modifiers,
+                "strict");
+        }
+
+        if (ContainsToken(normalized, "hotel") || ContainsToken(normalized, "hotels"))
+        {
+            return new CompanionPlaceRoleIntent(
+                "hotel",
+                ["hotel"],
+                [],
+                ["motel", "lodging", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground"],
+                role.Modifiers,
+                "strict");
+        }
+
+        return role;
+    }
+
+    private static bool MentionsBroadAccommodation(string normalized)
+    {
+        return normalized.Contains(" places to stay ", StringComparison.Ordinal)
+               || normalized.Contains(" place to stay ", StringComparison.Ordinal)
+               || normalized.Contains(" somewhere to stay ", StringComparison.Ordinal)
+               || normalized.Contains(" accommodation ", StringComparison.Ordinal)
+               || normalized.Contains(" accommodations ", StringComparison.Ordinal)
+               || normalized.Contains(" overnight stay ", StringComparison.Ordinal)
+               || normalized.Contains(" overnight stays ", StringComparison.Ordinal)
+               || normalized.Contains(" where can i stay ", StringComparison.Ordinal);
+    }
+
+    private static bool IsStrictHotelDisallowedVariant(string? value)
+    {
+        var normalized = NormalizeForPhraseMatch(value);
+        return ContainsToken(normalized, "lodging")
+               || ContainsToken(normalized, "motel")
+               || ContainsToken(normalized, "motels")
+               || ContainsToken(normalized, "guesthouse")
+               || normalized.Contains(" guest house ", StringComparison.Ordinal)
+               || ContainsToken(normalized, "hostel")
+               || normalized.Contains(" places to stay ", StringComparison.Ordinal)
+               || ContainsToken(normalized, "accommodation")
+               || ContainsToken(normalized, "accommodations");
+    }
+
+    private static string NormalizeForPhraseMatch(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return " ";
+        }
+
+        var chars = value.ToLowerInvariant().Select(static ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray();
+        return $" {string.Join(' ', new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries))} ";
+    }
+
+    private static bool ContainsToken(string normalized, string token)
+    {
+        return normalized.Contains($" {token} ", StringComparison.Ordinal);
     }
 
     private static string BuildPlacesIntelligenceReply(CompanionSemanticIntent intent, int returnedCardCount)

@@ -100,9 +100,10 @@ public sealed class CompanionPlaceCandidatePoolService(
 
                 diagnostics.UnionWith(result.Warnings);
                 providerReturnedCount += result.Candidates.Count;
-                foreach (var candidate in result.Candidates.Select(item => Map(item, intent)))
+                foreach (var candidate in result.Candidates.Select(item => Map(item, intent, pass)))
                 {
-                    candidatesById.TryAdd(candidate.PlaceId, candidate);
+                    AddOrMerge(candidatesById, candidate);
+                    await TrackRetrievalEvidenceAsync(candidate, request.CorrelationId, cancellationToken);
                     await placeRegistryService.RegisterSeenAsync("google_places", candidate.PlaceId, BuildRegistryTags(intent), cancellationToken);
                 }
 
@@ -141,9 +142,10 @@ public sealed class CompanionPlaceCandidatePoolService(
                     cancellationToken);
                 diagnostics.UnionWith(nearby.Warnings);
                 providerReturnedCount += nearby.Candidates.Count;
-                foreach (var candidate in nearby.Candidates.Select(item => Map(item, intent)))
+                foreach (var candidate in nearby.Candidates.Select(item => Map(item, intent, new CompanionPlaceRetrievalPass("nearby:parking", "nearby", null, ["parking"], intent.Location.Latitude, intent.Location.Longitude, radiusMeters, country, true, "typed_nearby"))))
                 {
-                    candidatesById.TryAdd(candidate.PlaceId, candidate);
+                    AddOrMerge(candidatesById, candidate);
+                    await TrackRetrievalEvidenceAsync(candidate, request.CorrelationId, cancellationToken);
                     await placeRegistryService.RegisterSeenAsync("google_places", candidate.PlaceId, BuildRegistryTags(intent), cancellationToken);
                 }
 
@@ -164,7 +166,7 @@ public sealed class CompanionPlaceCandidatePoolService(
             providerReturnedCount += text.Candidates.Count;
             foreach (var candidate in text.Candidates.Select(item => Map(item, intent)))
             {
-                candidatesById.TryAdd(candidate.PlaceId, candidate);
+                AddOrMerge(candidatesById, candidate);
                 await placeRegistryService.RegisterSeenAsync("google_places", candidate.PlaceId, BuildRegistryTags(intent), cancellationToken);
             }
         }
@@ -319,12 +321,14 @@ public sealed class CompanionPlaceCandidatePoolService(
         return null;
     }
 
-    private static CompanionPlacePoolCandidate Map(CompanionPlaceCandidate candidate, CompanionSemanticIntent intent)
+    private static CompanionPlacePoolCandidate Map(CompanionPlaceCandidate candidate, CompanionSemanticIntent intent, CompanionPlaceRetrievalPass? pass = null)
     {
         var distance = TryComputeDistanceMeters(intent.Location.Latitude, intent.Location.Longitude, candidate.Location);
         var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Add("business_status", candidate.BusinessStatus);
         Add("formatted_address", candidate.FormattedAddress);
+        IReadOnlyList<string> includedTypes = pass?.Mode == "nearby" ? pass.IncludedTypes : [];
+        var roleFamilies = includedTypes.Select(MapIncludedTypeToRoleFamily).Where(static value => !string.IsNullOrWhiteSpace(value)).Select(static value => value!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
         return new CompanionPlacePoolCandidate(
             PlaceId: candidate.PlaceId,
@@ -340,7 +344,15 @@ public sealed class CompanionPlaceCandidatePoolService(
             UserRatingCount: candidate.UserRatingCount,
             PriceLevel: candidate.PriceLevel,
             OpenNow: candidate.OpeningHours.OpenNow,
-            LightweightAttributes: attributes);
+            LightweightAttributes: attributes)
+        {
+            RetrievalIncludedTypes = includedTypes,
+            RetrievalRoleFamilies = roleFamilies,
+            RetrievalPassKind = pass?.Mode == "nearby" ? "typed_nearby" : pass?.Mode == "text" ? "text_search" : null,
+            RetrievalVariant = pass?.Query ?? pass?.PassId,
+            HasProviderTypedRoleEvidence = pass?.Mode == "nearby" && includedTypes.Count > 0,
+            Photos = candidate.Photos ?? []
+        };
 
         void Add(string key, string? value)
         {
@@ -349,6 +361,66 @@ public sealed class CompanionPlaceCandidatePoolService(
                 attributes[key] = value.Trim();
             }
         }
+    }
+
+    private async Task TrackRetrievalEvidenceAsync(CompanionPlacePoolCandidate candidate, string correlationId, CancellationToken cancellationToken)
+    {
+        if (!candidate.HasProviderTypedRoleEvidence)
+        {
+            return;
+        }
+
+        await telemetry.TrackAsync(
+            "places.candidate.retrieval_evidence",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = correlationId,
+                ["placeId"] = candidate.PlaceId,
+                ["name"] = candidate.DisplayName,
+                ["retrievalPassKind"] = candidate.RetrievalPassKind,
+                ["retrievalIncludedTypes"] = candidate.RetrievalIncludedTypes.ToArray(),
+                ["retrievalRoleFamilies"] = candidate.RetrievalRoleFamilies.ToArray(),
+                ["hasProviderTypedRoleEvidence"] = candidate.HasProviderTypedRoleEvidence
+            },
+            cancellationToken);
+    }
+
+    private static void AddOrMerge(Dictionary<string, CompanionPlacePoolCandidate> candidatesById, CompanionPlacePoolCandidate candidate)
+    {
+        if (!candidatesById.TryGetValue(candidate.PlaceId, out var existing))
+        {
+            candidatesById[candidate.PlaceId] = candidate;
+            return;
+        }
+
+        candidatesById[candidate.PlaceId] = existing with
+        {
+            RetrievalIncludedTypes = existing.RetrievalIncludedTypes.Concat(candidate.RetrievalIncludedTypes).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            RetrievalExcludedTypes = existing.RetrievalExcludedTypes.Concat(candidate.RetrievalExcludedTypes).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            RetrievalRoleFamilies = existing.RetrievalRoleFamilies.Concat(candidate.RetrievalRoleFamilies).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            RetrievalPassKind = existing.HasProviderTypedRoleEvidence ? existing.RetrievalPassKind : candidate.RetrievalPassKind,
+            RetrievalVariant = existing.RetrievalVariant ?? candidate.RetrievalVariant,
+            HasProviderTypedRoleEvidence = existing.HasProviderTypedRoleEvidence || candidate.HasProviderTypedRoleEvidence,
+            Photos = existing.Photos.Count > 0 ? existing.Photos : candidate.Photos
+        };
+    }
+
+    private static string? MapIncludedTypeToRoleFamily(string includedType)
+    {
+        return Normalize(includedType) switch
+        {
+            "electric vehicle charging station" => "ev_charging",
+            "lodging" => "lodging",
+            "atm" => "atm",
+            "parking" => "parking",
+            "gas station" => "gas_station",
+            "restaurant" => "restaurant",
+            "cafe" => "cafe",
+            "pharmacy" => "pharmacy",
+            "gym" => "gym",
+            "bank" => "bank",
+            _ => Normalize(includedType).Replace(' ', '_')
+        };
     }
 
     private static IReadOnlyList<string> BuildRegistryTags(CompanionSemanticIntent intent)

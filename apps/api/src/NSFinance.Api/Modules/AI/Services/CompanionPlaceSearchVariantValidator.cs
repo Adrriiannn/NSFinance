@@ -88,6 +88,11 @@ public sealed class CompanionPlaceSearchVariantValidator(IChatTelemetry telemetr
             return "contradicts_role";
         }
 
+        if (ContradictsStrictAccommodationRole(strategy.Role, normalized))
+        {
+            return "contradicts_accommodation_role";
+        }
+
         if (IsTooBroadGeneric(strategy, normalized))
         {
             return "too_broad";
@@ -139,6 +144,32 @@ public sealed class CompanionPlaceSearchVariantValidator(IChatTelemetry telemetr
         if (role.RequestedRole == "parking")
         {
             return HasWord(normalized, "park") && !normalized.Contains("car park", StringComparison.Ordinal) && !HasWord(normalized, "parking");
+        }
+
+        return false;
+    }
+
+    private static bool ContradictsStrictAccommodationRole(CompanionPlaceRoleIntent role, string normalized)
+    {
+        if (role.CategoryStrictness != "strict")
+        {
+            return false;
+        }
+
+        if (role.RequestedRole == "hotel")
+        {
+            return HasWord(normalized, "lodging")
+                   || HasWord(normalized, "motel")
+                   || HasWord(normalized, "guesthouse")
+                   || normalized.Contains("guest house", StringComparison.Ordinal)
+                   || HasWord(normalized, "hostel")
+                   || normalized.Contains("places to stay", StringComparison.Ordinal)
+                   || HasWord(normalized, "accommodation");
+        }
+
+        if (role.RequestedRole == "motel")
+        {
+            return HasWord(normalized, "hotel") && !HasWord(normalized, "motel");
         }
 
         return false;

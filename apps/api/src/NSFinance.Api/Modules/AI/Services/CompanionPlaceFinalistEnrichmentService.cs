@@ -87,7 +87,19 @@ public sealed class CompanionPlaceFinalistEnrichmentService(
 
     private CompanionPlaceCardResult BuildCard(CompanionPlacePoolCandidate candidate, PlaceDetailsResult? details)
     {
-        var photoUrls = BuildPhotoUrls(details);
+        var photoUrls = BuildPhotoUrls(details?.Photos, candidate.Photos);
+        _ = telemetry.TrackAsync(
+            "places.finalist.photo_resolution",
+            new Dictionary<string, object?>
+            {
+                ["placeId"] = candidate.PlaceId,
+                ["candidateName"] = candidate.DisplayName,
+                ["detailsFound"] = details is not null,
+                ["detailsPhotoCount"] = details?.Photos?.Count ?? 0,
+                ["candidatePhotoCount"] = candidate.Photos.Count,
+                ["photoSource"] = details?.Photos is { Count: > 0 } ? "details" : candidate.Photos.Count > 0 ? "candidate" : "none"
+            },
+            CancellationToken.None);
         var address = details?.Address ?? candidate.ShortFormattedAddress;
         return new CompanionPlaceCardResult(
             Id: candidate.PlaceId,
@@ -112,15 +124,22 @@ public sealed class CompanionPlaceFinalistEnrichmentService(
             Longitude: details?.Location?.Longitude ?? candidate.Longitude);
     }
 
-    private IReadOnlyList<string> BuildPhotoUrls(PlaceDetailsResult? details)
+    private IReadOnlyList<string> BuildPhotoUrls(
+        IReadOnlyList<PlacePhotoSummary>? detailsPhotos,
+        IReadOnlyList<PlacePhotoSummary> candidatePhotos)
     {
-        if (photoService is null
-            || details?.Photos is not { Count: > 0 })
+        if (photoService is null)
         {
             return [];
         }
 
-        return details.Photos
+        var photos = detailsPhotos is { Count: > 0 } ? detailsPhotos : candidatePhotos;
+        if (photos.Count == 0)
+        {
+            return [];
+        }
+
+        return photos
             .Select(photo => photoService.BuildAppPhotoUrl(photo.Name, 900, 520))
             .Where(static url => !string.IsNullOrWhiteSpace(url))
             .Select(static url => url!)

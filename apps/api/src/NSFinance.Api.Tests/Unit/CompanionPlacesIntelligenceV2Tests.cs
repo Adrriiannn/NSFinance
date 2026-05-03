@@ -165,6 +165,35 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     }
 
     [Fact]
+    public async Task CandidatePool_StampsTypedNearbyRoleEvidence()
+    {
+        var discovery = new MultipassDiscoveryService();
+        var telemetry = new NoOpChatTelemetry();
+        var pool = new CompanionPlaceCandidatePoolService(
+            discovery,
+            new NoOpPlaceRegistryService(),
+            Options.Create(new GooglePlacesOptions()),
+            locationBoundaryService: new CompanionPlaceLocationBoundaryService(Options.Create(new AIIntegrationOptions()), telemetry),
+            retrievalPlanner: new CompanionPlaceRetrievalPlanner(Options.Create(new AIIntegrationOptions()), telemetry),
+            telemetry: telemetry);
+        var intent = BuildIntent(placeQuery: "EV charging", rankingGoal: "distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("ev_charging", ["ev_charging", "electric_vehicle_charging_station"], [], [], [], "strict")
+        };
+
+        var result = await pool.BuildPoolAsync(
+            intent,
+            BuildRequest("EV charging near me"),
+            Strategy("EV charging stations", intent.Role),
+            CancellationToken.None);
+
+        var candidate = Assert.Single(result.Candidates, item => item.PlaceId == "nearby-1");
+        Assert.True(candidate.HasProviderTypedRoleEvidence);
+        Assert.Contains("electric_vehicle_charging_station", candidate.RetrievalIncludedTypes);
+        Assert.Contains("ev_charging", candidate.RetrievalRoleFamilies);
+    }
+
+    [Fact]
     public void ConstraintEngine_HardFiltersFastFoodAndTakeawayForFineDining()
     {
         var engine = new CompanionPlaceConstraintEngine(new NoOpChatTelemetry());
@@ -267,6 +296,135 @@ public sealed class CompanionPlacesIntelligenceV2Tests
 
         Assert.Equal(["atm", "bank"], result.Candidates.Select(static item => item.PlaceId).ToArray());
         Assert.Contains(result.Rejected, item => item.PlaceId == "other");
+    }
+
+    [Fact]
+    public void TypeFamilyClassifier_SplitsAccommodationSubtypes()
+    {
+        var classifier = new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry());
+
+        var hotel = classifier.ClassifyFamilies(Candidate("hotel", "Hotel", "hotel", ["hotel"], 100, "Hotel"));
+        Assert.Contains("hotel", hotel);
+        Assert.Contains("accommodation", hotel);
+        Assert.DoesNotContain("lodging", hotel);
+        Assert.DoesNotContain("motel", hotel);
+
+        var lodging = classifier.ClassifyFamilies(Candidate("lodging", "Lodging", "lodging", ["lodging"], 100, "Lodging"));
+        Assert.Contains("lodging", lodging);
+        Assert.Contains("accommodation", lodging);
+        Assert.DoesNotContain("hotel", lodging);
+
+        var motel = classifier.ClassifyFamilies(Candidate("motel", "Motel", "motel", ["motel"], 100, "Motel"));
+        Assert.Contains("motel", motel);
+        Assert.Contains("accommodation", motel);
+        Assert.DoesNotContain("hotel", motel);
+
+        var aparthotel = classifier.ClassifyFamilies(Candidate("aparthotel", "Aparthotel", "aparthotel", ["aparthotel"], 100, "Aparthotel"));
+        Assert.Contains("aparthotel", aparthotel);
+        Assert.Contains("accommodation", aparthotel);
+        Assert.DoesNotContain("hotel", aparthotel);
+
+        var guesthouse = classifier.ClassifyFamilies(Candidate("guesthouse", "Guesthouse", "guesthouse", ["guesthouse"], 100, "Guesthouse"));
+        Assert.Contains("guesthouse", guesthouse);
+        Assert.Contains("accommodation", guesthouse);
+        Assert.DoesNotContain("hotel", guesthouse);
+
+        var student = classifier.ClassifyFamilies(Candidate("student", "Student Accommodation", "student_accommodation", ["student_accommodation"], 100, "Student accommodation"));
+        Assert.Contains("student_accommodation", student);
+        Assert.Contains("accommodation", student);
+        Assert.DoesNotContain("hotel", student);
+    }
+
+    [Fact]
+    public void TypeFamilyClassifier_EvChargingTypesBecomeEvFamilies()
+    {
+        var classifier = new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry());
+
+        var families = classifier.ClassifyFamilies(Candidate("ev", "EV Charger", "establishment", ["point_of_interest"], 100, "Point of interest", retrievalIncludedTypes: ["electric_vehicle_charging_station"]));
+
+        Assert.Contains("ev_charging", families);
+        Assert.Contains("electric_vehicle_charging_station", families);
+    }
+
+    [Fact]
+    public void CategoryCompatibility_StrictHotelRejectsOtherAccommodationSubtypes()
+    {
+        var service = new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry()), new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "hotels", rankingGoal: "distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("hotel", ["hotel"], [], ["motel", "lodging", "guesthouse", "private_accommodation", "student_accommodation"], [], "strict")
+        };
+
+        var result = service.Apply(
+            intent,
+            [
+                Candidate("hotel", "Real Hotel", "hotel", ["hotel"], 300, "Hotel"),
+                Candidate("lodging", "Generic Lodging", "lodging", ["lodging"], 100, "Lodging"),
+                Candidate("motel", "Road Motel", "motel", ["motel"], 200, "Motel"),
+                Candidate("student", "Student Accommodation", "student_accommodation", ["student_accommodation"], 150, "Student accommodation")
+            ]);
+
+        Assert.Equal("hotel", Assert.Single(result.Candidates).PlaceId);
+        Assert.Equal(3, result.Rejected.Count);
+    }
+
+    [Fact]
+    public void CategoryCompatibility_BroadAccommodationAcceptsAccommodationMix()
+    {
+        var service = new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry()), new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "places to stay", rankingGoal: "intent_fit_then_distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("accommodation", ["accommodation"], ["hotel", "motel", "lodging", "aparthotel", "guesthouse"], [], [], "compatible")
+        };
+
+        var result = service.Apply(
+            intent,
+            [
+                Candidate("hotel", "Real Hotel", "hotel", ["hotel"], 300, "Hotel"),
+                Candidate("lodging", "Generic Lodging", "lodging", ["lodging"], 100, "Lodging"),
+                Candidate("motel", "Road Motel", "motel", ["motel"], 200, "Motel"),
+                Candidate("guesthouse", "Guesthouse", "guesthouse", ["guesthouse"], 250, "Guesthouse")
+            ]);
+
+        Assert.Equal(["hotel", "lodging", "motel", "guesthouse"], result.Candidates.Select(static item => item.PlaceId).ToArray());
+    }
+
+    [Fact]
+    public void CategoryCompatibility_EvChargingAcceptsGenericCandidateWithTypedEvidence()
+    {
+        var service = new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry()), new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "EV charging", rankingGoal: "distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("ev_charging", ["ev_charging", "electric_vehicle_charging_station"], [], [], [], "strict")
+        };
+
+        var result = service.Apply(
+            intent,
+            [
+                Candidate("ev", "Charging Station", "establishment", ["point_of_interest"], 100, "Point of interest", retrievalIncludedTypes: ["electric_vehicle_charging_station"]),
+                Candidate("generic", "Generic Point", "establishment", ["point_of_interest"], 200, "Point of interest")
+            ]);
+
+        Assert.Equal("ev", Assert.Single(result.Candidates).PlaceId);
+        Assert.Contains(result.Rejected, item => item.PlaceId == "generic");
+    }
+
+    [Fact]
+    public void CategoryCompatibility_TypedEvidenceDoesNotOverrideConfirmedConflict()
+    {
+        var service = new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry()), new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "EV charging", rankingGoal: "distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("ev_charging", ["ev_charging", "electric_vehicle_charging_station"], [], [], [], "strict")
+        };
+
+        var result = service.Apply(
+            intent,
+            [
+                Candidate("cafe", "Cafe", "cafe", ["cafe"], 100, "Cafe", retrievalIncludedTypes: ["electric_vehicle_charging_station"])
+            ]);
+
+        Assert.Empty(result.Candidates);
     }
 
     [Fact]
@@ -1235,6 +1393,89 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     }
 
     [Fact]
+    public void SearchStrategySanitizer_HotelsNearMe_ForcesStrictHotelRole()
+    {
+        var sanitizer = new CompanionPlaceSearchStrategySanitizer();
+        var intent = BuildIntent(placeQuery: "hotels", rankingGoal: "distance");
+        var strategy = Strategy(
+            "lodging",
+            new CompanionPlaceRoleIntent("lodging", ["lodging"], ["hotel", "lodging"], [], [], "compatible")) with
+        {
+            SearchVariants =
+            [
+                new CompanionPlaceSearchVariant("lodging", "primary", false, true, 0.8),
+                new CompanionPlaceSearchVariant("places to stay", "role_disambiguation", false, true, 0.7),
+                new CompanionPlaceSearchVariant("hotel", "role_disambiguation", false, true, 0.7)
+            ]
+        };
+
+        var sanitized = sanitizer.Sanitize(BuildRequest("hotels near me"), intent, strategy);
+
+        Assert.Equal("hotel", sanitized.Role.RequestedRole);
+        Assert.Equal("strict", sanitized.Role.CategoryStrictness);
+        Assert.Equal(["hotel"], sanitized.Role.RequiredCoreRoles);
+        Assert.Equal(["hotel"], sanitized.SearchVariants.Select(static item => item.Query).ToArray());
+    }
+
+    [Fact]
+    public void SearchStrategySanitizer_PlacesToStayKeepsBroadAccommodation()
+    {
+        var sanitizer = new CompanionPlaceSearchStrategySanitizer();
+        var intent = BuildIntent(placeQuery: "places to stay", rankingGoal: "intent_fit_then_distance");
+        var strategy = Strategy("places to stay", new CompanionPlaceRoleIntent("hotel", ["hotel"], [], [], [], "strict"));
+
+        var sanitized = sanitizer.Sanitize(BuildRequest("places to stay near me"), intent, strategy);
+
+        Assert.Equal("accommodation", sanitized.Role.RequestedRole);
+        Assert.Equal("compatible", sanitized.Role.CategoryStrictness);
+        Assert.Contains("lodging", sanitized.Role.AcceptableSubRoles);
+        Assert.Contains("hotel", sanitized.Role.AcceptableSubRoles);
+    }
+
+    [Fact]
+    public void VariantValidator_StrictHotelRejectsBroadAccommodationVariants()
+    {
+        var validator = new CompanionPlaceSearchVariantValidator(new NoOpChatTelemetry());
+        var strategy = Strategy(
+            "hotel",
+            new CompanionPlaceRoleIntent("hotel", ["hotel"], [], ["motel", "lodging", "guesthouse"], [], "strict")) with
+        {
+            SearchVariants =
+            [
+                new CompanionPlaceSearchVariant("hotel", "primary", false, true, 0.9),
+                new CompanionPlaceSearchVariant("lodging", "role_disambiguation", false, true, 0.7),
+                new CompanionPlaceSearchVariant("places to stay", "role_disambiguation", false, true, 0.7),
+                new CompanionPlaceSearchVariant("guesthouse", "role_disambiguation", false, true, 0.7)
+            ]
+        };
+
+        var variants = validator.Validate(strategy);
+
+        Assert.Equal(["hotel"], variants.Select(static item => item.Query).ToArray());
+    }
+
+    [Fact]
+    public void VariantValidator_BroadAccommodationAllowsAccommodationVariants()
+    {
+        var validator = new CompanionPlaceSearchVariantValidator(new NoOpChatTelemetry());
+        var strategy = Strategy(
+            "places to stay",
+            new CompanionPlaceRoleIntent("accommodation", ["accommodation"], ["hotel", "motel", "lodging", "guesthouse"], [], [], "compatible")) with
+        {
+            SearchVariants =
+            [
+                new CompanionPlaceSearchVariant("places to stay", "primary", false, true, 0.8),
+                new CompanionPlaceSearchVariant("lodging", "role_disambiguation", false, true, 0.7),
+                new CompanionPlaceSearchVariant("guesthouse", "role_disambiguation", false, true, 0.7)
+            ]
+        };
+
+        var variants = validator.Validate(strategy);
+
+        Assert.Equal(["places to stay", "lodging", "guesthouse"], variants.Select(static item => item.Query).ToArray());
+    }
+
+    [Fact]
     public async Task FinalistEnrichment_EnrichesOnlyTopTenAndUsesCache()
     {
         var details = new CountingPlaceDetailsService();
@@ -1266,6 +1507,37 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         Assert.Equal(10, second.StructuredResults?.Items.Count);
         Assert.Equal(10, second.EnrichedCount);
         Assert.Equal(10, details.CallCount);
+    }
+
+    [Fact]
+    public async Task FinalistEnrichment_UsesCandidatePhotoFallbackWhenDetailsHaveNoPhotos()
+    {
+        var service = new CompanionPlaceFinalistEnrichmentService(
+            new DictionaryPlaceDetailsService(new Dictionary<string, PlaceDetailsResult>
+            {
+                ["hotel"] = Details("hotel")
+            }),
+            new FakePhotoService(),
+            new InMemoryPlacesShortLivedCache(),
+            Options.Create(new GooglePlacesOptions { PlaceDetailsCacheTtlSeconds = 900 }),
+            new NoOpChatTelemetry());
+        var candidate = Candidate(
+            "hotel",
+            "Photo Hotel",
+            "hotel",
+            ["hotel"],
+            100,
+            "Hotel",
+            photos: [new PlacePhotoSummary("places/photo-candidate", 800, 600)]);
+
+        var result = await service.EnrichAsync(
+            BuildIntent(placeQuery: "hotels", rankingGoal: "distance"),
+            [candidate],
+            maxCards: 1,
+            CancellationToken.None);
+
+        var card = Assert.Single(result.StructuredResults?.Items ?? []);
+        Assert.Equal("/photo/places/photo-candidate", card.PhotoUrl);
     }
 
     [Fact]
@@ -1437,7 +1709,9 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         string? priceLevel = null,
         double? latitude = 53.3,
         double? longitude = -6.2,
-        string? shortAddress = "Test Street")
+        string? shortAddress = "Test Street",
+        IReadOnlyList<string>? retrievalIncludedTypes = null,
+        IReadOnlyList<PlacePhotoSummary>? photos = null)
     {
         return new CompanionPlacePoolCandidate(
             PlaceId: id,
@@ -1453,7 +1727,15 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             UserRatingCount: 100,
             PriceLevel: priceLevel,
             OpenNow: true,
-            LightweightAttributes: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+            LightweightAttributes: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+        {
+            RetrievalIncludedTypes = retrievalIncludedTypes ?? [],
+            RetrievalRoleFamilies = retrievalIncludedTypes?.Select(static item => item == "electric_vehicle_charging_station" ? "ev_charging" : item).ToArray() ?? [],
+            RetrievalPassKind = retrievalIncludedTypes is { Count: > 0 } ? "typed_nearby" : null,
+            RetrievalVariant = retrievalIncludedTypes is { Count: > 0 } ? "nearby:test" : null,
+            HasProviderTypedRoleEvidence = retrievalIncludedTypes is { Count: > 0 },
+            Photos = photos ?? []
+        };
     }
 
     private static CompanionPlaceSearchStrategy Strategy(
@@ -1829,6 +2111,28 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
         {
             return Task.FromResult(SuccessfulAiResponse(payload));
+        }
+    }
+
+    private sealed class FakePhotoService : IGooglePlacesPhotoService
+    {
+        public string? BuildAppPhotoUrl(string? photoResourceName, int? maxWidthPx = null, int? maxHeightPx = null)
+        {
+            return string.IsNullOrWhiteSpace(photoResourceName) ? null : $"/photo/{photoResourceName}";
+        }
+
+        public Task<GooglePlacesPhotoMediaResult> ResolvePhotoAsync(
+            GooglePlacesPhotoMediaRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new GooglePlacesPhotoMediaResult(
+                Succeeded: false,
+                RedirectUri: null,
+                Content: null,
+                ContentType: null,
+                ErrorCode: "not_implemented",
+                ErrorMessage: null,
+                Elapsed: TimeSpan.Zero));
         }
     }
 

@@ -339,6 +339,80 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         Assert.Contains(telemetry.Events, item => item.Name == "places.location_boundary.filter_applied");
     }
 
+    [Fact]
+    public async Task HotelsNearMe_ReturnsOnlyHotels()
+    {
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "hotels", locationQuery: "near me"),
+            new FixedPoolService(
+                [
+                    Candidate("hotel", "Real Hotel", "hotel", ["hotel"], 300, "Hotel"),
+                    Candidate("lodging", "Generic Lodging", "lodging", ["lodging"], 100, "Lodging"),
+                    Candidate("motel", "Road Motel", "motel", ["motel"], 200, "Motel"),
+                    Candidate("guesthouse", "Guesthouse", "guesthouse", ["guesthouse"], 250, "Guesthouse"),
+                    Candidate("student", "Student Accommodation", "student_accommodation", ["student_accommodation"], 150, "Student accommodation")
+                ]));
+
+        var response = await orchestrator.ExecuteAsync(Request("hotels near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Real Hotel", card.Name);
+    }
+
+    [Fact]
+    public async Task PlacesToStayNearMe_ReturnsAccommodationMix()
+    {
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "places to stay", locationQuery: "near me"),
+            new FixedPoolService(
+                [
+                    Candidate("hotel", "Real Hotel", "hotel", ["hotel"], 300, "Hotel"),
+                    Candidate("lodging", "Generic Lodging", "lodging", ["lodging"], 100, "Lodging"),
+                    Candidate("motel", "Road Motel", "motel", ["motel"], 200, "Motel"),
+                    Candidate("guesthouse", "Guesthouse", "guesthouse", ["guesthouse"], 250, "Guesthouse")
+                ]));
+
+        var response = await orchestrator.ExecuteAsync(Request("places to stay near me"), CancellationToken.None);
+
+        var names = response.StructuredResults?.Items.Select(static item => item.Name).ToArray() ?? [];
+        Assert.Equal(4, names.Length);
+        Assert.Contains("Generic Lodging", names);
+        Assert.Contains("Road Motel", names);
+        Assert.Contains("Guesthouse", names);
+        Assert.Contains("Real Hotel", names);
+    }
+
+    [Fact]
+    public async Task EvChargingNearMe_AcceptsTypedNearbyEvidenceWithGenericDisplayTypes()
+    {
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "EV charging", locationQuery: "near me"),
+            new FixedPoolService(
+                [
+                    Candidate("ev", "EV Charging Station", "establishment", ["point_of_interest"], 300, "Point of interest", retrievalIncludedTypes: ["electric_vehicle_charging_station"])
+                ]));
+
+        var response = await orchestrator.ExecuteAsync(Request("EV charging near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("EV Charging Station", card.Name);
+    }
+
+    [Fact]
+    public async Task EvChargingNearMe_RejectsGenericCandidateWithoutTypedEvidence()
+    {
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "EV charging", locationQuery: "near me"),
+            new FixedPoolService(
+                [
+                    Candidate("generic", "Generic Point", "establishment", ["point_of_interest"], 300, "Point of interest")
+                ]));
+
+        var response = await orchestrator.ExecuteAsync(Request("EV charging near me"), CancellationToken.None);
+
+        Assert.Null(response.StructuredResults);
+    }
+
     private static ConversationLayerOrchestrator CreateOrchestrator(
         CompanionResolvedAction action,
         FixedPoolService pool,
@@ -525,7 +599,8 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         bool? openNow = true,
         double? latitude = 53.3,
         double? longitude = -6.2,
-        string? shortAddress = "Test Street")
+        string? shortAddress = "Test Street",
+        IReadOnlyList<string>? retrievalIncludedTypes = null)
     {
         return new CompanionPlacePoolCandidate(
             id,
@@ -541,7 +616,14 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             100,
             priceLevel,
             openNow,
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))
+        {
+            RetrievalIncludedTypes = retrievalIncludedTypes ?? [],
+            RetrievalRoleFamilies = retrievalIncludedTypes?.Select(static item => item == "electric_vehicle_charging_station" ? "ev_charging" : item).ToArray() ?? [],
+            RetrievalPassKind = retrievalIncludedTypes is { Count: > 0 } ? "typed_nearby" : null,
+            RetrievalVariant = retrievalIncludedTypes is { Count: > 0 } ? "nearby:test" : null,
+            HasProviderTypedRoleEvidence = retrievalIncludedTypes is { Count: > 0 }
+        };
     }
 
     private static CompanionPlaceSearchContext Context(IReadOnlyList<CompanionPlacePoolCandidate> candidates)

@@ -504,9 +504,52 @@ public sealed class CompanionSemanticIntentService(IChatTelemetry? telemetry = n
             return new CompanionPlaceRoleIntent("post_office", ["post_office"], ["post_office"], ["mailbox"], [], "strict");
         }
 
+        if (normalized.Contains("ev charging", StringComparison.Ordinal)
+            || normalized.Contains("electric vehicle charging", StringComparison.Ordinal)
+            || normalized.Contains("ev charger", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("ev_charging", ["ev_charging", "electric_vehicle_charging_station"], [], [], [], "strict");
+        }
+
+        if (normalized.Contains("places to stay", StringComparison.Ordinal)
+            || normalized.Contains("somewhere to stay", StringComparison.Ordinal)
+            || normalized.Contains("accommodation", StringComparison.Ordinal)
+            || normalized.Contains("overnight stays", StringComparison.Ordinal)
+            || normalized.Contains("where can i stay", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent(
+                "accommodation",
+                ["accommodation"],
+                ["hotel", "motel", "lodging", "aparthotel", "serviced_apartment", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground", "resort"],
+                [],
+                [],
+                "compatible");
+        }
+
+        if (normalized.Contains("motel", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("motel", ["motel"], [], ["hotel", "lodging", "guesthouse", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground"], [], "strict");
+        }
+
+        if (normalized.Contains("guesthouse", StringComparison.Ordinal) || normalized.Contains("guest house", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("guesthouse", ["guesthouse"], [], ["hotel", "motel", "lodging", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground"], [], "strict");
+        }
+
+        if (normalized.Contains("aparthotel", StringComparison.Ordinal) || normalized.Contains("apartment hotel", StringComparison.Ordinal))
+        {
+            return new CompanionPlaceRoleIntent("aparthotel", ["aparthotel"], [], ["hotel", "motel", "lodging", "guesthouse", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground"], [], "strict");
+        }
+
         if (normalized.Contains("hotel", StringComparison.Ordinal))
         {
-            return new CompanionPlaceRoleIntent("hotel", ["lodging"], ["hotel", "lodging"], ["restaurant", "bar"], [], "strict");
+            return new CompanionPlaceRoleIntent(
+                "hotel",
+                ["hotel"],
+                [],
+                ["motel", "lodging", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground", "restaurant", "bar"],
+                [],
+                "strict");
         }
 
         return new CompanionPlaceRoleIntent(null, [], [], [], [], "loose");

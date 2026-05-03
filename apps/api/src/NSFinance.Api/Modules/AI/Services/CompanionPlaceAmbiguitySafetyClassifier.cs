@@ -84,7 +84,13 @@ public sealed class CompanionPlaceAmbiguitySafetyClassifier(IChatTelemetry telem
             guarded = ApplyGuard(
                 strategy,
                 strategy.CanonicalQuery,
-                new CompanionPlaceRoleIntent("hotel", ["lodging"], ["hotel", "lodging"], ["restaurant", "bar"], [], "strict"),
+                new CompanionPlaceRoleIntent(
+                    "hotel",
+                    ["hotel"],
+                    [],
+                    ["motel", "lodging", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground", "restaurant", "bar"],
+                    [],
+                    "strict"),
                 strategy.SearchVariants.Select(static item => item.Query).DefaultIfEmpty(strategy.CanonicalQuery ?? "hotels").ToArray(),
                 []);
             reasonCodes.Add("ambiguity_guard_hotel_not_restaurant");

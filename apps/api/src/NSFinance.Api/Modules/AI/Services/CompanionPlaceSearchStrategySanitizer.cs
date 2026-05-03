@@ -12,6 +12,7 @@ public sealed class CompanionPlaceSearchStrategySanitizer : ICompanionPlaceSearc
         var role = strategy.Role.CategoryStrictness is "strict" or "compatible" or "loose"
             ? strategy.Role
             : strategy.Role with { CategoryStrictness = "loose" };
+        role = NormalizeAccommodationRole(request.UserMessage, role);
         var entity = strategy.Entity;
         if (entity is not null && IsGenericEntity(entity, role))
         {
@@ -35,6 +36,7 @@ public sealed class CompanionPlaceSearchStrategySanitizer : ICompanionPlaceSearc
         var variants = strategy.SearchVariants
             .Where(static item => !string.IsNullOrWhiteSpace(item.Query))
             .Select(static item => item with { Query = Regex.Replace(item.Query.Trim(), @"\s+", " ") })
+            .Where(item => !IsDisallowedAccommodationVariant(role, item.Query))
             .DistinctBy(static item => Normalize(item.Query), StringComparer.OrdinalIgnoreCase)
             .Take(4)
             .ToArray();
@@ -63,6 +65,50 @@ public sealed class CompanionPlaceSearchStrategySanitizer : ICompanionPlaceSearc
         };
     }
 
+    private static CompanionPlaceRoleIntent NormalizeAccommodationRole(string message, CompanionPlaceRoleIntent role)
+    {
+        var normalizedMessage = Normalize(message);
+        if (MentionsBroadAccommodation(normalizedMessage))
+        {
+            return new CompanionPlaceRoleIntent(
+                "accommodation",
+                ["accommodation"],
+                ["hotel", "motel", "lodging", "aparthotel", "serviced_apartment", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground", "resort"],
+                [],
+                role.Modifiers,
+                "compatible");
+        }
+
+        if (HasWord(normalizedMessage, "motels") || HasWord(normalizedMessage, "motel"))
+        {
+            return new CompanionPlaceRoleIntent("motel", ["motel"], [], ["hotel", "lodging", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground"], role.Modifiers, "strict");
+        }
+
+        if (HasWord(normalizedMessage, "hotels") || HasWord(normalizedMessage, "hotel"))
+        {
+            return new CompanionPlaceRoleIntent("hotel", ["hotel"], [], ["motel", "lodging", "guesthouse", "bed_and_breakfast", "hostel", "private_accommodation", "vacation_rental", "student_accommodation", "campground"], role.Modifiers, "strict");
+        }
+
+        return role;
+    }
+
+    private static bool IsDisallowedAccommodationVariant(CompanionPlaceRoleIntent role, string query)
+    {
+        if (role.RequestedRole != "hotel" || role.CategoryStrictness != "strict")
+        {
+            return false;
+        }
+
+        var normalized = Normalize(query);
+        return normalized.Contains("lodging", StringComparison.Ordinal)
+               || normalized.Contains("places to stay", StringComparison.Ordinal)
+               || normalized.Contains("accommodation", StringComparison.Ordinal)
+               || normalized.Contains("guesthouse", StringComparison.Ordinal)
+               || normalized.Contains("guest house", StringComparison.Ordinal)
+               || normalized.Contains("motel", StringComparison.Ordinal)
+               || normalized.Contains("hostel", StringComparison.Ordinal);
+    }
+
     private static bool IsGenericEntity(CompanionPlaceEntityIntent entity, CompanionPlaceRoleIntent role)
     {
         var raw = Normalize($"{entity.RawEntityText} {entity.CanonicalName}");
@@ -73,6 +119,20 @@ public sealed class CompanionPlaceSearchStrategySanitizer : ICompanionPlaceSearc
                || raw is "bike" or "bicycle" or "cycle" or "bike shops" or "bicycle store" or "cycle shop"
                    or "fine dining" or "car parks" or "coffee shops" or "restaurants" or "parking" or "cafe"
                    or "office" or "corporate office" or "headquarters";
+    }
+
+    private static bool MentionsBroadAccommodation(string normalized)
+    {
+        return normalized.Contains("places to stay", StringComparison.Ordinal)
+               || normalized.Contains("somewhere to stay", StringComparison.Ordinal)
+               || normalized.Contains("accommodation", StringComparison.Ordinal)
+               || normalized.Contains("overnight stays", StringComparison.Ordinal)
+               || normalized.Contains("where can i stay", StringComparison.Ordinal);
+    }
+
+    private static bool HasWord(string haystack, string word)
+    {
+        return Regex.IsMatch(haystack, $@"(^|\s){Regex.Escape(word)}($|\s)", RegexOptions.IgnoreCase);
     }
 
     private static IReadOnlyList<string> Clean(IReadOnlyList<string> values)
