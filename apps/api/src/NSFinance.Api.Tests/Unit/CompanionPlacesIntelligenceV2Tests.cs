@@ -779,6 +779,90 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     }
 
     [Fact]
+    public void GuardCatalogue_LoadsJsonCatalogue_WithBroadCoverage()
+    {
+        var provider = new JsonCompanionAmbiguityGuardCatalogueProvider(
+            new NoOpChatTelemetry(),
+            NullLogger<JsonCompanionAmbiguityGuardCatalogueProvider>.Instance);
+
+        var guards = provider.GetAll();
+
+        Assert.True(guards.Count >= 100);
+        Assert.Contains(guards, guard => guard.GuardId == "bank_branch_vs_atm");
+        Assert.Contains(guards, guard => guard.GuardId == "parking_availability");
+        Assert.True(guards.Select(static guard => guard.Domain).Distinct(StringComparer.OrdinalIgnoreCase).Count() >= 20);
+    }
+
+    [Fact]
+    public void GuardCatalogue_FallsBackToEmergencyCatalogue_WhenJsonInvalid()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"bad-places-guard-catalogue-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, "{ not-json");
+        try
+        {
+            var provider = new JsonCompanionAmbiguityGuardCatalogueProvider(
+                new NoOpChatTelemetry(),
+                NullLogger<JsonCompanionAmbiguityGuardCatalogueProvider>.Instance,
+                path);
+
+            var guards = provider.GetAll();
+
+            Assert.Contains(guards, guard => guard.GuardId == "bank_branch_vs_atm");
+            Assert.Contains(guards, guard => guard.GuardId == "car_park_vs_public_park");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void GuardMatcher_MatchesCatalogueTerms_WithoutSubstringBleed()
+    {
+        var matcher = new CompanionAmbiguityGuardMatcher(new TestGuardCatalogueProvider(), new NoOpChatTelemetry());
+
+        Assert.Contains(
+            matcher.Match(Strategy("AIB bank", role: new CompanionPlaceRoleIntent("bank_branch", ["bank"], ["bank"], ["atm"], [], "strict")), BuildIntent("AIB bank", "brand")),
+            guard => guard.GuardId == "bank_branch_vs_atm");
+        Assert.DoesNotContain(
+            matcher.Match(Strategy("parks", role: new CompanionPlaceRoleIntent("park", ["park"], ["park"], ["parking"], [], "strict")), BuildIntent("parks", "distance")),
+            guard => guard.GuardId is "car_park_vs_public_park" or "car_park_vs_park");
+        Assert.Contains(
+            matcher.Match(Strategy("card payments", hardRequirements: ["card payments"]), BuildIntent("restaurants that accept card", "intent", hardFilters: ["card payments"])),
+            guard => guard.GuardId == "card_payments");
+        Assert.DoesNotContain(
+            matcher.Match(Strategy("car parks"), BuildIntent("car parks", "distance")),
+            guard => guard.GuardId == "card_payments");
+    }
+
+    [Fact]
+    public void GuardMatcher_MatchesAttributeAndBroadCatalogueExamples()
+    {
+        var provider = new JsonCompanionAmbiguityGuardCatalogueProvider(
+            new NoOpChatTelemetry(),
+            NullLogger<JsonCompanionAmbiguityGuardCatalogueProvider>.Instance);
+        var matcher = new CompanionAmbiguityGuardMatcher(provider, new NoOpChatTelemetry());
+
+        var delivery = matcher.Match(
+            Strategy("delivery restaurants", hardRequirements: ["delivery"]),
+            BuildIntent("delivery restaurants", "intent", hardFilters: ["delivery"]));
+        var dogFriendly = matcher.Match(
+            Strategy("dog friendly cafes", softPreferences: ["dog friendly"]),
+            BuildIntent("dog friendly cafes", "intent", softPreferences: ["dog friendly"]));
+        var phoneRepair = matcher.Match(
+            Strategy("phone repair", role: new CompanionPlaceRoleIntent("phone_repair", ["phone repair"], ["phone repair"], ["phone shop"], [], "compatible")),
+            BuildIntent("phone repair", "intent"));
+        var evCharging = matcher.Match(
+            Strategy("EV charging", role: new CompanionPlaceRoleIntent("ev_charging", ["ev charging"], ["ev charging"], ["petrol station"], [], "strict")),
+            BuildIntent("EV charging", "intent"));
+
+        Assert.Contains(delivery, guard => guard.GuardId.Contains("delivery", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(dogFriendly, guard => guard.GuardId == "dog_friendly_policy");
+        Assert.Contains(phoneRepair, guard => guard.GuardId.Contains("phone_repair", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(evCharging, guard => guard.GuardId.Contains("ev_charging", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task GuardEvidence_DeliveryTrue_ConfirmedMatch()
     {
         var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>
@@ -1233,6 +1317,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             new DictionaryPlaceDetailsService(details),
             new CompanionPlaceParkingEvidenceService(new MultipassDiscoveryService(), new NoOpChatTelemetry()),
             new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry()),
+            new CompanionAmbiguityGuardMatcher(new TestGuardCatalogueProvider(), new NoOpChatTelemetry()),
             Options.Create(new AIIntegrationOptions()),
             new NoOpChatTelemetry());
     }

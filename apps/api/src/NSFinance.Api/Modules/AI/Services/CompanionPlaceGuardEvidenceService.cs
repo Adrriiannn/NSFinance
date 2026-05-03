@@ -6,26 +6,10 @@ public sealed class CompanionPlaceGuardEvidenceService(
     IPlaceDetailsService placeDetailsService,
     ICompanionPlaceParkingEvidenceService parkingEvidenceService,
     ICompanionPlaceTypeFamilyClassifier typeFamilyClassifier,
+    ICompanionAmbiguityGuardMatcher guardMatcher,
     IOptions<AIIntegrationOptions> options,
     IChatTelemetry telemetry) : ICompanionPlaceGuardEvidenceService
 {
-    private static readonly IReadOnlyList<CompanionAmbiguityGuardDefinition> Catalogue =
-    [
-        new("bank_branch_vs_atm", ["bank_branch", "bank"], ["atm", "cash_machine"], ["bank", "financial_institution"], ["types", "primaryType"], "hard_reject_if_confirmed"),
-        new("atm_vs_bank_branch", ["atm"], ["bank_branch", "bank"], ["atm"], ["types", "primaryType"], "hard_reject_if_confirmed"),
-        new("post_office_vs_mailbox", ["post_office"], ["mailbox", "post_box", "parcel_locker"], ["post_office"], ["types", "primaryType"], "hard_reject_if_confirmed"),
-        new("hotel_vs_hotel_restaurant", ["hotel", "lodging"], ["restaurant", "bar"], ["hotel", "lodging"], ["types", "primaryType"], "soft_penalty_only"),
-        new("car_park_vs_public_park", ["parking", "car_park"], ["park", "tourist_attraction"], ["parking", "parking_lot", "parking_garage"], ["types", "primaryType"], "hard_reject_if_confirmed"),
-        new("fine_dining_vs_fast_food", ["fine_dining", "upscale"], ["fast_food_restaurant", "meal_takeaway", "cafe"], ["restaurant", "fine_dining_restaurant"], ["types", "primaryType", "priceLevel"], "ranking_guard"),
-        new("restaurant_delivery_vs_dine_in_only", ["delivery", "delivery_restaurant", "food_delivery"], ["dine_in_only", "takeaway_not_available"], ["restaurant", "meal_delivery", "meal_takeaway"], ["delivery", "takeout", "dineIn"], "enrich_before_reject"),
-        new("takeaway_vs_dine_in_only", ["takeaway", "takeout"], ["dine_in_only", "takeout_false"], ["meal_takeaway", "restaurant"], ["takeout", "delivery", "dineIn"], "enrich_before_reject"),
-        new("dog_friendly_policy", ["dog_friendly", "dogs_allowed"], ["dogs_not_allowed"], ["allows_dogs"], ["allowsDogs"], "enrich_before_reject"),
-        new("wheelchair_accessibility", ["wheelchair", "wheelchair_accessible", "accessible"], ["not_accessible"], ["wheelchair_accessible"], ["accessibilityOptions"], "enrich_before_reject"),
-        new("outdoor_seating", ["outdoor_seating", "outside_seating"], ["no_outdoor_seating"], ["outdoor_seating"], ["outdoorSeating"], "enrich_before_reject"),
-        new("card_payments", ["card", "cards", "card_payments"], ["cash_only"], ["credit_cards", "debit_cards", "nfc"], ["paymentOptions"], "enrich_before_reject"),
-        new("parking_availability", ["parking", "free_parking", "parking_available"], ["no_parking"], ["parking", "nearby_parking"], ["parkingOptions", "accessibilityOptions.wheelchairAccessibleParking", "nearbyParking"], "enrich_before_reject")
-    ];
-
     public async Task<CompanionGuardEvaluationResult> EvaluateAsync(
         CompanionPlaceSearchStrategy strategy,
         CompanionSemanticIntent intent,
@@ -36,7 +20,7 @@ public sealed class CompanionPlaceGuardEvidenceService(
         ArgumentNullException.ThrowIfNull(intent);
         ArgumentNullException.ThrowIfNull(candidates);
 
-        var guards = ResolveApplicableGuards(strategy, intent);
+        var guards = guardMatcher.Match(strategy, intent);
         if (guards.Count == 0 || candidates.Count == 0 || !options.Value.Architecture.PlacesGuardEvidenceEnabled)
         {
             return new CompanionGuardEvaluationResult(new Dictionary<string, IReadOnlyList<CompanionGuardEvidence>>(StringComparer.OrdinalIgnoreCase), [], []);
@@ -54,7 +38,7 @@ public sealed class CompanionPlaceGuardEvidenceService(
             },
             cancellationToken);
 
-        var requiresDetails = guards.Any(static guard => guard.DefaultAction == "enrich_before_reject" && guard.GuardId != "parking_availability");
+        var requiresDetails = guards.Any(static guard => guard.RequiresDetails && guard.GuardId != "parking_availability");
         var detailsById = new Dictionary<string, PlaceDetailsResult?>(StringComparer.OrdinalIgnoreCase);
         if (requiresDetails)
         {
@@ -63,7 +47,7 @@ public sealed class CompanionPlaceGuardEvidenceService(
                 new Dictionary<string, object?>
                 {
                     ["candidateCount"] = candidatesToEvaluate.Length,
-                    ["guardIds"] = guards.Where(static guard => guard.DefaultAction == "enrich_before_reject").Select(static guard => guard.GuardId).ToArray()
+                    ["guardIds"] = guards.Where(static guard => guard.RequiresDetails).Select(static guard => guard.GuardId).ToArray()
                 },
                 cancellationToken);
             foreach (var candidate in candidatesToEvaluate)
@@ -152,8 +136,26 @@ public sealed class CompanionPlaceGuardEvidenceService(
             "outdoor_seating" => EvaluateBoolGuard(guard, candidate.PlaceId, details, details?.OutdoorSeating, conflictWhen: details?.OutdoorSeating == false, "outdoorSeating", "outdoor_seating_false"),
             "card_payments" => EvaluatePaymentGuard(guard, candidate.PlaceId, details),
             "parking_availability" => EvaluateParkingGuard(guard, candidate.PlaceId, parking),
-            _ => Unknown(guard, candidate.PlaceId, requiresDetails: false, "guard_not_implemented")
+            _ => EvaluateGenericGuard(guard, candidate, details)
         };
+    }
+
+    private CompanionGuardEvidence EvaluateGenericGuard(
+        CompanionAmbiguityGuardDefinition guard,
+        CompanionPlacePoolCandidate candidate,
+        PlaceDetailsResult? details)
+    {
+        if (guard.EvidenceFields.Any(IsTypeEvidenceField))
+        {
+            var typeEvidence = EvaluateTypeGuard(guard, candidate, guard.CompatibleConcepts, guard.DangerousSiblingConcepts);
+            if (typeEvidence.Status != CompanionGuardEvidenceStatus.Unknown || !guard.RequiresDetails)
+            {
+                return typeEvidence;
+            }
+        }
+
+        var attributeEvidence = EvaluateAttributeGuard(guard, candidate.PlaceId, details);
+        return attributeEvidence ?? Unknown(guard, candidate.PlaceId, guard.RequiresDetails && details is null, "catalogue_guard_unknown");
     }
 
     private CompanionGuardEvidence EvaluateTypeGuard(
@@ -248,6 +250,42 @@ public sealed class CompanionPlaceGuardEvidenceService(
         return Unknown(guard, placeId, requiresDetails: details is null, "payment_options_unknown");
     }
 
+    private static CompanionGuardEvidence? EvaluateAttributeGuard(
+        CompanionAmbiguityGuardDefinition guard,
+        string placeId,
+        PlaceDetailsResult? details)
+    {
+        foreach (var field in guard.EvidenceFields)
+        {
+            var normalized = NormalizeField(field);
+            var value = normalized switch
+            {
+                "delivery" => details?.Delivery,
+                "takeout" => details?.Takeout,
+                "dinein" => details?.DineIn,
+                "allowsdogs" => details?.AllowsDogs,
+                "outdoorseating" => details?.OutdoorSeating,
+                "restroom" => details?.Restroom,
+                "reservable" => details?.Reservable,
+                "goodforgroups" => details?.GoodForGroups,
+                "menuforchildren" => details?.MenuForChildren,
+                _ => null
+            };
+
+            if (value == true)
+            {
+                return new CompanionGuardEvidence(guard.GuardId, placeId, CompanionGuardEvidenceStatus.ConfirmedMatch, guard.Confidence, [field], [$"{field}_true"], false);
+            }
+
+            if (value == false && guard.RequiresDetails)
+            {
+                return new CompanionGuardEvidence(guard.GuardId, placeId, CompanionGuardEvidenceStatus.ConfirmedConflict, Math.Min(0.9d, guard.Confidence), [field], [$"{field}_false"], false);
+            }
+        }
+
+        return null;
+    }
+
     private static CompanionGuardEvidence EvaluateParkingGuard(
         CompanionAmbiguityGuardDefinition guard,
         string placeId,
@@ -276,51 +314,16 @@ public sealed class CompanionPlaceGuardEvidenceService(
         return new CompanionGuardEvidence(guard.GuardId, placeId, CompanionGuardEvidenceStatus.Unknown, 0.35d, guard.EvidenceFields, [reason], requiresDetails);
     }
 
-    private static IReadOnlyList<CompanionAmbiguityGuardDefinition> ResolveApplicableGuards(
-        CompanionPlaceSearchStrategy strategy,
-        CompanionSemanticIntent intent)
+    private static bool IsTypeEvidenceField(string field)
     {
-        var haystack = Normalize(string.Join(' ',
-            intent.PlaceQuery,
-            strategy.CanonicalQuery,
-            intent.Role.RequestedRole,
-            string.Join(' ', intent.Role.RequiredCoreRoles),
-            string.Join(' ', intent.Role.AcceptableSubRoles),
-            string.Join(' ', intent.Role.Modifiers),
-            string.Join(' ', intent.HardFilters),
-            string.Join(' ', intent.SoftPreferences),
-            string.Join(' ', intent.RequestedDetailFields)));
-
-        var guards = new List<CompanionAmbiguityGuardDefinition>();
-        AddIf(haystack.Contains("bank", StringComparison.Ordinal) && !haystack.Contains("atm", StringComparison.Ordinal), "bank_branch_vs_atm");
-        AddIf(haystack.Contains("atm", StringComparison.Ordinal), "atm_vs_bank_branch");
-        AddIf(haystack.Contains("post office", StringComparison.Ordinal) || haystack.Contains("post offices", StringComparison.Ordinal), "post_office_vs_mailbox");
-        AddIf(haystack.Contains("hotel", StringComparison.Ordinal) || haystack.Contains("lodging", StringComparison.Ordinal), "hotel_vs_hotel_restaurant");
-        AddIf(haystack.Contains("car park", StringComparison.Ordinal) || haystack.Contains("parking", StringComparison.Ordinal), "car_park_vs_public_park");
-        AddIf(haystack.Contains("fine dining", StringComparison.Ordinal) || haystack.Contains("upscale", StringComparison.Ordinal), "fine_dining_vs_fast_food");
-        AddIf(haystack.Contains("delivery", StringComparison.Ordinal), "restaurant_delivery_vs_dine_in_only");
-        AddIf(haystack.Contains("takeaway", StringComparison.Ordinal) || haystack.Contains("takeout", StringComparison.Ordinal), "takeaway_vs_dine_in_only");
-        AddIf(haystack.Contains("dog friendly", StringComparison.Ordinal) || haystack.Contains("dogs allowed", StringComparison.Ordinal) || haystack.Contains("dog_friendly", StringComparison.Ordinal), "dog_friendly_policy");
-        AddIf(haystack.Contains("wheelchair", StringComparison.Ordinal) || haystack.Contains("accessible", StringComparison.Ordinal), "wheelchair_accessibility");
-        AddIf(haystack.Contains("outdoor seating", StringComparison.Ordinal) || haystack.Contains("outside seating", StringComparison.Ordinal), "outdoor_seating");
-        AddIf(haystack.Contains("card", StringComparison.Ordinal) || haystack.Contains("cashless", StringComparison.Ordinal), "card_payments");
-        AddIf(haystack.Contains("parking", StringComparison.Ordinal), "parking_availability");
-        return guards.DistinctBy(static guard => guard.GuardId, StringComparer.OrdinalIgnoreCase).ToArray();
-
-        void AddIf(bool condition, string guardId)
-        {
-            if (condition)
-            {
-                var guard = Catalogue.First(item => item.GuardId == guardId);
-                guards.Add(guard);
-            }
-        }
+        return field.Equals("types", StringComparison.OrdinalIgnoreCase)
+               || field.Equals("primaryType", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Normalize(string? value)
+    private static string NormalizeField(string? value)
     {
         return string.IsNullOrWhiteSpace(value)
             ? string.Empty
-            : value.Trim().ToLowerInvariant().Replace('_', ' ').Replace('-', ' ');
+            : value.Trim().ToLowerInvariant().Replace("_", string.Empty).Replace("-", string.Empty).Replace(".", string.Empty);
     }
 }

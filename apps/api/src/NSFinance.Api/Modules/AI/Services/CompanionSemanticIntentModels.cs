@@ -267,11 +267,28 @@ public sealed record CompanionGuardEvaluationResult(
 
 public sealed record CompanionAmbiguityGuardDefinition(
     string GuardId,
+    string Domain,
     IReadOnlyList<string> RequestedConcepts,
     IReadOnlyList<string> DangerousSiblingConcepts,
     IReadOnlyList<string> CompatibleConcepts,
     IReadOnlyList<string> EvidenceFields,
-    string DefaultAction);
+    string DefaultAction,
+    bool RequiresDetails,
+    double Confidence,
+    IReadOnlyList<string> Examples,
+    string? Notes);
+
+public interface ICompanionAmbiguityGuardCatalogueProvider
+{
+    IReadOnlyList<CompanionAmbiguityGuardDefinition> GetAll();
+}
+
+public interface ICompanionAmbiguityGuardMatcher
+{
+    IReadOnlyList<CompanionAmbiguityGuardDefinition> Match(
+        CompanionPlaceSearchStrategy strategy,
+        CompanionSemanticIntent intent);
+}
 
 public interface ICompanionPlaceGuardEvidenceService
 {

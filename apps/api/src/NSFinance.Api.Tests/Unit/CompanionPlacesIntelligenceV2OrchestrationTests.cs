@@ -354,6 +354,7 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
                 detailsService,
                 parkingEvidenceService,
                 typeFamilyClassifier,
+                new CompanionAmbiguityGuardMatcher(new TestGuardCatalogueProvider(), telemetry),
                 Options.Create(new AIIntegrationOptions()),
                 telemetry),
             companionPlaceGuardAwareFilter: new CompanionPlaceGuardAwareFilter(telemetry),

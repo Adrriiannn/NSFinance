@@ -23,4 +23,8 @@
     <ProjectReference Include="..\..\..\..\libs\shared\src\NSFinance.Shared\NSFinance.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="Modules\AI\Resources\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

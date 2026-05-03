@@ -158,6 +158,8 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ICompanionPlaceSessionMemoryService, CompanionPlaceSessionMemoryService>();
         services.AddScoped<ICompanionPlaceResultContextBinder, CompanionPlaceResultContextBinder>();
         services.AddScoped<ICompanionPlaceParkingEvidenceService, CompanionPlaceParkingEvidenceService>();
+        services.AddSingleton<ICompanionAmbiguityGuardCatalogueProvider, JsonCompanionAmbiguityGuardCatalogueProvider>();
+        services.AddScoped<ICompanionAmbiguityGuardMatcher, CompanionAmbiguityGuardMatcher>();
         services.AddScoped<ICompanionPlaceGuardEvidenceService, CompanionPlaceGuardEvidenceService>();
         services.AddScoped<ICompanionPlaceGuardAwareFilter, CompanionPlaceGuardAwareFilter>();
         services.AddScoped<ICompanionPlaceDuplicateClusterService, CompanionPlaceDuplicateClusterService>();
