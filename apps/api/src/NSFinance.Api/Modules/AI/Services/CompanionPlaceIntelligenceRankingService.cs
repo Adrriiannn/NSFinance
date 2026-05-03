@@ -15,14 +15,15 @@ public sealed class CompanionPlaceIntelligenceRankingService : ICompanionPlaceIn
         CompanionSemanticIntent intent,
         IReadOnlyList<CompanionPlacePoolCandidate> candidates)
     {
+        var rankingMode = SelectRankingMode(intent);
         var ranked = candidates
             .Select(candidate => new
             {
                 Candidate = candidate,
-                Score = Score(intent, candidate)
+                Score = Score(intent, candidate, rankingMode)
             })
             .OrderByDescending(item => item.Score)
-            .ThenBy(item => intent.RankingGoal.Contains("distance", StringComparison.OrdinalIgnoreCase)
+            .ThenBy(item => rankingMode == "distance_first"
                 ? item.Candidate.DistanceMeters ?? double.MaxValue
                 : double.MaxValue)
             .ThenByDescending(item => item.Candidate.Rating ?? 0d)
@@ -32,10 +33,10 @@ public sealed class CompanionPlaceIntelligenceRankingService : ICompanionPlaceIn
 
         return new CompanionPlaceIntelligenceRankingResult(
             RankedCandidates: ranked,
-            Diagnostics: ["places_ranking_v2_completed"]);
+            Diagnostics: ["places_ranking_v2_completed", $"places_ranking_mode:{rankingMode}"]);
     }
 
-    private static double Score(CompanionSemanticIntent intent, CompanionPlacePoolCandidate candidate)
+    private static double Score(CompanionSemanticIntent intent, CompanionPlacePoolCandidate candidate, string rankingMode)
     {
         var concept = ScoreConcept(intent, candidate);
         var distance = ScoreDistance(candidate.DistanceMeters);
@@ -43,17 +44,17 @@ public sealed class CompanionPlaceIntelligenceRankingService : ICompanionPlaceIn
         var open = candidate.OpenNow == true ? 0.08d : 0d;
         var soft = ScoreSoftPreferences(intent, candidate);
 
-        if (intent.RankingGoal == "brand_match_then_distance")
+        if (rankingMode == "brand_fit_first")
         {
             return (ScoreBrand(intent, candidate) * 0.60d) + (distance * 0.25d) + (rating * 0.15d);
         }
 
-        if (intent.RankingGoal == "concept_fit_then_distance")
+        if (rankingMode == "concept_fit_first")
         {
             return (concept * 0.52d) + (rating * 0.22d) + (distance * 0.16d) + (soft * 0.10d);
         }
 
-        if (intent.RankingGoal == "relevance_rating_then_distance")
+        if (rankingMode == "quality_first")
         {
             return (concept * 0.45d) + (rating * 0.35d) + (distance * 0.12d) + open;
         }
@@ -63,12 +64,54 @@ public sealed class CompanionPlaceIntelligenceRankingService : ICompanionPlaceIn
             return (ScoreParking(candidate) * 0.55d) + (distance * 0.30d) + (rating * 0.15d);
         }
 
-        if (intent.RankingGoal == "distance")
+        if (rankingMode == "distance_first")
         {
-            return (distance * 0.70d) + (concept * 0.20d) + (rating * 0.10d);
+            return (distance * 0.82d) + (concept * 0.12d) + (rating * 0.06d);
         }
 
         return (concept * 0.40d) + (distance * 0.30d) + (rating * 0.20d) + (soft * 0.10d) + open;
+    }
+
+    private static string SelectRankingMode(CompanionSemanticIntent intent)
+    {
+        if (intent.RankingGoal == "brand_match_then_distance" || !string.IsNullOrWhiteSpace(intent.BrandOrEntity))
+        {
+            return "brand_fit_first";
+        }
+
+        if (intent.PlaceQuery?.Contains("fine dining", StringComparison.OrdinalIgnoreCase) == true
+            || intent.SoftPreferences.Contains("upscale", StringComparer.OrdinalIgnoreCase)
+            || intent.RankingGoal == "concept_fit_then_distance")
+        {
+            return "concept_fit_first";
+        }
+
+        if (intent.RankingGoal == "relevance_rating_then_distance"
+            || intent.HardFilters.Any(static filter => filter.Contains("rating", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "quality_first";
+        }
+
+        if (intent.Location.Mode == "near_me" && IsDistanceFirstRole(intent))
+        {
+            return "distance_first";
+        }
+
+        return intent.RankingGoal == "distance" ? "distance_first" : "intent_fit_first";
+    }
+
+    private static bool IsDistanceFirstRole(CompanionSemanticIntent intent)
+    {
+        var query = Normalize($"{intent.PlaceQuery} {intent.Role.RequestedRole} {string.Join(' ', intent.Role.RequiredCoreRoles)} {string.Join(' ', intent.Role.AcceptableSubRoles)}");
+        return query.Contains("hotel", StringComparison.Ordinal)
+               || query.Contains("lodging", StringComparison.Ordinal)
+               || query.Contains("atm", StringComparison.Ordinal)
+               || query.Contains("ev charging", StringComparison.Ordinal)
+               || query.Contains("electric vehicle", StringComparison.Ordinal)
+               || query.Contains("car park", StringComparison.Ordinal)
+               || query.Contains("parking", StringComparison.Ordinal)
+               || query.Contains("pharmacy", StringComparison.Ordinal)
+               || query.Contains("gym", StringComparison.Ordinal);
     }
 
     private static double ScoreBrand(CompanionSemanticIntent intent, CompanionPlacePoolCandidate candidate)

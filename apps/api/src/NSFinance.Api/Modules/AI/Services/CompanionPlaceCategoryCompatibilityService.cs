@@ -21,9 +21,31 @@ public sealed class CompanionPlaceCategoryCompatibilityService(
         foreach (var candidate in candidates)
         {
             var families = typeFamilyClassifier.ClassifyFamilies(candidate);
+            var hasRequiredRole = intent.Role.RequiredCoreRoles.Any(role => ContainsRole(families, role))
+                                  || intent.Role.AcceptableSubRoles.Any(role => ContainsRole(families, role));
             var excluded = intent.Role.ExcludedSiblingRoles.FirstOrDefault(role => ContainsRole(families, role));
-            if (!string.IsNullOrWhiteSpace(excluded))
+            if (!string.IsNullOrWhiteSpace(excluded) && !hasRequiredRole)
             {
+                if (IsAtmRole(intent.Role)
+                    && families.Contains("bank")
+                    && MatchesEntityLock(strategy?.Entity, intent.BrandOrEntity, candidate.DisplayName, out _, out _))
+                {
+                    accepted.Add(candidate);
+                    _ = telemetry.TrackAsync(
+                        "places.role_compatibility.mixed_role_applied",
+                        new Dictionary<string, object?>
+                        {
+                            ["requestedRole"] = intent.Role.RequestedRole,
+                            ["candidateName"] = candidate.DisplayName,
+                            ["families"] = families.ToArray(),
+                            ["status"] = "unknown",
+                            ["needsDetails"] = true,
+                            ["reason"] = "bank_family_candidate_kept_for_atm_evidence"
+                        },
+                        CancellationToken.None);
+                    continue;
+                }
+
                 rejected.Add(new CompanionPlaceRejectedCandidate(candidate.PlaceId, candidate.DisplayName, $"excluded_sibling_role:{excluded}"));
                 continue;
             }
@@ -122,6 +144,13 @@ public sealed class CompanionPlaceCategoryCompatibilityService(
     {
         return role.RequestedRole is "office" or "corporate_office" or "headquarters" or "hq"
                || role.AcceptableSubRoles.Any(static item => item is "office" or "corporate_office" or "headquarters" or "hq");
+    }
+
+    private static bool IsAtmRole(CompanionPlaceRoleIntent role)
+    {
+        return role.RequestedRole == "atm"
+               || role.RequiredCoreRoles.Contains("atm", StringComparer.OrdinalIgnoreCase)
+               || role.AcceptableSubRoles.Contains("atm", StringComparer.OrdinalIgnoreCase);
     }
 
     private static bool HasOfficeCompatibleFamily(IReadOnlySet<string> families)

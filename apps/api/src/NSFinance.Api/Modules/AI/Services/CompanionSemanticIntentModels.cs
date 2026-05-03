@@ -64,6 +64,61 @@ public sealed record CompanionPlaceCandidatePoolResult(
     bool UsedCache,
     string? FailureReason);
 
+public sealed record CompanionPlaceLocationBoundaryPlan(
+    string BoundaryMode,
+    string? RawLocationText,
+    string? CanonicalLocationText,
+    string? CountryCode,
+    string? RegionCode,
+    string? City,
+    string? District,
+    string? County,
+    double? CenterLatitude,
+    double? CenterLongitude,
+    double? RadiusMeters,
+    IReadOnlyList<string> AddressMustContain,
+    IReadOnlyList<string> AddressShouldContain,
+    IReadOnlyList<string> AddressMustNotContain,
+    bool HardBoundary,
+    bool NeedsGeocoding,
+    double Confidence,
+    IReadOnlyList<string> Warnings);
+
+public sealed record CompanionPlaceLocationBoundaryDecision(
+    string PlaceId,
+    bool IsInsideBoundary,
+    double Confidence,
+    IReadOnlyList<string> Evidence,
+    IReadOnlyList<string> Warnings);
+
+public sealed record CompanionPlaceRetrievalPlan(
+    IReadOnlyList<CompanionPlaceRetrievalPass> Passes,
+    int TargetCandidateCount,
+    int ProviderPageSize,
+    IReadOnlyList<string> Diagnostics);
+
+public sealed record CompanionPlaceRetrievalPass(
+    string PassId,
+    string Mode,
+    string? Query,
+    IReadOnlyList<string> IncludedTypes,
+    double? Latitude,
+    double? Longitude,
+    double? RadiusMeters,
+    string? CountryCode,
+    bool RequiresLocation,
+    string Purpose);
+
+public sealed record CompanionPlaceRoleCompatibilityDecision(
+    string PlaceId,
+    bool Keep,
+    string Status,
+    double Confidence,
+    IReadOnlyList<string> MatchedRoles,
+    IReadOnlyList<string> ConflictingRoles,
+    IReadOnlyList<string> Evidence,
+    bool NeedsDetails);
+
 public sealed record CompanionPlaceRejectedCandidate(
     string PlaceId,
     string DisplayName,
@@ -117,6 +172,30 @@ public interface ICompanionPlaceCandidatePoolService
         UserChatRequest request,
         CompanionPlaceSearchStrategy strategy,
         CancellationToken cancellationToken);
+}
+
+public interface ICompanionPlaceLocationBoundaryService
+{
+    CompanionPlaceLocationBoundaryPlan CreatePlan(
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        CompanionPlaceSearchStrategy? strategy = null);
+}
+
+public interface ICompanionPlaceLocationBoundaryFilter
+{
+    IReadOnlyList<CompanionPlacePoolCandidate> Apply(
+        CompanionPlaceLocationBoundaryPlan plan,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates);
+}
+
+public interface ICompanionPlaceRetrievalPlanner
+{
+    CompanionPlaceRetrievalPlan Build(
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        CompanionPlaceSearchStrategy? strategy,
+        CompanionPlaceLocationBoundaryPlan? boundaryPlan = null);
 }
 
 public interface ICompanionPlaceConstraintEngine

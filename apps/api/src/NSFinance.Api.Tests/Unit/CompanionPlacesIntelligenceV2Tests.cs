@@ -122,7 +122,9 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             discovery,
             new NoOpPlaceRegistryService(),
             Options.Create(new GooglePlacesOptions()),
-            new NoOpChatTelemetry());
+            locationBoundaryService: null,
+            retrievalPlanner: null,
+            telemetry: new NoOpChatTelemetry());
 
         var result = await pool.BuildPoolAsync(
             BuildIntent(placeQuery: "Starbucks", rankingGoal: "brand_match_then_distance") with
@@ -146,7 +148,9 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             discovery,
             new NoOpPlaceRegistryService(),
             Options.Create(new GooglePlacesOptions()),
-            new NoOpChatTelemetry());
+            locationBoundaryService: null,
+            retrievalPlanner: null,
+            telemetry: new NoOpChatTelemetry());
 
         var result = await pool.BuildPoolAsync(
             BuildIntent(placeQuery: "coffee shops", rankingGoal: "distance"),
@@ -240,6 +244,171 @@ public sealed class CompanionPlacesIntelligenceV2Tests
 
         Assert.Equal("bank", Assert.Single(banks.Candidates).PlaceId);
         Assert.Equal("atm", Assert.Single(atms.Candidates).PlaceId);
+    }
+
+    [Fact]
+    public void CategoryCompatibility_AtmIntent_KeepsStrongBrandBankForEvidence()
+    {
+        var telemetry = new NoOpChatTelemetry();
+        var service = new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry);
+        var intent = BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with
+        {
+            BrandOrEntity = "AIB",
+            Role = new CompanionPlaceRoleIntent("atm", ["atm"], ["atm"], ["bank"], [], "strict")
+        };
+
+        var result = service.Apply(
+            intent,
+            [
+                Candidate("atm", "AIB ATM", "atm", ["atm"], 100, "ATM"),
+                Candidate("bank", "AIB Bank Santry", "bank", ["bank"], 200, "Bank"),
+                Candidate("other", "Bank of Ireland", "bank", ["bank"], 300, "Bank")
+            ]);
+
+        Assert.Equal(["atm", "bank"], result.Candidates.Select(static item => item.PlaceId).ToArray());
+        Assert.Contains(result.Rejected, item => item.PlaceId == "other");
+    }
+
+    [Fact]
+    public void LocationBoundary_FacebookOfficeDublin_RejectsUsAndUkCandidates()
+    {
+        var telemetry = new NoOpChatTelemetry();
+        var service = new CompanionPlaceLocationBoundaryService(Options.Create(new AIIntegrationOptions()), telemetry);
+        var filter = new CompanionPlaceLocationBoundaryFilter(Options.Create(new AIIntegrationOptions()), telemetry);
+        var plan = service.CreatePlan(
+            BuildRequest("Facebook office Dublin"),
+            BuildIntent(placeQuery: "Facebook office", rankingGoal: "brand_match_then_distance"));
+
+        var kept = filter.Apply(
+            plan,
+            [
+                Candidate("dublin", "Meta Dublin", "establishment", ["establishment"], 1_000, latitude: 53.3498, longitude: -6.2603, shortAddress: "Dublin, Ireland"),
+                Candidate("london", "Meta London", "establishment", ["establishment"], null, latitude: 51.5074, longitude: -0.1278, shortAddress: "London, United Kingdom"),
+                Candidate("usa", "Meta HQ", "establishment", ["establishment"], null, latitude: 37.4848, longitude: -122.1484, shortAddress: "Menlo Park, CA, USA")
+            ]);
+
+        Assert.Equal("dublin", Assert.Single(kept).PlaceId);
+    }
+
+    [Fact]
+    public void LocationBoundary_NearMe_RejectsFarOutsideRadius()
+    {
+        var telemetry = new NoOpChatTelemetry();
+        var service = new CompanionPlaceLocationBoundaryService(Options.Create(new AIIntegrationOptions()), telemetry);
+        var filter = new CompanionPlaceLocationBoundaryFilter(Options.Create(new AIIntegrationOptions()), telemetry);
+        var plan = service.CreatePlan(
+            BuildRequest("hotels near me"),
+            BuildIntent(placeQuery: "hotels", rankingGoal: "distance"));
+
+        var kept = filter.Apply(
+            plan,
+            [
+                Candidate("near", "Nearby Hotel", "lodging", ["lodging"], 500, latitude: 53.351, longitude: -6.261),
+                Candidate("far", "Far Hotel", "lodging", ["lodging"], 80_000, latitude: 54.0, longitude: -7.0)
+            ]);
+
+        Assert.Equal("near", Assert.Single(kept).PlaceId);
+    }
+
+    [Fact]
+    public void LocationBoundary_TooBroadCountry_HardStopsLocalDiscovery()
+    {
+        var service = new CompanionPlaceLocationBoundaryService(Options.Create(new AIIntegrationOptions()), new NoOpChatTelemetry());
+        var plan = service.CreatePlan(
+            BuildRequest("restaurants in Ireland"),
+            BuildIntent(placeQuery: "restaurants", rankingGoal: "intent_fit_then_distance") with
+            {
+                Location = new CompanionLocationIntent("typed_area", "Ireland", null, null, false)
+            });
+
+        Assert.Equal("too_broad", plan.BoundaryMode);
+        Assert.True(plan.HardBoundary);
+    }
+
+    [Fact]
+    public void RetrievalPlanner_HotelsNearMe_UsesLodgingNearbyAndText()
+    {
+        var planner = new CompanionPlaceRetrievalPlanner(Options.Create(new AIIntegrationOptions()), new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "hotels", rankingGoal: "distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("hotel", ["lodging"], ["hotel"], [], [], "compatible")
+        };
+        var strategy = Strategy("hotels", role: intent.Role);
+
+        var plan = planner.Build(BuildRequest("hotels near me"), intent, strategy);
+
+        Assert.Contains(plan.Passes, pass => pass.Mode == "nearby" && pass.IncludedTypes.Contains("lodging"));
+        Assert.Contains(plan.Passes, pass => pass.Mode == "text" && pass.Query == "hotels");
+    }
+
+    [Fact]
+    public void RetrievalPlanner_EvChargingNearMe_UsesEvChargingNearbyAndText()
+    {
+        var planner = new CompanionPlaceRetrievalPlanner(Options.Create(new AIIntegrationOptions()), new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "EV charging", rankingGoal: "distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("ev_charging_station", ["electric_vehicle_charging_station"], ["ev_charging_station"], [], [], "strict")
+        };
+
+        var plan = planner.Build(BuildRequest("EV charging near me"), intent, Strategy("EV charging stations", role: intent.Role));
+
+        Assert.Contains(plan.Passes, pass => pass.Mode == "nearby" && pass.IncludedTypes.Contains("electric_vehicle_charging_station"));
+        Assert.Contains(plan.Passes, pass => pass.Mode == "text" && pass.Query == "EV charging stations");
+    }
+
+    [Fact]
+    public void RetrievalPlanner_AibAtmsNearMe_UsesAtmNearbyAndBrandText()
+    {
+        var planner = new CompanionPlaceRetrievalPlanner(Options.Create(new AIIntegrationOptions()), new NoOpChatTelemetry());
+        var intent = BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with
+        {
+            BrandOrEntity = "AIB",
+            Role = new CompanionPlaceRoleIntent("atm", ["atm"], ["atm"], ["bank"], [], "strict")
+        };
+
+        var plan = planner.Build(BuildRequest("AIB ATMs near me"), intent, Strategy("AIB ATM", role: intent.Role));
+
+        Assert.Contains(plan.Passes, pass => pass.Mode == "nearby" && pass.IncludedTypes.Contains("atm"));
+        Assert.Contains(plan.Passes, pass => pass.Mode == "text" && pass.Query == "AIB ATM");
+    }
+
+    [Fact]
+    public void Ranking_HotelsNearMe_DistanceFirstRanksNearestCompatibleHotel()
+    {
+        var service = new CompanionPlaceIntelligenceRankingService();
+        var intent = BuildIntent(placeQuery: "hotels", rankingGoal: "intent_fit_then_distance") with
+        {
+            Role = new CompanionPlaceRoleIntent("hotel", ["lodging"], ["hotel"], [], [], "compatible")
+        };
+
+        var result = service.Rank(
+            intent,
+            [
+                Candidate("far", "Far Five Star Hotel", "lodging", ["lodging"], 8_000, rating: 5.0),
+                Candidate("near", "Nearby Hotel", "lodging", ["lodging"], 400, rating: 4.1)
+            ]);
+
+        Assert.Equal("near", result.RankedCandidates[0].PlaceId);
+        Assert.Contains("places_ranking_mode:distance_first", result.Diagnostics);
+    }
+
+    [Fact]
+    public void Ranking_BrandSearch_RanksBrandMatchAboveGenericNearby()
+    {
+        var service = new CompanionPlaceIntelligenceRankingService();
+        var intent = BuildIntent(placeQuery: "Starbucks", rankingGoal: "brand_match_then_distance") with
+        {
+            BrandOrEntity = "Starbucks"
+        };
+
+        var result = service.Rank(
+            intent,
+            [
+                Candidate("generic", "Nearby Cafe", "cafe", ["cafe"], 100),
+                Candidate("brand", "Starbucks", "cafe", ["cafe"], 2_000)
+            ]);
+
+        Assert.Equal("brand", result.RankedCandidates[0].PlaceId);
     }
 
     [Fact]
@@ -728,7 +897,9 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             discovery,
             new NoOpPlaceRegistryService(),
             Options.Create(new GooglePlacesOptions()),
-            new NoOpChatTelemetry());
+            locationBoundaryService: null,
+            retrievalPlanner: null,
+            telemetry: new NoOpChatTelemetry());
         var intent = BuildIntent(placeQuery: "AIB bank", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB" };
         var strategy = new CompanionPlaceSearchStrategy(
             "AIB banks near me",

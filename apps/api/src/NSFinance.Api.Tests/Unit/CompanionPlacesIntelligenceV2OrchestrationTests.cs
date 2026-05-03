@@ -119,6 +119,25 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
     }
 
     [Fact]
+    public async Task ClosestFollowUp_WithMultipleCards_UsesPluralCopy()
+    {
+        var session = new FixedSessionMemoryService(Context(
+            [
+                Candidate("far", "Far Coffee", "cafe", ["cafe"], 900, "Cafe"),
+                Candidate("near", "Near Coffee", "cafe", ["cafe"], 100, "Cafe")
+            ]));
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.SortPreviousResults, sortGoal: "distance"),
+            new FixedPoolService([]),
+            session);
+
+        var response = await orchestrator.ExecuteAsync(Request("show me the closest options"), CancellationToken.None);
+
+        Assert.Equal(2, response.StructuredResults?.Items.Count);
+        Assert.Equal("Here are the closest matches I found:", response.ReplyText);
+    }
+
+    [Fact]
     public async Task RatingFollowUp_DoesNotPadBelowThresholdResults()
     {
         var session = new FixedSessionMemoryService(Context(
@@ -216,8 +235,8 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
 
         var response = await orchestrator.ExecuteAsync(Request("AIB ATMs near me"), CancellationToken.None);
 
-        var card = Assert.Single(response.StructuredResults?.Items ?? []);
-        Assert.Equal("AIB ATM", card.Name);
+        var cards = response.StructuredResults?.Items ?? [];
+        Assert.Equal(["AIB ATM", "AIB Bank Santry"], cards.Select(static item => item.Name).ToArray());
     }
 
     [Fact]
@@ -297,6 +316,29 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         Assert.DoesNotContain(pool.LastQueryPasses, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task FacebookOfficeDublin_DoesNotReturnLondonOrUs()
+    {
+        var telemetry = new RecordingTelemetry();
+        var pool = new FixedPoolService(
+            [
+                Candidate("dublin", "Meta Dublin", "establishment", ["establishment", "point_of_interest"], 2_000, "Establishment", latitude: 53.3498, longitude: -6.2603, shortAddress: "Dublin, Ireland"),
+                Candidate("london", "Meta London", "establishment", ["establishment", "point_of_interest"], null, "Establishment", latitude: 51.5074, longitude: -0.1278, shortAddress: "London, United Kingdom"),
+                Candidate("usa", "Meta HQ", "establishment", ["establishment", "point_of_interest"], null, "Establishment", latitude: 37.4848, longitude: -122.1484, shortAddress: "Menlo Park, CA, USA")
+            ]);
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "Facebook office", locationQuery: "Dublin"),
+            pool,
+            telemetry: telemetry,
+            strategyPlanner: BuildAiStrategyPlanner(FacebookOfficeStrategyJson(), telemetry));
+
+        var response = await orchestrator.ExecuteAsync(Request("Facebook office Dublin"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Meta Dublin", card.Name);
+        Assert.Contains(telemetry.Events, item => item.Name == "places.location_boundary.filter_applied");
+    }
+
     private static ConversationLayerOrchestrator CreateOrchestrator(
         CompanionResolvedAction action,
         FixedPoolService pool,
@@ -349,6 +391,8 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
                 telemetry),
             companionPlaceSessionMemoryService: session ?? new FixedSessionMemoryService(null),
             companionPlaceResultContextBinder: new CompanionPlaceResultContextBinder(telemetry),
+            companionPlaceLocationBoundaryService: new CompanionPlaceLocationBoundaryService(Options.Create(new AIIntegrationOptions()), telemetry),
+            companionPlaceLocationBoundaryFilter: new CompanionPlaceLocationBoundaryFilter(Options.Create(new AIIntegrationOptions()), telemetry),
             companionPlaceParkingEvidenceService: parkingEvidenceService,
             companionPlaceGuardEvidenceService: new CompanionPlaceGuardEvidenceService(
                 detailsService,
@@ -478,7 +522,10 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         string? primaryTypeDisplayName = null,
         double? rating = 4.8,
         string? priceLevel = null,
-        bool? openNow = true)
+        bool? openNow = true,
+        double? latitude = 53.3,
+        double? longitude = -6.2,
+        string? shortAddress = "Test Street")
     {
         return new CompanionPlacePoolCandidate(
             id,
@@ -486,10 +533,10 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             primaryType,
             primaryTypeDisplayName ?? primaryType,
             types,
-            53.3,
-            -6.2,
+            latitude,
+            longitude,
             distanceMeters,
-            "Test Street",
+            shortAddress,
             rating,
             100,
             priceLevel,

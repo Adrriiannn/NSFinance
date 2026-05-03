@@ -13,6 +13,8 @@ public sealed class CompanionPlaceCandidatePoolService(
     ICompanionPlaceDiscoveryService discoveryService,
     IPlaceRegistryService placeRegistryService,
     IOptions<GooglePlacesOptions> options,
+    ICompanionPlaceLocationBoundaryService? locationBoundaryService,
+    ICompanionPlaceRetrievalPlanner? retrievalPlanner,
     IChatTelemetry telemetry) : ICompanionPlaceCandidatePoolService
 {
     private const int PoolTargetCount = 50;
@@ -35,7 +37,9 @@ public sealed class CompanionPlaceCandidatePoolService(
     {
         ArgumentNullException.ThrowIfNull(intent);
         var diagnostics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var queryPasses = BuildQueryPasses(intent, strategy);
+        var boundaryPlan = locationBoundaryService?.CreatePlan(request, intent, strategy);
+        var retrievalPlan = retrievalPlanner?.Build(request, intent, strategy, boundaryPlan);
+        var queryPasses = retrievalPlan?.Passes.Select(static pass => pass.PassId).ToArray() ?? BuildQueryPasses(intent, strategy);
         var queryPassesUsed = new List<string>();
         var candidatesById = new Dictionary<string, CompanionPlacePoolCandidate>(StringComparer.OrdinalIgnoreCase);
         var country = ResolveCountryCode(request);
@@ -52,6 +56,70 @@ public sealed class CompanionPlaceCandidatePoolService(
             },
             cancellationToken);
 
+        if (retrievalPlan is not null)
+        {
+            foreach (var pass in retrievalPlan.Passes)
+            {
+                if (candidatesById.Count >= PoolTargetCount)
+                {
+                    break;
+                }
+
+                queryPassesUsed.Add(pass.PassId);
+                await telemetry.TrackAsync(
+                    "places.retrieval_pass.started",
+                    new Dictionary<string, object?>
+                    {
+                        ["correlationId"] = request.CorrelationId,
+                        ["passId"] = pass.PassId,
+                        ["mode"] = pass.Mode,
+                        ["query"] = pass.Query,
+                        ["includedTypes"] = pass.IncludedTypes.ToArray(),
+                        ["purpose"] = pass.Purpose
+                    },
+                    cancellationToken);
+                var result = pass.Mode == "nearby"
+                    ? await discoveryService.DiscoverNearbyAsync(
+                        new CompanionNearbyDiscoveryRequest(
+                            Latitude: pass.Latitude ?? intent.Location.Latitude ?? 0d,
+                            Longitude: pass.Longitude ?? intent.Location.Longitude ?? 0d,
+                            RadiusMeters: (int)Math.Clamp(pass.RadiusMeters ?? ResolveRadiusMeters(intent), 1_000, 50_000),
+                            IncludedTypes: pass.IncludedTypes,
+                            CountryCode: pass.CountryCode,
+                            MaxCandidates: retrievalPlan.ProviderPageSize),
+                        cancellationToken)
+                    : await discoveryService.DiscoverAsync(
+                        new CompanionPlaceDiscoveryRequest(
+                            Query: pass.Query!,
+                            CountryCode: pass.CountryCode,
+                            Latitude: pass.Latitude ?? intent.Location.Latitude,
+                            Longitude: pass.Longitude ?? intent.Location.Longitude,
+                            RadiusMeters: (pass.Latitude ?? intent.Location.Latitude).HasValue ? (int?)Math.Clamp(pass.RadiusMeters ?? ResolveRadiusMeters(intent), 1_000, 50_000) : null,
+                            MaxCandidates: retrievalPlan.ProviderPageSize),
+                        cancellationToken);
+
+                diagnostics.UnionWith(result.Warnings);
+                providerReturnedCount += result.Candidates.Count;
+                foreach (var candidate in result.Candidates.Select(item => Map(item, intent)))
+                {
+                    candidatesById.TryAdd(candidate.PlaceId, candidate);
+                    await placeRegistryService.RegisterSeenAsync("google_places", candidate.PlaceId, BuildRegistryTags(intent), cancellationToken);
+                }
+
+                await telemetry.TrackAsync(
+                    "places.retrieval_pass.completed",
+                    new Dictionary<string, object?>
+                    {
+                        ["correlationId"] = request.CorrelationId,
+                        ["passId"] = pass.PassId,
+                        ["providerReturnedCount"] = result.Candidates.Count,
+                        ["dedupedCount"] = candidatesById.Count
+                    },
+                    cancellationToken);
+            }
+        }
+        else
+        {
         foreach (var pass in queryPasses)
         {
             if (candidatesById.Count >= PoolTargetCount)
@@ -99,6 +167,7 @@ public sealed class CompanionPlaceCandidatePoolService(
                 candidatesById.TryAdd(candidate.PlaceId, candidate);
                 await placeRegistryService.RegisterSeenAsync("google_places", candidate.PlaceId, BuildRegistryTags(intent), cancellationToken);
             }
+        }
         }
 
         var candidates = candidatesById.Values.Take(PoolTargetCount).ToArray();
@@ -255,6 +324,7 @@ public sealed class CompanionPlaceCandidatePoolService(
         var distance = TryComputeDistanceMeters(intent.Location.Latitude, intent.Location.Longitude, candidate.Location);
         var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Add("business_status", candidate.BusinessStatus);
+        Add("formatted_address", candidate.FormattedAddress);
 
         return new CompanionPlacePoolCandidate(
             PlaceId: candidate.PlaceId,

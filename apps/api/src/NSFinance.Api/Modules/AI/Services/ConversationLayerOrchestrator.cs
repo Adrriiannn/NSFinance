@@ -37,6 +37,8 @@ public sealed class ConversationLayerOrchestrator(
     ICompanionPlaceFinalistEnrichmentService? companionPlaceFinalistEnrichmentService = null,
     ICompanionPlaceSessionMemoryService? companionPlaceSessionMemoryService = null,
     ICompanionPlaceResultContextBinder? companionPlaceResultContextBinder = null,
+    ICompanionPlaceLocationBoundaryService? companionPlaceLocationBoundaryService = null,
+    ICompanionPlaceLocationBoundaryFilter? companionPlaceLocationBoundaryFilter = null,
     ICompanionPlaceParkingEvidenceService? companionPlaceParkingEvidenceService = null,
     ICompanionPlaceGuardEvidenceService? companionPlaceGuardEvidenceService = null,
     ICompanionPlaceGuardAwareFilter? companionPlaceGuardAwareFilter = null,
@@ -1209,6 +1211,8 @@ public sealed class ConversationLayerOrchestrator(
             || companionPlaceFinalistEnrichmentService is null
             || companionPlaceSessionMemoryService is null
             || companionPlaceResultContextBinder is null
+            || companionPlaceLocationBoundaryService is null
+            || companionPlaceLocationBoundaryFilter is null
             || companionPlaceParkingEvidenceService is null
             || companionPlaceGuardEvidenceService is null
             || companionPlaceGuardAwareFilter is null
@@ -1335,6 +1339,25 @@ public sealed class ConversationLayerOrchestrator(
             resultContextReadResult,
             latestPlacesV2Context,
             effectiveBaseIntent);
+        var locationBoundaryPlan = companionPlaceLocationBoundaryService!.CreatePlan(request, effectiveBaseIntent, searchStrategy);
+        if (locationBoundaryPlan.BoundaryMode == "too_broad")
+        {
+            return await BuildPlacesNoMatchResultAsync(
+                request,
+                contextSummary,
+                state,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                resolvedAction,
+                effectiveBaseIntent,
+                locationBoundaryPlan.Warnings,
+                "location_too_broad",
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken);
+        }
 
         CompanionPlaceSearchContext? previousContext = null;
         if (effectiveBaseIntent.ActionKind is "filter_previous_results" or "sort_previous_results")
@@ -1394,6 +1417,27 @@ public sealed class ConversationLayerOrchestrator(
             pool = poolResult.Candidates;
             diagnostics = poolResult.Diagnostics;
         }
+
+        var boundaryFilteredPool = companionPlaceLocationBoundaryFilter!.Apply(locationBoundaryPlan, pool);
+        if (boundaryFilteredPool.Count == 0)
+        {
+            return await BuildPlacesNoMatchResultAsync(
+                request,
+                contextSummary,
+                state,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                resolvedAction,
+                intent,
+                diagnostics.Concat(locationBoundaryPlan.Warnings).Append("places_location_boundary_no_matches").ToArray(),
+                "location_boundary_no_matches",
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
+                cancellationToken);
+        }
+        pool = boundaryFilteredPool;
 
         var brandFiltered = companionPlaceBrandIdentityService!.Apply(intent, pool, searchStrategy);
         var categoryFiltered = companionPlaceCategoryCompatibilityService!.Apply(intent, brandFiltered.Candidates, searchStrategy);
@@ -1537,7 +1581,7 @@ public sealed class ConversationLayerOrchestrator(
             ToolExecutionPermission: ToolExecutionPermission.EligibleIfGuardPasses,
             ReasonCodes: ["places_intelligence_v2_executed"]);
         var response = new UserChatResponse(
-            ReplyText: BuildPlacesIntelligenceReply(intent),
+            ReplyText: BuildPlacesIntelligenceReply(intent, finalists.StructuredResults.Items.Count),
             ModelUsed: "deterministic-places-intelligence-v2",
             ReasoningClass: AIModelClass.Fast,
             SuggestedStructuredStateUpdates: BuildSuggestedStateUpdates(
@@ -1650,11 +1694,16 @@ public sealed class ConversationLayerOrchestrator(
         };
     }
 
-    private static string BuildPlacesIntelligenceReply(CompanionSemanticIntent intent)
+    private static string BuildPlacesIntelligenceReply(CompanionSemanticIntent intent, int returnedCardCount)
     {
-        if (intent.RequestedMaxResults == 1 || intent.RankingGoal == "distance")
+        if (returnedCardCount == 1 && (intent.RequestedMaxResults == 1 || intent.RankingGoal == "distance"))
         {
             return "Here's the closest one I found:";
+        }
+
+        if (returnedCardCount > 1 && intent.RankingGoal == "distance")
+        {
+            return "Here are the closest matches I found:";
         }
 
         if (intent.RequestedDetailFields.Contains("parking", StringComparer.OrdinalIgnoreCase)

@@ -124,7 +124,7 @@ public sealed class CompanionPlaceGuardEvidenceService(
         return guard.GuardId switch
         {
             "bank_branch_vs_atm" => EvaluateTypeGuard(guard, candidate, required: ["bank", "financial_institution"], conflict: ["atm"]),
-            "atm_vs_bank_branch" => EvaluateTypeGuard(guard, candidate, required: ["atm"], conflict: ["bank", "financial_institution"]),
+            "atm_vs_bank_branch" => EvaluateAtmTypeGuard(guard, candidate),
             "post_office_vs_mailbox" => EvaluateTypeGuard(guard, candidate, required: ["post_office"], conflict: ["mailbox", "post_box", "parcel_locker"]),
             "hotel_vs_hotel_restaurant" => EvaluateTypeGuard(guard, candidate, required: ["hotel", "lodging"], conflict: ["restaurant", "bar"]),
             "car_park_vs_public_park" => EvaluateTypeGuard(guard, candidate, required: ["parking"], conflict: ["park", "tourist_attraction"]),
@@ -175,6 +175,24 @@ public sealed class CompanionPlaceGuardEvidenceService(
         if (hasConflict)
         {
             return new CompanionGuardEvidence(guard.GuardId, candidate.PlaceId, CompanionGuardEvidenceStatus.ConfirmedConflict, 0.9d, ["types"], ["dangerous_sibling_family_present"], false);
+        }
+
+        return Unknown(guard, candidate.PlaceId, requiresDetails: false, "type_family_unknown");
+    }
+
+    private CompanionGuardEvidence EvaluateAtmTypeGuard(
+        CompanionAmbiguityGuardDefinition guard,
+        CompanionPlacePoolCandidate candidate)
+    {
+        var families = typeFamilyClassifier.ClassifyFamilies(candidate);
+        if (families.Contains("atm"))
+        {
+            return new CompanionGuardEvidence(guard.GuardId, candidate.PlaceId, CompanionGuardEvidenceStatus.ConfirmedMatch, 0.9d, ["types"], ["required_family_present"], false);
+        }
+
+        if (families.Contains("bank") || families.Contains("financial_institution"))
+        {
+            return new CompanionGuardEvidence(guard.GuardId, candidate.PlaceId, CompanionGuardEvidenceStatus.LikelyConflict, 0.7d, ["types"], ["bank_family_without_atm_evidence"], false);
         }
 
         return Unknown(guard, candidate.PlaceId, requiresDetails: false, "type_family_unknown");

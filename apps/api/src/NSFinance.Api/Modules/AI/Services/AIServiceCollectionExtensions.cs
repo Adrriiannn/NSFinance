@@ -152,6 +152,9 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<IPlaceResultFollowUpService, PlaceResultFollowUpService>();
         services.AddScoped<ICompanionSemanticIntentService, CompanionSemanticIntentService>();
         services.AddScoped<ICompanionPlaceCandidatePoolService, CompanionPlaceCandidatePoolService>();
+        services.AddScoped<ICompanionPlaceLocationBoundaryService, CompanionPlaceLocationBoundaryService>();
+        services.AddScoped<ICompanionPlaceLocationBoundaryFilter, CompanionPlaceLocationBoundaryFilter>();
+        services.AddScoped<ICompanionPlaceRetrievalPlanner, CompanionPlaceRetrievalPlanner>();
         services.AddScoped<ICompanionPlaceConstraintEngine, CompanionPlaceConstraintEngine>();
         services.AddScoped<ICompanionPlaceIntelligenceRankingService, CompanionPlaceIntelligenceRankingService>();
         services.AddScoped<ICompanionPlaceFinalistEnrichmentService, CompanionPlaceFinalistEnrichmentService>();

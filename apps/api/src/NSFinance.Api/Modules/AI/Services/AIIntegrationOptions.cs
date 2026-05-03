@@ -155,6 +155,13 @@ public sealed class ConversationArchitectureOptions
     public int PlacesStrategyPlannerRetryTimeoutMs { get; set; } = 2000;
     public bool PlacesGuardEvidenceEnabled { get; set; } = true;
     public int PlacesGuardEvidenceMaxCandidates { get; set; } = 20;
+    public bool PlacesLocationBoundaryEnabled { get; set; } = true;
+    public bool PlacesTypedNearbyRetrievalEnabled { get; set; } = true;
+    public bool PlacesMixedRoleCompatibilityEnabled { get; set; } = true;
+    public bool PlacesZeroResultTypedRetryEnabled { get; set; } = true;
+    public int PlacesNearMeDefaultRadiusMeters { get; set; } = 15_000;
+    public int PlacesExplicitCityDefaultRadiusMeters { get; set; } = 25_000;
+    public int PlacesMaxBoundaryFilteredCandidates { get; set; } = 50;
     public int ResultContextActiveMinutes { get; set; } = 30;
     public int ResultContextPersistedHours { get; set; } = 24;
     public int ExplorationConstraintTtlMinutes { get; set; } = 30;
