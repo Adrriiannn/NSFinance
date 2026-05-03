@@ -254,7 +254,25 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         var card = Assert.Single(response.StructuredResults?.Items ?? []);
         Assert.Equal("Dublin Bike Shop", card.Name);
         Assert.DoesNotContain(pool.LastQueryPasses, query => query.Contains("coffee", StringComparison.OrdinalIgnoreCase) || query.Contains("cafe", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(pool.LastQueryPasses, query => query.Contains("bicycle store", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(pool.LastQueryPasses, query => query.Contains("bike shops", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AquariumShopsNearMe_WhenPlannerFallsBack_UsesPhraseFallback()
+    {
+        var pool = new FixedPoolService(
+            [
+                Candidate("aquarium", "Santry Aquarium Shop", "store", ["store"], 400, "Store")
+            ]);
+        var orchestrator = CreateOrchestrator(
+            Action(CompanionActionKind.NewPlaceSearch, placeQuery: "aquarium shops", locationQuery: "near me"),
+            pool);
+
+        var response = await orchestrator.ExecuteAsync(Request("aquarium shops near me"), CancellationToken.None);
+
+        var card = Assert.Single(response.StructuredResults?.Items ?? []);
+        Assert.Equal("Santry Aquarium Shop", card.Name);
+        Assert.Equal(["aquarium shops"], pool.LastQueryPasses);
     }
 
     [Fact]
@@ -292,6 +310,9 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
         {
             details[candidate.PlaceId] = Details(candidate);
         }
+        var detailsService = new DictionaryPlaceDetailsService(details);
+        var parkingEvidenceService = new CompanionPlaceParkingEvidenceService(new EmptyDiscoveryService(), telemetry);
+        var typeFamilyClassifier = new CompanionPlaceTypeFamilyClassifier(telemetry);
 
         return new ConversationLayerOrchestrator(
             contextService: new EmptyContextService(),
@@ -321,19 +342,26 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             companionPlaceConstraintEngine: new CompanionPlaceConstraintEngine(telemetry),
             companionPlaceRankingServiceV2: new CompanionPlaceIntelligenceRankingService(),
             companionPlaceFinalistEnrichmentService: new CompanionPlaceFinalistEnrichmentService(
-                new DictionaryPlaceDetailsService(details),
+                detailsService,
                 photoService: null,
                 new InMemoryPlacesShortLivedCache(),
                 Options.Create(new GooglePlacesOptions()),
                 telemetry),
             companionPlaceSessionMemoryService: session ?? new FixedSessionMemoryService(null),
             companionPlaceResultContextBinder: new CompanionPlaceResultContextBinder(telemetry),
-            companionPlaceParkingEvidenceService: new CompanionPlaceParkingEvidenceService(new EmptyDiscoveryService(), telemetry),
+            companionPlaceParkingEvidenceService: parkingEvidenceService,
+            companionPlaceGuardEvidenceService: new CompanionPlaceGuardEvidenceService(
+                detailsService,
+                parkingEvidenceService,
+                typeFamilyClassifier,
+                Options.Create(new AIIntegrationOptions()),
+                telemetry),
+            companionPlaceGuardAwareFilter: new CompanionPlaceGuardAwareFilter(telemetry),
             companionPlaceDuplicateClusterService: new CompanionPlaceDuplicateClusterService(telemetry),
-            companionPlaceCategoryCompatibilityService: new CompanionPlaceCategoryCompatibilityService(new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
+            companionPlaceCategoryCompatibilityService: new CompanionPlaceCategoryCompatibilityService(typeFamilyClassifier, telemetry),
             companionPlaceBrandIdentityService: new CompanionPlaceBrandIdentityService(telemetry),
-            companionPlaceSearchStrategyPlanner: strategyPlanner ?? new DeterministicStrategyPlanner(new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), telemetry)),
-            companionPlaceEntityVerificationService: new CompanionPlaceEntityVerificationService(new EmptyDiscoveryService(), new CompanionPlaceTypeFamilyClassifier(telemetry), telemetry),
+            companionPlaceSearchStrategyPlanner: strategyPlanner ?? new DeterministicStrategyPlanner(BuildFallback(telemetry)),
+            companionPlaceEntityVerificationService: new CompanionPlaceEntityVerificationService(new EmptyDiscoveryService(), typeFamilyClassifier, telemetry),
             companionPlaceSearchVariantValidator: new CompanionPlaceSearchVariantValidator(telemetry));
     }
 
@@ -396,7 +424,14 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
             new FixedModelRouter(),
             new FixedAIClient(payload),
-            new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), telemetry),
+            new CompanionPlaceSearchStrategyRetryPlanner(
+                new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
+                new FixedModelRouter(),
+                new FixedAIClient(payload),
+                Options.Create(new AIIntegrationOptions()),
+                telemetry,
+                NullLogger<CompanionPlaceSearchStrategyRetryPlanner>.Instance),
+            BuildFallback(telemetry),
             Options.Create(new AIIntegrationOptions
             {
                 Architecture = new ConversationArchitectureOptions
@@ -409,6 +444,14 @@ public sealed class CompanionPlacesIntelligenceV2OrchestrationTests
             }),
             telemetry,
             NullLogger<AICompanionPlaceSearchStrategyPlanner>.Instance);
+    }
+
+    private static DeterministicCompanionPlaceSearchStrategyFallback BuildFallback(IChatTelemetry telemetry)
+    {
+        return new DeterministicCompanionPlaceSearchStrategyFallback(
+            new CompanionPlacePhrasePreservingFallbackStrategyBuilder(),
+            new CompanionPlaceAmbiguitySafetyClassifier(telemetry),
+            telemetry);
     }
 
     private static string AibBankStrategyJson()

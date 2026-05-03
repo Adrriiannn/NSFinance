@@ -38,6 +38,8 @@ public sealed class ConversationLayerOrchestrator(
     ICompanionPlaceSessionMemoryService? companionPlaceSessionMemoryService = null,
     ICompanionPlaceResultContextBinder? companionPlaceResultContextBinder = null,
     ICompanionPlaceParkingEvidenceService? companionPlaceParkingEvidenceService = null,
+    ICompanionPlaceGuardEvidenceService? companionPlaceGuardEvidenceService = null,
+    ICompanionPlaceGuardAwareFilter? companionPlaceGuardAwareFilter = null,
     ICompanionPlaceDuplicateClusterService? companionPlaceDuplicateClusterService = null,
     ICompanionPlaceCategoryCompatibilityService? companionPlaceCategoryCompatibilityService = null,
     ICompanionPlaceBrandIdentityService? companionPlaceBrandIdentityService = null,
@@ -1208,6 +1210,8 @@ public sealed class ConversationLayerOrchestrator(
             || companionPlaceSessionMemoryService is null
             || companionPlaceResultContextBinder is null
             || companionPlaceParkingEvidenceService is null
+            || companionPlaceGuardEvidenceService is null
+            || companionPlaceGuardAwareFilter is null
             || companionPlaceDuplicateClusterService is null
             || companionPlaceCategoryCompatibilityService is null
             || companionPlaceBrandIdentityService is null
@@ -1432,37 +1436,44 @@ public sealed class ConversationLayerOrchestrator(
             },
             cancellationToken);
 
-        var parkingEvidenceCount = (int?)null;
-        var finalCandidates = ranked.RankedCandidates;
-        if (RequiresParkingEvidence(intent))
+        var guardEvidence = await companionPlaceGuardEvidenceService!.EvaluateAsync(
+            searchStrategy ?? new CompanionPlaceSearchStrategy(
+                request.UserMessage,
+                intent.PlaceQuery,
+                null,
+                intent.Role,
+                [],
+                intent.HardFilters,
+                intent.NegativeFilters,
+                intent.SoftPreferences,
+                intent.NonSearchablePreferences,
+                intent.Location,
+                intent.RankingGoal,
+                50,
+                Math.Clamp(intent.RequestedMaxResults ?? 10, 1, 10),
+                intent.Confidence,
+                []),
+            intent,
+            ranked.RankedCandidates,
+            cancellationToken);
+        var finalCandidates = companionPlaceGuardAwareFilter!.Apply(searchStrategy, ranked.RankedCandidates, guardEvidence);
+        if (finalCandidates.Count == 0)
         {
-            var evidence = await companionPlaceParkingEvidenceService!.EvaluateAsync(
+            return await BuildPlacesNoMatchResultAsync(
+                request,
+                contextSummary,
+                state,
+                resultContextReadResult,
+                existingWarnings,
+                intelligenceWarnings,
+                resolvedAction,
                 intent,
-                ranked.RankedCandidates,
+                diagnostics.Concat(constrained.Diagnostics).Concat(ranked.Diagnostics).Concat(guardEvidence.Diagnostics).ToArray(),
+                "guard_evidence_no_matches",
+                intelligenceModelCallCount,
+                intelligenceFastModelCallCount,
+                intelligenceHeavyModelCallCount,
                 cancellationToken);
-            parkingEvidenceCount = evidence.EvidenceByPlaceId.Count;
-            finalCandidates = ranked.RankedCandidates
-                .Where(candidate => evidence.EvidenceByPlaceId.TryGetValue(candidate.PlaceId, out var item)
-                                    && item.EvidenceLevel is "confirmed_on_site" or "likely_on_site" or "nearby_parking")
-                .ToArray();
-            if (finalCandidates.Count == 0)
-            {
-                return await BuildPlacesNoMatchResultAsync(
-                    request,
-                    contextSummary,
-                    state,
-                    resultContextReadResult,
-                    existingWarnings,
-                    intelligenceWarnings,
-                    resolvedAction,
-                    intent,
-                    diagnostics.Concat(constrained.Diagnostics).Concat(ranked.Diagnostics).Concat(evidence.Diagnostics).ToArray(),
-                    "parking_evidence_not_found",
-                    intelligenceModelCallCount,
-                    intelligenceFastModelCallCount,
-                    intelligenceHeavyModelCallCount,
-                    cancellationToken);
-            }
         }
 
         var maxCards = Math.Clamp(intent.RequestedMaxResults ?? 10, 1, 10);
@@ -1546,6 +1557,7 @@ public sealed class ConversationLayerOrchestrator(
                 .Concat(categoryFiltered.Diagnostics)
                 .Concat(constrained.Diagnostics)
                 .Concat(ranked.Diagnostics)
+                .Concat(guardEvidence.Diagnostics)
                 .Concat(finalists.Diagnostics)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
@@ -1579,7 +1591,8 @@ public sealed class ConversationLayerOrchestrator(
                 ["afterCategoryFilterCount"] = categoryFiltered.Candidates.Count,
                 ["afterHardFilterCount"] = constrained.Candidates.Count,
                 ["afterDuplicateClusterCount"] = clustered.Count,
-                ["afterParkingEvidenceCount"] = parkingEvidenceCount,
+                ["afterParkingEvidenceCount"] = guardEvidence.EvidenceByPlaceId.Count == 0 ? null : guardEvidence.EvidenceByPlaceId.Count,
+                ["afterGuardFilterCount"] = finalCandidates.Count,
                 ["returnedCardCount"] = finalists.StructuredResults.Items.Count,
                 ["noMatchReason"] = null
             },

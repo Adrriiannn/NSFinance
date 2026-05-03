@@ -7,6 +7,7 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
     ICompanionPlaceSearchStrategyJsonParser parser,
     IAIModelRouter modelRouter,
     IAIClient aiClient,
+    ICompanionPlaceSearchStrategyRetryPlanner retryPlanner,
     IDeterministicCompanionPlaceSearchStrategyFallback fallback,
     IOptions<AIIntegrationOptions> options,
     IChatTelemetry telemetry,
@@ -78,11 +79,13 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
                     ["fallbackEnabled"] = architecture.PlacesStrategyPlannerFallbackEnabled
                 },
                 cancellationToken);
+            await TrackMainAiFailedAsync(request, "places_search_strategy_ai_timeout", cancellationToken);
             return await UseFallbackAsync(request, intent, "places_search_strategy_ai_timeout", cancellationToken);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Places search strategy planner failed correlationId={CorrelationId}", request.CorrelationId);
+            await TrackMainAiFailedAsync(request, "places_search_strategy_ai_failed", cancellationToken);
             return await UseFallbackAsync(request, intent, "places_search_strategy_ai_failed", cancellationToken);
         }
 
@@ -97,6 +100,7 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
                     ["reasonCodes"] = reasonCodes.ToArray()
                 },
                 cancellationToken);
+            await TrackMainAiFailedAsync(request, failureReason ?? "places_search_strategy_ai_parse_failed", cancellationToken);
             return await UseFallbackAsync(request, intent, failureReason ?? "places_search_strategy_ai_parse_failed", cancellationToken);
         }
 
@@ -111,16 +115,21 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
                     ["confidence"] = strategy.Confidence
                 },
                 cancellationToken);
+            await TrackMainAiFailedAsync(request, "places_search_strategy_low_confidence", cancellationToken);
             return await UseFallbackAsync(request, intent, "places_search_strategy_low_confidence", cancellationToken);
         }
 
         await telemetry.TrackAsync(
             "places.search_strategy.ai_invocation_completed",
-            BuildFinalTelemetry(request, strategy, "ai", fallbackReason: null),
+            BuildFinalTelemetry(request, strategy, "main_ai", fallbackReason: null),
             cancellationToken);
         await telemetry.TrackAsync(
             "places.search_strategy.finalized",
-            BuildFinalTelemetry(request, strategy, "ai", fallbackReason: null),
+            BuildFinalTelemetry(request, strategy, "main_ai", fallbackReason: null),
+            cancellationToken);
+        await telemetry.TrackAsync(
+            "places.search_strategy.final_source",
+            BuildFinalTelemetry(request, strategy, "main_ai", fallbackReason: null),
             cancellationToken);
         return strategy;
     }
@@ -160,10 +169,35 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
                 [reason, "places_search_strategy_no_fallback"]);
         }
 
+        if (options.Value.Architecture.PlacesStrategyPlannerModelBacked
+            && reason is not "places_strategy_planner_v2_disabled" and not "places_strategy_planner_model_disabled")
+        {
+            var retry = await retryPlanner.TryPlanAsync(request, intent, reason, cancellationToken);
+            if (retry.Succeeded && retry.Strategy is not null)
+            {
+                await telemetry.TrackAsync(
+                    "places.search_strategy.finalized",
+                    BuildFinalTelemetry(request, retry.Strategy, "retry_ai", reason),
+                    cancellationToken);
+                await telemetry.TrackAsync(
+                    "places.search_strategy.final_source",
+                    BuildFinalTelemetry(request, retry.Strategy, "retry_ai", reason),
+                    cancellationToken);
+                return retry.Strategy;
+            }
+        }
+
         var strategy = fallback.Plan(request, intent, reason);
+        var source = strategy.Warnings.Contains("ambiguity_safety_guard_applied", StringComparer.OrdinalIgnoreCase)
+            ? "phrase_fallback_with_ambiguity_guard"
+            : "phrase_fallback";
         await telemetry.TrackAsync(
             "places.search_strategy.finalized",
-            BuildFinalTelemetry(request, strategy, "fallback", reason),
+            BuildFinalTelemetry(request, strategy, source, reason),
+            cancellationToken);
+        await telemetry.TrackAsync(
+            "places.search_strategy.final_source",
+            BuildFinalTelemetry(request, strategy, source, reason),
             cancellationToken);
         return strategy;
     }
@@ -178,12 +212,27 @@ public sealed class AICompanionPlaceSearchStrategyPlanner(
         {
             ["correlationId"] = request.CorrelationId,
             ["source"] = source,
+            ["finalSource"] = source,
             ["canonicalQuery"] = strategy.CanonicalQuery,
             ["entity"] = strategy.Entity?.CanonicalName,
             ["requestedRole"] = strategy.Role.RequestedRole,
             ["variantCount"] = strategy.SearchVariants.Count,
             ["confidence"] = strategy.Confidence,
-            ["fallbackReason"] = fallbackReason
+            ["fallbackReason"] = fallbackReason,
+            ["ambiguityGuardApplied"] = strategy.Warnings.Contains("ambiguity_safety_guard_applied", StringComparer.OrdinalIgnoreCase),
+            ["warnings"] = strategy.Warnings.ToArray()
         };
+    }
+
+    private async Task TrackMainAiFailedAsync(UserChatRequest request, string failureReason, CancellationToken cancellationToken)
+    {
+        await telemetry.TrackAsync(
+            "places.search_strategy.main_ai_failed",
+            new Dictionary<string, object?>
+            {
+                ["correlationId"] = request.CorrelationId,
+                ["failureReason"] = failureReason
+            },
+            cancellationToken);
     }
 }

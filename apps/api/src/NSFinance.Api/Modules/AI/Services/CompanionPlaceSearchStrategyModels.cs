@@ -62,6 +62,41 @@ public interface IDeterministicCompanionPlaceSearchStrategyFallback
         string fallbackReason);
 }
 
+public interface ICompanionPlaceSearchStrategyRetryPlanner
+{
+    Task<CompanionPlaceSearchStrategyRetryResult> TryPlanAsync(
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        string retryReason,
+        CancellationToken cancellationToken);
+}
+
+public sealed record CompanionPlaceSearchStrategyRetryResult(
+    bool Succeeded,
+    CompanionPlaceSearchStrategy? Strategy,
+    string? FailureReason);
+
+public interface ICompanionPlacePhrasePreservingFallbackStrategyBuilder
+{
+    CompanionPlaceSearchStrategy Build(
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        string fallbackReason);
+}
+
+public interface ICompanionPlaceAmbiguitySafetyClassifier
+{
+    CompanionPlaceAmbiguitySafetyResult Apply(
+        UserChatRequest request,
+        CompanionSemanticIntent intent,
+        CompanionPlaceSearchStrategy strategy);
+}
+
+public sealed record CompanionPlaceAmbiguitySafetyResult(
+    CompanionPlaceSearchStrategy Strategy,
+    bool Applied,
+    IReadOnlyList<string> ReasonCodes);
+
 public interface ICompanionPlaceSearchStrategyPromptBuilder
 {
     PromptBuildResult BuildPrompt(UserChatRequest request, CompanionSemanticIntent intent);
@@ -102,18 +137,4 @@ public interface ICompanionPlaceSearchVariantValidator
 public interface ICompanionPlaceTypeFamilyClassifier
 {
     IReadOnlySet<string> ClassifyFamilies(CompanionPlacePoolCandidate candidate);
-}
-
-public sealed record CompanionFallbackCategoryClassification(
-    bool Matched,
-    string? CanonicalQuery,
-    CompanionPlaceRoleIntent Role,
-    IReadOnlyList<CompanionPlaceSearchVariant> SearchVariants,
-    IReadOnlyList<string> NegativeRequirements);
-
-public interface ICompanionGenericPlaceCategoryFallbackClassifier
-{
-    CompanionFallbackCategoryClassification Classify(
-        string userMessage,
-        CompanionSemanticIntent intent);
 }

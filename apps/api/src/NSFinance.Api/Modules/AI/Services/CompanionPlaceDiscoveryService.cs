@@ -1583,7 +1583,16 @@ public sealed class GooglePlacesPlaceDetailsService(
             AccessibilityOptions: place.AccessibilityOptions,
             EditorialSummary: place.EditorialSummary,
             Location: place.Location,
-            Photos: place.Photos);
+            Photos: place.Photos,
+            Takeout: place.Takeout,
+            Delivery: place.Delivery,
+            DineIn: place.DineIn,
+            Reservable: place.Reservable,
+            OutdoorSeating: place.OutdoorSeating,
+            AllowsDogs: place.AllowsDogs,
+            Restroom: place.Restroom,
+            GoodForGroups: place.GoodForGroups,
+            MenuForChildren: place.MenuForChildren);
         cache.Set(
             cacheKey,
             success,

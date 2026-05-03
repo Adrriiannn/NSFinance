@@ -266,7 +266,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_AibBanks_SplitsEntityAndRole()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("AIB banks near me"),
             BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB banks" },
             "test");
@@ -310,9 +310,50 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         Assert.Equal("AIB", strategy.Entity?.CanonicalName);
         Assert.Contains(strategy.Warnings, item => item.Contains("invalid_json", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.ai_parse_failed");
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.retry_failed");
         Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.finalized"
                                                   && item.Properties.TryGetValue("source", out var source)
-                                                  && string.Equals(source?.ToString(), "fallback", StringComparison.OrdinalIgnoreCase));
+                                                  && string.Equals(source?.ToString(), "phrase_fallback_with_ambiguity_guard", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task MainAI_InvalidJson_RetryAI_Succeeds_UsesRetry()
+    {
+        var telemetry = new RecordingTelemetry();
+        var planner = BuildAiPlanner(["not json", AibBankStrategyJson()], telemetry);
+
+        var strategy = await planner.PlanAsync(
+            BuildRequest("AIB banks near me"),
+            BuildIntent(placeQuery: "AIB banks", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB banks" },
+            CancellationToken.None);
+
+        Assert.Equal("AIB bank", strategy.CanonicalQuery);
+        Assert.Equal("AIB", strategy.Entity?.CanonicalName);
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.retry_started");
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.retry_completed");
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.finalized"
+                                                  && item.Properties.TryGetValue("source", out var source)
+                                                  && string.Equals(source?.ToString(), "retry_ai", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task MainAI_Fails_RetryAI_Fails_UsesPhraseFallback()
+    {
+        var telemetry = new RecordingTelemetry();
+        var planner = BuildAiPlanner(["not json", "also not json"], telemetry);
+
+        var strategy = await planner.PlanAsync(
+            BuildRequest("aquarium shops near me"),
+            BuildIntent(placeQuery: "aquarium shops", rankingGoal: "intent_fit_then_distance"),
+            CancellationToken.None);
+
+        Assert.Equal("aquarium shops", strategy.CanonicalQuery);
+        Assert.Null(strategy.Entity);
+        Assert.Contains("phrase_preserving_fallback_used", strategy.Warnings);
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.retry_failed");
+        Assert.Contains(telemetry.Events, item => item.Name == "places.search_strategy.finalized"
+                                                  && item.Properties.TryGetValue("source", out var source)
+                                                  && string.Equals(source?.ToString(), "phrase_fallback", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -339,7 +380,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_AibAtms_SplitsEntityAndAtmRole()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("AIB ATMs near me"),
             BuildIntent(placeQuery: "AIB ATMs", rankingGoal: "brand_match_then_distance") with { BrandOrEntity = "AIB ATMs" },
             "test");
@@ -352,7 +393,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_FineDining_HasNoEntityAndRestaurantModifier()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("fine dining restaurants near me"),
             BuildIntent(placeQuery: "fine dining restaurants", rankingGoal: "concept_fit_then_distance", softPreferences: ["upscale"]) with { BrandOrEntity = "fine dining" },
             "test");
@@ -366,7 +407,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_CarParks_HasNoEntityAndParkingRole()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("car parks near me"),
             BuildIntent(placeQuery: "car parks", rankingGoal: "parking_match_then_distance") with { BrandOrEntity = "car parks" },
             "test");
@@ -377,40 +418,74 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     }
 
     [Fact]
-    public void SearchStrategy_CoffeeShops_AllowsCafeVariants()
+    public void PhraseFallback_CoffeeShops_PreservesPhraseWithoutInventingVariants()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("coffee shops near me"),
             BuildIntent(placeQuery: "coffee shops", rankingGoal: "intent_fit_then_distance"),
             "test");
 
         Assert.Null(strategy.Entity);
-        Assert.Equal("coffee_shop", strategy.Role.RequestedRole);
-        Assert.Contains(strategy.SearchVariants, item => string.Equals(item.Query, "cafe", StringComparison.OrdinalIgnoreCase));
+        Assert.Null(strategy.Role.RequestedRole);
+        Assert.Equal("coffee shops", strategy.CanonicalQuery);
+        Assert.Single(strategy.SearchVariants);
     }
 
     [Theory]
     [InlineData("bike shops near me")]
     [InlineData("bicycle shops near me")]
     [InlineData("cycle shops near me")]
-    public void Fallback_BikeShops_NoEntity_UsesBicycleStoreRole(string message)
+    public void PhraseFallback_BikeShops_NoEntity_PreservesPhrase(string message)
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest(message),
             BuildIntent(placeQuery: message, rankingGoal: "intent_fit_then_distance") with { BrandOrEntity = "bike" },
             "places_search_strategy_ai_timeout");
 
         Assert.Null(strategy.Entity);
         Assert.Equal("bicycle_store", strategy.Role.RequestedRole);
-        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("bike shop", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("bicycle store", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(strategy.SearchVariants, item => item.Query.Contains("cycle shop", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(strategy.SearchVariants, item => item.Query.Contains("coffee", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(strategy.SearchVariants);
+    }
+
+    [Theory]
+    [InlineData("aquarium shops near me", "aquarium shops")]
+    [InlineData("tailors near me", "tailors")]
+    [InlineData("currency exchange near me", "currency exchange")]
+    [InlineData("phone repair near me", "phone repair")]
+    [InlineData("garden centres near me", "garden centres")]
+    public void PhraseFallback_UnknownCategories_PreservePhrase_NoEntity(string message, string expectedQuery)
+    {
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
+            BuildRequest(message),
+            BuildIntent(placeQuery: message, rankingGoal: "intent_fit_then_distance"),
+            "places_search_strategy_ai_timeout");
+
+        Assert.Null(strategy.Entity);
+        Assert.Equal(expectedQuery, strategy.CanonicalQuery);
+        var variant = Assert.Single(strategy.SearchVariants);
+        Assert.Equal(expectedQuery, variant.Query);
+        Assert.Null(strategy.Role.RequestedRole);
+    }
+
+    [Theory]
+    [InlineData("shoe shops near me")]
+    [InlineData("toy shops near me")]
+    [InlineData("phone repair near me")]
+    public void PhraseFallback_GenericNouns_DoNotBecomeBrands(string message)
+    {
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
+            BuildRequest(message),
+            BuildIntent(placeQuery: message, rankingGoal: "intent_fit_then_distance") with { BrandOrEntity = message.Split(' ')[0] },
+            "places_search_strategy_ai_timeout");
+
+        Assert.Null(strategy.Entity);
     }
 
     [Fact]
     public void Fallback_BikeRepair_UsesBicycleRepairVariants()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("bike repair near me"),
             BuildIntent(placeQuery: "bike repair", rankingGoal: "intent_fit_then_distance") with { BrandOrEntity = "bike" },
             "places_search_strategy_ai_timeout");
@@ -423,7 +498,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void Fallback_DistinctiveBrand_StillCanBeEntity()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("IKEA near me"),
             BuildIntent(placeQuery: "IKEA", rankingGoal: "brand_match_then_distance"),
             "places_search_strategy_ai_timeout");
@@ -434,7 +509,7 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     [Fact]
     public void SearchStrategy_Ikea_AllowsSingleVariant()
     {
-        var strategy = new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), new NoOpChatTelemetry()).Plan(
+        var strategy = BuildFallback(new NoOpChatTelemetry()).Plan(
             BuildRequest("IKEA near me"),
             BuildIntent(placeQuery: "IKEA", rankingGoal: "brand_match_then_distance"),
             "test");
@@ -704,6 +779,169 @@ public sealed class CompanionPlacesIntelligenceV2Tests
     }
 
     [Fact]
+    public async Task GuardEvidence_DeliveryTrue_ConfirmedMatch()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>
+        {
+            ["delivery"] = Details("delivery", delivery: true)
+        });
+
+        var result = await service.EvaluateAsync(
+            Strategy("delivery restaurants"),
+            BuildIntent(placeQuery: "delivery restaurants", rankingGoal: "intent_fit_then_distance", hardFilters: ["delivery"]),
+            [Candidate("delivery", "Delivery Restaurant", "restaurant", ["restaurant"], 100)],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId["delivery"], item => item.GuardId == "restaurant_delivery_vs_dine_in_only");
+        Assert.Equal(CompanionGuardEvidenceStatus.ConfirmedMatch, evidence.Status);
+    }
+
+    [Fact]
+    public async Task GuardEvidence_DeliveryFalseDineInTrue_ConfirmedConflict()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>
+        {
+            ["dinein"] = Details("dinein", delivery: false, takeout: false, dineIn: true)
+        });
+
+        var result = await service.EvaluateAsync(
+            Strategy("delivery restaurants"),
+            BuildIntent(placeQuery: "delivery restaurants", rankingGoal: "intent_fit_then_distance", hardFilters: ["delivery"]),
+            [Candidate("dinein", "Dine In Restaurant", "restaurant", ["restaurant"], 100)],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId["dinein"], item => item.GuardId == "restaurant_delivery_vs_dine_in_only");
+        Assert.Equal(CompanionGuardEvidenceStatus.ConfirmedConflict, evidence.Status);
+    }
+
+    [Fact]
+    public async Task GuardEvidence_DeliveryMissing_Unknown()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>
+        {
+            ["unknown"] = Details("unknown")
+        });
+
+        var result = await service.EvaluateAsync(
+            Strategy("delivery restaurants"),
+            BuildIntent(placeQuery: "delivery restaurants", rankingGoal: "intent_fit_then_distance", hardFilters: ["delivery"]),
+            [Candidate("unknown", "Unknown Restaurant", "restaurant", ["restaurant"], 100)],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId["unknown"], item => item.GuardId == "restaurant_delivery_vs_dine_in_only");
+        Assert.Equal(CompanionGuardEvidenceStatus.Unknown, evidence.Status);
+    }
+
+    [Fact]
+    public async Task GuardEvidence_DogFriendlyTrue_ConfirmedMatchAndMissingUnknown()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>
+        {
+            ["dog"] = Details("dog", allowsDogs: true),
+            ["unknown"] = Details("unknown")
+        });
+
+        var result = await service.EvaluateAsync(
+            Strategy("dog friendly cafes"),
+            BuildIntent(placeQuery: "dog friendly cafes", rankingGoal: "intent_fit_then_distance", softPreferences: ["dog_friendly"]),
+            [
+                Candidate("dog", "Dog Cafe", "cafe", ["cafe"], 100),
+                Candidate("unknown", "Unknown Cafe", "cafe", ["cafe"], 200)
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(CompanionGuardEvidenceStatus.ConfirmedMatch, Assert.Single(result.EvidenceByPlaceId["dog"], item => item.GuardId == "dog_friendly_policy").Status);
+        Assert.Equal(CompanionGuardEvidenceStatus.Unknown, Assert.Single(result.EvidenceByPlaceId["unknown"], item => item.GuardId == "dog_friendly_policy").Status);
+    }
+
+    [Fact]
+    public async Task GuardEvidence_WheelchairAccessibleFalse_ConflictWhenStrict()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>
+        {
+            ["blocked"] = Details("blocked", accessibility: new PlaceAccessibilitySummary(false, false, false, false))
+        });
+
+        var result = await service.EvaluateAsync(
+            Strategy("wheelchair accessible restaurant"),
+            BuildIntent(placeQuery: "wheelchair accessible restaurant", rankingGoal: "intent_fit_then_distance", hardFilters: ["wheelchair_accessible"]),
+            [Candidate("blocked", "Blocked Restaurant", "restaurant", ["restaurant"], 100)],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId["blocked"], item => item.GuardId == "wheelchair_accessibility");
+        Assert.Equal(CompanionGuardEvidenceStatus.ConfirmedConflict, evidence.Status);
+    }
+
+    [Fact]
+    public async Task GuardEvidence_PostOfficeMailboxOnly_ConfirmedConflict()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>());
+
+        var result = await service.EvaluateAsync(
+            Strategy("post offices"),
+            BuildIntent(placeQuery: "post offices", rankingGoal: "intent_fit_then_distance"),
+            [Candidate("mailbox", "Parcel Locker", "mailbox", ["mailbox"], 100, "Mailbox")],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId["mailbox"], item => item.GuardId == "post_office_vs_mailbox");
+        Assert.Equal(CompanionGuardEvidenceStatus.ConfirmedConflict, evidence.Status);
+    }
+
+    [Fact]
+    public async Task GuardEvidence_HotelRestaurantOnly_ConfirmedConflict()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>());
+
+        var result = await service.EvaluateAsync(
+            Strategy("hotels"),
+            BuildIntent(placeQuery: "hotels", rankingGoal: "intent_fit_then_distance"),
+            [Candidate("restaurant", "Hotel Bar Restaurant", "restaurant", ["restaurant"], 100, "Restaurant")],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId["restaurant"], item => item.GuardId == "hotel_vs_hotel_restaurant");
+        Assert.Equal(CompanionGuardEvidenceStatus.ConfirmedConflict, evidence.Status);
+    }
+
+    [Fact]
+    public void GuardFilter_UnknownsKeptWhenNotEnoughConfirmedMatchesAndConflictsRemoved()
+    {
+        var filter = new CompanionPlaceGuardAwareFilter(new NoOpChatTelemetry());
+        var candidates = new[]
+        {
+            Candidate("match", "Match", "restaurant", ["restaurant"], 100),
+            Candidate("unknown", "Unknown", "restaurant", ["restaurant"], 200),
+            Candidate("conflict", "Conflict", "restaurant", ["restaurant"], 300)
+        };
+        var evidence = new CompanionGuardEvaluationResult(
+            new Dictionary<string, IReadOnlyList<CompanionGuardEvidence>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["match"] = [new CompanionGuardEvidence("test", "match", CompanionGuardEvidenceStatus.ConfirmedMatch, 0.95, ["field"], ["ok"], false)],
+                ["unknown"] = [new CompanionGuardEvidence("test", "unknown", CompanionGuardEvidenceStatus.Unknown, 0.35, ["field"], ["missing"], false)],
+                ["conflict"] = [new CompanionGuardEvidence("test", "conflict", CompanionGuardEvidenceStatus.ConfirmedConflict, 0.95, ["field"], ["bad"], false)]
+            },
+            ["test"],
+            []);
+
+        var filtered = filter.Apply(null, candidates, evidence);
+
+        Assert.Equal(["match", "unknown"], filtered.Select(static item => item.PlaceId).ToArray());
+    }
+
+    [Fact]
+    public async Task ParkingGuard_UsesExistingParkingEvidenceService()
+    {
+        var service = BuildGuardEvidenceService(new Dictionary<string, PlaceDetailsResult>());
+        var result = await service.EvaluateAsync(
+            Strategy("coffee shops with parking"),
+            BuildIntent(placeQuery: "coffee shops with parking", rankingGoal: "intent_fit_then_distance", hardFilters: ["parking"]),
+            [Candidate("coffee", "Coffee Shop", "cafe", ["cafe"], 100, shortAddress: "Omni Shopping Centre")],
+            CancellationToken.None);
+
+        var evidence = Assert.Single(result.EvidenceByPlaceId["coffee"], item => item.GuardId == "parking_availability");
+        Assert.Equal(CompanionGuardEvidenceStatus.LikelyMatch, evidence.Status);
+    }
+
+    [Fact]
     public void ResultContextBinder_PrefersLatestPlacesV2ForFollowUps()
     {
         var binder = new CompanionPlaceResultContextBinder(new NoOpChatTelemetry());
@@ -963,6 +1201,73 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             LightweightAttributes: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
     }
 
+    private static CompanionPlaceSearchStrategy Strategy(
+        string canonicalQuery,
+        CompanionPlaceRoleIntent? role = null,
+        IReadOnlyList<string>? hardRequirements = null,
+        IReadOnlyList<string>? negativeRequirements = null,
+        IReadOnlyList<string>? softPreferences = null)
+    {
+        return new CompanionPlaceSearchStrategy(
+            OriginalUserMessage: canonicalQuery,
+            CanonicalQuery: canonicalQuery,
+            Entity: null,
+            Role: role ?? new CompanionPlaceRoleIntent(null, [], [], [], [], "loose"),
+            SearchVariants: [new CompanionPlaceSearchVariant(canonicalQuery, "primary", false, false, 0.7)],
+            HardRequirements: hardRequirements ?? [],
+            NegativeRequirements: negativeRequirements ?? [],
+            SoftPreferences: softPreferences ?? [],
+            NonSearchablePreferences: [],
+            Location: new CompanionLocationIntent("near_me", null, 53.3498, -6.2603, RequiresLocation: false),
+            RankingGoal: "intent_fit_then_distance",
+            MaxCandidatePoolSize: 50,
+            MaxVisibleCards: 10,
+            Confidence: 0.7,
+            Warnings: []);
+    }
+
+    private static CompanionPlaceGuardEvidenceService BuildGuardEvidenceService(
+        IReadOnlyDictionary<string, PlaceDetailsResult> details)
+    {
+        return new CompanionPlaceGuardEvidenceService(
+            new DictionaryPlaceDetailsService(details),
+            new CompanionPlaceParkingEvidenceService(new MultipassDiscoveryService(), new NoOpChatTelemetry()),
+            new CompanionPlaceTypeFamilyClassifier(new NoOpChatTelemetry()),
+            Options.Create(new AIIntegrationOptions()),
+            new NoOpChatTelemetry());
+    }
+
+    private static PlaceDetailsResult Details(
+        string placeId,
+        bool? delivery = null,
+        bool? takeout = null,
+        bool? dineIn = null,
+        bool? allowsDogs = null,
+        bool? outdoorSeating = null,
+        PlaceAccessibilitySummary? accessibility = null,
+        PlacePaymentOptionsSummary? payment = null)
+    {
+        return new PlaceDetailsResult(
+            PlaceId: placeId,
+            Name: placeId,
+            Address: "1 Test Street",
+            Website: null,
+            PriceLevel: null,
+            PrimaryType: "restaurant",
+            PrimaryTypeDisplayName: "Restaurant",
+            Types: ["restaurant"],
+            OpeningHours: null,
+            PaymentOptions: payment,
+            AccessibilityOptions: accessibility,
+            EditorialSummary: null,
+            Location: new PlaceLocationSummary(53.3, -6.2),
+            Takeout: takeout,
+            Delivery: delivery,
+            DineIn: dineIn,
+            OutdoorSeating: outdoorSeating,
+            AllowsDogs: allowsDogs);
+    }
+
     private static CompanionPlaceCandidate ProviderCandidate(
         string id,
         string name,
@@ -1032,12 +1337,25 @@ public sealed class CompanionPlacesIntelligenceV2Tests
 
     private static AICompanionPlaceSearchStrategyPlanner BuildAiPlanner(string payload, RecordingTelemetry telemetry)
     {
+        return BuildAiPlanner([payload], telemetry);
+    }
+
+    private static AICompanionPlaceSearchStrategyPlanner BuildAiPlanner(IReadOnlyList<string> payloads, RecordingTelemetry telemetry)
+    {
+        var aiClient = new SequentialAIClient(payloads);
         return new AICompanionPlaceSearchStrategyPlanner(
             new CompanionPlaceSearchStrategyPromptBuilder(),
             new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
             new FixedModelRouter(),
-            new FixedAIClient(payload),
-            new DeterministicCompanionPlaceSearchStrategyFallback(new CompanionGenericPlaceCategoryFallbackClassifier(), telemetry),
+            aiClient,
+            new CompanionPlaceSearchStrategyRetryPlanner(
+                new CompanionPlaceSearchStrategyJsonParser(new CompanionPlaceSearchStrategySanitizer()),
+                new FixedModelRouter(),
+                aiClient,
+                Options.Create(new AIIntegrationOptions()),
+                telemetry,
+                NullLogger<CompanionPlaceSearchStrategyRetryPlanner>.Instance),
+            BuildFallback(telemetry),
             Options.Create(new AIIntegrationOptions
             {
                 Architecture = new ConversationArchitectureOptions
@@ -1050,6 +1368,14 @@ public sealed class CompanionPlacesIntelligenceV2Tests
             }),
             telemetry,
             NullLogger<AICompanionPlaceSearchStrategyPlanner>.Instance);
+    }
+
+    private static DeterministicCompanionPlaceSearchStrategyFallback BuildFallback(IChatTelemetry telemetry)
+    {
+        return new DeterministicCompanionPlaceSearchStrategyFallback(
+            new CompanionPlacePhrasePreservingFallbackStrategyBuilder(),
+            new CompanionPlaceAmbiguitySafetyClassifier(telemetry),
+            telemetry);
     }
 
     private static AIResponse SuccessfulAiResponse(string payload)
@@ -1176,6 +1502,20 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         }
     }
 
+    private sealed class DictionaryPlaceDetailsService(IReadOnlyDictionary<string, PlaceDetailsResult> details) : IPlaceDetailsService
+    {
+        public int CallCount { get; private set; }
+
+        public Task<PlaceDetailsResult> GetDetailsAsync(string placeId, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult(
+                details.TryGetValue(placeId, out var value)
+                    ? value
+                    : Details(placeId));
+        }
+    }
+
     private sealed class InMemoryPlacesShortLivedCache : IPlacesShortLivedCache
     {
         private readonly Dictionary<string, object> values = new(StringComparer.OrdinalIgnoreCase);
@@ -1233,6 +1573,18 @@ public sealed class CompanionPlacesIntelligenceV2Tests
         public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
         {
             return Task.FromResult(SuccessfulAiResponse(payload));
+        }
+    }
+
+    private sealed class SequentialAIClient(IReadOnlyList<string> payloads) : IAIClient
+    {
+        private int index;
+
+        public Task<AIResponse> SendAsync(AIRequest request, AIModelRoute route, CancellationToken cancellationToken)
+        {
+            var selected = payloads[Math.Min(index, payloads.Count - 1)];
+            index++;
+            return Task.FromResult(SuccessfulAiResponse(selected));
         }
     }
 

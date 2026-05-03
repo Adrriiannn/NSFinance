@@ -241,3 +241,51 @@ public interface ICompanionPlaceBrandIdentityService
         IReadOnlyList<CompanionPlacePoolCandidate> candidates,
         CompanionPlaceSearchStrategy? strategy = null);
 }
+
+public enum CompanionGuardEvidenceStatus
+{
+    ConfirmedMatch,
+    LikelyMatch,
+    Unknown,
+    LikelyConflict,
+    ConfirmedConflict
+}
+
+public sealed record CompanionGuardEvidence(
+    string GuardId,
+    string CandidatePlaceId,
+    CompanionGuardEvidenceStatus Status,
+    double Confidence,
+    IReadOnlyList<string> EvidenceFields,
+    IReadOnlyList<string> Reasons,
+    bool RequiresDetailsEnrichment);
+
+public sealed record CompanionGuardEvaluationResult(
+    IReadOnlyDictionary<string, IReadOnlyList<CompanionGuardEvidence>> EvidenceByPlaceId,
+    IReadOnlyList<string> AppliedGuardIds,
+    IReadOnlyList<string> Diagnostics);
+
+public sealed record CompanionAmbiguityGuardDefinition(
+    string GuardId,
+    IReadOnlyList<string> RequestedConcepts,
+    IReadOnlyList<string> DangerousSiblingConcepts,
+    IReadOnlyList<string> CompatibleConcepts,
+    IReadOnlyList<string> EvidenceFields,
+    string DefaultAction);
+
+public interface ICompanionPlaceGuardEvidenceService
+{
+    Task<CompanionGuardEvaluationResult> EvaluateAsync(
+        CompanionPlaceSearchStrategy strategy,
+        CompanionSemanticIntent intent,
+        IReadOnlyList<CompanionPlacePoolCandidate> candidates,
+        CancellationToken cancellationToken);
+}
+
+public interface ICompanionPlaceGuardAwareFilter
+{
+    IReadOnlyList<CompanionPlacePoolCandidate> Apply(
+        CompanionPlaceSearchStrategy? strategy,
+        IReadOnlyList<CompanionPlacePoolCandidate> rankedCandidates,
+        CompanionGuardEvaluationResult evidence);
+}

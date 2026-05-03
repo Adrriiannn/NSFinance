@@ -88,6 +88,23 @@ public sealed class CompanionPlaceTypeFamilyClassifier(IChatTelemetry telemetry)
             families.Add("post_office");
         }
 
+        if (normalized.Contains("mailbox", StringComparison.Ordinal)
+            || normalized.Contains("mail box", StringComparison.Ordinal)
+            || normalized.Contains("post box", StringComparison.Ordinal)
+            || normalized.Contains("parcel locker", StringComparison.Ordinal))
+        {
+            families.Add("mailbox");
+            if (normalized.Contains("post box", StringComparison.Ordinal))
+            {
+                families.Add("post_box");
+            }
+
+            if (normalized.Contains("parcel locker", StringComparison.Ordinal))
+            {
+                families.Add("parcel_locker");
+            }
+        }
+
         if (normalized.Contains("pharmacy", StringComparison.Ordinal))
         {
             families.Add("pharmacy");

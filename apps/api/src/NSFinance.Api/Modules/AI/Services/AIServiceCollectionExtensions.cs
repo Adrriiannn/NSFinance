@@ -158,11 +158,15 @@ public static class AIServiceCollectionExtensions
         services.AddScoped<ICompanionPlaceSessionMemoryService, CompanionPlaceSessionMemoryService>();
         services.AddScoped<ICompanionPlaceResultContextBinder, CompanionPlaceResultContextBinder>();
         services.AddScoped<ICompanionPlaceParkingEvidenceService, CompanionPlaceParkingEvidenceService>();
+        services.AddScoped<ICompanionPlaceGuardEvidenceService, CompanionPlaceGuardEvidenceService>();
+        services.AddScoped<ICompanionPlaceGuardAwareFilter, CompanionPlaceGuardAwareFilter>();
         services.AddScoped<ICompanionPlaceDuplicateClusterService, CompanionPlaceDuplicateClusterService>();
         services.AddScoped<ICompanionPlaceCategoryCompatibilityService, CompanionPlaceCategoryCompatibilityService>();
         services.AddScoped<ICompanionPlaceBrandIdentityService, CompanionPlaceBrandIdentityService>();
-        services.AddScoped<ICompanionGenericPlaceCategoryFallbackClassifier, CompanionGenericPlaceCategoryFallbackClassifier>();
+        services.AddScoped<ICompanionPlacePhrasePreservingFallbackStrategyBuilder, CompanionPlacePhrasePreservingFallbackStrategyBuilder>();
+        services.AddScoped<ICompanionPlaceAmbiguitySafetyClassifier, CompanionPlaceAmbiguitySafetyClassifier>();
         services.AddScoped<IDeterministicCompanionPlaceSearchStrategyFallback, DeterministicCompanionPlaceSearchStrategyFallback>();
+        services.AddScoped<ICompanionPlaceSearchStrategyRetryPlanner, CompanionPlaceSearchStrategyRetryPlanner>();
         services.AddScoped<ICompanionPlaceSearchStrategyPlanner, AICompanionPlaceSearchStrategyPlanner>();
         services.AddScoped<ICompanionPlaceSearchStrategyPromptBuilder, CompanionPlaceSearchStrategyPromptBuilder>();
         services.AddScoped<ICompanionPlaceSearchStrategyJsonParser, CompanionPlaceSearchStrategyJsonParser>();

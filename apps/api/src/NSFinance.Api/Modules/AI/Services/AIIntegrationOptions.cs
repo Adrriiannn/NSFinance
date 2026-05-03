@@ -152,6 +152,9 @@ public sealed class ConversationArchitectureOptions
     public bool PlacesStrategyPlannerModelBacked { get; set; } = true;
     public bool PlacesStrategyPlannerFallbackEnabled { get; set; } = true;
     public int PlacesStrategyPlannerTimeoutMs { get; set; } = 4500;
+    public int PlacesStrategyPlannerRetryTimeoutMs { get; set; } = 2000;
+    public bool PlacesGuardEvidenceEnabled { get; set; } = true;
+    public int PlacesGuardEvidenceMaxCandidates { get; set; } = 20;
     public int ResultContextActiveMinutes { get; set; } = 30;
     public int ResultContextPersistedHours { get; set; } = 24;
     public int ExplorationConstraintTtlMinutes { get; set; } = 30;

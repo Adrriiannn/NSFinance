@@ -187,7 +187,16 @@ public sealed record PlaceDetailsResult(
     PlaceAccessibilitySummary? AccessibilityOptions = null,
     PlaceEditorialSummary? EditorialSummary = null,
     PlaceLocationSummary? Location = null,
-    IReadOnlyList<PlacePhotoSummary>? Photos = null);
+    IReadOnlyList<PlacePhotoSummary>? Photos = null,
+    bool? Takeout = null,
+    bool? Delivery = null,
+    bool? DineIn = null,
+    bool? Reservable = null,
+    bool? OutdoorSeating = null,
+    bool? AllowsDogs = null,
+    bool? Restroom = null,
+    bool? GoodForGroups = null,
+    bool? MenuForChildren = null);
 
 public sealed record ReviewInsightsResult(
     string PlaceId,
