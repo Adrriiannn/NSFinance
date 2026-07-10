@@ -128,15 +128,105 @@ function Invoke-InShortBuildWorkspace {
     Invoke-DirectoryMirror (Join-Path $repoRoot "tools\mobile") (Join-Path $workspaceRoot "tools\mobile")
 
     $pnpm = (Get-Command "pnpm.cmd" -ErrorAction Stop).Source
-    Push-Location $workspaceRoot
-    try {
-        & $pnpm install --frozen-lockfile --prefer-offline
-        if ($LASTEXITCODE -ne 0) {
-            throw "Unable to install the synchronized Android workspace dependencies."
+    $pnpmVersion = (& $pnpm --version).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pnpmVersion)) {
+        throw "Unable to determine the pnpm version for the Android build workspace."
+    }
+
+    $dependencyFiles = @(
+        (Join-Path $workspaceRoot "package.json"),
+        (Join-Path $workspaceRoot "pnpm-lock.yaml"),
+        (Join-Path $workspaceRoot "pnpm-workspace.yaml"),
+        (Join-Path $workspaceMobile "package.json")
+    )
+    $dependencyFingerprintSource = @(
+        "pnpm=$pnpmVersion"
+        foreach ($dependencyFile in $dependencyFiles) {
+            "$([IO.Path]::GetFileName($dependencyFile))=$((Get-FileHash -LiteralPath $dependencyFile -Algorithm SHA256).Hash)"
+        }
+    ) -join "`n"
+    $fingerprintBytes = [Text.Encoding]::UTF8.GetBytes($dependencyFingerprintSource)
+    $dependencyFingerprint = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($fingerprintBytes)
+    ).ToLowerInvariant()
+    $dependencyMarkerPath = Join-Path $workspaceRoot ".nsfinance-android-dependencies.json"
+    $requiredDependencies = @(
+        (Join-Path $workspaceRoot "node_modules\.modules.yaml"),
+        (Join-Path $workspaceRoot "node_modules\expo\package.json"),
+        (Join-Path $workspaceRoot "node_modules\react-native\package.json"),
+        (Join-Path $workspaceRoot "node_modules\typescript\package.json")
+    )
+    $dependenciesReady = $requiredDependencies.Count -eq @(
+        $requiredDependencies | Where-Object { Test-Path -LiteralPath $_ }
+    ).Count
+    if ($dependenciesReady -and (Test-Path -LiteralPath $dependencyMarkerPath)) {
+        try {
+            $dependencyMarker = Get-Content -LiteralPath $dependencyMarkerPath -Raw | ConvertFrom-Json
+            $dependenciesReady = (
+                [int]$dependencyMarker.schemaVersion -eq 1 -and
+                [string]$dependencyMarker.fingerprint -eq $dependencyFingerprint -and
+                [string]$dependencyMarker.pnpmVersion -eq $pnpmVersion
+            )
+        }
+        catch {
+            $dependenciesReady = $false
         }
     }
-    finally {
-        Pop-Location
+    else {
+        $dependenciesReady = $false
+    }
+
+    if ($dependenciesReady) {
+        Write-Host "Reusing synchronized Android workspace dependencies."
+    }
+    else {
+        $workspaceGradle = Join-Path $workspaceMobile "android\gradlew.bat"
+        if (Test-Path -LiteralPath $workspaceGradle) {
+            . (Join-Path $workspaceRoot "tools\mobile\AndroidBuild.Common.ps1")
+            $env:JAVA_HOME = Resolve-NSFinanceJavaHome
+            $env:PATH = "$(Join-Path $env:JAVA_HOME 'bin');$env:PATH"
+            $previousGradleUserHome = [Environment]::GetEnvironmentVariable("GRADLE_USER_HOME", "Process")
+            try {
+                $env:GRADLE_USER_HOME = Join-Path $env:USERPROFILE "NFG"
+                & $workspaceGradle --stop | Out-Null
+            }
+            finally {
+                if ($null -eq $previousGradleUserHome) {
+                    Remove-Item -LiteralPath "Env:GRADLE_USER_HOME" -ErrorAction SilentlyContinue
+                }
+                else {
+                    $env:GRADLE_USER_HOME = $previousGradleUserHome
+                }
+            }
+        }
+
+        Push-Location $workspaceRoot
+        try {
+            & $pnpm install --frozen-lockfile --prefer-offline
+            if ($LASTEXITCODE -ne 0) {
+                throw "Unable to install the synchronized Android workspace dependencies."
+            }
+        }
+        finally {
+            Pop-Location
+        }
+
+        foreach ($requiredDependency in $requiredDependencies) {
+            if (-not (Test-Path -LiteralPath $requiredDependency)) {
+                throw "The synchronized Android workspace is missing dependency '$requiredDependency'."
+            }
+        }
+        $dependencyMarker = [ordered]@{
+            schemaVersion = 1
+            fingerprint = $dependencyFingerprint
+            pnpmVersion = $pnpmVersion
+            installedAtUtc = [DateTime]::UtcNow.ToString("o")
+        }
+        [IO.File]::WriteAllText(
+            $dependencyMarkerPath,
+            ($dependencyMarker | ConvertTo-Json),
+            [Text.UTF8Encoding]::new($false)
+        )
     }
 
     $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
