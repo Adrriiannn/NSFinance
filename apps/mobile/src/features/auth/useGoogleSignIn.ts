@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { exchangeCodeAsync } from "expo-auth-session";
 import * as Google from "expo-auth-session/providers/google";
+import runtimeConfig from "../../../runtime.config.json";
 import { formatUnknownError } from "../../lib/api/errors";
 import { buildDeviceContext } from "../../lib/device/deviceIdentity";
 import {
@@ -22,19 +23,17 @@ type GoogleSignInResult = {
 
 const GOOGLE_CLIENT_ID_FALLBACK = "missing-google-client-id";
 
-function normalizeEnvValue(value: string | undefined): string | undefined {
+function normalizeConfigValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
 function readGoogleWebClientId(): string | undefined {
-  const value = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-  return normalizeEnvValue(value);
+  return normalizeConfigValue(runtimeConfig.googleOAuth.webClientId);
 }
 
 function readGoogleAndroidClientIdProd(): string | undefined {
-  const value = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD;
-  return normalizeEnvValue(value);
+  return normalizeConfigValue(runtimeConfig.googleOAuth.androidClientId);
 }
 
 function readActiveGoogleAndroidClientId(): string | undefined {

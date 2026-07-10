@@ -1,6 +1,7 @@
 import * as Device from "expo-device";
 import { Platform } from "react-native";
 import type { DeviceContextDto } from "../../types/api";
+import { appMetadata } from "../config/appMetadata";
 
 const GENERIC_DEVICE_LABEL_PATTERNS = [
   /^android$/i,
@@ -98,6 +99,6 @@ export function buildDeviceContext(): DeviceContextDto {
     deviceLabel: resolveDeviceLabel(),
     platform: Platform.OS,
     osVersion: normalizeValue(Device.osVersion),
-    appVersion: process.env.EXPO_PUBLIC_APP_VERSION?.trim() || null
+    appVersion: appMetadata.version
   };
 }

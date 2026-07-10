@@ -4,7 +4,6 @@ node_modules/
 **/.tmp/
 .env
 .env.*
-!apps/mobile/.env.example
 bin/
 obj/
 dist/

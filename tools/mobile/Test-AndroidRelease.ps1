@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipQualityChecks,
-    [switch]$CheckEasProject
+    [switch]$CheckLocalToolchain
 )
 
 Set-StrictMode -Version Latest
@@ -9,8 +9,8 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $mobileRoot = Join-Path $repoRoot "apps\mobile"
-$easJsonPath = Join-Path $mobileRoot "eas.json"
 $appJsonPath = Join-Path $mobileRoot "app.json"
+$runtimeConfigPath = Join-Path $mobileRoot "runtime.config.json"
 $gradlePropertiesPath = Join-Path $mobileRoot "android\gradle.properties"
 $androidStringsPath = Join-Path $mobileRoot "android\app\src\main\res\values\strings.xml"
 $androidColorsPath = Join-Path $mobileRoot "android\app\src\main\res\values\colors.xml"
@@ -79,22 +79,21 @@ function Invoke-CheckedCommand {
     }
 }
 
-$easConfig = Get-Content -Raw $easJsonPath | ConvertFrom-Json
-$profileNames = @($easConfig.build.PSObject.Properties.Name)
-Assert-Equal $profileNames.Count 1 "EAS build profile count"
-Assert-Equal $profileNames[0] "production" "EAS build profile"
-
-$productionProfile = $easConfig.build.production
-Assert-Equal $productionProfile.credentialsSource "remote" "EAS Android credential source"
-Assert-Equal $productionProfile.channel "production" "EAS channel"
-Assert-Equal $productionProfile.android.buildType "apk" "Android artifact type"
-Assert-Equal $productionProfile.env.EXPO_PUBLIC_API_BASE_URL "https://api.finance.nsireland.ie" "Public API URL"
-Assert-NotBlank $productionProfile.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID "Google web client ID"
-Assert-NotBlank $productionProfile.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD "Google Android production client ID"
+$runtimeConfig = Get-Content -Raw $runtimeConfigPath | ConvertFrom-Json
+Assert-Equal $runtimeConfig.apiBaseUrl "https://api.finance.nsireland.ie" "Public API URL"
+Assert-Equal $runtimeConfig.turnstilePageBaseUrl "https://api.finance.nsireland.ie" "Turnstile page URL"
+Assert-NotBlank $runtimeConfig.googleOAuth.webClientId "Google web client ID"
+Assert-NotBlank $runtimeConfig.googleOAuth.androidClientId "Google Android client ID"
+if ([int]$runtimeConfig.bankingAutoSyncIntervalMinutes -lt 1) {
+    throw "Banking auto-sync interval must be at least one minute."
+}
 
 $appConfig = Get-Content -Raw $appJsonPath | ConvertFrom-Json
 Assert-Equal $appConfig.expo.android.package "com.nsfinance.mobile" "Android application ID"
 Assert-Equal $appConfig.expo.updates.url "https://u.expo.dev/21986a2d-cbfa-4757-bf6d-04eb6aa4f197" "EAS Update URL"
+if ([int]$appConfig.expo.android.versionCode -lt 1) {
+    throw "Android versionCode must be a positive integer."
+}
 
 $imagePickerPlugin = @($appConfig.expo.plugins) |
     Where-Object { $_ -is [array] -and $_.Count -ge 2 -and $_[0] -eq "expo-image-picker" } |
@@ -186,6 +185,22 @@ if ($appBuildGradle -match '(?s)release\s*\{.*?signingConfig\s+signingConfigs\.d
     throw "Android release builds must not use the debug signing configuration."
 }
 
+foreach ($requiredSigningValue in @(
+    "NSFINANCE_ANDROID_KEYSTORE_PATH",
+    "NSFINANCE_ANDROID_KEYSTORE_PASSWORD",
+    "NSFINANCE_ANDROID_KEY_ALIAS",
+    "NSFINANCE_ANDROID_KEY_PASSWORD",
+    "signingConfig signingConfigs.release"
+)) {
+    if (-not $appBuildGradle.Contains($requiredSigningValue)) {
+        throw "Android app/build.gradle is missing production signing value '$requiredSigningValue'."
+    }
+}
+
+if ($appBuildGradle.Contains("signingConfigs.debug") -or $appBuildGradle.Contains("EAS injects")) {
+    throw "Android app/build.gradle still contains obsolete debug or EAS build signing logic."
+}
+
 if (-not $SkipQualityChecks) {
     $pnpm = Resolve-NativeCommand "pnpm"
     Invoke-CheckedCommand $pnpm @("--filter", "@nsfinance/mobile", "typecheck") $repoRoot "Mobile type-check"
@@ -196,14 +211,17 @@ if (-not $SkipQualityChecks) {
     Invoke-CheckedCommand $pnpm @("--filter", "@nsfinance/mobile", "exec", "expo", "config", "--type", "public") $repoRoot "Expo public config resolution"
 }
 
-if ($CheckEasProject) {
-    $eas = Resolve-NativeCommand "eas"
-    Invoke-CheckedCommand $eas @("whoami") $mobileRoot "EAS authentication"
-    Invoke-CheckedCommand $eas @("config", "--platform", "android", "--profile", "production", "--non-interactive", "--json") $mobileRoot "EAS project resolution" -DiscardOutput
-}
+if ($CheckLocalToolchain) {
+    if (-not $IsWindows) {
+        throw "The local Android production toolchain check requires Windows."
+    }
 
-if (-not $SkipQualityChecks) {
-    & (Join-Path $PSScriptRoot "Test-AndroidTooling.ps1")
+    . (Join-Path $PSScriptRoot "AndroidBuild.Common.ps1")
+    $toolchain = Set-NSFinanceAndroidBuildEnvironment -RequireSigning
+    Assert-Equal (Test-Path -LiteralPath (Join-Path $toolchain.JavaHome "bin\java.exe")) $true "OpenJDK 17"
+    Assert-Equal (Test-Path -LiteralPath (Join-Path $toolchain.AndroidSdk "platforms\android-36\android.jar")) $true "Android SDK Platform 36"
+    Assert-Equal (Test-Path -LiteralPath (Join-Path $toolchain.BuildTools "apksigner.bat")) $true "Android Build Tools 36.0.0"
+    Assert-Equal (Test-Path -LiteralPath (Join-Path $toolchain.Ndk "source.properties")) $true "Android NDK 27.1.12297006"
 }
 
 Write-Host "Android production release checks passed."

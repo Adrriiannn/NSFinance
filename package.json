@@ -7,8 +7,11 @@
     "mobile:android": "pnpm --filter @nsfinance/mobile android",
     "mobile:ios": "pnpm --filter @nsfinance/mobile ios",
     "mobile:web": "pnpm --filter @nsfinance/mobile web",
-    "android:release:check": "pnpm --filter @nsfinance/mobile release:check",
-    "android:release:build": "pnpm --filter @nsfinance/mobile release:build",
-    "android:release:install": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./tools/mobile/Install-AndroidApk.ps1"
+    "android:production:check": "pnpm --filter @nsfinance/mobile production:check",
+    "android:production:apk": "pnpm --filter @nsfinance/mobile production:apk",
+    "android:production:aab": "pnpm --filter @nsfinance/mobile production:aab",
+    "android:production:build": "pnpm --filter @nsfinance/mobile production:build",
+    "android:production:device": "pnpm --filter @nsfinance/mobile production:device",
+    "android:production:install": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./tools/mobile/Install-AndroidApk.ps1"
   }
 }

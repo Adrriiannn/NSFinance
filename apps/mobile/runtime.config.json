@@ -1,0 +1,10 @@
+{
+  "apiBaseUrl": "https://api.finance.nsireland.ie",
+  "turnstilePageBaseUrl": "https://api.finance.nsireland.ie",
+  "googleOAuth": {
+    "webClientId": "205425768766-3688b2vlk03u2bn58rkv4in1p1cqdsrc.apps.googleusercontent.com",
+    "androidClientId": "205425768766-8l75g6rfu2q71pamp685v8gi6bnjgl1f.apps.googleusercontent.com"
+  },
+  "bankingAutoSyncIntervalMinutes": 10,
+  "websiteUrl": "https://nsireland.ie"
+}

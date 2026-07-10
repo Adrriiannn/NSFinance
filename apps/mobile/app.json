@@ -37,6 +37,7 @@
     },
     "android": {
       "package": "com.nsfinance.mobile",
+      "versionCode": 4,
       "runtimeVersion": "1.0.0",
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW"

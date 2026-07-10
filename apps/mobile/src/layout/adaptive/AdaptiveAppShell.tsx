@@ -7,7 +7,7 @@ import { getDashboardSummary } from "../../features/dashboard/dashboardApi";
 import { getExpenseTrackerEntries, getExpenseTrackerTaxonomy } from "../../features/expenseTracker/expenseTrackerApi";
 import { getTransactions } from "../../features/transactions/transactionsApi";
 import { queryKeys } from "../../lib/api/queryKeys";
-import { completeLatestNavigationProbe, navigateWithProbe } from "../../lib/perf/navigationTiming";
+import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { queryClient } from "../../providers/QueryProvider";
 import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
@@ -87,7 +87,6 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
   const [shellFrame, setShellFrame] = useState<AdaptiveShellFrame | null>(null);
   const lastInteractionAtRef = useRef(Date.now());
   const hasWarmedCachesRef = useRef(false);
-  const lastPathnameRef = useRef<string>("");
 
   const markInteraction = useCallback(() => {
     lastInteractionAtRef.current = Date.now();
@@ -159,34 +158,6 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
       clearTimeout(warmupTimer);
     };
   }, [isAuthenticated, router]);
-
-  useEffect(() => {
-    const currentPath = pathname ?? "";
-    if (lastPathnameRef.current === currentPath) {
-      return;
-    }
-
-    const committedAtMs = Date.now();
-    lastPathnameRef.current = currentPath;
-    const frame = requestAnimationFrame(() => {
-      const perfProbesEnabled = process.env.EXPO_PUBLIC_PERF_PROBES === "1";
-      const perfProbesVerbose = process.env.EXPO_PUBLIC_PERF_PROBES_VERBOSE === "1";
-      const commitToFrameMs = Date.now() - committedAtMs;
-      if (perfProbesEnabled && (perfProbesVerbose || commitToFrameMs >= 36)) {
-        console.info("[Perf Probe]", {
-          type: "route_commit",
-          path: currentPath,
-          commitToFrameMs,
-          timestampUtc: new Date().toISOString()
-        });
-      }
-      completeLatestNavigationProbe(currentPath);
-    });
-
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-  }, [pathname]);
 
   return (
     <AdaptiveLayoutContext.Provider value={contextValue}>

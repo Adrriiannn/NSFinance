@@ -2,7 +2,7 @@
   "name": "@nsfinance/mobile",
   "private": true,
   "version": "0.1.0",
-  "main": "expo-router/entry",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -13,8 +13,11 @@
     "test:node": "tsx --require ../../tools/mobile/Register-NodeTestAssets.cjs --test src/**/*.node.test.ts",
     "expo:check": "expo install --check",
     "expo:doctor": "expo-doctor",
-    "release:check": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../tools/mobile/Test-AndroidRelease.ps1",
-    "release:build": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../tools/mobile/Invoke-AndroidBuild.ps1"
+    "production:check": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../tools/mobile/Test-AndroidRelease.ps1",
+    "production:apk": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../tools/mobile/Invoke-AndroidBuild.ps1 -ArtifactFormat Apk",
+    "production:aab": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../tools/mobile/Invoke-AndroidBuild.ps1 -ArtifactFormat Aab",
+    "production:build": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../tools/mobile/Invoke-AndroidBuild.ps1 -ArtifactFormat Both",
+    "production:device": "pwsh -NoProfile -ExecutionPolicy Bypass -File ../../tools/mobile/Invoke-AndroidBuild.ps1 -ArtifactFormat Apk -Install -Launch"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

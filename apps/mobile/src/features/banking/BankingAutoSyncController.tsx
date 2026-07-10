@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AppState, type AppStateStatus } from "react-native";
+import runtimeConfig from "../../../runtime.config.json";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { useConnectedBanksQuery, useGlobalBankSyncMutation } from "./useBanking";
 
@@ -7,9 +8,7 @@ const DEFAULT_FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MINUTES = 10;
 const MIN_FOREGROUND_AUTO_SYNC_CHECK_INTERVAL_MINUTES = 1;
 const AUTO_SYNC_MIN_TRIGGER_GAP_MS = 30_000;
 
-const configuredAutoSyncCheckIntervalMinutes = Number(
-  process.env.EXPO_PUBLIC_BANKING_AUTO_SYNC_INTERVAL_MINUTES
-);
+const configuredAutoSyncCheckIntervalMinutes = Number(runtimeConfig.bankingAutoSyncIntervalMinutes);
 
 const resolvedAutoSyncCheckIntervalMinutes = Number.isFinite(configuredAutoSyncCheckIntervalMinutes)
   ? Math.max(

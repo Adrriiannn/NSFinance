@@ -1,6 +1,7 @@
 import { apiRequest, getApiAccessToken } from "../../lib/api/client";
 import { apiConfig } from "../../lib/api/config";
 import { ApiClientError, parseApiErrorBody } from "../../lib/api/errors";
+import { appMetadata } from "../../lib/config/appMetadata";
 import * as FileSystem from "expo-file-system/legacy";
 import { NativeModules, Platform } from "react-native";
 import type {
@@ -66,7 +67,7 @@ export async function downloadExportRequestFile(requestId: string): Promise<Expo
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     "x-platform": Platform.OS,
-    "x-app-version": process.env.EXPO_PUBLIC_APP_VERSION || "mobile"
+    "x-app-version": appMetadata.version
   };
 
   const preflight = await fetch(url, {

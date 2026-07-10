@@ -2,11 +2,10 @@ import { Linking, Pressable, Text } from "react-native";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { HeaderShell } from "../../../src/layout/appHeader";
+import { appMetadata } from "../../../src/lib/config/appMetadata";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 export default function AboutScreen() {
-  const appVersion = process.env.EXPO_PUBLIC_APP_VERSION || "0.1.0";
-
   return (
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset>
       <HeaderShell preset="secondaryDetail" title="About" />
@@ -16,7 +15,7 @@ export default function AboutScreen() {
         <Text style={styles.body}>
           NSFinance is a bank-linked personal finance app focused on account clarity, spending analysis, and planning insights.
         </Text>
-        <Text style={styles.meta}>Version: {appVersion}</Text>
+        <Text style={styles.meta}>Version: {appMetadata.version}</Text>
         <Text style={styles.meta}>Operator details will be published here before public launch.</Text>
         <Text style={styles.meta}>Legal entity name: pending publication</Text>
         <Text style={styles.meta}>Registered address: pending publication</Text>

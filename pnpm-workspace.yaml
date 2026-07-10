@@ -1,5 +1,7 @@
 packages:
   - "apps/mobile"
 
+nodeLinker: hoisted
+
 onlyBuiltDependencies:
   - esbuild

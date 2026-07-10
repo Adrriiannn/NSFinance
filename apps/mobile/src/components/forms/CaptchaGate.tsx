@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { WebViewErrorEvent, WebViewHttpErrorEvent } from "react-native-webview/lib/WebViewTypes";
+import runtimeConfig from "../../../runtime.config.json";
 import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
@@ -28,8 +29,7 @@ type TurnstileMessage =
 
 type ChallengeState = "loading" | "ready" | "expired" | "error";
 
-const TURNSTILE_PAGE_BASE_URL =
-  process.env.EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL?.trim() ?? "https://api.finance.nsireland.ie";
+const TURNSTILE_PAGE_BASE_URL = runtimeConfig.turnstilePageBaseUrl;
 const TURNSTILE_REGISTER_PATH = "/turnstile/register";
 const TURNSTILE_WIDGET_WIDTH = 300;
 const TURNSTILE_WIDGET_HEIGHT = 65;

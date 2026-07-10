@@ -2,6 +2,7 @@ import { apiConfig } from "./config";
 import { resolveApiRequestUrl } from "./diagnostics";
 import { ApiClientError, parseApiErrorBody } from "./errors";
 import { Platform } from "react-native";
+import { appMetadata } from "../config/appMetadata";
 
 type TokenResolver = () => string | null;
 type UnauthorizedHandler = () => Promise<string | null>;
@@ -72,7 +73,7 @@ export async function apiRequest<T>(
     const headers: HeadersInit = {
       "Content-Type": "application/json",
       "x-platform": Platform.OS,
-      "x-app-version": process.env.EXPO_PUBLIC_APP_VERSION || "mobile",
+      "x-app-version": appMetadata.version,
       ...(overrideToken ? { Authorization: `Bearer ${overrideToken}` } : {}),
       ...(init?.headers ?? {})
     };

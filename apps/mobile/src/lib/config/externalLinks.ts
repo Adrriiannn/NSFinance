@@ -1,6 +1,6 @@
-const fallbackWebsiteUrl = "https://nsireland.ie";
+import runtimeConfig from "../../../runtime.config.json";
 
 export const externalLinks = {
   instagram: null,
-  website: process.env.EXPO_PUBLIC_NSFINANCE_WEBSITE_URL?.trim() || fallbackWebsiteUrl
+  website: runtimeConfig.websiteUrl
 } as const;
