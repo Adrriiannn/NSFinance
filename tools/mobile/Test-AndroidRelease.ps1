@@ -80,7 +80,6 @@ function Invoke-CheckedCommand {
 }
 
 $easConfig = Get-Content -Raw $easJsonPath | ConvertFrom-Json
-Assert-Equal ([bool]$easConfig.cli.requireCommit) $true "EAS clean commit requirement"
 $profileNames = @($easConfig.build.PSObject.Properties.Name)
 Assert-Equal $profileNames.Count 1 "EAS build profile count"
 Assert-Equal $profileNames[0] "production" "EAS build profile"

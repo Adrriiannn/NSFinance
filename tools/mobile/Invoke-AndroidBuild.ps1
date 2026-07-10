@@ -22,6 +22,20 @@ if (-not $eas) {
 
 & $testScript -SkipQualityChecks:$SkipQualityChecks -CheckEasProject
 
+$git = Get-Command "git" -ErrorAction SilentlyContinue
+if (-not $git) {
+    throw "Git is required to verify the source state before an EAS build."
+}
+
+$worktreeState = @(& $git.Source -C $repoRoot status --porcelain --untracked-files=all)
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to verify the Git worktree before the EAS build."
+}
+
+if ($worktreeState.Count -gt 0) {
+    throw "The EAS build must start from a clean Git worktree. Commit or remove pending files first."
+}
+
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 Push-Location $mobileRoot
 try {
