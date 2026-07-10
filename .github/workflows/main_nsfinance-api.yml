@@ -320,15 +320,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
+      - name: Validate installed Android runner toolchain
+        shell: pwsh
+        run: |
+          $nodeVersion = (& node --version).Trim().TrimStart("v")
+          $nodeMajor = [int]$nodeVersion.Split('.')[0]
+          $expectedNodeMajor = [int]$env:NODE_VERSION.Split('.')[0]
+          if ($nodeMajor -ne $expectedNodeMajor) {
+            throw "The Android runner requires Node $expectedNodeMajor.x, but found $nodeVersion."
+          }
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
+          $pnpmVersion = (& pnpm --version).Trim()
+          if ($pnpmVersion -ne $env:PNPM_VERSION) {
+            throw "The Android runner requires pnpm $env:PNPM_VERSION, but found $pnpmVersion."
+          }
+
+          ./tools/mobile/Test-AndroidRelease.ps1 -SkipQualityChecks -CheckLocalToolchain
 
       - name: Verify live production API
         shell: pwsh
