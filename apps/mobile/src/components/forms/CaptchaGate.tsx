@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import type { WebViewErrorEvent, WebViewHttpErrorEvent } from "react-native-webview/lib/WebViewTypes";
-import { apiConfig } from "../../lib/api/config";
 import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
@@ -57,19 +56,6 @@ function buildTurnstileRegisterUrl(baseUrl: string, theme: "light" | "dark"): st
   }
 }
 
-function logTurnstileDebug(event: string, details?: unknown) {
-  if (!__DEV__) {
-    return;
-  }
-
-  if (details === undefined) {
-    console.info(`[Turnstile][register] ${event}`);
-    return;
-  }
-
-  console.info(`[Turnstile][register] ${event}`, details);
-}
-
 function LegacyCaptchaGate({ isVerified, onVerify, showLabel = true }: LegacyCaptchaProps) {
   return (
     <View style={styles.wrap}>
@@ -111,40 +97,28 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
       setChallengeState("error");
       setIsChallengeReady(true);
       setLastError("Turnstile URL could not be built from Turnstile host configuration.");
-      logTurnstileDebug("challenge_url_invalid", {
-        turnstileBaseUrl: TURNSTILE_PAGE_BASE_URL,
-        apiBaseUrl: apiConfig.baseUrl
-      });
       return;
     }
 
     setChallengeState("loading");
     setIsChallengeReady(false);
     setLastError(null);
-    logTurnstileDebug("challenge_load", { challengeUrl, seed: challengeSeed, theme: resolvedThemeName });
   }, [challengeSeed, challengeUrl]);
 
   const retryChallenge = useCallback(() => {
     onTokenChange(null);
     setChallengeSeed((current) => current + 1);
-    logTurnstileDebug("challenge_retry");
   }, [onTokenChange]);
 
   const onTurnstileMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let message: TurnstileMessage | null = null;
+      let message: TurnstileMessage;
 
       try {
         message = JSON.parse(event.nativeEvent.data) as TurnstileMessage;
       } catch {
-        logTurnstileDebug("message_parse_failed", event.nativeEvent.data);
-      }
-
-      if (!message) {
         return;
       }
-
-      logTurnstileDebug("message_received", message);
 
       if (message.type === "turnstile.ready") {
         setIsChallengeReady(true);
@@ -192,7 +166,6 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
       setChallengeState("error");
       setIsChallengeReady(true);
       setLastError(event.nativeEvent.description || "WebView loading error.");
-      logTurnstileDebug("webview_error", event.nativeEvent);
     },
     [onTokenChange]
   );
@@ -203,7 +176,6 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
       setChallengeState("error");
       setIsChallengeReady(true);
       setLastError(`HTTP ${event.nativeEvent.statusCode}`);
-      logTurnstileDebug("webview_http_error", event.nativeEvent);
     },
     [onTokenChange]
   );
@@ -247,10 +219,6 @@ function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptc
                   nextUrl.startsWith("http://") ||
                   nextUrl.startsWith("about:blank") ||
                   nextUrl.startsWith("about:srcdoc");
-
-                if (!isAllowed) {
-                  logTurnstileDebug("navigation_blocked", request.url);
-                }
 
                 return isAllowed;
               }}

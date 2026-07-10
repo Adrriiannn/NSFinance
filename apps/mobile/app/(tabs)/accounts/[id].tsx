@@ -274,7 +274,7 @@ export default function AccountDetailsScreen() {
       } else if (Platform.OS === "android") {
         Alert.alert(
           "Excel downloaded",
-          "Your export was downloaded to app storage. Use a preview/dev build for Download Manager notifications."
+          "Your export was downloaded to app storage. Use a custom Android build for Download Manager notifications."
         );
       } else if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(downloadResult.uri, {

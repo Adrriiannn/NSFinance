@@ -2,58 +2,63 @@
 
 Expo Router + TypeScript mobile client for NSFinance.
 
-## Implemented in this slice
+## Implemented In This Slice
 
-- auth entry/login/register flow
-- auth-gated app shell
-- 4 tabs: Dashboard / Accounts / Activity / Planner
-- account details screen with persistent tab bar
-- add account / add transaction modals
-- transaction context modal for planner enrichment fields
-- centralized API client (`src/lib/api/*`)
-- React Query data hooks + mutation invalidation + optimistic cache reconciliation
-- pull-to-refresh and reliable loading/error/empty states
-- persistent device-bound sessions (no idle auto-logout)
-- premium floating tab bar and polished fintech UI primitives
-- planner foundation:
+- Auth entry, login, register, reset, and account security flows
+- Auth-gated app shell
+- Dashboard, Accounts, Activity, and Planner tabs
+- Account details screen with persistent tab bar
+- Add account and add transaction modals
+- Transaction context modal for planner enrichment fields
+- Centralized API client under `src/lib/api`
+- React Query hooks with mutation invalidation and optimistic cache reconciliation
+- Pull-to-refresh and reliable loading, error, and empty states
+- Persistent device-bound sessions
+- Floating tab bar and fintech UI primitives
+- Planner foundation:
   - month-over-month comparison
   - necessities management
   - planning categories
   - suggestions cards
   - AI companion chat shell
 
-## API environment behavior
+## API Target
 
-- Development runtime (`__DEV__ = true`):
-  - Uses `EXPO_PUBLIC_API_BASE_URL` when set.
-  - Falls back to local defaults:
-    - Android emulator: `http://10.0.2.2:5080`
-    - iOS simulator: `http://localhost:5080`
-  - Prevents accidental Azure usage unless `EXPO_PUBLIC_ALLOW_AZURE_IN_DEV=true`.
-  - Turnstile challenge page can be pinned to Azure with `EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL` (recommended).
-- Production runtime (`__DEV__ = false`):
-  - Uses Azure API by default:
-    - `https://api.finance.nsireland.ie`
-  - Ignores local/LAN API URLs if they are accidentally provided.
+The app targets:
 
-## Run locally
+```text
+https://api.finance.nsireland.ie
+```
 
-1. Install dependencies:
-   - `pnpm install`
-2. Configure local env:
-   - copy `.env.example` to `.env`
-   - set `EXPO_PUBLIC_API_BASE_URL` only if testing on a physical device
-   - set `EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL=https://api.finance.nsireland.ie` to keep Turnstile host consistent across dev/prod
-3. Start Expo:
-   - `pnpm --filter @nsfinance/mobile start`
+`EXPO_PUBLIC_API_BASE_URL` may override this only when it points to a public production-compatible API host. Localhost, emulator, and private LAN values are ignored by the runtime config helper.
 
-## EAS build profiles
+## Run
 
-- `development`: internal dev client build, local-development environment mode.
-- `preview`: internal APK build targeting Azure API.
-- `production`: release AAB build targeting Azure API.
+```powershell
+pnpm install
+pnpm --filter @nsfinance/mobile start
+```
 
-Demo login for local dev:
+Production Android verification:
 
-- Email: `demo@nsfinance.local`
-- Password: `Password123!`
+```powershell
+pnpm android:release:check
+```
+
+This runs type-check, lint, all Node-native mobile tests, Expo SDK compatibility,
+resolved Expo config, and the APK packaging self-test.
+
+## Public Config
+
+`EXPO_PUBLIC_*` values are bundled into the client app and must never contain private secrets.
+
+Expected public keys:
+
+- `EXPO_PUBLIC_API_BASE_URL=https://api.finance.nsireland.ie`
+- `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`
+- `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD`
+- `EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL=https://api.finance.nsireland.ie` when the Turnstile host needs to be explicit
+
+## EAS Build Profile
+
+- `production`: installable Android APK targeting the Azure API.

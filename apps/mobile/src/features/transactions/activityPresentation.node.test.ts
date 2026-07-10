@@ -107,7 +107,7 @@ test("bank account transfers do not render lower linked-transfer helper line", (
     semanticFamily: semantic.family
   });
 
-  assert.equal(labelResolution.displayLabel, "Bank Account Transfer");
+  assert.equal(labelResolution.displayLabel, "Bank account transfer");
   assert.equal(showHelperLine, false);
 });
 

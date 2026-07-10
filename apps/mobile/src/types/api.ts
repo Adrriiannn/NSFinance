@@ -320,7 +320,6 @@ export type SessionDto = {
 
 export type AuthActionResponse = {
   message: string;
-  debugToken?: string | null;
 };
 
 export type ForgotPasswordRequest = {

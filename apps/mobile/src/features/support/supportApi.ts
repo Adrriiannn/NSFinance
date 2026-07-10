@@ -66,7 +66,7 @@ export async function downloadExportRequestFile(requestId: string): Promise<Expo
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     "x-platform": Platform.OS,
-    "x-app-version": process.env.EXPO_PUBLIC_APP_VERSION || "mobile-dev"
+    "x-app-version": process.env.EXPO_PUBLIC_APP_VERSION || "mobile"
   };
 
   const preflight = await fetch(url, {

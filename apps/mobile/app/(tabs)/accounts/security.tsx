@@ -327,12 +327,8 @@ export default function SecuritySettingsScreen() {
     setPasswordCode("");
     setPasswordCodeError(null);
     try {
-      const response = await requestPasswordChangeCode();
+      await requestPasswordChangeCode();
       setPasswordCodeModalVisible(true);
-
-      if (response.debugToken) {
-        showFlashMessage(`Dev code: ${response.debugToken}`, { tone: "info", durationMs: 5000 });
-      }
     } catch (error) {
       showFlashMessage(error instanceof Error ? error.message : "Could not request password code.", { tone: "error", durationMs: 3200 });
     }
@@ -388,14 +384,10 @@ export default function SecuritySettingsScreen() {
     }
 
     try {
-      const response = await requestAccountDeletionCode();
+      await requestAccountDeletionCode();
       setDeletionCode("");
       setDeletionCodeError(null);
       setDeletionCodeModalVisible(true);
-
-      if (response.debugToken) {
-        showFlashMessage(`Dev deletion code: ${response.debugToken}`, { tone: "info", durationMs: 5000 });
-      }
     } catch (error) {
       showFlashMessage(error instanceof Error ? error.message : "Could not request deletion code.", { tone: "error", durationMs: 3200 });
     }

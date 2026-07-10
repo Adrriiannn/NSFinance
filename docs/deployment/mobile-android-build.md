@@ -1,172 +1,125 @@
-# Mobile Android Build Guide
+# Android Production Delivery
 
-This document defines the NSFinance mobile Android build process with strict separation between local development and Azure-backed production builds.
+NSFinance currently targets Android only and has one EAS build profile: `production`.
+The profile builds an installable APK connected to `https://api.finance.nsireland.ie`.
 
-## 1. Prerequisites
+## Toolchain
 
-- Node.js 20+ (recommended for Expo SDK 54)
-- pnpm 10+
-- Expo account
-- EAS CLI access
+- Node.js 24.x
+- pnpm 10.8.0
+- Expo SDK 54
+- EAS CLI 20.5.1
+- PowerShell 7
+- Android Platform Tools for `adb` installation
 
-Commands:
+The EAS cloud build supplies the Android SDK and release-signing integration. A
+local Java or Android SDK installation is not required for this cloud path.
 
-```bash
+## Automated Main-Branch Flow
+
+The workflow is `.github/workflows/main_nsfinance-api.yml` and is named
+`NSFinance Production Delivery`.
+
+On a push to `main`, it classifies the changed paths:
+
+1. API or shared backend changes run the full backend suite.
+2. Only a green backend suite can publish the API, build and execute the EF
+   migration bundle, deploy Azure App Service, and verify `/health`.
+3. Mobile or Android-tooling changes run type-check, lint, all Node-native
+   mobile tests, Expo SDK/Doctor checks, native/config parity, Expo configuration
+   resolution, and the artifact-tooling self-test.
+4. If the same push changes API and mobile code, the APK waits for the API
+   deployment and health check.
+5. The workflow checks the live API before consuming an EAS build credit.
+6. EAS produces a production-signed APK. The workflow downloads it, checks that
+   it is an APK/ZIP archive, computes SHA-256, writes a redacted manifest, and
+   retains all three files as a GitHub Actions artifact for 30 days.
+
+An API-only push does not rebuild an identical APK. The installed app uses the
+updated live API immediately. A manual workflow run can request an APK without
+requesting an API deployment.
+
+## Required GitHub Configuration
+
+Existing API delivery values remain required:
+
+- Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+  `AZURE_SUBSCRIPTION_ID`, and `PROD_DB_CONNECTION_STRING`.
+- Repository variable: `AZURE_API_RESOURCE_GROUP`.
+
+Android delivery also requires the secret `EXPO_TOKEN`. The token must belong to
+an Expo account with access to project
+`21986a2d-cbfa-4757-bf6d-04eb6aa4f197`. Never place it in source, workflow
+inputs, logs, or Obsidian.
+
+Before the first non-interactive CI build, verify the EAS project and managed
+Android signing credentials interactively on a trusted workstation. EAS Build
+injects the managed release signing configuration during its remote Android
+build; the checked-in debug signing block is not production-signing evidence.
+
+## Local Commands
+
+Run from the repository root:
+
+```powershell
 pnpm install
-pnpm dlx eas-cli login
-pnpm dlx eas-cli whoami
+pnpm android:release:check
+pnpm android:release:build
 ```
 
-## 2. Environment strategy
+`android:release:build` performs the checks, verifies EAS authentication, waits
+for the cloud build, downloads the APK to ignored `local-builds/android`, and
+writes its checksum and manifest.
 
-The project uses `apps/mobile/eas.json` profile env injection plus runtime mode checks.
+Install the latest locally downloaded APK on one connected, authorized phone:
 
-Source of truth:
-
-- API resolver: `apps/mobile/src/lib/api/config.ts`
-- Expo config: `apps/mobile/app.config.ts`
-- EAS profiles: `apps/mobile/eas.json`
-
-### Development behavior (`__DEV__ = true`)
-
-- Uses `EXPO_PUBLIC_API_BASE_URL` if set.
-- Otherwise uses local defaults:
-  - Android emulator: `http://10.0.2.2:5080`
-  - iOS simulator: `http://localhost:5080`
-- Azure API is blocked in dev unless `EXPO_PUBLIC_ALLOW_AZURE_IN_DEV=true`.
-
-### Production behavior (`__DEV__ = false`)
-
-- Uses `EXPO_PUBLIC_API_BASE_URL` or falls back to Azure base URL.
-- Local/LAN URLs are rejected and replaced by Azure default.
-
-Azure production API base URL:
-
-`https://api.finance.nsireland.ie`
-
-## 3. Build profiles
-
-Defined in `apps/mobile/eas.json`:
-
-- `development`
-  - Purpose: internal development client
-  - Env:
-    - `EXPO_PUBLIC_APP_ENV=development`
-    - `EXPO_PUBLIC_ALLOW_AZURE_IN_DEV=false`
-- `preview`
-  - Purpose: internal APK testing against Azure
-  - Android output: APK
-  - Env:
-    - `EXPO_PUBLIC_APP_ENV=preview`
-    - `EXPO_PUBLIC_API_BASE_URL=https://api.finance.nsireland.ie`
-- `production`
-  - Purpose: production release build against Azure
-  - Android output: AAB
-  - Env:
-    - `EXPO_PUBLIC_APP_ENV=production`
-    - `EXPO_PUBLIC_API_BASE_URL=https://api.finance.nsireland.ie`
-
-## 4. Exact commands
-
-Run commands from repo root.
-
-### Local development (Expo Go)
-
-```bash
-pnpm --filter @nsfinance/mobile start
+```powershell
+pnpm android:release:install -- -Launch
 ```
 
-Optional local API override (physical phone): set in `apps/mobile/.env`:
+Install a specific APK:
 
-```env
-EXPO_PUBLIC_APP_ENV=development
-EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:5080
-EXPO_PUBLIC_ALLOW_AZURE_IN_DEV=false
+```powershell
+pnpm android:release:install -- -ApkPath "C:\path\to\NSFinance.apk" -Launch
 ```
 
-### Local development build (Android dev client)
+The installer uses `adb install -r`, which upgrades the existing app only when
+the package and signing identity are compatible.
 
-```bash
-pnpm dlx eas-cli build --platform android --profile development --non-interactive
-```
+## Artifact Contract
 
-### Internal/preview APK against Azure
+Every successful Android workflow artifact contains:
 
-```bash
-pnpm dlx eas-cli build --platform android --profile preview --non-interactive
-```
+- `NSFinance-android-<version>-<commit>.apk`
+- `<apk-name>.sha256`
+- `<apk-name>.manifest.json`
 
-### Production Android build against Azure
+The manifest records the EAS build ID, profile, channel, package, app/runtime
+version, source commit, API target, byte length, and checksum. It never records
+the temporary EAS download URL, credentials, or user data.
 
-```bash
-pnpm dlx eas-cli build --platform android --profile production --non-interactive
-```
+The checked-in native Android project is validated against the production app
+config. Camera, microphone, and overlay permissions are explicitly removed;
+gallery and foreground-location permissions remain for implemented journeys.
 
-## 5. Manual setup still required
+## Faster Compatible Updates
 
-- Google OAuth console:
-  - Register Android app package `com.nsfinance.mobile` and SHA certificate fingerprints.
-  - Ensure client IDs used by mobile and API verification are aligned.
-- TrueLayer console:
-  - Register callback URL to backend endpoint:
-    - `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
-- Azure App Service:
-  - Keep production env vars configured (`ConnectionStrings__DefaultConnection`, JWT keys, TrueLayer credentials, Google auth settings).
+`expo-updates`, the production channel, and runtime version `1.0.0` are already
+configured. After the first APK is installed and smoke-tested, compatible
+JavaScript and bundled-asset changes can use EAS Update instead of rebuilding an
+APK. This must not be automated until update-time production environment values,
+runtime compatibility, rollback, and real-device behavior are proven.
 
-## 6. Notes
+Native dependencies, app configuration, permissions, Gradle, Android source,
+or signing changes still require a new APK and an intentional app/runtime
+version decision.
 
-- Never embed API secrets in the mobile app.
-- `EXPO_PUBLIC_*` values are public and should only be used for non-secret client config.
-- For local TrueLayer sandbox testing, configure backend local TrueLayer settings separately from production Azure settings.
-## 7. Preview diagnostics for register/login routing
+## Provider Checks
 
-In preview APK builds, auth API target diagnostics are enabled automatically.
+Google OAuth must register package `com.nsfinance.mobile` with the SHA
+fingerprint of the EAS-managed signing certificate. TrueLayer keeps the live
+callback `https://api.finance.nsireland.ie/api/banking/truelayer/callback`.
 
-Where diagnostics appear:
-
-- Expo/native log output from API client:
-  - `[API ROUTE DIAGNOSTIC]` with `baseUrl`, route, and full request URL.
-- Auth error cards (login/register) when a request fails:
-  - shows resolved API base URL
-  - shows resolved register URL
-  - shows resolved login URL
-
-Files:
-
-- `apps/mobile/src/lib/api/diagnostics.ts`
-- `apps/mobile/src/lib/api/client.ts`
-- `apps/mobile/app/(auth)/register.tsx`
-- `apps/mobile/app/(auth)/login.tsx`
-
-To disable later:
-
-- Remove `isPreviewDiagnosticsEnabled` usage from `api/config.ts` and related `authApiRouteDiagnostics` usage.
-- Or keep it as-is; it only activates for preview (`EXPO_PUBLIC_APP_ENV=preview` and non-__DEV__ runtime).
-
-## 8. Stronger return-link strategy (recommended follow-up)
-
-Current production bank return flow uses the custom scheme:
-
-- preferred: `nsfinance://accounts/connect-bank?...`
-- legacy fallback still supported: `nsfinance://modals/add-account?...`
-
-This remains the active and supported flow.
-
-For a stronger production return path later, add verified HTTPS app links / universal links alongside the custom scheme.
-
-Android App Links requirements:
-
-- Keep the current package name: `com.nsfinance.mobile`
-- Add an intent filter for `https://api.finance.nsireland.ie`
-- Host `/.well-known/assetlinks.json` on `api.finance.nsireland.ie`
-- Include the app signing certificate fingerprints used by the preview/production builds
-- Update the callback return page to prefer the verified HTTPS app link and keep the custom scheme as fallback
-
-Apple Universal Links requirements:
-
-- Host `/.well-known/apple-app-site-association` on `api.finance.nsireland.ie`
-- Add the associated domains entitlement in the iOS app configuration
-- Add the matching app path rules for the bank return route
-- Keep the custom scheme as fallback until universal links are verified end-to-end
-
-Do not remove the custom scheme until verified HTTPS app links work on real preview/production builds.
+The preferred mobile bank return is
+`nsfinance://accounts/connect-bank?...`; the legacy modal path remains supported
+until verified HTTPS App Links are implemented and proven.

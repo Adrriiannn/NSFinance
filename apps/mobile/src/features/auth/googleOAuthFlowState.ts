@@ -1,11 +1,10 @@
 import { useSyncExternalStore } from "react";
-import { resetGoogleOAuthDebugState } from "./googleOAuthDebug";
+import { resetGoogleOAuthCompletionState } from "./googleOAuthCompletionState";
 
 type GoogleOAuthFlowResetReason =
   | "logout"
   | "auth_screen_mount"
   | "auth_screen_unmount"
-  | "code_exchange_failed"
   | "manual_retry";
 
 let oauthRequestEpoch = 0;
@@ -26,25 +25,13 @@ function getSnapshot() {
   return oauthRequestEpoch;
 }
 
-function logFlowReset(reason: GoogleOAuthFlowResetReason) {
-  if (!__DEV__) {
-    return;
-  }
-
-  console.info("[GoogleAuth] flow_reset", {
-    reason,
-    oauthRequestEpoch
-  });
-}
-
 export function resetGoogleOAuthFlowState(reason: GoogleOAuthFlowResetReason) {
+  void reason;
   oauthRequestEpoch += 1;
-  resetGoogleOAuthDebugState();
-  logFlowReset(reason);
+  resetGoogleOAuthCompletionState();
   emitChange();
 }
 
 export function useGoogleOAuthRequestEpoch() {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
-

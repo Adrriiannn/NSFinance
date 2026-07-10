@@ -135,7 +135,6 @@ export default function ForgotPasswordScreen() {
   const [identity, setIdentity] = useState("");
   const [focusedIdentity, setFocusedIdentity] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [debugToken, setDebugToken] = useState<string | null>(null);
   const identityBorderColor = focusedIdentity ? palette.primaryGlow : palette.borderStrong;
 
   const handleRequest = async () => {
@@ -143,7 +142,6 @@ export default function ForgotPasswordScreen() {
       email: identity.trim().toLowerCase()
     });
     setMessage(response.message);
-    setDebugToken(response.debugToken ?? null);
   };
 
   return (
@@ -184,7 +182,6 @@ export default function ForgotPasswordScreen() {
         </View>
 
         {message ? <Text style={styles.message}>{message}</Text> : null}
-        {debugToken ? <Text style={styles.debugToken}>Dev reset token: {debugToken}</Text> : null}
 
         <View style={styles.actions}>
           <PrimaryButton
@@ -273,13 +270,6 @@ const styles = createRuntimeStyleSheet(() => ({
     marginTop: spacing[16],
     color: palette.textSecondary,
     ...typography.body2,
-    width: "88%",
-    maxWidth: 360
-  },
-  debugToken: {
-    marginTop: spacing[8],
-    color: palette.accent,
-    ...typography.caption,
     width: "88%",
     maxWidth: 360
   },

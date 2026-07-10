@@ -26,7 +26,6 @@ import { resetGoogleOAuthFlowState } from "../../src/features/auth/googleOAuthFl
 import { useRegisterMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
-import { authApiRouteDiagnostics, getAuthApiDebugDetail } from "../../src/lib/api/diagnostics";
 import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
 import { getLocaleLocationProfile } from "../../src/lib/device/deviceLocationProfile";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
@@ -232,8 +231,6 @@ export default function RegisterScreen() {
   const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [socialAuthMessage, setSocialAuthMessage] = useState<string | null>(null);
-  const authApiDebugDetail = getAuthApiDebugDetail();
-
   useEffect(() => {
     resetGoogleOAuthFlowState("auth_screen_mount");
   }, []);
@@ -476,8 +473,6 @@ export default function RegisterScreen() {
               message={formatUnknownError(registerMutation.error)}
               onRetry={handleRegister}
               retryLabel="Try again"
-              debugDetail={authApiDebugDetail}
-              showDebugDetail={authApiRouteDiagnostics.enabled}
             />
           </View>
         ) : null}

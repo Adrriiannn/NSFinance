@@ -54,19 +54,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
   const logoutPromiseRef = useRef<Promise<void> | null>(null);
 
-  const logAuthDebug = useCallback((event: string, details?: Record<string, unknown>) => {
-    if (!__DEV__) {
-      return;
-    }
-
-    if (!details) {
-      console.info(`[Auth] ${event}`);
-      return;
-    }
-
-    console.info(`[Auth] ${event}`, details);
-  }, []);
-
   const clearSessionStorage = useCallback(async () => {
     try {
       await SecureStore.deleteItemAsync(SESSION_KEY);
@@ -93,10 +80,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       const runLogout = async () => {
         setIsAuthTransitioning(true);
-        logAuthDebug("logout_started", {
-          hasReason: Boolean(reason),
-          reason: reason ?? ""
-        });
         resetGoogleOAuthFlowState("logout");
         refreshPromiseRef.current = null;
 
@@ -109,7 +92,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         await clearSessionStorage();
         await queryClient.cancelQueries();
         queryClient.clear();
-        logAuthDebug("logout_storage_and_cache_cleared");
 
         if (reason) {
           setSessionMessage(reason);
@@ -119,16 +101,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setApiTokenResolver(() => tokenBeforeClear);
           try {
             await logoutApi();
-            logAuthDebug("logout_api_succeeded");
           } catch {
             // Logout endpoint is best-effort in case token already expired.
-            logAuthDebug("logout_api_failed");
           } finally {
             setApiTokenResolver(() => accessTokenRef.current);
           }
         }
-
-        logAuthDebug("logout_completed");
       };
 
       logoutPromiseRef.current = runLogout().finally(() => {
@@ -138,7 +116,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       await logoutPromiseRef.current;
     },
-    [clearSessionStorage, logAuthDebug]
+    [clearSessionStorage]
   );
 
   const notifyUserInteraction = useCallback(() => {

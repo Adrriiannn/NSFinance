@@ -1,51 +1,21 @@
 {
   "cli": {
-    "version": ">= 16.7.0",
-    "appVersionSource": "remote"
+    "version": "20.5.1",
+    "appVersionSource": "remote",
+    "requireCommit": true
   },
   "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "channel": "development",
-      "android": {
-        "image": "sdk-54"
-      },
-      "env": {
-        "EXPO_PUBLIC_APP_ENV": "development",
-        "EXPO_PUBLIC_ALLOW_AZURE_IN_DEV": "false",
-        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "205425768766-3688b2vlk03u2bn58rkv4in1p1cqdsrc.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_DEBUG": "205425768766-8jreoslp0bone86fj2hrn9u6t0sn8g9f.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD": "205425768766-8l75g6rfu2q71pamp685v8gi6bnjgl1f.apps.googleusercontent.com"
-      }
-    },
-    "preview": {
-      "distribution": "internal",
-      "channel": "preview",
+    "production": {
+      "credentialsSource": "remote",
+      "channel": "production",
+      "autoIncrement": true,
       "android": {
         "buildType": "apk",
         "image": "sdk-54"
       },
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "preview",
         "EXPO_PUBLIC_API_BASE_URL": "https://api.finance.nsireland.ie",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "205425768766-3688b2vlk03u2bn58rkv4in1p1cqdsrc.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_DEBUG": "205425768766-8jreoslp0bone86fj2hrn9u6t0sn8g9f.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD": "205425768766-8l75g6rfu2q71pamp685v8gi6bnjgl1f.apps.googleusercontent.com"
-      }
-    },
-    "production": {
-      "channel": "production",
-      "autoIncrement": true,
-      "android": {
-        "buildType": "app-bundle",
-        "image": "sdk-54"
-      },
-      "env": {
-        "EXPO_PUBLIC_APP_ENV": "production",
-        "EXPO_PUBLIC_API_BASE_URL": "https://api.finance.nsireland.ie",
-        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "205425768766-3688b2vlk03u2bn58rkv4in1p1cqdsrc.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_DEBUG": "205425768766-8jreoslp0bone86fj2hrn9u6t0sn8g9f.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD": "205425768766-8l75g6rfu2q71pamp685v8gi6bnjgl1f.apps.googleusercontent.com"
       }
     }

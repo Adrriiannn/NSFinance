@@ -1,24 +1,14 @@
-import { router, useLocalSearchParams, usePathname } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
-import { useGoogleOAuthDebugState, pushGoogleOAuthDebugStep, updateGoogleOAuthDebugState } from "../src/features/auth/googleOAuthDebug";
+import {
+  setGoogleOAuthCompletionState,
+  useGoogleOAuthCompletionState
+} from "../src/features/auth/googleOAuthCompletionState";
 import { resetGoogleOAuthFlowState } from "../src/features/auth/googleOAuthFlowState";
 import { palette, surfaces, typography, createRuntimeStyleSheet } from "../src/theme/tokens";
 
 const SUCCESS_REDIRECT_DELAY_MS = 600;
-
-function logOAuthRedirectDebug(event: string, details?: Record<string, unknown>) {
-  if (!__DEV__) {
-    return;
-  }
-
-  if (!details) {
-    console.info(`[GoogleAuth][callback] ${event}`);
-    return;
-  }
-
-  console.info(`[GoogleAuth][callback] ${event}`, details);
-}
 
 function getFirstParamValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) {
@@ -31,105 +21,59 @@ function getFirstParamValue(value: string | string[] | undefined): string | unde
 }
 
 export default function OAuthRedirectScreen() {
-  const pathname = usePathname();
   const params = useLocalSearchParams();
-  const debugState = useGoogleOAuthDebugState();
+  const completion = useGoogleOAuthCompletionState();
 
   useEffect(() => {
-    logOAuthRedirectDebug("route_mounted", {
-      pathname,
-      paramKeys: Object.keys(params),
-      hasCode: Boolean(params.code),
-      hasState: Boolean(params.state),
-      hasError: Boolean(params.error),
-      error: getFirstParamValue(params.error as string | string[] | undefined),
-      errorDescription: getFirstParamValue(params.error_description as string | string[] | undefined)
-    });
-
     const errorDescription = getFirstParamValue(params.error_description as string | string[] | undefined);
     const errorCode = getFirstParamValue(params.error as string | string[] | undefined);
-    const callbackErrorMessage =
+    if (!errorCode && !errorDescription) {
+      return;
+    }
+
+    const message =
       errorDescription ??
       (errorCode ? `Google sign-in failed: ${errorCode}.` : "Google sign-in did not complete. Please try again.");
-
-    if (errorCode || errorDescription) {
-      updateGoogleOAuthDebugState({
-        backendOutcome: "failure",
-        backendMessage: callbackErrorMessage
-      });
-      pushGoogleOAuthDebugStep("callback_error", callbackErrorMessage);
-    }
-  }, [params, pathname]);
+    setGoogleOAuthCompletionState("failure", message);
+  }, [params]);
 
   useEffect(() => {
-    if (debugState.backendOutcome !== "success") {
+    if (completion.status !== "success") {
       return;
     }
 
     const timeout = setTimeout(() => {
-      pushGoogleOAuthDebugStep("callback_redirect_tabs", "Navigating to app after backend success.");
       router.replace("/(tabs)" as never);
     }, SUCCESS_REDIRECT_DELAY_MS);
 
     return () => clearTimeout(timeout);
-  }, [debugState.backendOutcome]);
+  }, [completion.status]);
 
-  const canReturnToLogin = debugState.backendOutcome === "failure" || debugState.currentStep !== "idle";
-  const responseFieldSummary = [
-    `params.id_token: ${debugState.hasParamsIdToken ? "yes" : "no"}`,
-    `authentication.idToken: ${debugState.hasAuthenticationIdToken ? "yes" : "no"}`,
-    `code: ${debugState.hasCode ? "yes" : "no"}`,
-    `error: ${debugState.hasError ? "yes" : "no"}`
-  ];
+  const isFailure = completion.status === "failure";
+  const statusMessage = isFailure
+    ? completion.message || "Google sign-in did not complete. Please try again."
+    : completion.status === "success"
+      ? "Sign-in complete. Opening NSFinance..."
+      : "Securely returning to NSFinance...";
 
   return (
     <View style={styles.container}>
       <View style={styles.card}>
         <Text style={styles.eyebrow}>NSFinance Google Sign-In</Text>
-        <Text style={styles.title}>Completing sign-in</Text>
+        <Text style={styles.title}>{isFailure ? "Sign-in needs another try" : "Completing sign-in"}</Text>
         <View style={styles.statusRow}>
-          <ActivityIndicator color={palette.accent} size="small" />
-          <Text style={styles.statusText}>Current step: {debugState.currentStep}</Text>
+          {!isFailure ? <ActivityIndicator color={palette.accent} size="small" /> : null}
+          <Text style={isFailure ? styles.errorText : styles.statusText}>{statusMessage}</Text>
         </View>
 
-        <View style={styles.fieldsBlock}>
-          <Text style={styles.sectionTitle}>Callback status</Text>
-          <Text style={styles.text}>idToken present: {debugState.idTokenPresent ? "yes" : "no"}</Text>
-          <Text style={styles.text}>idToken length: {debugState.idTokenLength}</Text>
-          <Text style={styles.text}>idToken prefix: {debugState.idTokenPrefix || "-"}</Text>
-          <Text style={styles.text}>Backend called: {debugState.backendCalled ? "yes" : "no"}</Text>
-          <Text style={styles.text}>Backend outcome: {debugState.backendOutcome}</Text>
-          {debugState.backendMessage ? (
-            <Text style={styles.errorText}>Backend message: {debugState.backendMessage}</Text>
-          ) : null}
-        </View>
-
-        <View style={styles.fieldsBlock}>
-          <Text style={styles.sectionTitle}>Auth response fields</Text>
-          {responseFieldSummary.map((line) => (
-            <Text key={line} style={styles.text}>
-              {line}
-            </Text>
-          ))}
-        </View>
-
-        <View style={styles.fieldsBlock}>
-          <Text style={styles.sectionTitle}>Debug timeline</Text>
-          {debugState.lines.map((line) => (
-            <Text key={line} style={styles.timelineText}>
-              {line}
-            </Text>
-          ))}
-        </View>
-
-        {canReturnToLogin ? (
+        {isFailure ? (
           <Pressable
             style={({ pressed }) => [styles.backButton, pressed ? styles.backButtonPressed : null]}
             onPress={() => {
               resetGoogleOAuthFlowState("manual_retry");
               router.replace({
                 pathname: "/login",
-                params: { googleError: debugState.backendMessage || "Google sign-in did not complete." }
+                params: { googleError: statusMessage }
               } as never);
             }}
           >
@@ -163,7 +107,7 @@ const styles = createRuntimeStyleSheet(() => ({
   eyebrow: {
     color: palette.textSecondary,
     ...typography.caption,
-    letterSpacing: 1.1,
+    letterSpacing: 0,
     fontWeight: "500",
     textTransform: "uppercase"
   },
@@ -178,38 +122,16 @@ const styles = createRuntimeStyleSheet(() => ({
     gap: 8
   },
   statusText: {
-    color: palette.textSecondary,
-    ...typography.body2
-  },
-  text: {
+    flex: 1,
     color: palette.textSecondary,
     ...typography.body2
   },
   errorText: {
-    marginTop: 4,
+    flex: 1,
     color: palette.negative,
-    ...typography.caption
-  },
-  fieldsBlock: {
-    width: "100%",
-    padding: 10,
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 6,
-    backgroundColor: surfaces.field
-  },
-  sectionTitle: {
-    color: palette.textPrimary,
-    ...typography.caption,
-    fontWeight: "500",
-    marginBottom: 4
-  },
-  timelineText: {
-    color: palette.textSecondary,
-    ...typography.caption
+    ...typography.body2
   },
   backButton: {
-    marginTop: 2,
     minHeight: 44,
     paddingHorizontal: 16,
     borderRadius: 6,
@@ -228,4 +150,3 @@ const styles = createRuntimeStyleSheet(() => ({
     fontWeight: "600"
   }
 }));
-

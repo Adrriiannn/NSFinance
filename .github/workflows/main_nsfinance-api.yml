@@ -1,4 +1,4 @@
-name: Deploy NSFinance API
+name: NSFinance Production Delivery
 
 on:
   push:
@@ -8,53 +8,151 @@ on:
       - ".github/workflows/main_nsfinance-api.yml"
       - ".config/dotnet-tools.json"
       - "apps/api/**"
+      - "apps/mobile/**"
       - "libs/shared/**"
-      - "docs/deployment/database-migrations.md"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tools/mobile/**"
   workflow_dispatch:
+    inputs:
+      deploy_api:
+        description: "Run the production API migration and deployment path"
+        required: true
+        default: false
+        type: boolean
+      build_android_apk:
+        description: "Build and retain a production Android APK"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: nsfinance-api-production
+  group: nsfinance-production-delivery
   cancel-in-progress: false
 
 env:
   DOTNET_VERSION: "10.0.x"
-  # Always target the API project directly so repo-root content never reaches App Service.
+  NODE_VERSION: "24"
+  PNPM_VERSION: "10.8.0"
+  EAS_VERSION: "20.5.1"
   API_PROJECT_PATH: apps/api/src/NSFinance.Api/NSFinance.Api.csproj
+  API_SOLUTION_PATH: apps/api/NSFinance.Api.slnx
   PUBLISH_OUTPUT_PATH: ${{ github.workspace }}/artifacts/api-publish
   DEPLOY_PACKAGE_PATH: ${{ github.workspace }}/artifacts/nsfinance-api.zip
   MIGRATION_BUNDLE_PATH: ${{ github.workspace }}/artifacts/efbundle
   AZURE_WEBAPP_NAME: nsfinance-api
   AZURE_RESOURCE_GROUP: ${{ vars.AZURE_API_RESOURCE_GROUP }}
+  PRODUCTION_API_URL: https://api.finance.nsireland.ie
 
 jobs:
-  deploy-api:
-    name: Build, Migrate, And Clean-Deploy API
+  changes:
+    name: Select Required Production Work
     runs-on: ubuntu-latest
+    outputs:
+      deploy_api: ${{ steps.select.outputs.deploy_api }}
+      build_android: ${{ steps.select.outputs.build_android }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          MANUAL_DEPLOY_API: ${{ inputs.deploy_api }}
+          MANUAL_BUILD_ANDROID: ${{ inputs.build_android_apk }}
+        shell: pwsh
+        run: |
+          $deployApi = $false
+          $buildAndroid = $false
+          $changedPaths = @()
+
+          if ($env:EVENT_NAME -eq "push") {
+            $baseSha = $env:BEFORE_SHA
+            if ([string]::IsNullOrWhiteSpace($baseSha) -or $baseSha -match "^0+$") {
+              $baseSha = git rev-list --max-parents=0 HEAD | Select-Object -First 1
+            }
+
+            $changedPaths = @(git diff --name-only $baseSha $env:GITHUB_SHA)
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to determine changed paths."
+            }
+
+            foreach ($path in $changedPaths) {
+              $normalizedPath = $path.Replace("\", "/")
+
+              if ($normalizedPath -match "^(apps/api/|libs/shared/|\.config/dotnet-tools\.json$)") {
+                $deployApi = $true
+              }
+
+              if ($normalizedPath -match "^(apps/mobile/|tools/mobile/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)") {
+                $buildAndroid = $true
+              }
+            }
+          }
+          elseif ($env:EVENT_NAME -eq "workflow_dispatch") {
+            $deployApi = $env:MANUAL_DEPLOY_API -eq "true"
+            $buildAndroid = $env:MANUAL_BUILD_ANDROID -eq "true"
+          }
+          else {
+            throw "Unsupported workflow event '$($env:EVENT_NAME)'."
+          }
+
+          $deployApiValue = $deployApi.ToString().ToLowerInvariant()
+          $buildAndroidValue = $buildAndroid.ToString().ToLowerInvariant()
+          "deploy_api=$deployApiValue" | Add-Content $env:GITHUB_OUTPUT
+          "build_android=$buildAndroidValue" | Add-Content $env:GITHUB_OUTPUT
+
+          "## Production work selection" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- API migration and deployment: $deployApiValue" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- Android APK: $buildAndroidValue" | Add-Content $env:GITHUB_STEP_SUMMARY
+
+  deploy-api:
+    name: Test, Migrate, And Deploy API
+    needs: changes
+    if: needs.changes.outputs.deploy_api == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
       - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Validate workflow inputs
+      - name: Validate production inputs
         env:
           PROD_DB_CONNECTION_STRING: ${{ secrets.PROD_DB_CONNECTION_STRING }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         shell: pwsh
         run: |
-          if ([string]::IsNullOrWhiteSpace("${{ env.AZURE_RESOURCE_GROUP }}")) {
-            throw "Repository variable AZURE_API_RESOURCE_GROUP must be configured."
+          $requiredValues = [ordered]@{
+            AZURE_API_RESOURCE_GROUP = "${{ env.AZURE_RESOURCE_GROUP }}"
+            PROD_DB_CONNECTION_STRING = $env:PROD_DB_CONNECTION_STRING
+            AZURE_CLIENT_ID = $env:AZURE_CLIENT_ID
+            AZURE_TENANT_ID = $env:AZURE_TENANT_ID
+            AZURE_SUBSCRIPTION_ID = $env:AZURE_SUBSCRIPTION_ID
           }
 
-          if ([string]::IsNullOrWhiteSpace($env:PROD_DB_CONNECTION_STRING)) {
-            throw "GitHub secret PROD_DB_CONNECTION_STRING must be configured."
+          foreach ($entry in $requiredValues.GetEnumerator()) {
+            if ([string]::IsNullOrWhiteSpace($entry.Value)) {
+              throw "Required production setting '$($entry.Key)' is not configured."
+            }
           }
 
       - name: Restore local .NET tools
@@ -65,13 +163,36 @@ jobs:
             throw "dotnet tool restore failed."
           }
 
-      - name: Restore API dependencies
+      - name: Restore backend dependencies
         shell: pwsh
         run: |
-          dotnet restore $env:API_PROJECT_PATH
+          dotnet restore $env:API_SOLUTION_PATH
           if ($LASTEXITCODE -ne 0) {
-            throw "dotnet restore failed for the API project."
+            throw "dotnet restore failed for the backend solution."
           }
+
+      - name: Run backend release gate
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts/test-results" | Out-Null
+          dotnet test $env:API_SOLUTION_PATH `
+            --configuration Release `
+            --no-restore `
+            --logger "trx;LogFileName=backend-tests.trx" `
+            --results-directory "artifacts/test-results"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Backend tests failed. Production migration and deployment are blocked."
+          }
+
+      - name: Retain backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nsfinance-backend-tests-${{ github.run_number }}
+          path: artifacts/test-results/*.trx
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Publish API project
         shell: pwsh
@@ -79,7 +200,6 @@ jobs:
           Remove-Item $env:PUBLISH_OUTPUT_PATH -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_PATH | Out-Null
 
-          # Publish the API project directly so the deployment artifact contains only the app output.
           dotnet publish $env:API_PROJECT_PATH `
             --configuration Release `
             --output $env:PUBLISH_OUTPUT_PATH `
@@ -88,12 +208,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "dotnet publish failed for the API project."
           }
-
-      - name: Show published files
-        shell: pwsh
-        run: |
-          Write-Host "Published output path: $env:PUBLISH_OUTPUT_PATH"
-          Get-ChildItem $env:PUBLISH_OUTPUT_PATH | Select-Object Name, Length, LastWriteTimeUtc
 
       - name: Create EF Core migration bundle
         env:
@@ -106,45 +220,30 @@ jobs:
           $env:NSFINANCE_DB_CONNECTION_STRING = $env:PROD_DB_CONNECTION_STRING
           $env:ConnectionStrings__DefaultConnection = $env:PROD_DB_CONNECTION_STRING
 
-          # Use an EF migration bundle in CI/CD so production schema changes happen before deploy,
-          # without depending on app-startup auto-migrations on Azure.
           dotnet ef migrations bundle `
             --project $env:API_PROJECT_PATH `
             --startup-project $env:API_PROJECT_PATH `
             --configuration Release `
             --output $env:MIGRATION_BUNDLE_PATH
 
-          if ($LASTEXITCODE -ne 0) {
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $env:MIGRATION_BUNDLE_PATH)) {
             throw "EF Core migration bundle creation failed."
           }
-
-          if (-not (Test-Path $env:MIGRATION_BUNDLE_PATH)) {
-            throw "EF Core migration bundle was not created at $env:MIGRATION_BUNDLE_PATH"
-          }
-
-          Write-Host "Migration bundle path: $env:MIGRATION_BUNDLE_PATH"
-          Get-Item $env:MIGRATION_BUNDLE_PATH | Select-Object FullName, Length, LastWriteTimeUtc
 
       - name: Run EF Core migrations against production database
         env:
           PROD_DB_CONNECTION_STRING: ${{ secrets.PROD_DB_CONNECTION_STRING }}
         shell: pwsh
         run: |
-          Write-Host "Starting EF Core migration bundle execution against the production database."
-
           $env:NSFINANCE_DB_CONNECTION_STRING = $env:PROD_DB_CONNECTION_STRING
           $env:ConnectionStrings__DefaultConnection = $env:PROD_DB_CONNECTION_STRING
-
-          Write-Host "Using mapped database environment variables required by API runtime/design-time configuration."
 
           chmod +x $env:MIGRATION_BUNDLE_PATH
           & $env:MIGRATION_BUNDLE_PATH --connection "$env:PROD_DB_CONNECTION_STRING"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "EF Core migration bundle execution failed. API deployment will not continue."
+            throw "Production migration failed. API deployment will not continue."
           }
-
-          Write-Host "EF Core migration bundle completed successfully."
 
       - name: Archive published output
         shell: pwsh
@@ -155,33 +254,18 @@ jobs:
             -DestinationPath $env:DEPLOY_PACKAGE_PATH `
             -Force
 
-          Write-Host "Deploy package path: $env:DEPLOY_PACKAGE_PATH"
-          Get-Item $env:DEPLOY_PACKAGE_PATH | Select-Object FullName, Length, LastWriteTimeUtc
-
       - name: Azure login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Show Azure target
-        shell: pwsh
-        run: |
-          Write-Host "Deploying package to App Service: $env:AZURE_WEBAPP_NAME"
-          Write-Host "Resource group: $env:AZURE_RESOURCE_GROUP"
-          Write-Host "GitHub Actions is the authoritative deployment path for this app."
-
-      - name: Clean deploy published API artifact
+      - name: Clean deploy API artifact
         uses: azure/cli@v2
         with:
           inlineScript: |
             set -euo pipefail
-
-            echo "Deploy package: $DEPLOY_PACKAGE_PATH"
-            echo "EF Core migrations already ran successfully in CI/CD before this deploy step."
-            echo "Using 'az webapp deploy --clean true' so the App Service content directory is replaced by the current publish output."
-            echo "Manual Kudu or zip deploys should not be used, because they can leave stale binaries behind and bypass the migration workflow."
 
             az webapp deploy \
               --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -192,14 +276,172 @@ jobs:
               --restart true \
               --async false
 
-      - name: Show deployed app summary
-        uses: azure/cli@v2
+      - name: Verify production API health
+        shell: pwsh
+        run: |
+          $healthy = $false
+
+          foreach ($attempt in 1..12) {
+            try {
+              $response = Invoke-RestMethod -Uri "$env:PRODUCTION_API_URL/health" -TimeoutSec 20
+              if ($response.status -eq "Healthy") {
+                $healthy = $true
+                break
+              }
+            }
+            catch {
+              Write-Host "Health attempt $attempt did not succeed yet."
+            }
+
+            Start-Sleep -Seconds 10
+          }
+
+          if (-not $healthy) {
+            throw "Production API health verification failed after deployment."
+          }
+
+  android-quality:
+    name: Validate Android Release
+    needs: changes
+    if: needs.changes.outputs.build_android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
         with:
-          inlineScript: |
-            az webapp show \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --name "$AZURE_WEBAPP_NAME" \
-              --query "{name:name,state:state,defaultHostName:defaultHostName}" \
-              --output table
+          version: ${{ env.PNPM_VERSION }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Android production release checks
+        shell: pwsh
+        run: ./tools/mobile/Test-AndroidRelease.ps1
+
+  build-android-apk:
+    name: Build And Retain Android APK
+    needs:
+      - changes
+      - deploy-api
+      - android-quality
+    if: >-
+      ${{
+        always() &&
+        needs.changes.outputs.build_android == 'true' &&
+        needs.android-quality.result == 'success' &&
+        (needs.deploy-api.result == 'success' || needs.deploy-api.result == 'skipped')
+      }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Validate Expo token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:EXPO_TOKEN)) {
+            throw "GitHub environment secret EXPO_TOKEN must be configured."
+          }
+
+      - name: Set up Expo and EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: ${{ env.EAS_VERSION }}
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify live API before spending a build credit
+        shell: pwsh
+        run: |
+          $response = Invoke-RestMethod -Uri "$env:PRODUCTION_API_URL/health" -TimeoutSec 20
+          if ($response.status -ne "Healthy") {
+            throw "The production API is not healthy. Android build is blocked."
+          }
+
+      - name: Build, download, and verify APK
+        id: package
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        shell: pwsh
+        run: ./tools/mobile/Invoke-AndroidBuild.ps1 -OutputDirectory local-builds/ci -SkipQualityChecks
+
+      - name: Upload installable Android artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nsfinance-android-${{ github.run_number }}-${{ steps.package.outputs.build_id }}
+          path: |
+            ${{ steps.package.outputs.artifact_path }}
+            ${{ steps.package.outputs.manifest_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Write Android delivery summary
+        env:
+          ARTIFACT_NAME: ${{ steps.package.outputs.artifact_name }}
+          BUILD_ID: ${{ steps.package.outputs.build_id }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        shell: pwsh
+        run: |
+          "## Android APK ready" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- File: ``$env:ARTIFACT_NAME``" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- EAS build ID: ``$env:BUILD_ID``" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- SHA-256: ``$env:SHA256``" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- Download it from this workflow run's Artifacts section." | Add-Content $env:GITHUB_STEP_SUMMARY
+
+  delivery-summary:
+    name: Production Delivery Summary
+    needs:
+      - changes
+      - deploy-api
+      - android-quality
+      - build-android-apk
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Record final job states
+        env:
+          API_REQUESTED: ${{ needs.changes.outputs.deploy_api }}
+          ANDROID_REQUESTED: ${{ needs.changes.outputs.build_android }}
+          API_RESULT: ${{ needs.deploy-api.result }}
+          ANDROID_QUALITY_RESULT: ${{ needs.android-quality.result }}
+          ANDROID_BUILD_RESULT: ${{ needs.build-android-apk.result }}
+        shell: pwsh
+        run: |
+          "## NSFinance production delivery" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- API requested: $env:API_REQUESTED; result: $env:API_RESULT" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- Android requested: $env:ANDROID_REQUESTED" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- Android checks: $env:ANDROID_QUALITY_RESULT" | Add-Content $env:GITHUB_STEP_SUMMARY
+          "- Android APK: $env:ANDROID_BUILD_RESULT" | Add-Content $env:GITHUB_STEP_SUMMARY

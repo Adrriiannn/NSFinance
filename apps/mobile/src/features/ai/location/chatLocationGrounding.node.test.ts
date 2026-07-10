@@ -156,7 +156,7 @@ test("chat location diagnostics allow non-nearby marker", () => {
 
 test("chat location attachment resolves gps for location-dependent prompts when permission is granted", async () => {
   const attachment = await resolveChatLocationAttachment(
-    "what can i do later tonight?",
+    "what can i do near me later tonight?",
     "granted",
     async (forceFresh) => {
       assert.equal(forceFresh, false);
