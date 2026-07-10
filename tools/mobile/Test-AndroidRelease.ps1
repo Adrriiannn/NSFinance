@@ -159,7 +159,7 @@ foreach ($requiredManifestValue in @(
 }
 
 $gradleProperties = Get-Content -Raw $gradlePropertiesPath
-$newArchitectureMatch = [regex]::Match($gradleProperties, "(?m)^newArchEnabled=(true|false)$")
+$newArchitectureMatch = [regex]::Match($gradleProperties, "(?m)^newArchEnabled=(true|false)\r?$")
 if (-not $newArchitectureMatch.Success) {
     throw "android/gradle.properties does not define newArchEnabled."
 }
