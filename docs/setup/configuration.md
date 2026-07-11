@@ -2,49 +2,55 @@
 
 This is the canonical source for NSFinance configuration ownership.
 
-## API config files
+## API Config Files
 
 - `apps/api/src/NSFinance.Api/appsettings.json`
-  - shared safe defaults only
-- `apps/api/src/NSFinance.Api/appsettings.Development.json`
-  - development-only non-secret overrides
+  - shared safe defaults
+  - live TrueLayer defaults
+  - Azure OpenAI provider selected by default
 - `apps/api/src/NSFinance.Api/appsettings.Local.json`
-  - local secrets only (gitignored)
+  - machine-local secrets only
+  - gitignored
 - `apps/api/src/NSFinance.Api/appsettings.Local.example.json`
-  - onboarding template for local secret structure
+  - onboarding template for the local secret structure
 
-## Local API secrets
+The API reads configuration in this order:
 
-Store local secrets only in:
+1. `appsettings.json`
+2. `appsettings.Local.json`
+3. environment variables
 
-- `apps/api/src/NSFinance.Api/appsettings.Local.json`
+## API Secrets
 
-Required local secret keys:
+Store machine-local secrets only in:
+
+```text
+apps/api/src/NSFinance.Api/appsettings.Local.json
+```
+
+Required keys:
 
 - `ConnectionStrings:DefaultConnection`
 - `Jwt:SigningKey`
 - `TrueLayer:ClientId`
 - `TrueLayer:ClientSecret`
-
-Google sign-in keys (required only when Google sign-in is enabled locally):
-
+- `TrueLayer:RedirectUri`
 - `GoogleAuth:WebClientId`
-- `GoogleAuth:AndroidClientIdDebug`
 - `GoogleAuth:AndroidClientIdProd`
 
-Reserved key for upcoming backend wiring:
+AI keys:
+
+- `AI:AzureOpenAI:Endpoint`
+- `AI:AzureOpenAI:Deployment`
+- `AI:AzureOpenAI:ApiKey` or managed identity settings
+
+Reserved key for backend captcha verification:
 
 - `Turnstile:SecretKey`
 
-Optional local override key:
+## Azure App Settings
 
-- `GoogleAuth:WebClientId`
-- `GoogleAuth:AndroidClientIdDebug`
-- `GoogleAuth:AndroidClientIdProd`
-
-## Production secrets (Azure)
-
-Production must use Azure App Service settings / Key Vault / environment variables.
+Production Azure settings should come from App Service settings and Key Vault-backed values.
 
 Primary keys:
 
@@ -53,56 +59,60 @@ Primary keys:
 - `TrueLayer__ClientId`
 - `TrueLayer__ClientSecret`
 - `TrueLayer__RedirectUri`
-- `TrueLayer__Environment`
-- `TrueLayer__AuthBaseUrl`
-- `TrueLayer__ApiBaseUrl`
-- `DataProtection__KeysPath` (optional explicit key-ring path)
-- `GoogleAuth__WebClientId` (recommended)
-- `GoogleAuth__AndroidClientIdDebug` (optional outside local/dev)
-- `GoogleAuth__AndroidClientIdProd` (recommended)
+- `TrueLayer__Environment=live`
+- `TrueLayer__AuthBaseUrl=https://auth.truelayer.com`
+- `TrueLayer__ApiBaseUrl=https://api.truelayer.com`
+- `DataProtection__KeysPath` or `NSFINANCE_DATA_PROTECTION_KEYS_PATH`
+- `GoogleAuth__WebClientId`
+- `GoogleAuth__AndroidClientIdProd`
 
-## Runtime sources
+Environment variable aliases:
 
-API runtime reads configuration in this order:
+- `NSFINANCE_DB_CONNECTION_STRING`
+- `NSFINANCE_JWT_SIGNING_KEY`
+- `NSFINANCE_ALLOWED_CORS_ORIGINS`
+- `NSFINANCE_GOOGLE_WEB_CLIENT_ID`
+- `NSFINANCE_GOOGLE_ANDROID_CLIENT_ID_PROD`
+- `TRUELAYER_CLIENT_ID`
+- `TRUELAYER_CLIENT_SECRET`
+- `TRUELAYER_REDIRECT_URI`
+- `TRUELAYER_ENVIRONMENT`
+- `TRUELAYER_AUTH_BASE_URL`
+- `TRUELAYER_API_BASE_URL`
+- `NSFINANCE_DATA_PROTECTION_KEYS_PATH`
 
-1. `appsettings.json`
-2. `appsettings.{Environment}.json`
-3. `appsettings.Local.json` (development only)
-4. environment variables
+## TrueLayer
 
-## Current API consumption status
+- Environment is live-only.
+- Callback URI is `https://api.finance.nsireland.ie/api/banking/truelayer/callback`.
+- Auth base URL is `https://auth.truelayer.com`.
+- API base URL is `https://api.truelayer.com`.
+- Provider targeting is backend-driven and currently uses Ireland provider group `ie-ob-all`.
 
-Actively consumed by runtime:
+Requested OAuth scopes:
 
-- database connection string
-- JWT options and signing key
-- TrueLayer options
-- Google auth client IDs (web + android audiences)
-- ASP.NET DataProtection key-ring path (`DataProtection:KeysPath` or `NSFINANCE_DATA_PROTECTION_KEYS_PATH`)
+- `info`
+- `accounts`
+- `cards`
+- `balance`
+- `transactions`
+- `offline_access`
+- `direct_debits`
+- `standing_orders`
 
-TrueLayer note:
+## Mobile Public Config
 
-- provider/country targeting is decided by backend auth-link generation logic, not by TrueLayer Console auth-link builder UI state.
-- requested OAuth scopes are also backend-driven (`BankingConstants.TrueLayerScopes.Default`) and currently include:
-  - `info`
-  - `accounts`
-  - `cards`
-  - `balance`
-  - `transactions`
-  - `offline_access`
-  - `direct_debits`
-  - `standing_orders`
+`EXPO_PUBLIC_*` values are public and bundled into the client app. Never place private secrets in these keys.
 
-Not yet bound by runtime services (template-ready only):
+Expected keys:
 
-- `Turnstile:SecretKey`
-- email transport/env constants
+- `EXPO_PUBLIC_APP_ENV=production`
+- `EXPO_PUBLIC_API_BASE_URL=https://api.finance.nsireland.ie`
+- `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`
+- `EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID_PROD`
+- `EXPO_PUBLIC_TURNSTILE_PAGE_BASE_URL=https://api.finance.nsireland.ie`
 
-## Mobile public config
+## Not Yet Active
 
-`EXPO_PUBLIC_*` values are public and bundled into the client app.
-Never place private secrets in `EXPO_PUBLIC_*` keys.
-
-Turnstile public key for the register challenge:
-
-- `EXPO_PUBLIC_TURNSTILE_SITE_KEY`
+- `Turnstile:SecretKey` is template-ready but not yet used by runtime services.
+- Email transport environment constants exist for provider wiring, but no email transport service is active yet.

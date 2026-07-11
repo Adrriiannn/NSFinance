@@ -8,17 +8,10 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
 {
     public AppDbContext CreateDbContext(string[] args)
     {
-        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Development";
-
         var configurationBuilder = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile($"appsettings.{environment}.json", optional: true);
-
-        if (environment.Equals("Development", StringComparison.OrdinalIgnoreCase))
-        {
-            configurationBuilder.AddJsonFile("appsettings.Local.json", optional: true);
-        }
+            .AddJsonFile("appsettings.Local.json", optional: true);
 
         var configuration = configurationBuilder
             .AddEnvironmentVariables()

@@ -1,7 +1,5 @@
-using System.Text.Json;
 using NSFinance.Api.Infrastructure.RequestContext;
 using NSFinance.Api.Persistence;
-using NSFinance.Api.Persistence.Entities;
 
 namespace NSFinance.Api.Modules.Audit.Services;
 
@@ -10,11 +8,6 @@ public sealed class AuditService(
     IRequestContextAccessor requestContext,
     ILogger<AuditService> logger) : IAuditService
 {
-    private static readonly JsonSerializerOptions MetadataSerializerOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
-
     public async Task WriteEventAsync(
         string category,
         string eventName,
@@ -25,22 +18,15 @@ public sealed class AuditService(
         object? metadata,
         CancellationToken cancellationToken)
     {
-        var auditEvent = new AuditEvent
-        {
-            Id = Guid.NewGuid(),
-            ActorType = actorType,
-            ActorId = actorId,
-            TargetEntityType = targetEntityType,
-            TargetEntityId = targetEntityId,
-            EventCategory = category,
-            EventName = eventName,
-            EventTimestampUtc = DateTime.UtcNow,
-            SourceChannel = requestContext.SourceChannel,
-            CorrelationId = requestContext.CorrelationId,
-            MetadataJson = metadata is null
-                ? null
-                : JsonSerializer.Serialize(metadata, MetadataSerializerOptions)
-        };
+        var auditEvent = AuditEventFactory.Create(
+            requestContext,
+            category,
+            eventName,
+            targetEntityType,
+            targetEntityId,
+            actorId,
+            actorType,
+            metadata);
 
         dbContext.AuditEvents.Add(auditEvent);
         await dbContext.SaveChangesAsync(cancellationToken);

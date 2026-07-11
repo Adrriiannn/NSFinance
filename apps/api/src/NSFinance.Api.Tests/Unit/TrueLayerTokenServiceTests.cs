@@ -37,10 +37,10 @@ public class TrueLayerTokenServiceTests
             new TrueLayerResolvedConfiguration(
                 "client",
                 "secret",
-                "http://localhost:5080/api/banking/truelayer/callback",
-                "sandbox",
-                "https://auth.truelayer-sandbox.com",
-                "https://api.truelayer-sandbox.com"),
+                "https://api.finance.nsireland.ie/api/banking/truelayer/callback",
+                "live",
+                "https://auth.truelayer.com",
+                "https://api.truelayer.com"),
             "code-1",
             CancellationToken.None);
 
@@ -50,13 +50,13 @@ public class TrueLayerTokenServiceTests
         Assert.Equal("accounts balance transactions offline_access", result.Value.Scope);
         Assert.True(result.Value.AccessTokenExpiresUtc > DateTime.UtcNow.AddMinutes(15));
         Assert.NotNull(requestCapture.RequestUri);
-        Assert.Equal("https://auth.truelayer-sandbox.com/connect/token", requestCapture.RequestUri!.ToString());
+        Assert.Equal("https://auth.truelayer.com/connect/token", requestCapture.RequestUri!.ToString());
         Assert.Equal("application/x-www-form-urlencoded", requestCapture.ContentType);
         Assert.Contains("grant_type=authorization_code", requestCapture.Body, StringComparison.Ordinal);
         Assert.Contains("client_id=client", requestCapture.Body, StringComparison.Ordinal);
         Assert.Contains("client_secret=secret", requestCapture.Body, StringComparison.Ordinal);
         Assert.Contains("code=code-1", requestCapture.Body, StringComparison.Ordinal);
-        Assert.Contains("redirect_uri=http%3A%2F%2Flocalhost%3A5080%2Fapi%2Fbanking%2Ftruelayer%2Fcallback", requestCapture.Body, StringComparison.Ordinal);
+        Assert.Contains("redirect_uri=https%3A%2F%2Fapi.finance.nsireland.ie%2Fapi%2Fbanking%2Ftruelayer%2Fcallback", requestCapture.Body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -84,10 +84,10 @@ public class TrueLayerTokenServiceTests
             new TrueLayerResolvedConfiguration(
                 "client",
                 "secret",
-                "http://localhost:5080/api/banking/truelayer/callback",
-                "sandbox",
-                "https://auth.truelayer-sandbox.com",
-                "https://api.truelayer-sandbox.com"),
+                "https://api.finance.nsireland.ie/api/banking/truelayer/callback",
+                "live",
+                "https://auth.truelayer.com",
+                "https://api.truelayer.com"),
             "code-1",
             CancellationToken.None);
 
@@ -122,10 +122,10 @@ public class TrueLayerTokenServiceTests
             new TrueLayerResolvedConfiguration(
                 "client",
                 "secret",
-                "http://localhost:5080/api/banking/truelayer/callback",
-                "sandbox",
-                "https://auth.truelayer-sandbox.com",
-                "https://api.truelayer-sandbox.com"),
+                "https://api.finance.nsireland.ie/api/banking/truelayer/callback",
+                "live",
+                "https://auth.truelayer.com",
+                "https://api.truelayer.com"),
             "very-secret-auth-code",
             CancellationToken.None);
 

@@ -10,11 +10,7 @@ public static class TrueLayerReturnUriContract
 
     private static readonly HashSet<string> SupportedSchemes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "nsfinance",
-        "nsfinance-dev",
-        "exp+nsfinance-mobile",
-        "exp",
-        "exps"
+        "nsfinance"
     };
 
     public static string? Normalize(string? appReturnUri)

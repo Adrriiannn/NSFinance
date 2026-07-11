@@ -4,42 +4,40 @@ ASP.NET Core modular monolith backend for NSFinance mobile.
 
 ## Run
 
-```bash
+```powershell
 dotnet run --project .\src\NSFinance.Api\NSFinance.Api.csproj
 ```
 
 ## Configuration
 
-- Shared base config: `src/NSFinance.Api/appsettings.json`
-- Development-safe overrides: `src/NSFinance.Api/appsettings.Development.json` (no secrets)
-- Local secrets (only path, gitignored): `src/NSFinance.Api/appsettings.Local.json`
-- Local template: `src/NSFinance.Api/appsettings.Local.example.json`
-- Production should use App Service/Key Vault environment variables (no secrets in source).
-- Deployment checklist: `..\..\docs\deployment\azure-production.md`
-- TrueLayer callback URIs:
-  - Development: `http://localhost:5080/api/banking/truelayer/callback`
-  - Production: `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
+- Shared defaults: `src/NSFinance.Api/appsettings.json`
+- Machine-local secrets: `src/NSFinance.Api/appsettings.Local.json` (gitignored)
+- Secret template: `src/NSFinance.Api/appsettings.Local.example.json`
+- Azure deployment checklist: `..\..\docs\deployment\azure-production.md`
+- TrueLayer callback URI: `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 
-### Local secret bootstrap
+### Secret Bootstrap
 
 1. Copy `src/NSFinance.Api/appsettings.Local.example.json` to `src/NSFinance.Api/appsettings.Local.json`.
-2. Fill local secrets in `appsettings.Local.json`:
+2. Fill production-connected secrets:
    - `ConnectionStrings:DefaultConnection`
    - `Jwt:SigningKey`
    - `TrueLayer:ClientId`
    - `TrueLayer:ClientSecret`
+   - `TrueLayer:RedirectUri`
    - `GoogleAuth:WebClientId`
-   - `GoogleAuth:AndroidClientIdDebug`
    - `GoogleAuth:AndroidClientIdProd`
-   - `Turnstile:SecretKey` (reserved for captcha backend wiring)
+   - Azure OpenAI settings under `AI:AzureOpenAI`
+   - `Turnstile:SecretKey` when backend verification is wired
 
-### Active config keys
+### Active Config Keys
 
-- API consumes `ConnectionStrings:DefaultConnection`, `Jwt:SigningKey`, `TrueLayer:*`, and Google auth client IDs from `GoogleAuth:WebClientId`, `GoogleAuth:AndroidClientIdDebug`, and `GoogleAuth:AndroidClientIdProd` (plus `GoogleAuth:ClientId` as a compatibility alias).
+- API consumes `ConnectionStrings:DefaultConnection`, `Jwt:SigningKey`, `TrueLayer:*`, and Google auth client IDs from `GoogleAuth:WebClientId` and `GoogleAuth:AndroidClientIdProd`.
+- TrueLayer is live-only. The API validates live base URLs and HTTPS callback shape at startup.
 - `Turnstile:SecretKey` is template-ready but not yet used at runtime.
-- Email env constants exist for future transport wiring, but no email options binding is active yet.
+- Email env constants exist for provider wiring, but no email transport service is active yet.
 
-## Key endpoints
+## Key Endpoints
 
 - `GET /health` (public)
 - `POST /api/auth/register`
@@ -86,15 +84,9 @@ dotnet run --project .\src\NSFinance.Api\NSFinance.Api.csproj
 - `POST /api/banking/connections/{connectionId}/sync`
 - `POST /api/banking/connections/{connectionId}/disconnect`
 
-All finance endpoints require a JWT bearer token.
+Finance endpoints require a JWT bearer token.
 
-## Dev seed behavior
+## Startup Data
 
-In development startup:
-
-- migrations are applied
-- baseline policy/version records are seeded
-- demo user is seeded with credentials:
-  - `demo@nsfinance.local`
-  - `Password123!`
-- demo categories/accounts/transactions are seeded
+- Baseline policy/version records are seeded when `Database:SeedPolicyDataOnStartup` is enabled.
+- Database migrations are controlled by `Database:ApplyMigrationsOnStartup`; production deployment should use the migration workflow in `docs/deployment/database-migrations.md`.

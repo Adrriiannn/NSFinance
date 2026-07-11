@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Google.Apis.Auth;
@@ -93,6 +93,7 @@ public class AuthAndTrustIntegrationTests
         harness.ConfigureGoogleToken(
             "google-valid-token",
             CreateGooglePayload("sub-google-1", "google.new.user@test.local", emailVerified: true, "Google User"));
+        var saveCountBeforeLogin = harness.SaveChangesCount;
 
         var result = await harness.AuthService.LoginWithGoogleAsync(
             new GoogleLoginRequest("google-valid-token", new DeviceContextDto(null, "Android device", "android", "14", "1.0.0")),
@@ -125,6 +126,7 @@ public class AuthAndTrustIntegrationTests
         Assert.Contains("google_user_created", auditEvents);
         Assert.Contains("google_provider_link_created", auditEvents);
         Assert.Contains("google_login_success", auditEvents);
+        Assert.Equal(saveCountBeforeLogin + 1, harness.SaveChangesCount);
     }
 
     [Fact]
@@ -157,6 +159,32 @@ public class AuthAndTrustIntegrationTests
             .Where(x => x.ProviderType == "google_oidc")
             .ToListAsync();
         Assert.Single(providers);
+    }
+
+    [Fact]
+    public async Task GoogleLogin_ExistingProviderSubject_TakesPrecedenceOverAnotherUsersMatchingEmail()
+    {
+        await using var harness = new TestHarness();
+        harness.ConfigureGoogleToken(
+            "google-subject-owner-token",
+            CreateGooglePayload("sub-google-subject-owner", "subject.owner@test.local", emailVerified: true, "Subject Owner"));
+
+        var subjectOwner = await harness.AuthService.LoginWithGoogleAsync(
+            new GoogleLoginRequest("google-subject-owner-token", null),
+            CancellationToken.None);
+        Assert.True(subjectOwner.Succeeded);
+
+        await harness.RegisterAsync("google.changed.email@test.local", "ValidPassword123");
+        harness.ConfigureGoogleToken(
+            "google-subject-owner-changed-email-token",
+            CreateGooglePayload("sub-google-subject-owner", "google.changed.email@test.local", emailVerified: true, "Subject Owner"));
+
+        var secondLogin = await harness.AuthService.LoginWithGoogleAsync(
+            new GoogleLoginRequest("google-subject-owner-changed-email-token", null),
+            CancellationToken.None);
+
+        Assert.True(secondLogin.Succeeded);
+        Assert.Equal(subjectOwner.Value!.User.Id, secondLogin.Value!.User.Id);
     }
 
     [Fact]
@@ -225,10 +253,11 @@ public class AuthAndTrustIntegrationTests
             new ForgotPasswordRequest("reset.flow@test.local"),
             CancellationToken.None);
         Assert.True(requestReset.Succeeded);
-        Assert.False(string.IsNullOrWhiteSpace(requestReset.Value?.DebugToken));
+        var resetToken = harness.TokenSecretService.LastCreatedToken;
+        Assert.False(string.IsNullOrWhiteSpace(resetToken));
 
         var reset = await harness.AuthService.ResetPasswordAsync(
-            new ResetPasswordRequest(requestReset.Value!.DebugToken!, "NewValidPassword123"),
+            new ResetPasswordRequest(resetToken, "NewValidPassword123"),
             CancellationToken.None);
         Assert.True(reset.Succeeded);
 
@@ -312,11 +341,12 @@ public class AuthAndTrustIntegrationTests
 
         var deletionCodeRequest = await harness.AuthService.RequestAccountDeletionCodeAsync(CancellationToken.None);
         Assert.True(deletionCodeRequest.Succeeded);
-        Assert.False(string.IsNullOrWhiteSpace(deletionCodeRequest.Value?.DebugToken));
+        var deletionCode = harness.TokenSecretService.LastCreatedToken;
+        Assert.False(string.IsNullOrWhiteSpace(deletionCode));
 
         var deleteRequest = await harness.SupportService.CreateDeletionRequestAsync(
             new CreateDeletionRequestRequest(
-                deletionCodeRequest.Value!.DebugToken!,
+                deletionCode,
                 "integration test deletion"),
             CancellationToken.None);
         Assert.True(deleteRequest.Succeeded);
@@ -335,14 +365,15 @@ public class AuthAndTrustIntegrationTests
             new ForgotPasswordRequest("negative.flow@test.local"),
             CancellationToken.None);
         Assert.True(requestReset.Succeeded);
+        var resetToken = harness.TokenSecretService.LastCreatedToken;
 
-        var tokenHash = harness.TokenSecretService.HashToken(requestReset.Value!.DebugToken!);
+        var tokenHash = harness.TokenSecretService.HashToken(resetToken);
         var tokenEntity = await harness.DbContext.EmailActionTokens.SingleAsync(x => x.TokenHash == tokenHash);
         tokenEntity.ExpiresUtc = DateTime.UtcNow.AddMinutes(-1);
         await harness.DbContext.SaveChangesAsync();
 
         var expiredReset = await harness.AuthService.ResetPasswordAsync(
-            new ResetPasswordRequest(requestReset.Value.DebugToken!, "AnotherValidPassword123"),
+            new ResetPasswordRequest(resetToken, "AnotherValidPassword123"),
             CancellationToken.None);
         Assert.False(expiredReset.Succeeded);
         Assert.Equal("reset_token_invalid", expiredReset.Error?.Code);
@@ -350,7 +381,8 @@ public class AuthAndTrustIntegrationTests
         var secondResetRequest = await harness.AuthService.RequestPasswordResetAsync(
             new ForgotPasswordRequest("negative.flow@test.local"),
             CancellationToken.None);
-        var secondToken = secondResetRequest.Value!.DebugToken!;
+        Assert.True(secondResetRequest.Succeeded);
+        var secondToken = harness.TokenSecretService.LastCreatedToken;
 
         var firstUse = await harness.AuthService.ResetPasswordAsync(
             new ResetPasswordRequest(secondToken, "AnotherValidPassword123"),
@@ -392,7 +424,7 @@ public class AuthAndTrustIntegrationTests
             Id = connectionId,
             UserId = register.User.Id,
             ProviderName = "TrueLayer",
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Test Bank",
             Status = "connected",
             CreatedUtc = now,
@@ -564,9 +596,12 @@ public class AuthAndTrustIntegrationTests
 
     private sealed class TestHarness : IAsyncDisposable
     {
+        private readonly CountingSaveChangesInterceptor _saveChangesInterceptor = new();
+
         public AppDbContext DbContext { get; }
+        public int SaveChangesCount => _saveChangesInterceptor.SaveCount;
         public MutableCurrentUserProvider CurrentUserProvider { get; }
-        public TokenSecretService TokenSecretService { get; }
+        public DeterministicTokenSecretService TokenSecretService { get; }
         public SessionService SessionService { get; }
         public StubGoogleIdTokenVerifier GoogleIdTokenVerifier { get; }
         public AuthService AuthService { get; }
@@ -580,6 +615,7 @@ public class AuthAndTrustIntegrationTests
         {
             DbContext = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
                 .UseInMemoryDatabase($"integration-tests-{Guid.NewGuid():N}")
+                .AddInterceptors(_saveChangesInterceptor)
                 .Options);
 
             _jwtOptions = new JwtOptions
@@ -597,7 +633,7 @@ public class AuthAndTrustIntegrationTests
             };
 
             CurrentUserProvider = new MutableCurrentUserProvider();
-            TokenSecretService = new TokenSecretService();
+            TokenSecretService = new DeterministicTokenSecretService();
             GoogleIdTokenVerifier = new StubGoogleIdTokenVerifier();
 
             var jwtOptions = Options.Create(_jwtOptions);
@@ -629,7 +665,6 @@ public class AuthAndTrustIntegrationTests
                 new AuthAbuseService(DbContext, jwtOptions),
                 auditService,
                 requestContext,
-                new FakeHostEnvironment(),
                 jwtOptions,
                 NullLogger<AuthService>.Instance);
 
@@ -693,6 +728,28 @@ public class AuthAndTrustIntegrationTests
         public ValueTask DisposeAsync()
         {
             return DbContext.DisposeAsync();
+        }
+    }
+
+    private sealed class CountingSaveChangesInterceptor : SaveChangesInterceptor
+    {
+        public int SaveCount { get; private set; }
+
+        public override InterceptionResult<int> SavingChanges(
+            DbContextEventData eventData,
+            InterceptionResult<int> result)
+        {
+            SaveCount++;
+            return base.SavingChanges(eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            SaveCount++;
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
         }
     }
 
@@ -764,6 +821,20 @@ public class AuthAndTrustIntegrationTests
         }
     }
 
+    private sealed class DeterministicTokenSecretService : TokenSecretService
+    {
+        private int _counter;
+
+        public string LastCreatedToken { get; private set; } = string.Empty;
+
+        public override string CreateToken(int bytes = 48)
+        {
+            _counter++;
+            LastCreatedToken = $"integration-token-{_counter}";
+            return LastCreatedToken;
+        }
+    }
+
     private sealed class TestRequestContextAccessor : IRequestContextAccessor
     {
         public string CorrelationId => "integration-correlation-id";
@@ -772,14 +843,5 @@ public class AuthAndTrustIntegrationTests
         public string? UserAgent => "integration-tests";
         public string? Platform => "ios";
         public string? AppVersion => "1.0.0";
-    }
-
-    private sealed class FakeHostEnvironment : IHostEnvironment
-    {
-        public string EnvironmentName { get; set; } = "Development";
-        public string ApplicationName { get; set; } = "NSFinance.Api.Tests";
-        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
-        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } =
-            new Microsoft.Extensions.FileProviders.PhysicalFileProvider(AppContext.BaseDirectory);
     }
 }

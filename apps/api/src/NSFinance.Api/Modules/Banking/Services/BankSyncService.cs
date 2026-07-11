@@ -3666,6 +3666,12 @@ public sealed class BankSyncService(
             incrementalWindowStartUtc,
             now,
             cancellationToken);
+        var historicalTransferLinkIntegrityDriftWindow = includeHistorical
+            ? await FindLatestHistoricalTransferLinkIntegrityDriftWindowAsync(
+                connection.UserId,
+                incrementalWindowStartUtc,
+                cancellationToken)
+            : null;
 
         if (hasStaleIncrementalRows || hasTransferLinkIntegrityDrift)
         {
@@ -3724,6 +3730,60 @@ public sealed class BankSyncService(
                 incrementalCategorization.RowsRejectedAmbiguous,
                 hasStaleIncrementalRows,
                 hasTransferLinkIntegrityDrift);
+        }
+
+        if (historicalTransferLinkIntegrityDriftWindow is { } historicalDriftWindow)
+        {
+            var historicalIntegrityContextStartUtc = historicalDriftWindow.WindowStartUtc
+                .AddHours(-InternalTransferMatchMaxWindowHours);
+            var historicalIntegrityContextEndUtc = historicalDriftWindow.WindowEndUtc
+                .AddHours(InternalTransferMatchMaxWindowHours);
+
+            var historicalIntegrityMatched = await MatchLinkedInternalTransfersAsync(
+                connection.UserId,
+                now,
+                historicalIntegrityContextStartUtc,
+                historicalIntegrityContextEndUtc,
+                cancellationToken);
+            var historicalIntegrityRelationships = await ApplyTransactionRelationshipLayerAsync(
+                connection.UserId,
+                now,
+                historicalIntegrityContextStartUtc,
+                historicalIntegrityContextEndUtc,
+                cancellationToken);
+            var historicalIntegrityCategorization = await deterministicCategorizationService.CategorizeWindowAsync(
+                connection.UserId,
+                historicalDriftWindow.WindowStartUtc,
+                historicalDriftWindow.WindowEndUtc,
+                historicalIntegrityContextStartUtc,
+                historicalIntegrityContextEndUtc,
+                now,
+                cancellationToken);
+
+            if (historicalIntegrityMatched > 0)
+            {
+                deterministicMetrics.FalsePositiveCorrectionTotal.Add(historicalIntegrityMatched);
+            }
+
+            linkedTransfersMatched += historicalIntegrityMatched;
+            relationshipRowsUpserted += historicalIntegrityRelationships
+                + historicalIntegrityCategorization.RelationshipRowsUpserted;
+            rowsEvaluated += historicalIntegrityCategorization.RowsEvaluated;
+            batchesProcessed++;
+            modeParts.Add("historical_transfer_integrity");
+            hasChanges = true;
+
+            logger.LogInformation(
+                "Historical transfer integrity batch completed connectionId={ConnectionId} userId={UserId} windowStartUtc={WindowStartUtc} windowEndUtc={WindowEndUtc} contextStartUtc={ContextStartUtc} contextEndUtc={ContextEndUtc} linkedTransfersMatched={LinkedTransfersMatched} relationshipRowsUpserted={RelationshipRowsUpserted} rowsEvaluated={RowsEvaluated}",
+                connection.Id,
+                connection.UserId,
+                historicalDriftWindow.WindowStartUtc,
+                historicalDriftWindow.WindowEndUtc,
+                historicalIntegrityContextStartUtc,
+                historicalIntegrityContextEndUtc,
+                historicalIntegrityMatched,
+                historicalIntegrityRelationships + historicalIntegrityCategorization.RelationshipRowsUpserted,
+                historicalIntegrityCategorization.RowsEvaluated);
         }
 
         remainingWorkSnapshot = await GetDeterministicRemainingWorkSnapshotAsync(connection.UserId, cancellationToken);
@@ -4459,6 +4519,87 @@ public sealed class BankSyncService(
         return false;
     }
 
+    private readonly record struct TransferLinkIntegrityDriftWindow(
+        DateTime WindowStartUtc,
+        DateTime WindowEndUtc);
+
+    private async Task<TransferLinkIntegrityDriftWindow?> FindLatestHistoricalTransferLinkIntegrityDriftWindowAsync(
+        Guid userId,
+        DateTime historicalCutoffUtc,
+        CancellationToken cancellationToken)
+    {
+        var linkedFinancialAccountIds = await LoadLinkedFinancialAccountIdsAsync(userId, cancellationToken);
+        if (linkedFinancialAccountIds.Count == 0)
+        {
+            return null;
+        }
+
+        var linkedRows = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x =>
+                linkedFinancialAccountIds.Contains(x.FinancialAccountId)
+                && x.BookedAtUtc < historicalCutoffUtc
+                && x.TransferKind == TransactionTransferKind.LinkedInternal
+                && x.LinkedTransferTransactionId.HasValue)
+            .Select(x => new
+            {
+                x.Id,
+                x.BookedAtUtc,
+                CounterpartId = x.LinkedTransferTransactionId!.Value
+            })
+            .ToListAsync(cancellationToken);
+
+        if (linkedRows.Count == 0)
+        {
+            return null;
+        }
+
+        var counterpartIds = linkedRows
+            .Select(x => x.CounterpartId)
+            .Distinct()
+            .ToList();
+        var counterparts = await dbContext.Transactions
+            .AsNoTracking()
+            .Where(x => counterpartIds.Contains(x.Id))
+            .Select(x => new
+            {
+                x.Id,
+                x.BookedAtUtc,
+                x.LinkedTransferTransactionId
+            })
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+
+        var latestDrift = linkedRows
+            .Where(row =>
+                !counterparts.TryGetValue(row.CounterpartId, out var counterpart)
+                || counterpart.LinkedTransferTransactionId != row.Id)
+            .OrderByDescending(x => x.BookedAtUtc)
+            .ThenByDescending(x => x.Id)
+            .FirstOrDefault();
+
+        if (latestDrift is null)
+        {
+            return null;
+        }
+
+        var windowStartUtc = latestDrift.BookedAtUtc;
+        var windowEndUtc = latestDrift.BookedAtUtc;
+        if (counterparts.TryGetValue(latestDrift.CounterpartId, out var linkedCounterpart))
+        {
+            if (linkedCounterpart.BookedAtUtc < windowStartUtc)
+            {
+                windowStartUtc = linkedCounterpart.BookedAtUtc;
+            }
+
+            if (linkedCounterpart.BookedAtUtc > windowEndUtc)
+            {
+                windowEndUtc = linkedCounterpart.BookedAtUtc;
+            }
+        }
+
+        return new TransferLinkIntegrityDriftWindow(windowStartUtc, windowEndUtc);
+    }
+
     private readonly record struct StaleDeterministicTransactionBatchRow(Guid TransactionId, DateTime BookedAtUtc);
 
     private async Task<List<StaleDeterministicTransactionBatchRow>> GetStaleDeterministicBatchAsync(
@@ -5021,6 +5162,20 @@ public sealed class BankSyncService(
             return 0;
         }
 
+        // Repair stale cross-day pairs before cluster matching can consume the
+        // currently unlinked same-day counterpart in another repeated-amount pair.
+        var sameDayRepairs = RepairCrossDayLinkedPairsWithSameDayCandidates(
+            candidates,
+            accountProfilesByFinancialAccountId,
+            now);
+        if (sameDayRepairs > 0)
+        {
+            logger.LogInformation(
+                "Linked transfer same-day repair completed userId={UserId} repairsApplied={RepairsApplied}",
+                userId,
+                sameDayRepairs);
+        }
+
         var outgoingByAmountCurrency = outgoing
             .GroupBy(CreateInternalTransferAmountCurrencyKey)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
@@ -5028,7 +5183,7 @@ public sealed class BankSyncService(
             .GroupBy(CreateInternalTransferAmountCurrencyKey)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
 
-        var matchedPairs = 0;
+        var matchedPairs = sameDayRepairs;
         var clustersProcessed = 0;
         var clustersRepaired = 0;
         var candidatesEvaluated = 0;
@@ -5060,19 +5215,6 @@ public sealed class BankSyncService(
             candidatesAutoEligible += groupSummary.CandidatesAutoEligible;
             candidatesRejectedByAmbiguity += groupSummary.CandidatesRejectedByAmbiguity;
             candidatesRejectedByMutualBest += groupSummary.CandidatesRejectedByMutualBest;
-        }
-
-        var sameDayRepairs = RepairCrossDayLinkedPairsWithSameDayCandidates(
-            candidates,
-            accountProfilesByFinancialAccountId,
-            now);
-        matchedPairs += sameDayRepairs;
-        if (sameDayRepairs > 0)
-        {
-            logger.LogInformation(
-                "Linked transfer same-day repair completed userId={UserId} repairsApplied={RepairsApplied}",
-                userId,
-                sameDayRepairs);
         }
 
         logger.LogInformation(

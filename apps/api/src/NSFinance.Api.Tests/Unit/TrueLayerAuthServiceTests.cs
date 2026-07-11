@@ -7,11 +7,11 @@ public class TrueLayerAuthServiceTests
     [Fact]
     public void BuildAuthorizationLink_IncludesExpectedParameters()
     {
-        var providers = TrueLayerAuthService.BuildProviders("sandbox");
+        var providers = TrueLayerAuthService.BuildProviders("live");
         var url = TrueLayerAuthService.BuildAuthorizationLink(
-            "https://auth.truelayer-sandbox.com",
+            "https://auth.truelayer.com",
             "client-123",
-            "http://localhost:5080/api/banking/truelayer/callback",
+            "https://api.finance.nsireland.ie/api/banking/truelayer/callback",
             "state-xyz",
             TrueLayerAuthService.BuildScopes(),
             providers);
@@ -21,29 +21,29 @@ public class TrueLayerAuthServiceTests
 
         Assert.Equal("code", query["response_type"]);
         Assert.Equal("client-123", query["client_id"]);
-        Assert.Equal("http://localhost:5080/api/banking/truelayer/callback", query["redirect_uri"]);
+        Assert.Equal("https://api.finance.nsireland.ie/api/banking/truelayer/callback", query["redirect_uri"]);
         Assert.Equal("state-xyz", query["state"]);
         Assert.Equal("info accounts cards balance transactions offline_access direct_debits standing_orders", query["scope"]);
-        Assert.Equal("uk-cs-mock", query["providers"]);
+        Assert.Equal("ie-ob-all", query["providers"]);
     }
 
     [Fact]
-    public void BuildAuthorizationLink_SandboxHasProviders_AndNoRawSpacesInQuery()
+    public void BuildAuthorizationLink_LiveHasProviders_AndNoRawSpacesInQuery()
     {
         var url = TrueLayerAuthService.BuildAuthorizationLink(
-            "https://auth.truelayer-sandbox.com",
+            "https://auth.truelayer.com",
             "client-123",
-            "http://localhost:5080/api/banking/truelayer/callback",
+            "https://api.finance.nsireland.ie/api/banking/truelayer/callback",
             "state-xyz",
             TrueLayerAuthService.BuildScopes(),
-            TrueLayerAuthService.BuildProviders("sandbox"));
+            TrueLayerAuthService.BuildProviders("live"));
 
         var uri = new Uri(url);
         var query = ParseQuery(uri.Query);
 
         Assert.Contains("providers=", uri.Query, StringComparison.Ordinal);
         Assert.DoesNotContain(" ", uri.Query, StringComparison.Ordinal);
-        Assert.Equal("uk-cs-mock", query["providers"]);
+        Assert.Equal("ie-ob-all", query["providers"]);
         Assert.False(query.ContainsKey("country_id"));
     }
 
@@ -86,8 +86,6 @@ public class TrueLayerAuthServiceTests
     [Theory]
     [InlineData("nsfinance://accounts/connect-bank?intent=new")]
     [InlineData("nsfinance://modals/add-account?intent=new")]
-    [InlineData("exp://192.168.0.11:8081/--/accounts/connect-bank?intent=new")]
-    [InlineData("exp://192.168.0.11:8081/--/modals/add-account?intent=new")]
     public void ReturnUriContract_Normalize_AcceptsCurrentAndLegacyRoutes(string input)
     {
         var normalized = TrueLayerReturnUriContract.Normalize(input);

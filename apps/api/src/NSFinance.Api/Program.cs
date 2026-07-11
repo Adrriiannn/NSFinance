@@ -6,18 +6,13 @@ using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var configurationBuilder = builder.Configuration;
-
-if (builder.Environment.IsDevelopment())
-{
-    configurationBuilder.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
-}
-
-configurationBuilder.AddEnvironmentVariables();
+builder.Configuration
+    .AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true)
+    .AddEnvironmentVariables();
 
 builder.Services
     .AddProblemDetails()
-    .AddApiFoundation(builder.Configuration, builder.Environment);
+    .AddApiFoundation(builder.Configuration);
 
 var app = builder.Build();
 
@@ -36,17 +31,10 @@ app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseRateLimiter();
 app.UseCors("AppCors");
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
-
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHsts();
-    app.UseHttpsRedirection();
-}
+app.UseSwagger();
+app.UseSwaggerUI();
+app.UseHsts();
+app.UseHttpsRedirection();
 
 app.UseRouting();
 app.UseAuthentication();

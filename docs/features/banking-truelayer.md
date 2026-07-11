@@ -290,16 +290,11 @@ The callback endpoint normalizes and accepts both current and legacy route shape
 
 ## Environment model
 
-Development defaults (from `appsettings.Development.json`):
-
-- `TrueLayer:Environment=sandbox`
-- sandbox auth/API base URLs
-- local callback URI
-
-Production (Azure settings):
+TrueLayer is live-only in the current NSFinance setup.
 
 - `TrueLayer__Environment=live`
-- live auth/API base URLs
+- `TrueLayer__AuthBaseUrl=https://auth.truelayer.com`
+- `TrueLayer__ApiBaseUrl=https://api.truelayer.com`
 - callback: `https://api.finance.nsireland.ie/api/banking/truelayer/callback`
 
 ## Provider market targeting
@@ -308,21 +303,17 @@ Auth-link generation is backend-driven and deterministic. The backend is the sou
 
 Current targeting rules:
 
-- sandbox:
-  - `providers=uk-cs-mock`
-  - no `country_id`
-- live:
-  - `providers=ie-ob-all`
-  - `country_id=IE`
+- `providers=ie-ob-all`
+- `country_id=IE`
 
 This ensures live bank chooser flows open with Ireland providers instead of UK defaults.
 
 ## Safety checks
 
 - callback state validation
-- environment mismatch protection (sandbox vs live URL mismatches rejected)
+- live TrueLayer host validation
 - secure callback HTML response with safe status messaging
-- strict redirect URI validation (`/api/banking/truelayer/callback`; HTTPS + non-localhost required for live)
+- strict redirect URI validation (`/api/banking/truelayer/callback`; HTTPS + non-localhost required)
 - structured lifecycle logging for link, callback, token exchange, queueing, and sync
 - persistent ASP.NET DataProtection key-ring support via `DataProtection:KeysPath` / `NSFINANCE_DATA_PROTECTION_KEYS_PATH` (production path auto-detected if unset)
 

@@ -743,6 +743,7 @@ export default function LoginScreen() {
                     variant="secondary"
                     icon={<Ionicons name="logo-google" size={16} color={palette.textPrimary} />}
                     onPress={() => void handleGoogleSignIn()}
+                    isLoading={googleSignIn.isPending}
                     disabled={!googleSignIn.isConfigured || googleSignIn.isPending || isAuthTransitioning}
                     style={styles.authButton}
                   />

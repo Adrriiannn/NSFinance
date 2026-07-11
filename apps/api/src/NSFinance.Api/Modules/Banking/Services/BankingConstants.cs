@@ -103,11 +103,6 @@ public static class TrueLayerScopes
 
 public static class TrueLayerProviders
 {
-    public static readonly IReadOnlyList<string> SandboxDefault =
-    [
-        "uk-cs-mock"
-    ];
-
     public static readonly IReadOnlyList<string> LiveIrelandDefault =
     [
         "ie-ob-all"

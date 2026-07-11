@@ -753,11 +753,6 @@ public sealed class TrueLayerAuthService(
 
     public static IReadOnlyList<string> BuildProviders(string environment)
     {
-        if (string.Equals(environment, "sandbox", StringComparison.OrdinalIgnoreCase))
-        {
-            return TrueLayerProviders.SandboxDefault;
-        }
-
         if (string.Equals(environment, "live", StringComparison.OrdinalIgnoreCase))
         {
             return TrueLayerProviders.LiveIrelandDefault;

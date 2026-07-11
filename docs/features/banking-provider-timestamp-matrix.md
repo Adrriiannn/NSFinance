@@ -14,7 +14,7 @@ Classes:
 
 - TrueLayer supported-provider export (`Supported Providers.xlsx`, local attachment).
 - Public TrueLayer timestamp precision guidance.
-- NSFinance observed payload behavior from live/sandbox diagnostics.
+- NSFinance observed payload behavior from live provider diagnostics.
 
 `SourceType` meaning:
 

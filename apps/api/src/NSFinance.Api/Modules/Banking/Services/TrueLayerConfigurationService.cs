@@ -21,7 +21,7 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
         if (environment is null)
         {
             return ServiceResult<TrueLayerResolvedConfiguration>.Fail(
-                "TrueLayer environment must be 'sandbox' or 'live'.",
+                "TrueLayer environment must be 'live'.",
                 "truelayer_environment_invalid",
                 StatusCodes.Status500InternalServerError);
         }
@@ -31,16 +31,16 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
             || string.IsNullOrWhiteSpace(_options.RedirectUri))
         {
             return ServiceResult<TrueLayerResolvedConfiguration>.Fail(
-                "TrueLayer is not configured for local development. Set TrueLayer:ClientId, TrueLayer:ClientSecret, and TrueLayer:RedirectUri (or TRUELAYER_CLIENT_ID, TRUELAYER_CLIENT_SECRET, TRUELAYER_REDIRECT_URI).",
+                "TrueLayer is not configured. Set TrueLayer:ClientId, TrueLayer:ClientSecret, and TrueLayer:RedirectUri (or TRUELAYER_CLIENT_ID, TRUELAYER_CLIENT_SECRET, TRUELAYER_REDIRECT_URI).",
                 "truelayer_not_configured",
                 StatusCodes.Status503ServiceUnavailable);
         }
 
         var authBase = string.IsNullOrWhiteSpace(_options.AuthBaseUrl)
-            ? GetDefaultAuthBaseUrl(environment)
+            ? GetDefaultAuthBaseUrl()
             : _options.AuthBaseUrl.Trim();
         var apiBase = string.IsNullOrWhiteSpace(_options.ApiBaseUrl)
-            ? GetDefaultApiBaseUrl(environment)
+            ? GetDefaultApiBaseUrl()
             : _options.ApiBaseUrl.Trim();
 
         if (!Uri.TryCreate(authBase, UriKind.Absolute, out var authUri)
@@ -52,15 +52,15 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
                 StatusCodes.Status500InternalServerError);
         }
 
-        if (IsEnvironmentMismatch(environment, authUri, apiUri))
+        if (UsesNonLiveBaseUrls(authUri, apiUri))
         {
             return ServiceResult<TrueLayerResolvedConfiguration>.Fail(
-                "TrueLayer auth/API base URLs do not match TRUELAYER_ENVIRONMENT.",
+                "TrueLayer auth/API base URLs must target the live TrueLayer hosts.",
                 "truelayer_environment_mismatch",
                 StatusCodes.Status500InternalServerError);
         }
 
-        var redirectValidation = ValidateRedirectUri(_options.RedirectUri, environment);
+        var redirectValidation = ValidateRedirectUri(_options.RedirectUri);
         if (!redirectValidation.Succeeded)
         {
             return ServiceResult<TrueLayerResolvedConfiguration>.Fail(
@@ -79,17 +79,10 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
                 apiUri.ToString().TrimEnd('/')));
     }
 
-    private static bool IsEnvironmentMismatch(string environment, Uri authUri, Uri apiUri)
+    private static bool UsesNonLiveBaseUrls(Uri authUri, Uri apiUri)
     {
-        var authHost = authUri.Host.ToLowerInvariant();
-        var apiHost = apiUri.Host.ToLowerInvariant();
-
-        if (environment == "sandbox")
-        {
-            return !authHost.Contains("sandbox") || !apiHost.Contains("sandbox");
-        }
-
-        return authHost.Contains("sandbox") || apiHost.Contains("sandbox");
+        return !string.Equals(authUri.Host, "auth.truelayer.com", StringComparison.OrdinalIgnoreCase)
+               || !string.Equals(apiUri.Host, "api.truelayer.com", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? NormalizeEnvironment(string value)
@@ -97,23 +90,16 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
         var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
         return normalized switch
         {
-            "sandbox" => "sandbox",
             "live" => "live",
             _ => null
         };
     }
 
-    private static string GetDefaultAuthBaseUrl(string environment) =>
-        environment == "live"
-            ? "https://auth.truelayer.com"
-            : "https://auth.truelayer-sandbox.com";
+    private static string GetDefaultAuthBaseUrl() => "https://auth.truelayer.com";
 
-    private static string GetDefaultApiBaseUrl(string environment) =>
-        environment == "live"
-            ? "https://api.truelayer.com"
-            : "https://api.truelayer-sandbox.com";
+    private static string GetDefaultApiBaseUrl() => "https://api.truelayer.com";
 
-    private static ServiceResult<string> ValidateRedirectUri(string redirectUri, string environment)
+    private static ServiceResult<string> ValidateRedirectUri(string redirectUri)
     {
         var candidate = redirectUri.Trim();
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var redirect))
@@ -132,23 +118,20 @@ public sealed class TrueLayerConfigurationService(IOptions<TrueLayerOptions> opt
                 StatusCodes.Status500InternalServerError);
         }
 
-        if (environment == "live")
+        if (!string.Equals(redirect.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
         {
-            if (!string.Equals(redirect.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            {
-                return ServiceResult<string>.Fail(
-                    "Live TrueLayer redirect URI must use HTTPS.",
-                    "truelayer_redirect_uri_https_required",
-                    StatusCodes.Status500InternalServerError);
-            }
+            return ServiceResult<string>.Fail(
+                "Live TrueLayer redirect URI must use HTTPS.",
+                "truelayer_redirect_uri_https_required",
+                StatusCodes.Status500InternalServerError);
+        }
 
-            if (IsLocalHost(redirect.Host))
-            {
-                return ServiceResult<string>.Fail(
-                    "Live TrueLayer redirect URI cannot point to localhost.",
-                    "truelayer_redirect_uri_localhost_invalid",
-                    StatusCodes.Status500InternalServerError);
-            }
+        if (IsLocalHost(redirect.Host))
+        {
+            return ServiceResult<string>.Fail(
+                "Live TrueLayer redirect URI cannot point to localhost.",
+                "truelayer_redirect_uri_localhost_invalid",
+                StatusCodes.Status500InternalServerError);
         }
 
         return ServiceResult<string>.Ok(redirect.ToString().TrimEnd('/'));

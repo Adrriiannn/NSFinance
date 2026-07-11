@@ -23,19 +23,18 @@ public sealed class GoogleAuthService(
         if (logger.IsEnabled(LogLevel.Debug))
         {
             logger.LogDebug(
-                "Google token verification started hasIdToken={HasIdToken} idTokenLength={IdTokenLength} idTokenPrefix={IdTokenPrefix}",
+                "Google token verification started hasIdToken={HasIdToken} idTokenLength={IdTokenLength}",
                 tokenSummary.HasToken,
-                tokenSummary.TokenLength,
-                tokenSummary.TokenPrefix);
+                tokenSummary.TokenLength);
         }
 
         if (!IsConfigured)
         {
             logger.LogWarning(
                 "Google sign-in attempted but no Google client IDs are configured. " +
-                "Set GoogleAuth:WebClientId and/or GoogleAuth:AndroidClientIdDebug/GoogleAuth:AndroidClientIdProd.");
+                "Set GoogleAuth:WebClientId and GoogleAuth:AndroidClientIdProd.");
             return ServiceResult<GoogleIdentityPayload>.Fail(
-                "Google sign-in is not configured in this environment.",
+                "Google sign-in is not configured.",
                 "google_sign_in_not_configured",
                 StatusCodes.Status503ServiceUnavailable);
         }
@@ -62,10 +61,9 @@ public sealed class GoogleAuthService(
             var reason = ClassifyInvalidJwtFailureReason(ex);
             logger.LogInformation(
                 ex,
-                "Google ID token validation failed reason={Reason} idTokenLength={IdTokenLength} idTokenPrefix={IdTokenPrefix}",
+                "Google ID token validation failed reason={Reason} idTokenLength={IdTokenLength}",
                 reason,
-                tokenSummary.TokenLength,
-                tokenSummary.TokenPrefix);
+                tokenSummary.TokenLength);
             return ServiceResult<GoogleIdentityPayload>.Fail(
                 "Google authentication failed.",
                 "google_id_token_invalid",
@@ -108,16 +106,15 @@ public sealed class GoogleAuthService(
                 payload.Picture?.Trim()));
     }
 
-    private static (bool HasToken, int TokenLength, string TokenPrefix) SummarizeToken(string? token)
+    private static (bool HasToken, int TokenLength) SummarizeToken(string? token)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
-            return (false, 0, string.Empty);
+            return (false, 0);
         }
 
         var trimmed = token.Trim();
-        var prefixLength = Math.Min(10, trimmed.Length);
-        return (true, trimmed.Length, trimmed[..prefixLength]);
+        return (true, trimmed.Length);
     }
 
     private static string ClassifyInvalidJwtFailureReason(InvalidJwtException exception)

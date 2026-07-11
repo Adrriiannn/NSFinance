@@ -5,8 +5,7 @@ namespace NSFinance.Api.Modules.AI.Services;
 
 public sealed class AIConfigurationStartupLogger(
     IOptions<AIIntegrationOptions> options,
-    ILogger<AIConfigurationStartupLogger>? logger = null,
-    IHostEnvironment? hostEnvironment = null) : IHostedService
+    ILogger<AIConfigurationStartupLogger>? logger = null) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -34,22 +33,14 @@ public sealed class AIConfigurationStartupLogger(
 
         if (provider == AIProviderKind.Mock || config.UseMockProvider)
         {
-            var isProduction = hostEnvironment?.IsProduction() == true;
-            var isDevelopment = hostEnvironment?.IsDevelopment() != false;
-            var environmentName = hostEnvironment?.EnvironmentName ?? Environments.Development;
-            if (isProduction && !IsMockAllowedInProduction())
+            if (!IsMockAllowed())
             {
                 logger?.LogCritical(
-                    "Mock AI provider is active in production and is blocked. Set AI_ALLOW_MOCK_PROVIDER_IN_PRODUCTION=true only for emergency diagnostics.");
-                throw new InvalidOperationException("Mock AI provider is not allowed in production.");
+                    "Mock AI provider is active and is blocked. Set AI_ALLOW_MOCK_PROVIDER=true only for emergency diagnostics.");
+                throw new InvalidOperationException("Mock AI provider is not allowed for app startup.");
             }
 
-            if (!isDevelopment)
-            {
-                logger?.LogWarning(
-                    "Mock AI provider is active in non-development environment={EnvironmentName}.",
-                    environmentName);
-            }
+            logger?.LogWarning("Mock AI provider is active because AI_ALLOW_MOCK_PROVIDER is enabled.");
         }
 
         return Task.CompletedTask;
@@ -79,9 +70,9 @@ public sealed class AIConfigurationStartupLogger(
             : value.Trim();
     }
 
-    private static bool IsMockAllowedInProduction()
+    private static bool IsMockAllowed()
     {
-        var raw = Environment.GetEnvironmentVariable("AI_ALLOW_MOCK_PROVIDER_IN_PRODUCTION");
+        var raw = Environment.GetEnvironmentVariable("AI_ALLOW_MOCK_PROVIDER");
         return string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)
                || string.Equals(raw, "1", StringComparison.OrdinalIgnoreCase)
                || string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase);

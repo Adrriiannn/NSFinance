@@ -3,13 +3,11 @@ namespace NSFinance.Shared.Configuration;
 public static class EnvironmentVariableNames
 {
     public const string DatabaseConnectionString = "NSFINANCE_DB_CONNECTION_STRING";
-    public const string AllowRemoteDbInDevelopment = "NSFINANCE_ALLOW_REMOTE_DB_IN_DEVELOPMENT";
     public const string ApiBaseUrl = "EXPO_PUBLIC_API_BASE_URL";
     public const string JwtSigningKey = "NSFINANCE_JWT_SIGNING_KEY";
     public const string AllowedCorsOrigins = "NSFINANCE_ALLOWED_CORS_ORIGINS";
     public const string GoogleClientId = "NSFINANCE_GOOGLE_CLIENT_ID";
     public const string GoogleWebClientId = "NSFINANCE_GOOGLE_WEB_CLIENT_ID";
-    public const string GoogleAndroidClientIdDebug = "NSFINANCE_GOOGLE_ANDROID_CLIENT_ID_DEBUG";
     public const string GoogleAndroidClientIdProd = "NSFINANCE_GOOGLE_ANDROID_CLIENT_ID_PROD";
     public const string GoogleClientSecret = "NSFINANCE_GOOGLE_CLIENT_SECRET";
     public const string GoogleRedirectUri = "NSFINANCE_GOOGLE_REDIRECT_URI";

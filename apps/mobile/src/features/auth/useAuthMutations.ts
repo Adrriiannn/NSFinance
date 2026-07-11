@@ -55,7 +55,7 @@ export function useGoogleLoginMutation() {
     onSuccess: async (response) => {
       await applyAuthTokenResponse(response);
       void refreshSessionUser();
-      await queryClient.invalidateQueries();
+      void queryClient.invalidateQueries();
     }
   });
 }

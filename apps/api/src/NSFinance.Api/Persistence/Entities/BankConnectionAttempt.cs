@@ -6,7 +6,7 @@ public class BankConnectionAttempt
     public Guid UserId { get; set; }
     public Guid ConnectionId { get; set; }
     public string ProviderName { get; set; } = string.Empty;
-    public string ProviderEnvironment { get; set; } = "sandbox";
+    public string ProviderEnvironment { get; set; } = "live";
     public string Status { get; set; } = "created";
     public string? LaunchOriginPath { get; set; }
     public string? AppReturnUri { get; set; }

@@ -5,11 +5,11 @@ public sealed class AIIntegrationOptions
     public const string SectionName = "AI";
 
     public bool Enabled { get; set; } = true;
-    public bool UseMockProvider { get; set; } = true;
+    public bool UseMockProvider { get; set; }
     public string? Provider { get; set; }
     public string? Endpoint { get; set; }
     public string? ApiKey { get; set; }
-    public AIProviderKind ProviderKind { get; set; } = AIProviderKind.Mock;
+    public AIProviderKind ProviderKind { get; set; } = AIProviderKind.AzureOpenAI;
     public AIModelRoutingOptions Routing { get; set; } = new();
     public AIModelNameOptions Models { get; set; } = new();
     public AIExecutionOptions Execution { get; set; } = new();
@@ -60,7 +60,7 @@ public sealed class AIExecutionOptions
 
 public sealed class AzureOpenAIOptions
 {
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
     public string? Endpoint { get; set; }
     public string? ApiKey { get; set; }
     public bool UseManagedIdentity { get; set; }
@@ -69,7 +69,7 @@ public sealed class AzureOpenAIOptions
 
 public sealed class MockAIProviderOptions
 {
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; }
     public MockAIScenario DefaultMerchantScenario { get; set; } = MockAIScenario.MerchantInsufficientEvidence;
     public MockAIScenario DefaultSimpleChatScenario { get; set; } = MockAIScenario.UserChatSimple;
     public MockAIScenario DefaultComplexChatScenario { get; set; } = MockAIScenario.UserChatComplex;
@@ -130,8 +130,7 @@ public sealed class ChatTurnOptions
     public int MaxUserMessageChars { get; set; } = 4000;
     public int MaxClientRequestIdLength { get; set; } = 128;
     public bool AllowImplicitTransientFallback { get; set; }
-    public bool AllowExplicitTransientFallbackInProduction { get; set; }
-    public bool AllowImplicitTransientFallbackInProduction { get; set; }
+    public bool AllowExplicitTransientFallback { get; set; }
     public bool RequirePersistentMemoryWhenRequested { get; set; }
 }
 

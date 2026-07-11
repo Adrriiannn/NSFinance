@@ -38,8 +38,7 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddApiFoundation(
         this IServiceCollection services,
-        IConfiguration configuration,
-        IHostEnvironment hostEnvironment)
+        IConfiguration configuration)
     {
         services.AddHealthChecks();
         services.AddEndpointsApiExplorer();
@@ -72,7 +71,7 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddHttpContextAccessor();
-        ConfigureDataProtection(services, configuration, hostEnvironment);
+        ConfigureDataProtection(services, configuration);
         ConfigureCors(services, configuration);
         ConfigureRateLimiting(services);
 
@@ -307,7 +306,7 @@ public static class ServiceCollectionExtensions
                 options.ExpectedValueRecencyHorizonDays = 21;
             }
         });
-        ValidateTrueLayerConfigurationForNonDevelopment(configuration, hostEnvironment);
+        ValidateTrueLayerConfiguration(configuration);
 
         services.Configure<GoogleAuthOptions>(options =>
         {
@@ -322,11 +321,6 @@ public static class ServiceCollectionExtensions
                 ResolveEnvironmentValue(
                     configuration,
                     EnvironmentVariableNames.GoogleWebClientId));
-            OverrideIfSet(
-                value => options.AndroidClientIdDebug = value,
-                ResolveEnvironmentValue(
-                    configuration,
-                    EnvironmentVariableNames.GoogleAndroidClientIdDebug));
             OverrideIfSet(
                 value => options.AndroidClientIdProd = value,
                 ResolveEnvironmentValue(
@@ -359,11 +353,10 @@ public static class ServiceCollectionExtensions
             throw new InvalidOperationException("Jwt:SigningKey must be at least 32 characters.");
         }
 
-        if (!hostEnvironment.IsDevelopment()
-            && jwtOptions.SigningKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase))
+        if (jwtOptions.SigningKey.Contains("CHANGE_ME", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"A non-placeholder JWT signing key is required outside Development. " +
+                $"A non-placeholder JWT signing key is required. " +
                 $"Set Jwt:SigningKey, Jwt__SigningKey, {EnvironmentVariableNames.JwtSigningKey}, " +
                 "and ensure it is not a placeholder value.");
         }
@@ -429,7 +422,7 @@ public static class ServiceCollectionExtensions
 
         services.AddDbContext<AppDbContext>(options =>
         {
-            options.UseNpgsql(GetConnectionString(configuration, hostEnvironment));
+            options.UseNpgsql(GetConnectionString(configuration));
         });
 
         services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();
@@ -505,13 +498,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BankDisconnectBackgroundWorker>();
         services.AddSingleton<IBankDisconnectQueue>(sp => sp.GetRequiredService<BankDisconnectBackgroundWorker>());
         services.AddHostedService(sp => sp.GetRequiredService<BankDisconnectBackgroundWorker>());
-        services.AddScoped<DevelopmentDataSeeder>();
+        services.AddScoped<PolicyDataSeeder>();
         services.AddHostedService<DatabaseInitializationHostedService>();
 
         return services;
     }
 
-        private static string GetConnectionString(IConfiguration configuration, IHostEnvironment hostEnvironment)
+        private static string GetConnectionString(IConfiguration configuration)
     {
         var connectionString =
             ResolveEnvironmentValue(
@@ -526,54 +519,7 @@ public static class ServiceCollectionExtensions
                 "or ConnectionStrings:DefaultConnection.");
         }
 
-        var allowRemoteDbInDevelopment = ParseBoolean(
-            ResolveEnvironmentValue(
-                configuration,
-                EnvironmentVariableNames.AllowRemoteDbInDevelopment));
-
-        if (hostEnvironment.IsDevelopment()
-            && !allowRemoteDbInDevelopment
-            && !IsLocalDevelopmentConnectionString(connectionString))
-        {
-            throw new InvalidOperationException(
-                "Development startup blocked: database host is not local. " +
-                "Use localhost/127.0.0.1/::1 for local development, or set " +
-                $"{EnvironmentVariableNames.AllowRemoteDbInDevelopment}=true intentionally.");
-        }
-
         return connectionString;
-    }
-
-    private static bool IsLocalDevelopmentConnectionString(string connectionString)
-    {
-        try
-        {
-            var builder = new NpgsqlConnectionStringBuilder(connectionString);
-            var host = (builder.Host ?? string.Empty).Trim();
-
-            if (string.IsNullOrWhiteSpace(host))
-            {
-                return false;
-            }
-
-            return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-                || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
-                || host.Equals("::1", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool ParseBoolean(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        return bool.TryParse(value, out var parsed) && parsed;
     }
 
     private static void ConfigureCors(IServiceCollection services, IConfiguration configuration)
@@ -725,10 +671,9 @@ public static class ServiceCollectionExtensions
 
     private static void ConfigureDataProtection(
         IServiceCollection services,
-        IConfiguration configuration,
-        IHostEnvironment hostEnvironment)
+        IConfiguration configuration)
     {
-        var keysPath = ResolveDataProtectionKeyRingPath(configuration, hostEnvironment);
+        var keysPath = ResolveDataProtectionKeyRingPath(configuration);
         var dataProtectionBuilder = services
             .AddDataProtection()
             .SetApplicationName("NSFinance.Api");
@@ -742,9 +687,7 @@ public static class ServiceCollectionExtensions
         dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
     }
 
-    private static string? ResolveDataProtectionKeyRingPath(
-        IConfiguration configuration,
-        IHostEnvironment hostEnvironment)
+    private static string? ResolveDataProtectionKeyRingPath(IConfiguration configuration)
     {
         var configuredPath =
             ResolveEnvironmentValue(configuration, EnvironmentVariableNames.DataProtectionKeysPath)
@@ -755,11 +698,6 @@ public static class ServiceCollectionExtensions
             return configuredPath.Trim();
         }
 
-        if (hostEnvironment.IsDevelopment())
-        {
-            return null;
-        }
-
         var home = Environment.GetEnvironmentVariable("HOME");
         if (!string.IsNullOrWhiteSpace(home))
         {
@@ -767,19 +705,15 @@ public static class ServiceCollectionExtensions
         }
 
         return OperatingSystem.IsWindows()
-            ? @"D:\home\ASP.NET\DataProtection-Keys"
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "NSFinance",
+                "DataProtection-Keys")
             : "/home/ASP.NET/DataProtection-Keys";
     }
 
-    private static void ValidateTrueLayerConfigurationForNonDevelopment(
-        IConfiguration configuration,
-        IHostEnvironment hostEnvironment)
+    private static void ValidateTrueLayerConfiguration(IConfiguration configuration)
     {
-        if (hostEnvironment.IsDevelopment())
-        {
-            return;
-        }
-
         var options = new TrueLayerOptions();
         configuration.GetSection(TrueLayerOptions.SectionName).Bind(options);
         OverrideIfSet(value => options.ClientId = value, configuration[EnvironmentVariableNames.TrueLayerClientId]);
@@ -793,7 +727,7 @@ public static class ServiceCollectionExtensions
         if (!validation.Succeeded)
         {
             throw new InvalidOperationException(
-                $"TrueLayer configuration is invalid outside Development: {validation.Error!.Code} - {validation.Error.Message}");
+                $"TrueLayer configuration is invalid: {validation.Error!.Code} - {validation.Error.Message}");
         }
     }
 }

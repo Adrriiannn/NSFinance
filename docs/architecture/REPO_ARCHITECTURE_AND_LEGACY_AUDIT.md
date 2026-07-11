@@ -4,7 +4,7 @@ Date: 2026-04-29
 
 ## 1. Executive Summary
 
-NSFinance is a mobile-first personal finance and banking companion. The repo contains an ASP.NET Core API, an Expo React Native mobile app, a placeholder worker app, shared .NET libraries, deployment scripts, Docker local infrastructure, and documentation.
+NSFinance is a mobile-first personal finance and banking companion. The repo contains an ASP.NET Core API, an Expo React Native mobile app, a placeholder worker app, shared .NET libraries, deployment assets, and documentation.
 
 The current architecture is a modular monolith on the backend: `Program.cs` maps feature modules under `apps/api/src/NSFinance.Api/Modules`, each module exposes minimal API endpoints and services, and EF Core persistence is centralized in `Persistence/AppDbContext.cs`. The mobile app is an Expo Router application with feature folders under `apps/mobile/src/features` and route screens under `apps/mobile/app`.
 
@@ -33,7 +33,6 @@ Most likely legacy buildup areas:
 | `libs/infrastructure` | Infrastructure library shell | Unused candidate | Contains `Class1.cs`; no active infrastructure references found by file inventory |
 | `libs/connectors` | Connector library shell | Unused candidate | Contains `Class1.cs`; connectors currently implemented inside API modules |
 | `docs` | Architecture, setup, deployment, feature docs | Active | Existing `docs/architecture/overview.md`, `docs/features/*`, this audit |
-| `infra/docker` | Local Docker Compose infra | Active for development | `infra/docker/docker-compose.yml` |
 | `.github/workflows` | CI/CD for API deploy | Active | `main_nsfinance-api.yml` builds/tests/migrates/deploys API |
 | `scripts` | Utility scripts | Unknown/active by convention | Present in repo; review before deletion |
 | `artifacts`, `local-builds`, `.tmp` | Generated local output | Legacy/generated | Should remain ignored or cleaned if committed unintentionally |
@@ -248,7 +247,7 @@ Active turn events include:
 | OpenAI/Azure OpenAI | `AI:*`, `AI:AzureOpenAI:*` | `AIClient`, `AIModelRouter`, prompt builders/parsers | Companion/merchant/advice services -> AI client | mock provider and parser/fallback tests |
 | Cloudflare Turnstile | `Turnstile:*` | `TurnstileVerificationService`, `TurnstileRegisterPageEndpoint` | Register endpoint / hosted challenge page | missing config/failure handling in service |
 | Google Sign-In | `GoogleAuth:*` | `GoogleAuthService`, `GoogleIdTokenVerifier` | Mobile AuthSession -> `/api/auth/google` | `GoogleAuthServiceTests` |
-| PostgreSQL | `ConnectionStrings:DefaultConnection`, `NSFINANCE_DB_CONNECTION_STRING` | EF Core/Npgsql | All persistence | deployment migration bundle workflow |
+| Azure PostgreSQL | `ConnectionStrings:DefaultConnection`, `NSFINANCE_DB_CONNECTION_STRING` | EF Core/Npgsql | All persistence | deployment migration bundle workflow |
 | Azure App Service | GitHub workflow secrets/env | `.github/workflows/main_nsfinance-api.yml` | build/test/migrate/deploy | documented in `docs/deployment/azure-production.md` |
 | Expo/EAS | `apps/mobile/eas.json`, env in mobile `.env.example` | Expo Router/mobile app | mobile build/deploy | docs in `docs/deployment/mobile-android-build.md` |
 
@@ -268,7 +267,7 @@ Active turn events include:
 | Class | Section | Notes / Risk |
 |---|---|---|
 | `JwtOptions` | `Jwt` | Required for auth token signing |
-| `TrueLayerOptions` | `TrueLayer` | Fail-fast outside Development via `ValidateTrueLayerConfigurationForNonDevelopment` |
+| `TrueLayerOptions` | `TrueLayer` | Live-only startup validation via `ValidateTrueLayerConfiguration` |
 | `BankingSyncOptions` | `Banking:Sync` | Governs sync windows/behavior |
 | `BankConnectionAttemptOptions` | `Banking:ConnectionAttempts` | Attempt lifecycle |
 | `GoogleAuthOptions` | `GoogleAuth` | Google client IDs |

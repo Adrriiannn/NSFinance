@@ -1,6 +1,0 @@
-@NSFinance.Api_HostAddress = http://localhost:5147
-
-GET {{NSFinance.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

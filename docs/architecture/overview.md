@@ -36,7 +36,7 @@ Typical per-module organization:
 
 ## Data and runtime
 
-- PostgreSQL + EF Core + Npgsql
+- Azure PostgreSQL + EF Core + Npgsql
 - UTC timestamps
 - JWT authentication with DB-backed session validation
 - rate limiting, security headers, correlation ID middleware

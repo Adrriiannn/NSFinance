@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Persistence.Entities;
 
@@ -16,7 +15,6 @@ public sealed class ConversationLayerOrchestrator(
     IOptions<AIIntegrationOptions> options,
     IChatTelemetry telemetry,
     IOperationalFailureRecorder? failureRecorder = null,
-    IHostEnvironment? hostEnvironment = null,
     IConversationThreadService? conversationThreadService = null,
     IConversationTurnService? conversationTurnService = null,
     IConversationMessageService? conversationMessageService = null,
@@ -3345,7 +3343,6 @@ public sealed class ConversationLayerOrchestrator(
         bool localDiscoveryCandidate)
     {
         var chatOptions = options.Value.ChatTurns;
-        var isProduction = hostEnvironment?.IsProduction() == true;
 
         if (localDiscoveryCandidate
             && reasonCategory is "persistent_context_cancelled" or "persistent_context_timeout")
@@ -3355,22 +3352,17 @@ public sealed class ConversationLayerOrchestrator(
 
         if (request.AllowTransientFallbackOnPersistentFailure)
         {
-            if (!isProduction || chatOptions.AllowExplicitTransientFallbackInProduction)
+            if (chatOptions.AllowExplicitTransientFallback)
             {
                 return (true, "explicit", true, null);
             }
 
-            return (false, "explicit", false, "explicit_fallback_blocked_in_production");
+            return (false, "explicit", false, "explicit_fallback_disabled");
         }
 
         if (chatOptions.AllowImplicitTransientFallback)
         {
-            if (!isProduction || chatOptions.AllowImplicitTransientFallbackInProduction)
-            {
-                return (true, "implicit", true, null);
-            }
-
-            return (false, "implicit", false, "implicit_fallback_blocked_in_production");
+            return (true, "implicit", true, null);
         }
 
         return (false, "none", false, "transient_fallback_disabled");
@@ -3431,7 +3423,6 @@ public sealed class ConversationLayerOrchestrator(
             ["reasonCategory"] = reasonCategory,
             ["fallbackMode"] = fallbackMode,
             ["allowedByConfig"] = allowedByConfig,
-            ["environment"] = hostEnvironment?.EnvironmentName,
             ["threadId"] = conversationThreadId?.ToString("N"),
             ["turnId"] = conversationTurnId?.ToString("N"),
             ["requestId"] = ResolveClientRequestId(request, options.Value.ChatTurns.MaxClientRequestIdLength),

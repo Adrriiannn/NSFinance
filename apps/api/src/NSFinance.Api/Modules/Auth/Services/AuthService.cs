@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Infrastructure.RequestContext;
@@ -22,7 +23,6 @@ public sealed class AuthService(
     AuthAbuseService authAbuseService,
     IAuditService auditService,
     IRequestContextAccessor requestContext,
-    IHostEnvironment hostEnvironment,
     IOptions<JwtOptions> options,
     ILogger<AuthService> logger)
 {
@@ -119,7 +119,7 @@ public sealed class AuthService(
             metadata: new { provider = ProviderTypeLocalPassword, nsTag },
             cancellationToken);
 
-        var emailToken = await IssueEmailActionTokenAsync(
+        await IssueEmailActionTokenAsync(
             user.Id,
             PurposeEmailVerification,
             _options.EmailVerificationTokenMinutes,
@@ -134,11 +134,6 @@ public sealed class AuthService(
             actorType: "user",
             metadata: new { flow = "post_register" },
             cancellationToken);
-
-        if (hostEnvironment.IsDevelopment())
-        {
-            logger.LogInformation("Email verification token issued for local development userId={UserId}", user.Id);
-        }
 
         return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
     }
@@ -252,27 +247,11 @@ public sealed class AuthService(
         GoogleLoginRequest request,
         CancellationToken cancellationToken)
     {
-        var tokenSummary = SummarizeToken(request.IdToken);
-        if (hostEnvironment.IsDevelopment())
-        {
-            logger.LogInformation(
-                "Google login service entry hasIdToken={HasIdToken} idTokenLength={IdTokenLength} idTokenPrefix={IdTokenPrefix}",
-                tokenSummary.HasToken,
-                tokenSummary.TokenLength,
-                tokenSummary.TokenPrefix);
-        }
-
+        var totalStartedTimestamp = Stopwatch.GetTimestamp();
         var verification = await googleAuthService.VerifyIdTokenAsync(request.IdToken, cancellationToken);
+        var verificationDurationMs = Stopwatch.GetElapsedTime(totalStartedTimestamp).TotalMilliseconds;
         if (!verification.Succeeded)
         {
-            if (hostEnvironment.IsDevelopment())
-            {
-                logger.LogWarning(
-                    "Google login verification failed code={Code} statusCode={StatusCode} message={Message}",
-                    verification.Error?.Code,
-                    verification.Error?.StatusCode,
-                    verification.Error?.Message);
-            }
             await WriteGoogleLoginFailureAuditAsync(null, verification.Error!.Code, cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 verification.Error.Message,
@@ -283,10 +262,6 @@ public sealed class AuthService(
         var identity = verification.Value!;
         if (!identity.EmailVerified)
         {
-            if (hostEnvironment.IsDevelopment())
-            {
-                logger.LogWarning("Google login failed reason=google_email_not_verified");
-            }
             await WriteGoogleLoginFailureAuditAsync(null, "google_email_not_verified", cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 "Google account email must be verified before sign-in is allowed.",
@@ -296,10 +271,6 @@ public sealed class AuthService(
 
         if (string.IsNullOrWhiteSpace(identity.Email))
         {
-            if (hostEnvironment.IsDevelopment())
-            {
-                logger.LogWarning("Google login failed reason=google_email_missing");
-            }
             await WriteGoogleLoginFailureAuditAsync(null, "google_email_missing", cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 "Google account email is required.",
@@ -309,13 +280,19 @@ public sealed class AuthService(
 
         var normalizedEmail = NormalizeEmail(identity.Email);
         var utcNow = DateTime.UtcNow;
+        var accountResolutionStartedTimestamp = Stopwatch.GetTimestamp();
 
-        var existingProviderLink = await dbContext.UserAuthProviders
+        var accountMatches = await dbContext.UserAuthProviders
             .Include(x => x.User)
-            .SingleOrDefaultAsync(
-                x => x.ProviderType == ProviderTypeGoogleOidc
-                     && x.ProviderSubject == identity.Subject,
-                cancellationToken);
+            .ThenInclude(x => x!.AuthProviders)
+            .Where(x =>
+                (x.ProviderType == ProviderTypeGoogleOidc && x.ProviderSubject == identity.Subject)
+                || (x.User != null && x.User.NormalizedEmail == normalizedEmail))
+            .ToListAsync(cancellationToken);
+
+        var existingProviderLink = accountMatches.SingleOrDefault(
+            x => x.ProviderType == ProviderTypeGoogleOidc
+                 && x.ProviderSubject == identity.Subject);
 
         User user;
         UserAuthProvider providerLink;
@@ -327,10 +304,6 @@ public sealed class AuthService(
         {
             if (existingProviderLink.User is null)
             {
-                if (hostEnvironment.IsDevelopment())
-                {
-                    logger.LogWarning("Google login failed reason=google_provider_user_not_found");
-                }
                 await WriteGoogleLoginFailureAuditAsync(null, "google_provider_user_not_found", cancellationToken);
                 return ServiceResult<AuthTokenResponse>.Fail(
                     "Google account link is invalid. Please contact support.",
@@ -343,9 +316,11 @@ public sealed class AuthService(
         }
         else
         {
-            user = await dbContext.Users
-                .Include(x => x.AuthProviders)
-                .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken)
+            user = accountMatches
+                .Where(x => x.User?.NormalizedEmail == normalizedEmail)
+                .Select(x => x.User!)
+                .DistinctBy(x => x.Id)
+                .SingleOrDefault()
                 ?? new User();
 
             if (user.Id != Guid.Empty)
@@ -357,10 +332,6 @@ public sealed class AuthService(
                     && !string.IsNullOrWhiteSpace(existingUserGoogleProvider.ProviderSubject)
                     && !string.Equals(existingUserGoogleProvider.ProviderSubject, identity.Subject, StringComparison.Ordinal))
                 {
-                    if (hostEnvironment.IsDevelopment())
-                    {
-                        logger.LogWarning("Google login failed reason=google_provider_conflict");
-                    }
                     await WriteGoogleLoginFailureAuditAsync(user.Id, "google_provider_conflict", cancellationToken);
                     return ServiceResult<AuthTokenResponse>.Fail(
                         "Google provider identity conflict detected. Please contact support.",
@@ -448,10 +419,6 @@ public sealed class AuthService(
 
         if (user.IsDisabled || user.IsSuspended)
         {
-            if (hostEnvironment.IsDevelopment())
-            {
-                logger.LogWarning("Google login failed reason=account_restricted");
-            }
             await WriteGoogleLoginFailureAuditAsync(user.Id, "account_restricted", cancellationToken);
             return ServiceResult<AuthTokenResponse>.Fail(
                 "Account access is restricted.",
@@ -482,11 +449,12 @@ public sealed class AuthService(
         user.LastLoginUtc = utcNow;
         user.UpdatedUtc = utcNow;
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        var accountResolutionDurationMs = Stopwatch.GetElapsedTime(accountResolutionStartedTimestamp).TotalMilliseconds;
+        var sessionPersistenceStartedTimestamp = Stopwatch.GetTimestamp();
 
         if (providerLinkCreated)
         {
-            await auditService.WriteEventAsync(
+            StageAuditEvent(
                 category: "auth",
                 eventName: "google_provider_link_created",
                 targetEntityType: "user",
@@ -498,26 +466,29 @@ public sealed class AuthService(
                     provider = ProviderTypeGoogleOidc,
                     providerSubject = identity.Subject,
                     linkedByEmail = linkedToExistingByEmail
-                },
-                cancellationToken);
+                });
         }
 
         if (createdViaGoogle)
         {
-            await auditService.WriteEventAsync(
+            StageAuditEvent(
                 category: "auth",
                 eventName: "google_user_created",
                 targetEntityType: "user",
                 targetEntityId: user.Id.ToString(),
                 actorId: user.Id,
                 actorType: "user",
-                metadata: new { provider = ProviderTypeGoogleOidc },
-                cancellationToken);
+                metadata: new { provider = ProviderTypeGoogleOidc });
         }
 
-        var tokenResponse = await sessionService.CreateSessionAsync(user, request.DeviceContext, cancellationToken);
+        var tokenResponse = await sessionService.CreateSessionAsync(
+            user,
+            request.DeviceContext,
+            cancellationToken,
+            saveImmediately: false,
+            userIsNew: createdViaGoogle);
 
-        await auditService.WriteEventAsync(
+        StageAuditEvent(
             category: "auth",
             eventName: "google_login_success",
             targetEntityType: "session",
@@ -529,17 +500,22 @@ public sealed class AuthService(
                 provider = ProviderTypeGoogleOidc,
                 linkedByEmail = linkedToExistingByEmail,
                 createdViaGoogle
-            },
-            cancellationToken);
+            });
 
-        if (hostEnvironment.IsDevelopment())
-        {
-            logger.LogInformation(
-                "Google login succeeded userId={UserId} createdViaGoogle={CreatedViaGoogle} linkedByEmail={LinkedByEmail}",
-                user.Id,
-                createdViaGoogle,
-                linkedToExistingByEmail);
-        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var sessionPersistenceDurationMs = Stopwatch.GetElapsedTime(sessionPersistenceStartedTimestamp).TotalMilliseconds;
+        var totalDurationMs = Stopwatch.GetElapsedTime(totalStartedTimestamp).TotalMilliseconds;
+        logger.LogInformation(
+            "Google login completed createdViaGoogle={CreatedViaGoogle} linkedByEmail={LinkedByEmail} " +
+            "verificationDurationMs={VerificationDurationMs} accountResolutionDurationMs={AccountResolutionDurationMs} " +
+            "sessionPersistenceDurationMs={SessionPersistenceDurationMs} totalDurationMs={TotalDurationMs}",
+            createdViaGoogle,
+            linkedToExistingByEmail,
+            Math.Round(verificationDurationMs),
+            Math.Round(accountResolutionDurationMs),
+            Math.Round(sessionPersistenceDurationMs),
+            Math.Round(totalDurationMs));
 
         return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
     }
@@ -668,10 +644,9 @@ public sealed class AuthService(
             .AsNoTracking()
             .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
 
-        string? debugToken = null;
         if (user is not null && !user.IsDisabled && !user.IsSuspended)
         {
-            debugToken = await IssueEmailActionTokenAsync(
+            await IssueEmailActionTokenAsync(
                 user.Id,
                 PurposePasswordReset,
                 _options.PasswordResetTokenMinutes,
@@ -689,8 +664,7 @@ public sealed class AuthService(
         }
 
         var response = new AuthActionResponse(
-            "If your email is registered, a password reset link will be sent shortly.",
-            hostEnvironment.IsDevelopment() ? debugToken : null);
+            "If your email is registered, a password reset link will be sent shortly.");
 
         return ServiceResult<AuthActionResponse>.Ok(response);
     }
@@ -756,10 +730,9 @@ public sealed class AuthService(
             .AsNoTracking()
             .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
 
-        string? debugToken = null;
         if (user is not null && !user.EmailVerified)
         {
-            debugToken = await IssueEmailActionTokenAsync(
+            await IssueEmailActionTokenAsync(
                 user.Id,
                 PurposeEmailVerification,
                 _options.EmailVerificationTokenMinutes,
@@ -777,8 +750,7 @@ public sealed class AuthService(
         }
 
         var response = new AuthActionResponse(
-            "If your account requires verification, an email verification link will be sent.",
-            hostEnvironment.IsDevelopment() ? debugToken : null);
+            "If your account requires verification, an email verification link will be sent.");
 
         return ServiceResult<AuthActionResponse>.Ok(response);
     }
@@ -887,7 +859,7 @@ public sealed class AuthService(
             return ServiceResult<AuthActionResponse>.Fail("User not found.", "user_not_found", StatusCodes.Status404NotFound);
         }
 
-        var debugToken = await IssueEmailActionTokenAsync(
+        await IssueEmailActionTokenAsync(
             userId,
             PurposePasswordChange,
             _options.PasswordResetTokenMinutes,
@@ -904,8 +876,7 @@ public sealed class AuthService(
             cancellationToken);
 
         return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse(
-            "A password change code was requested. Check your email to continue.",
-            hostEnvironment.IsDevelopment() ? debugToken : null));
+            "A password change code was requested. Check your email to continue."));
     }
 
     public async Task<ServiceResult<AuthActionResponse>> VerifyPasswordChangeCodeAsync(
@@ -993,7 +964,7 @@ public sealed class AuthService(
             return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
         }
 
-        var debugToken = await IssueEmailActionTokenAsync(
+        await IssueEmailActionTokenAsync(
             userId,
             PurposeAccountDeletion,
             _options.PasswordResetTokenMinutes,
@@ -1010,8 +981,7 @@ public sealed class AuthService(
             cancellationToken);
 
         return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse(
-            "A deletion verification code was requested. Check your email to continue.",
-            hostEnvironment.IsDevelopment() ? debugToken : null));
+            "A deletion verification code was requested. Check your email to continue."));
     }
 
     public GoogleAuthOptionsDto GetGoogleAuthOptions()
@@ -1023,7 +993,7 @@ public sealed class AuthService(
             CallbackPath: "/api/auth/providers/google/callback",
             Message: googleAuthService.IsConfigured
                 ? "Google sign-in is configured for backend token verification."
-                : "Google sign-in is not configured. Set GoogleAuth:WebClientId and/or GoogleAuth:AndroidClientIdDebug/GoogleAuth:AndroidClientIdProd to enable it.");
+                : "Google sign-in is not configured. Set GoogleAuth:WebClientId and GoogleAuth:AndroidClientIdProd to enable it.");
     }
 
     public async Task<ServiceResult<AuthActionResponse>> ScaffoldGoogleCallbackAsync(CancellationToken cancellationToken)
@@ -1042,9 +1012,29 @@ public sealed class AuthService(
         }
 
         return ServiceResult<AuthActionResponse>.Fail(
-            "Google sign-in callback is scaffolded but not active in this environment.",
+            "Google sign-in callback is scaffolded but not active.",
             "google_sign_in_not_configured",
             StatusCodes.Status501NotImplemented);
+    }
+
+    private void StageAuditEvent(
+        string category,
+        string eventName,
+        string targetEntityType,
+        string? targetEntityId,
+        Guid? actorId,
+        string actorType,
+        object? metadata)
+    {
+        dbContext.AuditEvents.Add(AuditEventFactory.Create(
+            requestContext,
+            category,
+            eventName,
+            targetEntityType,
+            targetEntityId,
+            actorId,
+            actorType,
+            metadata));
     }
 
     private Task WriteGoogleLoginFailureAuditAsync(
@@ -1061,18 +1051,6 @@ public sealed class AuthService(
             actorType: actorId.HasValue ? "user" : "anonymous",
             metadata: new { provider = ProviderTypeGoogleOidc, reason },
             cancellationToken);
-    }
-
-    private static (bool HasToken, int TokenLength, string TokenPrefix) SummarizeToken(string? token)
-    {
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            return (false, 0, string.Empty);
-        }
-
-        var trimmed = token.Trim();
-        var prefixLength = Math.Min(10, trimmed.Length);
-        return (true, trimmed.Length, trimmed[..prefixLength]);
     }
 
     private async Task<string> IssueEmailActionTokenAsync(

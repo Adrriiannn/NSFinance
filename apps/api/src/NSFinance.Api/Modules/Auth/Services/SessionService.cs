@@ -21,11 +21,21 @@ public sealed class SessionService(
     public async Task<AuthTokenResponse> CreateSessionAsync(
         User user,
         DeviceContextDto? deviceContext,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool saveImmediately = true,
+        bool userIsNew = false)
     {
         var now = DateTime.UtcNow;
-        var device = await ResolveDeviceAsync(user.Id, deviceContext, now, cancellationToken);
-        var session = await ResolveReusableSessionAsync(user.Id, device?.Id, now, cancellationToken);
+        var device = await ResolveDeviceAsync(
+            user.Id,
+            deviceContext,
+            now,
+            cancellationToken,
+            saveImmediately,
+            userIsNew);
+        var session = userIsNew
+            ? null
+            : await ResolveReusableSessionAsync(user.Id, device?.Id, now, cancellationToken);
         var familyId = Guid.NewGuid();
 
         if (session is null)
@@ -85,7 +95,10 @@ public sealed class SessionService(
         };
 
         dbContext.SessionRefreshTokens.Add(refreshEntity);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        if (saveImmediately)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
 
         var (accessToken, accessTokenExpiresAtUtc) = jwtTokenService.CreateAccessToken(user, session.Id);
 
@@ -348,7 +361,9 @@ public sealed class SessionService(
         Guid userId,
         DeviceContextDto? deviceContext,
         DateTime now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool saveImmediately = true,
+        bool userIsNew = false)
     {
         var fingerprint = NormalizeFingerprint(deviceContext?.DeviceFingerprint);
         if (string.IsNullOrWhiteSpace(fingerprint))
@@ -356,8 +371,10 @@ public sealed class SessionService(
             return null;
         }
 
-        var device = await dbContext.Devices
-            .SingleOrDefaultAsync(x => x.UserId == userId && x.DeviceFingerprint == fingerprint, cancellationToken);
+        var device = userIsNew
+            ? null
+            : await dbContext.Devices
+                .SingleOrDefaultAsync(x => x.UserId == userId && x.DeviceFingerprint == fingerprint, cancellationToken);
 
         if (device is null)
         {
@@ -376,7 +393,11 @@ public sealed class SessionService(
             };
 
             dbContext.Devices.Add(device);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            if (saveImmediately)
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             return device;
         }
 
@@ -385,7 +406,11 @@ public sealed class SessionService(
         device.Platform = NormalizeNullable(deviceContext?.Platform) ?? device.Platform;
         device.OsVersion = NormalizeNullable(deviceContext?.OsVersion) ?? device.OsVersion;
         device.AppVersion = NormalizeNullable(deviceContext?.AppVersion) ?? device.AppVersion;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        if (saveImmediately)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
         return device;
     }
 

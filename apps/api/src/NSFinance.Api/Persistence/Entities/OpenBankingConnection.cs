@@ -5,7 +5,7 @@ public class OpenBankingConnection
     public Guid Id { get; set; }
     public Guid UserId { get; set; }
     public string ProviderName { get; set; } = string.Empty;
-    public string ProviderEnvironment { get; set; } = "sandbox";
+    public string ProviderEnvironment { get; set; } = "live";
     public string? ProviderConnectionReference { get; set; }
     public string? ProviderId { get; set; }
     public string? ProviderDisplayName { get; set; }

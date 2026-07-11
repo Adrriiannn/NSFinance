@@ -33,7 +33,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_SuccessfullyIngestsAccountsBalancesAndTransactions()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.success@test.local");
@@ -66,7 +66,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_PersistsBalanceSnapshot_WhenTransactionStageFails()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: BalanceSuccessTransactionFailureFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.balance-durable@test.local");
@@ -93,7 +93,7 @@ public class OpenBankingIntegrationTests
     {
         var merchantResolution = new RecordingMerchantResolutionService();
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler(),
             merchantResolutionService: merchantResolution);
 
@@ -129,7 +129,7 @@ public class OpenBankingIntegrationTests
     {
         var merchantResolution = new RecordingMerchantResolutionService();
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler(),
             merchantResolutionService: merchantResolution);
 
@@ -145,7 +145,7 @@ public class OpenBankingIntegrationTests
         Assert.True(callback.Succeeded);
         Assert.Equal(1, merchantResolution.InvocationCount);
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var rerun = await syncService.SyncConnectionAsync(user.Id, start.Value.ConnectionId, CancellationToken.None);
         Assert.True(rerun.Succeeded);
 
@@ -157,7 +157,7 @@ public class OpenBankingIntegrationTests
     {
         var merchantResolution = new RecordingMerchantResolutionService();
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SameFingerprintDistinctTransactionsFlowHandler(),
             merchantResolutionService: merchantResolution);
 
@@ -189,7 +189,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_MatchesLinkedInternalTransfers_ForAibLikeDateOnlyAndCounterpartyHints()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulCrossBankTransferFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.transfer-match@test.local");
@@ -224,7 +224,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_DoesNotMislinkSavingsPocketTransfer_WhenCrossBankCounterpartyMatchExists()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: CrossBankTransferWithSavingsPocketFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.transfer-pocket-guard@test.local");
@@ -270,7 +270,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_MatchesRepeatedSameAmountTransfers_WithSameDayPreference()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: RepeatedSameAmountTransferChainFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.transfer-repeated-chain@test.local");
@@ -318,7 +318,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_SecondAccountImport_ReprocessesTerminalNoCounterpartTransfers_WhenSameUserUniverseExpands()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SequentialUniverseExpansionTransferFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.second-account-universe-expansion@test.local");
@@ -378,10 +378,10 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_FirstBankImport_EnqueuesDeterministicProcessingForImportedRows()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.enqueue-first-import@test.local");
         var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
@@ -412,10 +412,10 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_SecondBankImport_AlsoEnqueuesDeterministicProcessingForImportedRows()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SequentialUniverseExpansionTransferFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.enqueue-second-import@test.local");
 
@@ -461,10 +461,10 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_EmptyFirstSyncThenLateIngestion_TriggersDeterministicKickoffFromInsertion()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: DelayedIngestionAfterSyncFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.delayed-ingestion-kickoff@test.local");
         var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
@@ -480,7 +480,7 @@ public class OpenBankingIntegrationTests
             queue.Items,
             item => item.ConnectionId == start.Value.ConnectionId && item.UserId == user.Id);
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions(), queue);
         var delayedSync = await syncService.SyncConnectionAsync(
             user.Id,
             start.Value.ConnectionId,
@@ -506,7 +506,7 @@ public class OpenBankingIntegrationTests
     public async Task EnrichmentProgress_ZeroRows_DoesNotReportCompleted()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: DelayedIngestionAfterSyncFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.zero-rows-not-completed@test.local");
@@ -531,10 +531,10 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_SecondBankLargeImport_TriggersIngestionKickoffForLaterAccount()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SequentialSecondAccountLargeImportFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.second-account-large-import-kickoff@test.local");
 
@@ -582,10 +582,10 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SequentialUniverseExpansionTransferFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.invalidate-transfer-terminalization@test.local");
 
@@ -636,7 +636,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.worker-second-account-sweep@test.local");
@@ -729,7 +729,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicWorker_PeriodicSweep_DoesNotQueueFlagDebtWithoutImportedConnectionFootprint()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.worker-no-footprint-flag-debt@test.local");
@@ -739,7 +739,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "No Footprint Connection",
             Status = BankConnectionStatuses.Synced,
             NeedsHistoricalReclassification = true,
@@ -797,7 +797,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.row-truth-historical-reopen@test.local");
@@ -808,7 +808,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Row Truth Historical Reopen",
             Status = BankConnectionStatuses.Synced,
             InitialBackfillStartedUtc = now.AddDays(-2),
@@ -868,7 +868,7 @@ public class OpenBankingIntegrationTests
 
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -907,10 +907,10 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SequentialUniverseExpansionTransferFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.universe-invalidation-idempotent@test.local");
 
@@ -982,7 +982,7 @@ public class OpenBankingIntegrationTests
         Assert.True(unrelatedAfterExpansion.DeterministicClassificationTerminal);
 
         var transferRetryTimestamp = transferAfterExpansion.DeterministicLastRetryConsideredUtc;
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions(), queue);
         var rerun = await syncService.SyncConnectionAsync(user.Id, secondStart.Value.ConnectionId, CancellationToken.None);
         Assert.True(rerun.Succeeded);
 
@@ -996,10 +996,10 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_SequentialSecondAccountImport_RequeuesNewRowsAndReprocessesStaleFirstAccountRows()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SequentialUniverseExpansionTransferFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.production-shape-sequential-reclassification@test.local");
 
@@ -1011,7 +1011,7 @@ public class OpenBankingIntegrationTests
             CancellationToken.None);
         Assert.True(firstCallback.Succeeded);
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions(), queue);
         var firstDeterministicRun = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             firstStart.Value.ConnectionId,
@@ -1081,7 +1081,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: RepeatedSameAmountTransferChainFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.unified-deterministic-organization@test.local");
@@ -1156,7 +1156,7 @@ public class OpenBankingIntegrationTests
         connection.HistoricalEnrichmentVersion = null;
         await harness.DbContext.SaveChangesAsync();
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var secondSync = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -1192,12 +1192,14 @@ public class OpenBankingIntegrationTests
         Assert.True(refreshedSavingsRow.DeterministicEnrichmentVersion.HasValue && refreshedSavingsRow.DeterministicEnrichmentVersion.Value >= 2);
     }
 
-    [Fact]
-    public async Task GlobalSync_RepairsStaleWrongRepeatedSameAmountLinks_ToSameDayCounterparts()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GlobalSync_RepairsStaleWrongRepeatedSameAmountLinks_ToSameDayCounterparts(bool reverseProviderOrder)
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
-            httpHandler: RepeatedSameAmountTransferChainFlowHandler());
+            options: ValidLiveOptions(),
+            httpHandler: RepeatedSameAmountTransferChainFlowHandler(reverseProviderOrder));
 
         var user = await harness.CreateUserAsync("bank.transfer-repair-chain@test.local");
         var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
@@ -1241,7 +1243,7 @@ public class OpenBankingIntegrationTests
 
         await harness.DbContext.SaveChangesAsync();
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var secondSync = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -1271,7 +1273,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_DoesNotForceMatch_WhenRepeatedCandidatesAreAmbiguous()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: AmbiguousRepeatedAmountTransferFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.transfer-ambiguous-repeated@test.local");
@@ -1302,7 +1304,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_DetectsRoundupSavingsRelationship_AndKeepsMerchantExpenseVisible()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: RevolutRoundupSavingsFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.roundup-savings@test.local");
@@ -1359,7 +1361,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_DetectsSavingsWithdrawal_AndKeepsItAnalyticsNeutral()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: RevolutSavingsWithdrawalFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-withdrawal@test.local");
@@ -1399,7 +1401,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_PersistsPendingRawTransactionsWithoutProjectingIntoLedger()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: PendingOnlyFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.pending-only@test.local");
@@ -1423,7 +1425,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_ProjectsSettledEndpointTransactions_WhenProviderStatusLooksPending()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SettledEndpointPendingStatusFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.settled-endpoint-pending-status@test.local");
@@ -1447,7 +1449,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_DoesNotCollapseDistinctTransactions_WithSameAmountTimestampAndDescription()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SameFingerprintDistinctTransactionsFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.same-fingerprint-distinct@test.local");
@@ -1463,7 +1465,7 @@ public class OpenBankingIntegrationTests
         Assert.Equal(2, await harness.DbContext.RawBankTransactions.CountAsync());
         Assert.Equal(2, await harness.DbContext.Transactions.CountAsync());
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var secondSync = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -1479,7 +1481,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_DoesNotCollapseDistinctTransactions_WhenNormalizedProviderIdIsShared()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SharedNormalizedIdDistinctTransactionsFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.shared-normalized-id-distinct@test.local");
@@ -1507,7 +1509,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_PromotesPendingAccountTransactionToBooked_WhenProviderIdIsReused()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: PendingThenBookedAccountFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.pending-promote@test.local");
@@ -1526,7 +1528,7 @@ public class OpenBankingIntegrationTests
         var firstRaw = await harness.DbContext.RawBankTransactions.SingleAsync();
         Assert.Equal("pending", firstRaw.TransactionStatus);
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var secondSync = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -1550,7 +1552,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_BoundsLegacyProjectionBackfillPerRun_ToAvoidUnboundedReconcileCost()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.backfill-bounded@test.local");
@@ -1610,7 +1612,7 @@ public class OpenBankingIntegrationTests
 
         await harness.DbContext.SaveChangesAsync();
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var syncResult = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -1635,7 +1637,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.historical-enrichment-batch@test.local");
@@ -1687,7 +1689,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = DateTime.UtcNow.AddHours(-2);
         connection.LastSyncAttemptedUtc = DateTime.UtcNow.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
 
         var firstRun = await globalSyncService.ExecuteAsync(
             user.Id,
@@ -1749,7 +1751,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.historical-enrichment-same-timestamp@test.local");
@@ -1801,7 +1803,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = DateTime.UtcNow.AddHours(-1);
         connection.LastSyncAttemptedUtc = DateTime.UtcNow.AddHours(-1);
         await harness.DbContext.SaveChangesAsync();
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var syncResult = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -1835,7 +1837,7 @@ public class OpenBankingIntegrationTests
     public async Task EnrichmentProgress_ConnectionAwaitingSyncWithPendingReclassification_IsQueuedForSync()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-queue@test.local");
@@ -1870,7 +1872,7 @@ public class OpenBankingIntegrationTests
     public async Task ConnectionSummary_ImportedDataAndQueuedEnrichment_UsesPostImportPhase()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.connection-summary-post-import@test.local");
@@ -1967,7 +1969,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.connection-summary-stale-sync-reconciled@test.local");
@@ -2009,7 +2011,7 @@ public class OpenBankingIntegrationTests
     public async Task ConnectionSummary_StaleSyncPendingWithoutImportedData_UsesSyncTakingLongerPhase()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.connection-summary-stale-sync-without-import@test.local");
@@ -2019,7 +2021,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Stale Pending Connection",
             Status = BankConnectionStatuses.SyncPending,
             NeedsHistoricalReclassification = true,
@@ -2052,10 +2054,10 @@ public class OpenBankingIntegrationTests
     public async Task ConnectionSummary_DelayedIngestion_RemainsImportingUntilConnectionRowsMaterialize()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: DelayedIngestionAfterSyncFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.connection-summary-delayed-import-gating@test.local");
         var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
@@ -2078,7 +2080,7 @@ public class OpenBankingIntegrationTests
         Assert.NotEqual("import_complete_enrichment_queued", summaryBeforeRows.SyncLifecyclePhase);
         Assert.NotEqual("completed", summaryBeforeRows.SyncLifecyclePhase);
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), queue);
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions(), queue);
         var delayedSync = await syncService.SyncConnectionAsync(
             user.Id,
             start.Value.ConnectionId,
@@ -2098,10 +2100,10 @@ public class OpenBankingIntegrationTests
     public async Task ConnectionSummary_ImportedRows_CanAdvanceToPostImportQueuedState()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.connection-summary-imported-rows-queued@test.local");
         var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
@@ -2127,10 +2129,10 @@ public class OpenBankingIntegrationTests
     public async Task ConnectionSummary_UserWideRows_DoNotCompleteDifferentConnectionWithoutItsOwnImportFootprint()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: MixedConnectionRowAvailabilityFlowHandler());
         var queue = new RecordingBankDeterministicEnrichmentQueue();
-        harness.AuthService = harness.BuildAuthService(ValidSandboxOptions(), queue);
+        harness.AuthService = harness.BuildAuthService(ValidLiveOptions(), queue);
 
         var user = await harness.CreateUserAsync("bank.connection-summary-connection-scoped-gating@test.local");
 
@@ -2171,7 +2173,7 @@ public class OpenBankingIntegrationTests
     public async Task ConnectionSummary_ExplicitZeroRowFinalImport_CanResolveCompleted()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.connection-summary-zero-row-final@test.local");
@@ -2181,7 +2183,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Zero Row Final Provider",
             Status = BankConnectionStatuses.Synced,
             NeedsHistoricalReclassification = false,
@@ -2236,7 +2238,7 @@ public class OpenBankingIntegrationTests
     public async Task EnrichmentProgress_SyncedLegacyConnectionWithoutDurableState_IsIdleWithoutActiveRows()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-needs-reclassification@test.local");
@@ -2298,7 +2300,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-active-scope@test.local");
@@ -2346,7 +2348,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Waiting Connection",
             Status = BankConnectionStatuses.ConnectedPendingSync,
             NeedsHistoricalReclassification = true,
@@ -2387,7 +2389,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-second-import-snapshot-suppression@test.local");
@@ -2442,7 +2444,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Second Import Pending",
             Status = BankConnectionStatuses.Synced,
             NeedsHistoricalReclassification = false,
@@ -2515,7 +2517,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-row-truth-numerator@test.local");
@@ -2526,7 +2528,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Row Truth Pending",
             Status = BankConnectionStatuses.Synced,
             NeedsHistoricalReclassification = false,
@@ -2626,7 +2628,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-terminal-no-match@test.local");
@@ -2690,7 +2692,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-waiting-counterparty@test.local");
@@ -2753,7 +2755,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.deferred-full-universe-terminalize@test.local");
@@ -2841,7 +2843,7 @@ public class OpenBankingIntegrationTests
         Assert.Contains(diagnosticsBefore.Value.TopDeferredReasonCodes, item =>
             item.Key == DeterministicClassificationReasonCodes.DeferredMissingCounterparty);
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -2873,7 +2875,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicDiagnostics_TaxonomyOnlySavingsText_DoesNotCreateDeterministicTransferStyling()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.taxonomy-fallback-style-guard@test.local");
@@ -2930,7 +2932,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.deterministic-small-residual@test.local");
@@ -3012,7 +3014,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         BankSyncService.DeterministicEnrichmentRunResult? lastRun = null;
         for (var run = 0; run < 6; run++)
         {
@@ -3056,7 +3058,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.deterministic-large-plateau@test.local");
@@ -3102,7 +3104,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var remainingSequence = new List<int>();
         BankSyncService.DeterministicEnrichmentRunResult? lastRun = null;
 
@@ -3146,7 +3148,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.enrichment-stage-contradiction@test.local");
@@ -3197,7 +3199,7 @@ public class OpenBankingIntegrationTests
             Id = Guid.NewGuid(),
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Waiting First Sync Connection",
             Status = BankConnectionStatuses.ConnectedPendingSync,
             NeedsHistoricalReclassification = true,
@@ -3228,7 +3230,7 @@ public class OpenBankingIntegrationTests
         var currentVersion = DeterministicCategorizationConstants.CurrentClassificationVersion;
 
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.false-defer-ordinary@test.local");
@@ -3290,7 +3292,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -3308,7 +3310,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_LegacySavingsHintWithValidPair_TransferTakesPrecedence()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.transfer-precedence-over-savings@test.local");
@@ -3434,7 +3436,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -3459,7 +3461,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_TransferPairWithLegacyLinkedTransferId_DoesNotGetCapturedBySavings()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.transfer-linked-id-safety@test.local");
@@ -3572,7 +3574,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -3595,7 +3597,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_TransferPending_IsHandledBeforeAnySavingsFallback()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.transfer-pending-before-savings@test.local");
@@ -3687,7 +3689,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -3720,7 +3722,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_NearbyPurchaseAlone_DoesNotAutoClassifySavings()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-nearby-alone@test.local");
@@ -3790,7 +3792,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -3808,7 +3810,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_DuplicateClusterStablePairs_AreMatchedOneToOne()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.duplicate-cluster-stable@test.local");
@@ -3977,7 +3979,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4001,7 +4003,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_AibRevolutDuplicateCluster_HighConfidenceReferencesDrivePairing()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: AibRevolutHighConfidenceDuplicateClusterFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.duplicate-cluster-high-ref@test.local");
@@ -4059,7 +4061,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_AibRevolutWeakNameOutgoing_DuplicateClusterRoutesAndPairs()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: AibRevolutWeakNameDuplicateClusterFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.weak-name-outgoing-override@test.local");
@@ -4142,7 +4144,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_AibRevolutWeakNameOutgoing_DateOnlyStoredPriorUtc_DuplicateClusterRoutesAndPairs()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: AibRevolutWeakNameDateOnlyStoredPriorUtcFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.weak-name-prior-utc@test.local");
@@ -4213,7 +4215,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_DateOnlyStoredPriorUtc_UnrelatedCrossDayRows_AreNotForceClustered()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: AibRevolutWeakNameDateOnlyStoredPriorUtcUnrelatedCrossDayFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.weak-name-prior-utc-cross-day-negative@test.local");
@@ -4241,7 +4243,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_WeakNameOutgoing_WithoutStrongOppositeEvidence_DoesNotOvermatch()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: AibRevolutWeakNameNoStructuredInboundFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.weak-name-negative-control@test.local");
@@ -4285,7 +4287,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_DuplicateClusterAmbiguous_IsNotForcePaired()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.duplicate-cluster-ambiguous@test.local");
@@ -4367,7 +4369,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4399,7 +4401,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_SavingsCustomName_ContextualPatternIsClassified()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-custom-name@test.local");
@@ -4473,7 +4475,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4494,7 +4496,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_SavingsContext_MainSpendPostedAfterCandidate_Classifies()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-posting-order@test.local");
@@ -4570,7 +4572,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4594,7 +4596,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_SavingsProviderStructuralLargeManualMove_Classifies()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-large-manual@test.local");
@@ -4651,7 +4653,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4672,7 +4674,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_WeakGenericSavingsWordingPlusNearbyPurchase_DoesNotClassify()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-weak-generic-nearby@test.local");
@@ -4742,7 +4744,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4759,7 +4761,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_SavingsSafety_ExternalOrOneOffSignalsStayUnmatched()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-safety-unmatched@test.local");
@@ -4858,7 +4860,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4880,7 +4882,7 @@ public class OpenBankingIntegrationTests
     public async Task DeterministicEnrichment_GenericSavingsWords_DoNotRouteSavingsOrDefer()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.savings-generic-keywords@test.local");
@@ -4949,7 +4951,7 @@ public class OpenBankingIntegrationTests
         connection.LastSuccessfulSyncUtc = now.AddHours(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions());
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
         var run = await syncService.RunDeterministicEnrichmentAsync(
             user.Id,
             connection.Id,
@@ -4977,7 +4979,7 @@ public class OpenBankingIntegrationTests
     {
         var handler = AibCappedOldestSliceFlowHandler(out var getTransactionsCallCount, out var referenceNowUtc);
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: handler);
 
         var user = await harness.CreateUserAsync("bank.aib-capped-window@test.local");
@@ -4996,7 +4998,7 @@ public class OpenBankingIntegrationTests
 
         Assert.True(initialLatestRawUtc < referenceNowUtc.AddDays(-20));
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var secondSync = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -5018,7 +5020,7 @@ public class OpenBankingIntegrationTests
     public async Task SyncConnection_DeterministicQueueDelay_DoesNotBlockImportOrCompletion()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: AibRevolutWeakNameDateOnlyStoredPriorUtcFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.sync-nonblocking-enrichment-queue@test.local");
@@ -5037,7 +5039,7 @@ public class OpenBankingIntegrationTests
         await harness.DbContext.SaveChangesAsync();
 
         var delayedQueue = new DelayedBankDeterministicEnrichmentQueue(TimeSpan.FromSeconds(4));
-        var syncService = harness.CreateSyncServiceForTesting(ValidSandboxOptions(), delayedQueue);
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions(), delayedQueue);
 
         var stopwatch = Stopwatch.StartNew();
         var syncResult = await syncService.SyncConnectionAsync(user.Id, connection.Id, CancellationToken.None);
@@ -5055,7 +5057,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_ManualTrigger_EnforcesCooldown()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.global-manual-cooldown@test.local");
@@ -5069,7 +5071,7 @@ public class OpenBankingIntegrationTests
 
         Assert.True(callback.Succeeded);
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
 
         var first = await globalSyncService.ExecuteAsync(
             user.Id,
@@ -5094,7 +5096,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_ManualCooldown_UsesConfiguredTenMinuteWindow()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.manual-cooldown-config@test.local");
@@ -5109,7 +5111,7 @@ public class OpenBankingIntegrationTests
         Assert.True(callback.Succeeded);
 
         var globalSyncService = harness.CreateGlobalSyncService(
-            ValidSandboxOptions(),
+            ValidLiveOptions(),
             bankingSyncOptions: new BankingSyncOptions
             {
                 ManualCooldownMinutes = 10,
@@ -5144,7 +5146,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_ManualTrigger_ForceTrue_BypassesCooldown()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.manual-force-cooldown@test.local");
@@ -5159,7 +5161,7 @@ public class OpenBankingIntegrationTests
         Assert.True(callback.Succeeded);
 
         var globalSyncService = harness.CreateGlobalSyncService(
-            ValidSandboxOptions(),
+            ValidLiveOptions(),
             bankingSyncOptions: new BankingSyncOptions
             {
                 ManualCooldownMinutes = 10,
@@ -5187,7 +5189,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_RecoversStaleSyncPendingConnection_AndRunsSync()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.global-stale-sync-pending@test.local");
@@ -5207,7 +5209,7 @@ public class OpenBankingIntegrationTests
         connection.UpdatedUtc = DateTime.UtcNow.AddMinutes(-20);
         await harness.DbContext.SaveChangesAsync();
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var result = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -5226,7 +5228,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_SkipsFreshSyncPendingConnection_AsInProgress()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.global-fresh-sync-pending@test.local");
@@ -5246,7 +5248,7 @@ public class OpenBankingIntegrationTests
         connection.UpdatedUtc = DateTime.UtcNow.AddMinutes(-2);
         await harness.DbContext.SaveChangesAsync();
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var result = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -5262,7 +5264,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_AutoTrigger_SkipsWhenNotDue()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.global-auto-not-due@test.local");
@@ -5276,7 +5278,7 @@ public class OpenBankingIntegrationTests
 
         Assert.True(callback.Succeeded);
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var result = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "auto",
@@ -5291,7 +5293,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_AutoTrigger_SkipsWhenProviderBackoffActive()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.global-auto-provider-backoff@test.local");
@@ -5313,7 +5315,7 @@ public class OpenBankingIntegrationTests
         await harness.DbContext.SaveChangesAsync();
 
         var globalSyncService = harness.CreateGlobalSyncService(
-            ValidSandboxOptions(),
+            ValidLiveOptions(),
             bankingSyncOptions: new BankingSyncOptions
             {
                 ManualCooldownMinutes = 10,
@@ -5336,7 +5338,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_AutoTrigger_ExecutesWhenDue()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.global-auto-due@test.local");
@@ -5355,7 +5357,7 @@ public class OpenBankingIntegrationTests
         connection.UpdatedUtc = DateTime.UtcNow;
         await harness.DbContext.SaveChangesAsync();
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var result = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "auto",
@@ -5369,7 +5371,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_AutoTrigger_UsesConfiguredTenMinuteInterval()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.auto-interval-config@test.local");
@@ -5389,7 +5391,7 @@ public class OpenBankingIntegrationTests
         await harness.DbContext.SaveChangesAsync();
 
         var globalSyncService = harness.CreateGlobalSyncService(
-            ValidSandboxOptions(),
+            ValidLiveOptions(),
             bankingSyncOptions: new BankingSyncOptions
             {
                 ManualCooldownMinutes = 10,
@@ -5409,7 +5411,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_Continues_WhenAuditWriteFails()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.global-audit-failure@test.local");
@@ -5424,7 +5426,7 @@ public class OpenBankingIntegrationTests
         Assert.True(callback.Succeeded);
 
         var globalSyncService = harness.CreateGlobalSyncService(
-            ValidSandboxOptions(),
+            ValidLiveOptions(),
             new ThrowingAuditService());
         var result = await globalSyncService.ExecuteAsync(
             user.Id,
@@ -5439,7 +5441,7 @@ public class OpenBankingIntegrationTests
     public async Task GlobalSync_HandlesPerConnectionExceptions_AsStructuredFailures()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: ThrowingNetworkHandler());
 
         var user = await harness.CreateUserAsync("bank.global-connection-throw@test.local");
@@ -5451,7 +5453,7 @@ public class OpenBankingIntegrationTests
             Id = connectionId,
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Throwing Bank",
             Status = BankConnectionStatuses.Synced,
             CreatedUtc = now.AddDays(-1),
@@ -5468,7 +5470,7 @@ public class OpenBankingIntegrationTests
         });
         await harness.DbContext.SaveChangesAsync();
 
-        var globalSyncService = harness.CreateGlobalSyncService(ValidSandboxOptions());
+        var globalSyncService = harness.CreateGlobalSyncService(ValidLiveOptions());
         var result = await globalSyncService.ExecuteAsync(
             user.Id,
             trigger: "manual",
@@ -5486,7 +5488,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_InvalidAuthorizationCode_MarksReauthRequired()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: InvalidCodeHandler());
 
         var user = await harness.CreateUserAsync("bank.invalid-code@test.local");
@@ -5510,13 +5512,13 @@ public class OpenBankingIntegrationTests
     public async Task StartLink_CreatesDurableConnectionAttempt_WithResponseAttemptId()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.attempt-created@test.local");
         var start = await harness.AuthService.StartLinkAsync(
             user.Id,
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts",
+            "nsfinance://accounts/connect-bank?intent=new&returnTo=accounts",
             null,
             CancellationToken.None);
 
@@ -5534,7 +5536,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_RepeatedCallback_IsIdempotentAndReturnsAlreadyHandledOutcome()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.callback-repeat@test.local");
@@ -5558,11 +5560,11 @@ public class OpenBankingIntegrationTests
     public async Task StartLink_SupersedesOlderAttempt_ForSameLaunchContext()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.attempt-supersede@test.local");
-        const string launchUri = "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts";
+        const string launchUri = "nsfinance://accounts/connect-bank?intent=new&returnTo=accounts";
 
         var first = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
         var second = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
@@ -5584,11 +5586,11 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_ForSupersededAttempt_ReturnsSupersededOutcome()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.callback-superseded@test.local");
-        const string launchUri = "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts";
+        const string launchUri = "nsfinance://accounts/connect-bank?intent=new&returnTo=accounts";
 
         var first = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
         var second = await harness.AuthService.StartLinkAsync(user.Id, launchUri, null, CancellationToken.None);
@@ -5608,7 +5610,7 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_ForExpiredAttempt_ReturnsExpiredOutcomeWithoutReplayingSideEffects()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.callback-expired@test.local");
@@ -5636,11 +5638,11 @@ public class OpenBankingIntegrationTests
     public async Task CallbackFlow_PreservesCustomAppReturnUri_ForEnvironmentAwareReturn()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.return-uri@test.local");
-        const string appReturnUri = "exp://192.168.0.11:8081/--/modals/add-account";
+        const string appReturnUri = "nsfinance://modals/add-account";
 
         var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, null, CancellationToken.None);
         Assert.True(start.Succeeded);
@@ -5652,18 +5654,18 @@ public class OpenBankingIntegrationTests
 
         Assert.True(outcome.Succeeded);
         Assert.NotNull(outcome.AppReturnUri);
-        Assert.StartsWith("exp://192.168.0.11:8081/--/modals/add-account", outcome.AppReturnUri, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("nsfinance://modals/add-account", outcome.AppReturnUri, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task CallbackFlow_PreservesCurrentAppReturnUri_ForEnvironmentAwareReturn()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.return-uri-current@test.local");
-        const string appReturnUri = "exp://192.168.0.11:8081/--/(tabs)/accounts/connect-bank?intent=new";
+        const string appReturnUri = "nsfinance://accounts/connect-bank?intent=new";
 
         var start = await harness.AuthService.StartLinkAsync(user.Id, appReturnUri, null, CancellationToken.None);
         Assert.True(start.Succeeded);
@@ -5676,7 +5678,7 @@ public class OpenBankingIntegrationTests
         Assert.True(outcome.Succeeded);
         Assert.NotNull(outcome.AppReturnUri);
         Assert.StartsWith(
-            "exp://192.168.0.11:8081/--/(tabs)/accounts/connect-bank",
+            "nsfinance://accounts/connect-bank",
             outcome.AppReturnUri,
             StringComparison.OrdinalIgnoreCase);
     }
@@ -5684,7 +5686,7 @@ public class OpenBankingIntegrationTests
     [Fact]
     public async Task StartLink_InvalidConfiguration_ReturnsActionableError()
     {
-        var options = ValidSandboxOptions();
+        var options = ValidLiveOptions();
         options.ClientSecret = string.Empty;
 
         await using var harness = new OpenBankingTestHarness(
@@ -5699,20 +5701,20 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
-    public async Task CallbackFlow_EnvironmentMismatch_IsRejectedAndLoggedAsFailed()
+    public async Task CallbackFlow_NonLiveHosts_AreRejectedAndLoggedAsFailed()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.env-mismatch@test.local");
         var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
         Assert.True(start.Succeeded);
 
-        var liveOptions = ValidSandboxOptions();
+        var liveOptions = ValidLiveOptions();
         liveOptions.Environment = "live";
-        liveOptions.AuthBaseUrl = "https://auth.truelayer.com";
-        liveOptions.ApiBaseUrl = "https://api.truelayer.com";
+        liveOptions.AuthBaseUrl = "https://auth.invalid-truelayer.test";
+        liveOptions.ApiBaseUrl = "https://api.invalid-truelayer.test";
         liveOptions.RedirectUri = "https://api.finance.nsireland.ie/api/banking/truelayer/callback";
 
         var liveAuthService = harness.BuildAuthService(
@@ -5736,7 +5738,7 @@ public class OpenBankingIntegrationTests
     public async Task ReconfirmFlow_ReusesExistingConnectionAndPreservesHistoricalRows()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.reconfirm@test.local");
@@ -5750,7 +5752,7 @@ public class OpenBankingIntegrationTests
             Id = connectionId,
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Mock Bank Plc",
             ProviderConnectionReference = "mock-bank",
             Status = BankConnectionStatuses.ReauthRequired,
@@ -5763,7 +5765,7 @@ public class OpenBankingIntegrationTests
         {
             Id = financialAccountId,
             UserId = user.Id,
-            Name = "Sandbox Main Account",
+            Name = "Live Main Account",
             Type = "Current",
             Currency = "GBP",
             CreatedUtc = now.AddDays(-30)
@@ -5774,7 +5776,7 @@ public class OpenBankingIntegrationTests
             Id = linkedAccountId,
             ConnectionId = connectionId,
             ProviderAccountId = "acc-001",
-            DisplayName = "Sandbox Main Account",
+            DisplayName = "Live Main Account",
             Currency = "GBP",
             CurrentConnectionHealth = "healthy",
             RawPayloadJson = "{}",
@@ -5839,7 +5841,7 @@ public class OpenBankingIntegrationTests
     public async Task ReconfirmFlow_BackfillsMissingProjectionForExistingRawTransaction()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.reconfirm-backfill@test.local");
@@ -5853,7 +5855,7 @@ public class OpenBankingIntegrationTests
             Id = connectionId,
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Mock Bank Plc",
             ProviderConnectionReference = "mock-bank",
             Status = BankConnectionStatuses.ReauthRequired,
@@ -5866,7 +5868,7 @@ public class OpenBankingIntegrationTests
         {
             Id = financialAccountId,
             UserId = user.Id,
-            Name = "Sandbox Main Account",
+            Name = "Live Main Account",
             Type = "Current",
             Currency = "GBP",
             CreatedUtc = now.AddDays(-30)
@@ -5877,7 +5879,7 @@ public class OpenBankingIntegrationTests
             Id = linkedAccountId,
             ConnectionId = connectionId,
             ProviderAccountId = "acc-001",
-            DisplayName = "Sandbox Main Account",
+            DisplayName = "Live Main Account",
             Currency = "GBP",
             CurrentConnectionHealth = "healthy",
             RawPayloadJson = "{}",
@@ -5922,7 +5924,7 @@ public class OpenBankingIntegrationTests
     public async Task ListUserVisibleConnectionsAsync_ShowsOnlyActiveAndAttentionConnectionsWithoutHistoryNoise()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.visible@test.local");
@@ -5934,7 +5936,7 @@ public class OpenBankingIntegrationTests
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Mock Bank Plc",
                 ProviderConnectionReference = "provider-connection-1",
                 Status = BankConnectionStatuses.Failed,
@@ -5946,7 +5948,7 @@ public class OpenBankingIntegrationTests
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Mock Bank Plc",
                 ProviderConnectionReference = "provider-connection-1",
                 Status = BankConnectionStatuses.Synced,
@@ -5958,7 +5960,7 @@ public class OpenBankingIntegrationTests
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Needs Attention Bank",
                 ProviderConnectionReference = "provider-connection-2",
                 Status = BankConnectionStatuses.ReauthRequired,
@@ -5970,7 +5972,7 @@ public class OpenBankingIntegrationTests
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Pending Bank",
                 ProviderConnectionReference = "provider-connection-3",
                 Status = BankConnectionStatuses.ConsentInProgress,
@@ -5982,7 +5984,7 @@ public class OpenBankingIntegrationTests
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Already Active Bank",
                 ProviderConnectionReference = "provider-connection-4",
                 Status = BankConnectionStatuses.Expired,
@@ -5994,7 +5996,7 @@ public class OpenBankingIntegrationTests
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Already Active Bank",
                 ProviderConnectionReference = "provider-connection-4",
                 Status = BankConnectionStatuses.ConnectedPendingSync,
@@ -6006,7 +6008,7 @@ public class OpenBankingIntegrationTests
                 Id = Guid.NewGuid(),
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Revoked Bank",
                 ProviderConnectionReference = "provider-connection-5",
                 Status = BankConnectionStatuses.Revoked,
@@ -6035,7 +6037,7 @@ public class OpenBankingIntegrationTests
     public async Task DisconnectCleanup_ClearsStaleSurvivingTransferLinksAndMarksReclassification()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.disconnect.stale-counterpart@test.local");
@@ -6056,7 +6058,7 @@ public class OpenBankingIntegrationTests
                 Id = removedConnectionId,
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Disconnected Bank",
                 Status = BankConnectionStatuses.Synced,
                 CreatedUtc = now.AddMinutes(-30),
@@ -6067,7 +6069,7 @@ public class OpenBankingIntegrationTests
                 Id = survivingConnectionId,
                 UserId = user.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 ProviderDisplayName = "Surviving Bank",
                 Status = BankConnectionStatuses.Synced,
                 CreatedUtc = now.AddMinutes(-30),
@@ -6229,7 +6231,7 @@ public class OpenBankingIntegrationTests
     public async Task DisconnectAsync_MarksPendingAndRevokesTokenBeforeBackgroundCleanup()
     {
         await using var harness = new OpenBankingTestHarness(
-            options: ValidSandboxOptions(),
+            options: ValidLiveOptions(),
             httpHandler: SuccessfulFlowHandler());
 
         var user = await harness.CreateUserAsync("bank.disconnect@test.local");
@@ -6243,7 +6245,7 @@ public class OpenBankingIntegrationTests
             Id = connectionId,
             UserId = user.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             ProviderDisplayName = "Disconnect Bank",
             ProviderConnectionReference = "provider-disconnect-1",
             Status = BankConnectionStatuses.Synced,
@@ -6357,14 +6359,14 @@ public class OpenBankingIntegrationTests
         Assert.Equal(BankConnectionStatuses.DisconnectPending, overview.AttentionConnections[0].Status);
     }
 
-    private static TrueLayerOptions ValidSandboxOptions() => new()
+    private static TrueLayerOptions ValidLiveOptions() => new()
     {
-        ClientId = "sandbox-client",
-        ClientSecret = "sandbox-secret",
-        RedirectUri = "http://localhost:5080/api/banking/truelayer/callback",
-        Environment = "sandbox",
-        AuthBaseUrl = "https://auth.truelayer-sandbox.com",
-        ApiBaseUrl = "https://api.truelayer-sandbox.com"
+        ClientId = "live-client",
+        ClientSecret = "live-secret",
+        RedirectUri = "https://api.finance.nsireland.ie/api/banking/truelayer/callback",
+        Environment = "live",
+        AuthBaseUrl = "https://auth.truelayer.com",
+        ApiBaseUrl = "https://api.truelayer.com"
     };
 
     private static HttpMessageHandler SuccessfulFlowHandler()
@@ -6393,7 +6395,7 @@ public class OpenBankingIntegrationTests
                       "results": [
                         {
                           "account_id": "acc-001",
-                          "display_name": "Sandbox Main Account",
+                          "display_name": "Live Main Account",
                           "currency": "GBP",
                           "account_type": "TRANSACTION",
                           "provider": {
@@ -6758,7 +6760,7 @@ public class OpenBankingIntegrationTests
         });
     }
 
-    private static HttpMessageHandler RepeatedSameAmountTransferChainFlowHandler()
+    private static HttpMessageHandler RepeatedSameAmountTransferChainFlowHandler(bool reverseTransactionOrder = false)
     {
         var baseDateUtc = new DateTime(2026, 3, 30, 0, 0, 0, DateTimeKind.Utc);
         var day1 = baseDateUtc;
@@ -6849,23 +6851,48 @@ public class OpenBankingIntegrationTests
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-aib-repeated-001/transactions", StringComparison.Ordinal))
             {
-                var scenario = new RepeatedAmountClusterScenarioBuilder()
-                    .AddDateOnlyInbound("tx-chain-inbound-a", "norm-chain-inbound-a", 1.00m, day1, "REF-A")
-                    .AddDateOnlyInbound("tx-chain-inbound-b", "norm-chain-inbound-b", 1.00m, day2, "REF-B")
-                    .AddDateOnlyInbound("tx-chain-inbound-c", "norm-chain-inbound-c", 1.00m, day3, "REF-C")
-                    .AddDateOnlyInbound("tx-chain-inbound-d", "norm-chain-inbound-d", 1.00m, day4, "REF-D");
+                var scenario = new RepeatedAmountClusterScenarioBuilder();
+                if (reverseTransactionOrder)
+                {
+                    scenario
+                        .AddDateOnlyInbound("tx-chain-inbound-d", "norm-chain-inbound-d", 1.00m, day4, "REF-D")
+                        .AddDateOnlyInbound("tx-chain-inbound-c", "norm-chain-inbound-c", 1.00m, day3, "REF-C")
+                        .AddDateOnlyInbound("tx-chain-inbound-b", "norm-chain-inbound-b", 1.00m, day2, "REF-B")
+                        .AddDateOnlyInbound("tx-chain-inbound-a", "norm-chain-inbound-a", 1.00m, day1, "REF-A");
+                }
+                else
+                {
+                    scenario
+                        .AddDateOnlyInbound("tx-chain-inbound-a", "norm-chain-inbound-a", 1.00m, day1, "REF-A")
+                        .AddDateOnlyInbound("tx-chain-inbound-b", "norm-chain-inbound-b", 1.00m, day2, "REF-B")
+                        .AddDateOnlyInbound("tx-chain-inbound-c", "norm-chain-inbound-c", 1.00m, day3, "REF-C")
+                        .AddDateOnlyInbound("tx-chain-inbound-d", "norm-chain-inbound-d", 1.00m, day4, "REF-D");
+                }
 
                 return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/data/v1/accounts/acc-revolut-repeated-001/transactions", StringComparison.Ordinal))
             {
-                var scenario = new RepeatedAmountClusterScenarioBuilder()
-                    .AddPreciseOutbound("tx-chain-outbound-a", "norm-chain-outbound-a", -1.00m, day1.AddHours(5).AddMinutes(33), "LEG-A")
-                    .AddPreciseOutbound("tx-chain-outbound-b", "norm-chain-outbound-b", -1.00m, day2.AddHours(3).AddMinutes(19), "LEG-B")
-                    .AddPreciseOutbound("tx-chain-outbound-c", "norm-chain-outbound-c", -1.00m, day3.AddHours(9).AddMinutes(7), "LEG-C")
-                    .AddPreciseOutbound("tx-chain-outbound-d", "norm-chain-outbound-d", -1.00m, day4.AddHours(7).AddMinutes(26), "LEG-D")
-                    .AddSavingsOutflow("tx-chain-savings-a", "norm-chain-savings-a", -1.00m, day2.AddHours(21).AddMinutes(37));
+                var scenario = new RepeatedAmountClusterScenarioBuilder();
+                if (reverseTransactionOrder)
+                {
+                    scenario
+                        .AddSavingsOutflow("tx-chain-savings-a", "norm-chain-savings-a", -1.00m, day2.AddHours(21).AddMinutes(37))
+                        .AddPreciseOutbound("tx-chain-outbound-d", "norm-chain-outbound-d", -1.00m, day4.AddHours(7).AddMinutes(26), "LEG-D")
+                        .AddPreciseOutbound("tx-chain-outbound-c", "norm-chain-outbound-c", -1.00m, day3.AddHours(9).AddMinutes(7), "LEG-C")
+                        .AddPreciseOutbound("tx-chain-outbound-b", "norm-chain-outbound-b", -1.00m, day2.AddHours(3).AddMinutes(19), "LEG-B")
+                        .AddPreciseOutbound("tx-chain-outbound-a", "norm-chain-outbound-a", -1.00m, day1.AddHours(5).AddMinutes(33), "LEG-A");
+                }
+                else
+                {
+                    scenario
+                        .AddPreciseOutbound("tx-chain-outbound-a", "norm-chain-outbound-a", -1.00m, day1.AddHours(5).AddMinutes(33), "LEG-A")
+                        .AddPreciseOutbound("tx-chain-outbound-b", "norm-chain-outbound-b", -1.00m, day2.AddHours(3).AddMinutes(19), "LEG-B")
+                        .AddPreciseOutbound("tx-chain-outbound-c", "norm-chain-outbound-c", -1.00m, day3.AddHours(9).AddMinutes(7), "LEG-C")
+                        .AddPreciseOutbound("tx-chain-outbound-d", "norm-chain-outbound-d", -1.00m, day4.AddHours(7).AddMinutes(26), "LEG-D")
+                        .AddSavingsOutflow("tx-chain-savings-a", "norm-chain-savings-a", -1.00m, day2.AddHours(21).AddMinutes(37));
+                }
 
                 return Json(HttpStatusCode.OK, scenario.BuildResultsJson());
             }

@@ -6,7 +6,6 @@ public sealed class GoogleAuthOptions
 
     public string ClientId { get; set; } = string.Empty;
     public string WebClientId { get; set; } = string.Empty;
-    public string AndroidClientIdDebug { get; set; } = string.Empty;
     public string AndroidClientIdProd { get; set; } = string.Empty;
 
     public string[] AdditionalClientIds { get; set; } = [];
@@ -17,7 +16,6 @@ public sealed class GoogleAuthOptions
 
         AddIfPresent(configured, ClientId);
         AddIfPresent(configured, WebClientId);
-        AddIfPresent(configured, AndroidClientIdDebug);
         AddIfPresent(configured, AndroidClientIdProd);
 
         foreach (var clientId in AdditionalClientIds)

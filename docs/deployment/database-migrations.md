@@ -1,15 +1,8 @@
 # Database Migration Workflow
 
-## Summary
+NSFinance uses EF Core migrations committed to source control. Schema changes should be intentional, reviewed, and applied through the deployment workflow before production traffic depends on the new shape.
 
-NSFinance uses EF Core migrations that are committed to source control.
-
-- Local development can still create and apply migrations with the normal EF workflow.
-- Production schema changes are applied in GitHub Actions with an EF Core migration bundle.
-- The API is deployed to Azure App Service only after the migration bundle succeeds.
-- Production does not rely on app-startup auto-migrations.
-
-## Local developer workflow
+## Developer Workflow
 
 From the repository root:
 
@@ -25,71 +18,63 @@ dotnet ef migrations add <MigrationName> `
   --startup-project apps/api/src/NSFinance.Api/NSFinance.Api.csproj
 ```
 
-Apply migrations locally:
+Review the generated migration before committing it.
 
-```powershell
-dotnet ef database update `
-  --project apps/api/src/NSFinance.Api/NSFinance.Api.csproj `
-  --startup-project apps/api/src/NSFinance.Api/NSFinance.Api.csproj
+## Production Deployment Workflow
+
+The API workflow is defined in:
+
+```text
+.github/workflows/main_nsfinance-api.yml
 ```
 
-Recommended local flow:
+The production delivery workflow classifies changed paths. API and shared
+backend changes use this order:
 
-1. Create the migration.
-2. Apply it locally.
-3. Run the API and tests against the updated schema.
-4. Commit the migration files with the code change.
-5. Push to `main`.
+1. Restore .NET tools.
+2. Restore the backend solution and run the full Release test suite.
+3. Publish the API project only when all tests pass.
+4. Build an EF Core migration bundle for `apps/api/src/NSFinance.Api/NSFinance.Api.csproj`.
+5. Execute the bundle against the production database using the GitHub secret connection string.
+6. Deploy the published API artifact to Azure App Service.
+7. Poll `https://api.finance.nsireland.ie/health` and fail the release visibly if it does not recover.
 
-## Production CI/CD workflow
+If tests, bundle creation, or migration execution fail, the workflow stops before
+API deployment. If a push also requests an Android APK, that APK waits for a
+successful API deployment so it is not presented as a complete combined release.
 
-The production API workflow is defined in:
+## Required GitHub Configuration
 
-- `.github/workflows/main_nsfinance-api.yml`
-
-Deployment order:
-
-1. Restore local .NET tools.
-2. Restore and publish the API project.
-3. Build an EF Core migration bundle for `apps/api/src/NSFinance.Api/NSFinance.Api.csproj`.
-4. Execute the bundle against the production database using a GitHub secret connection string.
-5. Deploy the published API artifact to Azure App Service.
-
-If the migration bundle fails, the workflow stops and the API deploy does not continue.
-
-## Required GitHub configuration
-
-### Secrets
+Secrets:
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_SUBSCRIPTION_ID`
 - `PROD_DB_CONNECTION_STRING`
 
-### Repository variables
+Repository variables:
 
 - `AZURE_API_RESOURCE_GROUP`
 
-## Notes on secrets
+## Secret Handling
 
 - `PROD_DB_CONNECTION_STRING` is passed to the migration bundle as a workflow secret.
-- During bundle execution, GitHub Actions maps that secret into `NSFINANCE_DB_CONNECTION_STRING` and `ConnectionStrings__DefaultConnection` so the API's runtime/design-time configuration can resolve it consistently.
+- During bundle execution, GitHub Actions maps that secret into `NSFINANCE_DB_CONNECTION_STRING` and `ConnectionStrings__DefaultConnection`.
 - Do not hardcode connection strings in the repository.
-- Do not print the connection string in workflow logs.
-- GitHub Actions masks secret values automatically, but workflow steps should still avoid echoing them.
+- Do not print connection strings in workflow logs.
 
-## Startup migration behavior
+## Startup Migration Behavior
 
-`Database:ApplyMigrationsOnStartup` is honored only in `Development`.
+`Database:ApplyMigrationsOnStartup` exists as an explicit switch, but the preferred production path is the migration bundle. Keep startup migrations off unless there is a deliberate operational reason.
 
-This keeps local development convenient while making production schema changes explicit and pipeline-driven.
-
-## If a production migration fails
+## If A Migration Fails
 
 1. Check the failed GitHub Actions run.
 2. Review the migration bundle step output.
-3. Fix the migration or the target database issue locally.
+3. Fix the migration or target database issue.
 4. Create a corrective migration if needed.
-5. Push the fix and let CI/CD rerun the migration before deploy.
+5. Push the fix and rerun CI/CD before deploying API changes that depend on the schema.
 
-Do not rely on Azure App Service startup to repair schema drift in production.
+Never bypass a failing backend test merely to reach the migration step. The
+current repeated same-amount transfer test is a tracked release blocker, not an
+allowed warning.

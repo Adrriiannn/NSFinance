@@ -22,9 +22,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connectionA.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-first",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts",
+            "nsfinance://accounts/connect-bank?intent=new&returnTo=accounts",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -35,9 +35,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connectionB.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-second",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts",
+            "nsfinance://accounts/connect-bank?intent=new&returnTo=accounts",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -60,13 +60,13 @@ public class BankConnectionAttemptServiceTests
         var connectionB = await SeedConnectionAsync(dbContext, userId);
         var connectionC = await SeedConnectionAsync(dbContext, userId);
         await dbContext.SaveChangesAsync();
-        const string launchUri = "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts";
+        const string launchUri = "nsfinance://accounts/connect-bank?intent=new&returnTo=accounts";
 
         var first = await service.CreateAttemptAsync(
             userId,
             connectionA.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-rapid-a",
             launchUri,
             DateTime.UtcNow.AddMinutes(15),
@@ -77,7 +77,7 @@ public class BankConnectionAttemptServiceTests
             userId,
             connectionB.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-rapid-b",
             launchUri,
             DateTime.UtcNow.AddMinutes(15),
@@ -88,7 +88,7 @@ public class BankConnectionAttemptServiceTests
             userId,
             connectionC.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-rapid-c",
             launchUri,
             DateTime.UtcNow.AddMinutes(15),
@@ -122,9 +122,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connection.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-confirm",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new",
+            "nsfinance://accounts/connect-bank?intent=new",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -148,13 +148,13 @@ public class BankConnectionAttemptServiceTests
         var connectionA = await SeedConnectionAsync(dbContext, userId, BankConnectionStatuses.ConnectedPendingSync);
         var connectionB = await SeedConnectionAsync(dbContext, userId, BankConnectionStatuses.ConnectedPendingSync);
         await dbContext.SaveChangesAsync();
-        const string launchUri = "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new&returnTo=/(tabs)/accounts";
+        const string launchUri = "nsfinance://accounts/connect-bank?intent=new&returnTo=accounts";
 
         var first = await service.CreateAttemptAsync(
             userId,
             connectionA.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-confirm-sup-a",
             launchUri,
             DateTime.UtcNow.AddMinutes(15),
@@ -165,7 +165,7 @@ public class BankConnectionAttemptServiceTests
             userId,
             connectionB.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-confirm-sup-b",
             launchUri,
             DateTime.UtcNow.AddMinutes(15),
@@ -194,9 +194,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connection.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-expire",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new",
+            "nsfinance://accounts/connect-bank?intent=new",
             DateTime.UtcNow.AddMinutes(-1),
             reconnectRequested: false,
             CancellationToken.None);
@@ -223,7 +223,7 @@ public class BankConnectionAttemptServiceTests
             UserId = userId,
             ConnectionId = connection.Id,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             Status = BankConnectionAttemptStatuses.Processing,
             CallbackState = "state-processing-stale",
             PublicToken = "public-token-processing-stale",
@@ -259,9 +259,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connection.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-fresh-not-expired",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new",
+            "nsfinance://accounts/connect-bank?intent=new",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -295,7 +295,7 @@ public class BankConnectionAttemptServiceTests
                 UserId = userId,
                 ConnectionId = connection.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 Status = BankConnectionAttemptStatuses.CallbackReceived,
                 LaunchOriginPath = "/(tabs)/accounts",
                 CallbackState = "state-duplicate-winner",
@@ -311,7 +311,7 @@ public class BankConnectionAttemptServiceTests
                 UserId = userId,
                 ConnectionId = connection.Id,
                 ProviderName = BankingProviders.TrueLayer,
-                ProviderEnvironment = "sandbox",
+                ProviderEnvironment = "live",
                 Status = BankConnectionAttemptStatuses.AwaitingCallback,
                 LaunchOriginPath = "/(tabs)/accounts",
                 CallbackState = "state-duplicate-stale",
@@ -347,9 +347,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connection.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-terminal-no-regress",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new",
+            "nsfinance://accounts/connect-bank?intent=new",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -375,9 +375,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connection.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-invalid-transition",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new",
+            "nsfinance://accounts/connect-bank?intent=new",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -405,9 +405,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connection.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-public",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new",
+            "nsfinance://accounts/connect-bank?intent=new",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -432,9 +432,9 @@ public class BankConnectionAttemptServiceTests
             userId,
             connection.Id,
             BankingProviders.TrueLayer,
-            "sandbox",
+            "live",
             "state-version",
-            "exp://127.0.0.1/--/(tabs)/accounts/connect-bank?intent=new",
+            "nsfinance://accounts/connect-bank?intent=new",
             DateTime.UtcNow.AddMinutes(15),
             reconnectRequested: false,
             CancellationToken.None);
@@ -487,7 +487,7 @@ public class BankConnectionAttemptServiceTests
             Id = Guid.NewGuid(),
             UserId = userId,
             ProviderName = BankingProviders.TrueLayer,
-            ProviderEnvironment = "sandbox",
+            ProviderEnvironment = "live",
             Status = status,
             AuthStateNonce = Guid.NewGuid().ToString("N"),
             AuthStateExpiresUtc = now.AddMinutes(15),

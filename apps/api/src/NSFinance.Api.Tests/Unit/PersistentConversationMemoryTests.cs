@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSFinance.Api.Modules.AI.Services;
@@ -580,7 +579,7 @@ public sealed class PersistentConversationMemoryTests
     }
 
     [Fact]
-    public async Task ConversationLayerOrchestrator_BlocksExplicitTransientFallbackInProduction_WhenNotAllowed()
+    public async Task ConversationLayerOrchestrator_BlocksExplicitTransientFallback_WhenNotAllowed()
     {
         var services = BuildServiceProviderWithDb(new Dictionary<string, string?>
         {
@@ -589,7 +588,7 @@ public sealed class PersistentConversationMemoryTests
             ["AI:ProviderKind"] = "Mock",
             ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple",
             ["AI:ChatTurns:AllowImplicitTransientFallback"] = "false",
-            ["AI:ChatTurns:AllowExplicitTransientFallbackInProduction"] = "false"
+            ["AI:ChatTurns:AllowExplicitTransientFallback"] = "false"
         });
 
         await using var scope = services.CreateAsyncScope();
@@ -599,8 +598,7 @@ public sealed class PersistentConversationMemoryTests
         var orchestrator = BuildOrchestratorWithPersistentContextFailure(
             scope.ServiceProvider,
             dbContext,
-            new InvalidOperationException("summary load failed during context build"),
-            environmentName: "Production");
+            new InvalidOperationException("summary load failed during context build"));
 
         var response = await orchestrator.ExecuteAsync(
             new UserChatRequest(
@@ -615,14 +613,14 @@ public sealed class PersistentConversationMemoryTests
             CancellationToken.None);
 
         Assert.False(response.Succeeded);
-        Assert.Equal("explicit_fallback_blocked_in_production", response.FailureReason);
+        Assert.Equal("explicit_fallback_disabled", response.FailureReason);
         Assert.Equal(ConversationTurnStatus.Failed, response.TurnStatus);
-        Assert.Contains("explicit_fallback_blocked_in_production", response.Warnings);
+        Assert.Contains("explicit_fallback_disabled", response.Warnings);
 
         var turn = await dbContext.ConversationTurns
             .SingleAsync(x => x.Id == response.ConversationTurnId);
         Assert.Equal(ConversationTurnStatus.Failed, turn.Status);
-        Assert.Equal("explicit_fallback_blocked_in_production", turn.FailureCode);
+        Assert.Equal("explicit_fallback_disabled", turn.FailureCode);
 
         var fallbackFailure = await dbContext.OperationalFailureRecords
             .SingleAsync(x => x.FailureType == "chat_persistent_context_build_failed");
@@ -640,8 +638,7 @@ public sealed class PersistentConversationMemoryTests
             ["AI:ProviderKind"] = "Mock",
             ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple",
             ["AI:ChatTurns:AllowImplicitTransientFallback"] = "false",
-            ["AI:ChatTurns:AllowExplicitTransientFallbackInProduction"] = "false",
-            ["AI:ChatTurns:AllowImplicitTransientFallbackInProduction"] = "false"
+            ["AI:ChatTurns:AllowExplicitTransientFallback"] = "false"
         });
 
         await using var scope = services.CreateAsyncScope();
@@ -650,8 +647,7 @@ public sealed class PersistentConversationMemoryTests
         var orchestrator = BuildOrchestratorWithPersistentContextFailure(
             scope.ServiceProvider,
             dbContext,
-            new OperationCanceledException("Persistent context cancelled during DB summary read."),
-            environmentName: "Production");
+            new OperationCanceledException("Persistent context cancelled during DB summary read."));
 
         var response = await orchestrator.ExecuteAsync(
             new UserChatRequest(
@@ -689,8 +685,7 @@ public sealed class PersistentConversationMemoryTests
             ["AI:ProviderKind"] = "Mock",
             ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple",
             ["AI:ChatTurns:AllowImplicitTransientFallback"] = "false",
-            ["AI:ChatTurns:AllowExplicitTransientFallbackInProduction"] = "false",
-            ["AI:ChatTurns:AllowImplicitTransientFallbackInProduction"] = "false"
+            ["AI:ChatTurns:AllowExplicitTransientFallback"] = "false"
         });
 
         await using var scope = services.CreateAsyncScope();
@@ -699,8 +694,7 @@ public sealed class PersistentConversationMemoryTests
         var orchestrator = BuildOrchestratorWithPersistentContextFailure(
             scope.ServiceProvider,
             dbContext,
-            new OperationCanceledException("Persistent context cancelled during DB summary read."),
-            environmentName: "Production");
+            new OperationCanceledException("Persistent context cancelled during DB summary read."));
 
         var response = await orchestrator.ExecuteAsync(
             new UserChatRequest(
@@ -768,7 +762,6 @@ public sealed class PersistentConversationMemoryTests
             scope.ServiceProvider.GetRequiredService<IOptions<AIIntegrationOptions>>(),
             scope.ServiceProvider.GetRequiredService<IChatTelemetry>(),
             new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
-            new TestHostEnvironment("Development"),
             scope.ServiceProvider.GetRequiredService<IConversationThreadService>(),
             scope.ServiceProvider.GetRequiredService<IConversationTurnService>(),
             scope.ServiceProvider.GetRequiredService<IConversationMessageService>(),
@@ -804,7 +797,8 @@ public sealed class PersistentConversationMemoryTests
             ["AI:UseMockProvider"] = "true",
             ["AI:ProviderKind"] = "Mock",
             ["AI:Mock:DefaultSimpleChatScenario"] = "UserChatSimple",
-            ["AI:ChatTurns:AllowImplicitTransientFallback"] = "true"
+            ["AI:ChatTurns:AllowImplicitTransientFallback"] = "true",
+            ["AI:ChatTurns:AllowExplicitTransientFallback"] = "true"
         });
 
         await using var scope = services.CreateAsyncScope();
@@ -814,8 +808,7 @@ public sealed class PersistentConversationMemoryTests
         var orchestrator = BuildOrchestratorWithPersistentContextFailure(
             scope.ServiceProvider,
             dbContext,
-            new InvalidOperationException("state snapshot retrieval failed"),
-            environmentName: "Development");
+            new InvalidOperationException("state snapshot retrieval failed"));
 
         var first = await orchestrator.ExecuteAsync(
             new UserChatRequest(
@@ -893,8 +886,7 @@ public sealed class PersistentConversationMemoryTests
             NullLogger<ConversationLayerOrchestrator>.Instance,
             options,
             scope.ServiceProvider.GetRequiredService<IChatTelemetry>(),
-            new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
-            new TestHostEnvironment("Development"));
+            new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance));
 
         var response = await orchestrator.ExecuteAsync(
             new UserChatRequest(
@@ -992,8 +984,7 @@ public sealed class PersistentConversationMemoryTests
     private static ConversationLayerOrchestrator BuildOrchestratorWithPersistentContextFailure(
         IServiceProvider provider,
         AppDbContext dbContext,
-        Exception exception,
-        string environmentName)
+        Exception exception)
     {
         return new ConversationLayerOrchestrator(
             provider.GetRequiredService<IConversationContextService>(),
@@ -1004,7 +995,6 @@ public sealed class PersistentConversationMemoryTests
             provider.GetRequiredService<IOptions<AIIntegrationOptions>>(),
             provider.GetRequiredService<IChatTelemetry>(),
             new OperationalFailureRecorder(dbContext, NullLogger<OperationalFailureRecorder>.Instance),
-            new TestHostEnvironment(environmentName),
             provider.GetRequiredService<IConversationThreadService>(),
             provider.GetRequiredService<IConversationTurnService>(),
             provider.GetRequiredService<IConversationMessageService>(),
@@ -1024,15 +1014,6 @@ public sealed class PersistentConversationMemoryTests
             cancellationToken.ThrowIfCancellationRequested();
             throw exception;
         }
-    }
-
-    private sealed class TestHostEnvironment(string environmentName) : IHostEnvironment
-    {
-        public string EnvironmentName { get; set; } = environmentName;
-        public string ApplicationName { get; set; } = "NSFinance.Api.Tests";
-        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
-        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; }
-            = new Microsoft.Extensions.FileProviders.NullFileProvider();
     }
 
     private sealed class CancellingPersistentConversationContextService(

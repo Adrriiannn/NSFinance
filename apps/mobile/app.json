@@ -2,7 +2,7 @@
   "expo": {
     "name": "NSFinance",
     "slug": "nsfinance-mobile",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "newArchEnabled": true,
     "scheme": "nsfinance",
@@ -35,7 +35,7 @@
     },
     "android": {
       "package": "com.nsfinance.mobile",
-      "versionCode": 5,
+      "versionCode": 6,
       "runtimeVersion": "1.0.1",
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW"

@@ -6,7 +6,6 @@ namespace NSFinance.Api.Infrastructure.Startup;
 
 public sealed class DatabaseInitializationHostedService(
     IServiceScopeFactory scopeFactory,
-    IHostEnvironment hostEnvironment,
     IConfiguration configuration,
     IHostApplicationLifetime hostApplicationLifetime,
     ILogger<DatabaseInitializationHostedService> logger) : IHostedService
@@ -49,31 +48,19 @@ public sealed class DatabaseInitializationHostedService(
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var seeder = scope.ServiceProvider.GetRequiredService<DevelopmentDataSeeder>();
+            var seeder = scope.ServiceProvider.GetRequiredService<PolicyDataSeeder>();
 
             var startupMigrationsEnabled = configuration.GetValue("Database:ApplyMigrationsOnStartup", true);
-            var applyMigrations = hostEnvironment.IsDevelopment() && startupMigrationsEnabled;
-            var seedDemoData = hostEnvironment.IsDevelopment() && configuration.GetValue("Database:SeedDemoDataOnStartup", true);
+            var applyMigrations = startupMigrationsEnabled;
             var seedPolicyData = configuration.GetValue("Database:SeedPolicyDataOnStartup", true);
-
-            if (!hostEnvironment.IsDevelopment() && startupMigrationsEnabled)
-            {
-                logger.LogWarning(
-                    "Database:ApplyMigrationsOnStartup is ignored outside Development. Apply schema changes through the CI/CD migration bundle workflow.");
-            }
 
             if (applyMigrations)
             {
                 await dbContext.Database.MigrateAsync(cancellationToken);
-                logger.LogInformation("Database migrations applied after host startup in Development.");
+                logger.LogInformation("Database migrations applied after host startup.");
             }
 
             if (seedPolicyData)
-            {
-                await seeder.SeedPolicyDataAsync(dbContext, cancellationToken);
-            }
-
-            if (seedDemoData)
             {
                 await seeder.SeedAsync(dbContext, cancellationToken);
             }
