@@ -3140,55 +3140,12 @@ public sealed class BankConnectionService(
     {
         try
         {
-            var directDebits = await dbContext.BankDirectDebits
-                .AsNoTracking()
-                .Where(x => x.LinkedBankAccount != null
-                    && x.LinkedBankAccount.Connection != null
-                    && x.LinkedBankAccount.Connection.UserId == userId)
-                .Select(x => new BankDirectDebitDto(
-                    x.Id,
-                    x.LinkedBankAccountId,
-                    x.LinkedBankAccount!.ConnectionId,
-                    x.LinkedBankAccount.DisplayName,
-                    x.ProviderDirectDebitId,
-                    x.Status,
-                    x.MandateType,
-                    x.Reference,
-                    x.MerchantName,
-                    x.PreviousPaymentDateUtc,
-                    x.PreviousPaymentAmount,
-                    x.PreviousPaymentCurrency,
-                    x.NextPaymentDateUtc,
-                    x.NextPaymentAmount,
-                    x.NextPaymentCurrency,
-                    x.UpdatedUtc))
-                .OrderBy(x => x.NextPaymentDateUtc ?? DateTime.MaxValue)
-                .ThenBy(x => x.AccountDisplayName)
+            var directDebits = await BankRecurringPaymentQueries
+                .BuildDirectDebits(dbContext, userId)
                 .ToListAsync(cancellationToken);
 
-            var standingOrders = await dbContext.BankStandingOrders
-                .AsNoTracking()
-                .Where(x => x.LinkedBankAccount != null
-                    && x.LinkedBankAccount.Connection != null
-                    && x.LinkedBankAccount.Connection.UserId == userId)
-                .Select(x => new BankStandingOrderDto(
-                    x.Id,
-                    x.LinkedBankAccountId,
-                    x.LinkedBankAccount!.ConnectionId,
-                    x.LinkedBankAccount.DisplayName,
-                    x.ProviderStandingOrderId,
-                    x.Status,
-                    x.Frequency,
-                    x.Reference,
-                    x.PayeeName,
-                    x.FirstPaymentDateUtc,
-                    x.NextPaymentDateUtc,
-                    x.FinalPaymentDateUtc,
-                    x.NextPaymentAmount,
-                    x.NextPaymentCurrency,
-                    x.UpdatedUtc))
-                .OrderBy(x => x.NextPaymentDateUtc ?? DateTime.MaxValue)
-                .ThenBy(x => x.AccountDisplayName)
+            var standingOrders = await BankRecurringPaymentQueries
+                .BuildStandingOrders(dbContext, userId)
                 .ToListAsync(cancellationToken);
 
             return new BankRecurringPaymentsDto(directDebits, standingOrders);

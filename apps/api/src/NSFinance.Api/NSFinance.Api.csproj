@@ -24,6 +24,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="NSFinance.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Update="Modules\AI\Resources\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
