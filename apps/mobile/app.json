@@ -2,13 +2,10 @@
   "expo": {
     "name": "NSFinance",
     "slug": "nsfinance-mobile",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "newArchEnabled": true,
-    "scheme": [
-      "nsfinance",
-      "com.nsfinance.mobile"
-    ],
+    "scheme": "nsfinance",
     "backgroundColor": "#050505",
     "userInterfaceStyle": "automatic",
     "plugins": [
@@ -33,12 +30,13 @@
       "./plugins/withExpoAutolinkingCommand"
     ],
     "experiments": {
-      "typedRoutes": true
+      "typedRoutes": true,
+      "autolinkingModuleResolution": true
     },
     "android": {
       "package": "com.nsfinance.mobile",
-      "versionCode": 4,
-      "runtimeVersion": "1.0.0",
+      "versionCode": 5,
+      "runtimeVersion": "1.0.1",
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW"
       ]

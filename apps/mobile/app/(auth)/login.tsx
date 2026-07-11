@@ -14,7 +14,6 @@ import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { TextField } from "../../src/components/ui/TextField";
 import { persistRememberedEmail, readRememberedEmail } from "../../src/features/auth/rememberedEmail";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
-import { resetGoogleOAuthFlowState } from "../../src/features/auth/googleOAuthFlowState";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
@@ -280,10 +279,6 @@ export default function LoginScreen() {
   const emailShakeX = useRef(new Animated.Value(0)).current;
   const passwordShakeX = useRef(new Animated.Value(0)).current;
   const loginBannerOpacity = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    resetGoogleOAuthFlowState("auth_screen_mount");
-  }, []);
 
   useEffect(() => {
     let cancelled = false;

@@ -31,7 +31,6 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="nsfinance"/>
-        <data android:scheme="com.nsfinance.mobile"/>
         <data android:scheme="exp+nsfinance-mobile"/>
       </intent-filter>
     </activity>

@@ -2,7 +2,6 @@ const appJson = require("./app.json");
 const runtimeConfig = require("./runtime.config.json");
 
 const androidPackageName = "com.nsfinance.mobile";
-const appSchemes = ["nsfinance", androidPackageName];
 
 module.exports = ({ config }) => {
   const baseConfig = appJson.expo;
@@ -12,7 +11,7 @@ module.exports = ({ config }) => {
     ...config,
     name: "NSFinance",
     slug: baseConfig.slug,
-    scheme: appSchemes,
+    scheme: baseConfig.scheme,
     version: baseConfig.version,
     android: {
       ...(baseConfig.android ?? {}),

@@ -5,7 +5,7 @@ import {
   logout as logoutApi,
   refreshToken as refreshTokenApi
 } from "../features/auth/authApi";
-import { resetGoogleOAuthFlowState } from "../features/auth/googleOAuthFlowState";
+import { clearNativeGoogleSignInState } from "../features/auth/googleNativeSignIn";
 import {
   setApiTokenResolver,
   setApiUnauthorizedHandler
@@ -80,7 +80,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       const runLogout = async () => {
         setIsAuthTransitioning(true);
-        resetGoogleOAuthFlowState("logout");
         refreshPromiseRef.current = null;
 
         const hadSession = Boolean(accessTokenRef.current);
@@ -90,6 +89,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setSession(null);
         setApiTokenResolver(() => accessTokenRef.current);
         await clearSessionStorage();
+        await clearNativeGoogleSignInState();
         await queryClient.cancelQueries();
         queryClient.clear();
 

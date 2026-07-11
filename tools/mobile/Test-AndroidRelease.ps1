@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $mobileRoot = Join-Path $repoRoot "apps\mobile"
+$mobilePackagePath = Join-Path $mobileRoot "package.json"
 $appJsonPath = Join-Path $mobileRoot "app.json"
 $runtimeConfigPath = Join-Path $mobileRoot "runtime.config.json"
 $gradlePropertiesPath = Join-Path $mobileRoot "android\gradle.properties"
@@ -89,10 +90,30 @@ if ([int]$runtimeConfig.bankingAutoSyncIntervalMinutes -lt 1) {
 }
 
 $appConfig = Get-Content -Raw $appJsonPath | ConvertFrom-Json
+$mobilePackage = Get-Content -Raw $mobilePackagePath | ConvertFrom-Json
 Assert-Equal $appConfig.expo.android.package "com.nsfinance.mobile" "Android application ID"
+Assert-Equal $appConfig.expo.scheme "nsfinance" "Production application URI scheme"
 Assert-Equal $appConfig.expo.updates.url "https://u.expo.dev/21986a2d-cbfa-4757-bf6d-04eb6aa4f197" "EAS Update URL"
 if ([int]$appConfig.expo.android.versionCode -lt 1) {
     throw "Android versionCode must be a positive integer."
+}
+
+$mobileDependencyNames = @($mobilePackage.dependencies.PSObject.Properties.Name)
+foreach ($requiredGoogleDependency in @(
+    "react-native-nitro-google-signin",
+    "react-native-nitro-modules"
+)) {
+    if ($requiredGoogleDependency -notin $mobileDependencyNames) {
+        throw "Mobile package is missing native Google sign-in dependency '$requiredGoogleDependency'."
+    }
+}
+
+if ("expo-auth-session" -in $mobileDependencyNames) {
+    throw "Mobile package still contains the deprecated browser-based Google AuthSession dependency."
+}
+
+if (Test-Path -LiteralPath (Join-Path $mobileRoot "app\oauthredirect.tsx")) {
+    throw "Mobile app still contains the obsolete browser OAuth redirect route."
 }
 
 $imagePickerPlugin = @($appConfig.expo.plugins) |
@@ -150,12 +171,15 @@ foreach ($requiredManifestValue in @(
     'android:name="android.permission.SYSTEM_ALERT_WINDOW" tools:node="remove"',
     'android:screenOrientation="portrait"',
     'locale|layoutDirection',
-    'android:scheme="nsfinance"',
-    'android:scheme="com.nsfinance.mobile"'
+    'android:scheme="nsfinance"'
 )) {
     if (-not $manifest.Contains($requiredManifestValue)) {
         throw "AndroidManifest.xml is missing required production value '$requiredManifestValue'."
     }
+}
+
+if ($manifest.Contains('android:scheme="com.nsfinance.mobile"')) {
+    throw "AndroidManifest.xml still exposes the obsolete browser OAuth redirect scheme."
 }
 
 $gradleProperties = Get-Content -Raw $gradlePropertiesPath

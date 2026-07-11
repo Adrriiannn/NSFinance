@@ -1,11 +1,10 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { GlassCard } from "../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
-import { resetGoogleOAuthFlowState } from "../../src/features/auth/googleOAuthFlowState";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
@@ -16,10 +15,6 @@ export default function AuthEntryScreen() {
   const { playSuccess } = useFeedbackSound();
   const googleSignIn = useGoogleSignIn();
   const [googleError, setGoogleError] = useState<string | null>(null);
-
-  useEffect(() => {
-    resetGoogleOAuthFlowState("auth_screen_mount");
-  }, []);
 
   const handleGoogleSignIn = async () => {
     if (isAuthTransitioning) {

@@ -22,7 +22,6 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
 } from "../../src/features/auth/passwordPolicy";
-import { resetGoogleOAuthFlowState } from "../../src/features/auth/googleOAuthFlowState";
 import { useRegisterMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { formatUnknownError } from "../../src/lib/api/errors";
@@ -231,10 +230,6 @@ export default function RegisterScreen() {
   const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [socialAuthMessage, setSocialAuthMessage] = useState<string | null>(null);
-  useEffect(() => {
-    resetGoogleOAuthFlowState("auth_screen_mount");
-  }, []);
-
   useEffect(() => {
     if (!prefilledEmail) {
       return;
