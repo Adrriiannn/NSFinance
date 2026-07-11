@@ -281,7 +281,16 @@ public sealed class AuthService(
         var normalizedEmail = NormalizeEmail(identity.Email);
         var utcNow = DateTime.UtcNow;
         var accountResolutionStartedTimestamp = Stopwatch.GetTimestamp();
+        var connectionOpenDurationMs = 0d;
+        var holdsConnectionOpen = dbContext.Database.IsRelational();
+        if (holdsConnectionOpen)
+        {
+            var connectionOpenStartedTimestamp = Stopwatch.GetTimestamp();
+            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+            connectionOpenDurationMs = Stopwatch.GetElapsedTime(connectionOpenStartedTimestamp).TotalMilliseconds;
+        }
 
+        var accountLookupStartedTimestamp = Stopwatch.GetTimestamp();
         var accountMatches = await dbContext.UserAuthProviders
             .Include(x => x.User)
             .ThenInclude(x => x!.AuthProviders)
@@ -289,6 +298,8 @@ public sealed class AuthService(
                 (x.ProviderType == ProviderTypeGoogleOidc && x.ProviderSubject == identity.Subject)
                 || (x.User != null && x.User.NormalizedEmail == normalizedEmail))
             .ToListAsync(cancellationToken);
+        var accountLookupDurationMs = Stopwatch.GetElapsedTime(accountLookupStartedTimestamp).TotalMilliseconds;
+        var nsTagGenerationDurationMs = 0d;
 
         var existingProviderLink = accountMatches.SingleOrDefault(
             x => x.ProviderType == ProviderTypeGoogleOidc
@@ -363,7 +374,9 @@ public sealed class AuthService(
             else
             {
                 var fullName = NormalizeFullName(identity.Name ?? $"{identity.GivenName} {identity.FamilyName}".Trim());
+                var nsTagGenerationStartedTimestamp = Stopwatch.GetTimestamp();
                 var nsTag = await GenerateUniqueNsTagAsync(fullName, normalizedEmail, cancellationToken);
+                nsTagGenerationDurationMs = Stopwatch.GetElapsedTime(nsTagGenerationStartedTimestamp).TotalMilliseconds;
 
                 user = new User
                 {
@@ -481,12 +494,14 @@ public sealed class AuthService(
                 metadata: new { provider = ProviderTypeGoogleOidc });
         }
 
+        var sessionCreationStartedTimestamp = Stopwatch.GetTimestamp();
         var tokenResponse = await sessionService.CreateSessionAsync(
             user,
             request.DeviceContext,
             cancellationToken,
             saveImmediately: false,
             userIsNew: createdViaGoogle);
+        var sessionCreationDurationMs = Stopwatch.GetElapsedTime(sessionCreationStartedTimestamp).TotalMilliseconds;
 
         StageAuditEvent(
             category: "auth",
@@ -502,18 +517,32 @@ public sealed class AuthService(
                 createdViaGoogle
             });
 
+        var saveChangesStartedTimestamp = Stopwatch.GetTimestamp();
         await dbContext.SaveChangesAsync(cancellationToken);
+        var saveChangesDurationMs = Stopwatch.GetElapsedTime(saveChangesStartedTimestamp).TotalMilliseconds;
+        if (holdsConnectionOpen)
+        {
+            await dbContext.Database.CloseConnectionAsync();
+        }
 
         var sessionPersistenceDurationMs = Stopwatch.GetElapsedTime(sessionPersistenceStartedTimestamp).TotalMilliseconds;
         var totalDurationMs = Stopwatch.GetElapsedTime(totalStartedTimestamp).TotalMilliseconds;
         logger.LogInformation(
             "Google login completed createdViaGoogle={CreatedViaGoogle} linkedByEmail={LinkedByEmail} " +
-            "verificationDurationMs={VerificationDurationMs} accountResolutionDurationMs={AccountResolutionDurationMs} " +
-            "sessionPersistenceDurationMs={SessionPersistenceDurationMs} totalDurationMs={TotalDurationMs}",
+            "verificationDurationMs={VerificationDurationMs} connectionOpenDurationMs={ConnectionOpenDurationMs} " +
+            "accountLookupDurationMs={AccountLookupDurationMs} nsTagGenerationDurationMs={NsTagGenerationDurationMs} " +
+            "accountResolutionDurationMs={AccountResolutionDurationMs} sessionCreationDurationMs={SessionCreationDurationMs} " +
+            "saveChangesDurationMs={SaveChangesDurationMs} sessionPersistenceDurationMs={SessionPersistenceDurationMs} " +
+            "totalDurationMs={TotalDurationMs}",
             createdViaGoogle,
             linkedToExistingByEmail,
             Math.Round(verificationDurationMs),
+            Math.Round(connectionOpenDurationMs),
+            Math.Round(accountLookupDurationMs),
+            Math.Round(nsTagGenerationDurationMs),
             Math.Round(accountResolutionDurationMs),
+            Math.Round(sessionCreationDurationMs),
+            Math.Round(saveChangesDurationMs),
             Math.Round(sessionPersistenceDurationMs),
             Math.Round(totalDurationMs));
 
