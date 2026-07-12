@@ -61,7 +61,6 @@ type AuthContextValue = {
   allowAutomaticBiometricPrompt: boolean;
   rememberedUnlockMethod: RememberedSessionUnlockMethod;
   canUseRememberedSessionMfa: boolean;
-  lockedAccountDisplayName: string | null;
   session: StoredSession | null;
   sessionMessage: string | null;
   applyAuthTokenResponse: (
@@ -112,7 +111,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [rememberedUnlockMethod, setRememberedUnlockMethod] =
     useState<RememberedSessionUnlockMethod>("sign_in");
   const [canUseRememberedSessionMfa, setCanUseRememberedSessionMfa] = useState(false);
-  const [lockedAccountDisplayName, setLockedAccountDisplayName] = useState<string | null>(null);
   const accessTokenRef = useRef<string | null>(null);
   const sessionRef = useRef<StoredSession | null>(null);
   const lockedSessionRef = useRef<StoredSession | null>(null);
@@ -163,7 +161,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         allowAutomaticBiometricPromptRef.current = true;
         setSession(null);
         setIsAppLocked(false);
-        setLockedAccountDisplayName(null);
         setBiometricEnabled(false);
         setAllowAutomaticBiometricPrompt(true);
         setRememberedUnlockMethod("sign_in");
@@ -254,7 +251,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setCanUseRememberedSessionMfa(response.user.twoFactorEnabled);
       if (!lockedSessionRef.current) {
         setIsAppLocked(false);
-        setLockedAccountDisplayName(null);
       }
       setShouldOfferBiometrics(offerProtectionSetup && protection.offerBiometricSetup);
       setRequiresRememberProtectionSetup(
@@ -441,7 +437,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     lockedSessionRef.current = null;
     allowAutomaticBiometricPromptRef.current = true;
     setRememberedUnlockMethod("biometric");
-    setLockedAccountDisplayName(null);
     setIsAppLocked(false);
     setAllowAutomaticBiometricPrompt(true);
     void refreshSessionUser();
@@ -603,7 +598,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       sessionRef.current = null;
       setSession(null);
       setApiTokenResolver(() => null);
-      setLockedAccountDisplayName(current.user.displayName || current.user.fullName || null);
       setCanUseRememberedSessionMfa(current.user.twoFactorEnabled);
       setRememberedUnlockMethod(
         biometricReady ? "biometric" : current.user.twoFactorEnabled ? "mfa" : "sign_in"
@@ -703,7 +697,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         rememberSessionRef.current = true;
         rememberProtectionSetupRequestedRef.current = false;
         lockedSessionRef.current = parsed;
-        setLockedAccountDisplayName(parsed.user.displayName || parsed.user.fullName || null);
         setIsAppLocked(true);
       } catch {
         await clearSessionStorage();
@@ -715,7 +708,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         biometricEnabledRef.current = false;
         setSession(null);
         setIsAppLocked(false);
-        setLockedAccountDisplayName(null);
         setBiometricEnabled(false);
         setCanUseRememberedSessionMfa(false);
         setRememberedUnlockMethod("sign_in");
@@ -744,7 +736,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       allowAutomaticBiometricPrompt,
       rememberedUnlockMethod,
       canUseRememberedSessionMfa,
-      lockedAccountDisplayName,
       session,
       sessionMessage,
       applyAuthTokenResponse,
@@ -782,7 +773,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isAuthTransitioning,
       isAppLocked,
       keepBiometricsAfterFallback,
-      lockedAccountDisplayName,
       logout,
       notifyUserInteraction,
       openRememberProtectionSetup,

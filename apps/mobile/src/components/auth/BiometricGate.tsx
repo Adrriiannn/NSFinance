@@ -23,7 +23,6 @@ export function BiometricGate() {
     allowAutomaticBiometricPrompt,
     rememberedUnlockMethod,
     canUseRememberedSessionMfa,
-    lockedAccountDisplayName,
     unlockWithBiometrics,
     beginRememberedSessionMfa,
     enableBiometrics,
@@ -282,9 +281,6 @@ export function BiometricGate() {
                   ? "Use Authenticator to unlock this remembered account."
                   : `Use your ${friendlyLabel} to log back into your account.`}
             </Text>
-            {!isOffer && lockedAccountDisplayName ? (
-              <Text style={styles.accountName}>{lockedAccountDisplayName}</Text>
-            ) : null}
             {message ? <Text style={styles.error}>{message}</Text> : null}
           </View>
         </View>
@@ -379,13 +375,6 @@ const styles = StyleSheet.create({
     fontSize: typography.body.fontSize,
     lineHeight: typography.body.lineHeight,
     fontFamily: typography.body.fontFamily,
-    textAlign: "center"
-  },
-  accountName: {
-    color: palette.textMuted,
-    fontSize: typography.helper.fontSize,
-    lineHeight: typography.helper.lineHeight,
-    fontFamily: typography.helper.fontFamily,
     textAlign: "center"
   },
   error: {
