@@ -247,11 +247,19 @@ public sealed class TotpMfaService(
         var now = DateTime.UtcNow;
         if (challenge is null
             || challenge.User is null
-            || challenge.ConsumedUtc is not null
-            || challenge.SupersededUtc is not null
-            || challenge.ExpiresUtc <= now
-            || challenge.FailedAttempts >= challenge.MaxAttempts
             || !FixedTimeTokenHashEquals(tokenSecretService.HashToken(request.ChallengeToken), challenge.SecretHash))
+        {
+            return InvalidMfaResult();
+        }
+
+        if (challenge.ExpiresUtc <= now)
+        {
+            return ExpiredMfaResult();
+        }
+
+        if (challenge.ConsumedUtc is not null
+            || challenge.SupersededUtc is not null
+            || challenge.FailedAttempts >= challenge.MaxAttempts)
         {
             return InvalidMfaResult();
         }
@@ -297,7 +305,7 @@ public sealed class TotpMfaService(
             }
             challenge.ConcurrencyToken = Guid.NewGuid();
             await dbContext.SaveChangesAsync(cancellationToken);
-            return InvalidMfaResult();
+            return InvalidMfaCodeResult();
         }
 
         challenge.ConsumedUtc = now;
@@ -414,6 +422,22 @@ public sealed class TotpMfaService(
         return ServiceResult<User>.Fail(
             "The verification code is invalid or expired.",
             "mfa_challenge_invalid",
+            StatusCodes.Status400BadRequest);
+    }
+
+    private static ServiceResult<User> ExpiredMfaResult()
+    {
+        return ServiceResult<User>.Fail(
+            "The security check has expired. Sign in again to continue.",
+            "mfa_challenge_expired",
+            StatusCodes.Status400BadRequest);
+    }
+
+    private static ServiceResult<User> InvalidMfaCodeResult()
+    {
+        return ServiceResult<User>.Fail(
+            "The verification code is invalid.",
+            "mfa_code_invalid",
             StatusCodes.Status400BadRequest);
     }
 }

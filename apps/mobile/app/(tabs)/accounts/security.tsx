@@ -567,9 +567,6 @@ export default function SecuritySettingsScreen() {
           <Text style={styles.sectionTitle}>Login & authentication</Text>
           <Text style={styles.metaLine}>
             Authenticator: {mfaStatusQuery.data?.enabled ? "On" : "Off"}
-            {mfaStatusQuery.data?.enabled
-              ? ` | ${mfaStatusQuery.data.recoveryCodesRemaining} recovery codes left`
-              : ""}
           </Text>
 
           <SecondaryButton

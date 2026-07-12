@@ -633,6 +633,17 @@ public class AuthAndTrustIntegrationTests
         Assert.Null(firstFactor.Value.Session);
         Assert.Equal(sessionCountBeforeFirstFactor, await harness.DbContext.Sessions.CountAsync());
 
+        var invalidCode = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                firstFactor.Value.MfaChallenge!.ChallengeId,
+                firstFactor.Value.MfaChallenge.ChallengeToken,
+                "not-a-code",
+                "totp",
+                null),
+            CancellationToken.None);
+        Assert.False(invalidCode.Succeeded);
+        Assert.Equal("mfa_code_invalid", invalidCode.Error?.Code);
+
         var nextTimeStepCode = totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30));
         var secondFactor = await harness.AuthService.VerifyMfaLoginAsync(
             new VerifyMfaLoginRequest(
@@ -670,7 +681,122 @@ public class AuthAndTrustIntegrationTests
                 null),
             CancellationToken.None);
         Assert.False(reusedRecoveryCode.Succeeded);
-        Assert.Equal("mfa_challenge_invalid", reusedRecoveryCode.Error?.Code);
+        Assert.Equal("mfa_code_invalid", reusedRecoveryCode.Error?.Code);
+    }
+
+    [Fact]
+    public async Task TotpMfa_ExpiredLoginChallengeRequiresFreshFirstFactor()
+    {
+        await using var harness = new TestHarness();
+        var registered = await harness.RegisterAsync("mfa.expired@test.local", "ValidPassword123");
+        await EnableTotpAsync(harness, registered.Value);
+
+        var firstFactor = await harness.AuthService.LoginAsync(
+            new LoginRequest("mfa.expired@test.local", "ValidPassword123", null),
+            CancellationToken.None);
+        Assert.True(firstFactor.Succeeded);
+        Assert.Equal("mfa_required", firstFactor.Value!.Status);
+        var mfaChallenge = firstFactor.Value.MfaChallenge!;
+
+        var challenge = await harness.DbContext.IdentityChallenges.SingleAsync(
+            x => x.Id == mfaChallenge.ChallengeId);
+        challenge.ExpiresUtc = DateTime.UtcNow.AddSeconds(-1);
+        await harness.DbContext.SaveChangesAsync();
+        var sessionCountBeforeVerification = await harness.DbContext.Sessions.CountAsync();
+
+        var result = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                mfaChallenge.ChallengeId,
+                mfaChallenge.ChallengeToken,
+                "123456",
+                "totp",
+                null),
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("mfa_challenge_expired", result.Error?.Code);
+        Assert.Equal(sessionCountBeforeVerification, await harness.DbContext.Sessions.CountAsync());
+    }
+
+    [Fact]
+    public async Task GoogleLogin_EnabledTotp_BlocksFreshProviderLoginBeforeSessionIssuance()
+    {
+        await using var harness = new TestHarness();
+        var payload = CreateGooglePayload(
+            "sub-google-mfa",
+            "google.mfa@test.local",
+            emailVerified: true,
+            "Google MFA User");
+        harness.ConfigureGoogleToken("google-mfa-enrollment-token", payload);
+
+        var initialLogin = await harness.AuthService.LoginWithGoogleAsync(
+            new GoogleLoginRequest(
+                "google-mfa-enrollment-token",
+                null,
+                AcceptPolicies: true,
+                TermsVersion: "1.0.0",
+                PrivacyVersion: "1.0.0"),
+            CancellationToken.None);
+        Assert.True(initialLogin.Succeeded);
+        Assert.Equal("authenticated", initialLogin.Value!.Status);
+        await EnableTotpAsync(harness, initialLogin.Value.Session!);
+
+        var sessionCountBeforeFreshLogin = await harness.DbContext.Sessions.CountAsync();
+        harness.ConfigureGoogleToken("google-mfa-fresh-token", payload);
+        var freshLogin = await harness.AuthService.LoginWithGoogleAsync(
+            new GoogleLoginRequest("google-mfa-fresh-token", null),
+            CancellationToken.None);
+
+        Assert.True(freshLogin.Succeeded);
+        Assert.Equal("mfa_required", freshLogin.Value!.Status);
+        Assert.Null(freshLogin.Value.Session);
+        Assert.NotNull(freshLogin.Value.MfaChallenge);
+        Assert.Equal(sessionCountBeforeFreshLogin, await harness.DbContext.Sessions.CountAsync());
+    }
+
+    [Fact]
+    public async Task MicrosoftLogin_EnabledTotp_BlocksFreshProviderLoginBeforeSessionIssuance()
+    {
+        await using var harness = new TestHarness();
+        var principal = CreateMicrosoftPrincipal(
+            tenantId: "tenant-mfa",
+            objectId: "object-mfa",
+            subject: "subject-mfa",
+            email: "microsoft.mfa@test.local",
+            name: "Microsoft MFA User");
+        harness.ConfigureMicrosoftToken("microsoft-mfa-enrollment-token", principal);
+
+        var initialLogin = await harness.AuthService.LoginWithMicrosoftAsync(
+            new MicrosoftLoginRequest(
+                "microsoft-mfa-enrollment-token",
+                null,
+                AcceptPolicies: true,
+                TermsVersion: "1.0.0",
+                PrivacyVersion: "1.0.0"),
+            CancellationToken.None);
+        Assert.True(initialLogin.Succeeded);
+        Assert.Equal("email_verification_required", initialLogin.Value!.Status);
+
+        var confirmed = await harness.AuthService.ConfirmEmailVerificationAsync(
+            new ConfirmEmailVerificationRequest(
+                initialLogin.Value.EmailVerification!.ChallengeId,
+                harness.IdentityCodeService.LastCreatedCode,
+                null),
+            CancellationToken.None);
+        Assert.True(confirmed.Succeeded);
+        await EnableTotpAsync(harness, confirmed.Value!);
+
+        var sessionCountBeforeFreshLogin = await harness.DbContext.Sessions.CountAsync();
+        harness.ConfigureMicrosoftToken("microsoft-mfa-fresh-token", principal);
+        var freshLogin = await harness.AuthService.LoginWithMicrosoftAsync(
+            new MicrosoftLoginRequest("microsoft-mfa-fresh-token", null),
+            CancellationToken.None);
+
+        Assert.True(freshLogin.Succeeded);
+        Assert.Equal("mfa_required", freshLogin.Value!.Status);
+        Assert.Null(freshLogin.Value.Session);
+        Assert.NotNull(freshLogin.Value.MfaChallenge);
+        Assert.Equal(sessionCountBeforeFreshLogin, await harness.DbContext.Sessions.CountAsync());
     }
 
     [Fact]
@@ -880,6 +1006,20 @@ public class AuthAndTrustIntegrationTests
         return new ClaimsPrincipal(identity);
     }
 
+    private static async Task EnableTotpAsync(TestHarness harness, AuthTokenResponse session)
+    {
+        harness.CurrentUserProvider.Set(session.User.Id, session.SessionId);
+        var enrollment = await harness.MfaService.BeginEnrollmentAsync(CancellationToken.None);
+        Assert.True(enrollment.Succeeded);
+
+        var totp = new Totp(Base32Encoding.ToBytes(enrollment.Value!.Secret));
+        var confirmed = await harness.MfaService.ConfirmEnrollmentAsync(
+            new ConfirmTotpEnrollmentRequest(enrollment.Value.AuthenticatorId, totp.ComputeTotp()),
+            CancellationToken.None);
+        Assert.True(confirmed.Succeeded);
+        harness.CurrentUserProvider.Clear();
+    }
+
     private sealed class TestHarness : IAsyncDisposable
     {
         private readonly CountingSaveChangesInterceptor _saveChangesInterceptor = new();
@@ -929,7 +1069,7 @@ public class AuthAndTrustIntegrationTests
                 CodePepper = "Integration_Test_Identity_Code_Pepper_123456789",
                 ChallengeLifetimeMinutes = 10,
                 RecoveryGrantLifetimeMinutes = 10,
-                MfaChallengeLifetimeMinutes = 5,
+                MfaChallengeLifetimeMinutes = 10,
                 ResendCooldownSeconds = 1,
                 MaxCodeAttempts = 5,
                 RecoveryCodeCount = 10,

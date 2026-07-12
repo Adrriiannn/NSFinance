@@ -37,6 +37,13 @@ test("a first device login offers protection without persisting first", () => {
   }), true);
 });
 
+test("a device without enrolled biometrics never receives a fingerprint offer", () => {
+  assert.equal(shouldOfferSessionProtection({
+    biometricAvailable: false,
+    biometricPreference: null
+  }), false);
+});
+
 test("automatic biometric prompt requires a foreground cold-launch lock", () => {
   assert.equal(shouldAutoPromptBiometric({
     isLocked: true,

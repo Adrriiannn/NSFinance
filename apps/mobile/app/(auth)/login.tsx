@@ -260,7 +260,12 @@ function InsetFieldShell({ label, color, children }: InsetFieldShellProps) {
 }
 
 export default function LoginScreen() {
-  const searchParams = useLocalSearchParams<{ googleError?: string | string[] }>();
+  const searchParams = useLocalSearchParams<{
+    googleError?: string | string[];
+    mfaExpired?: string | string[];
+    mfaUnavailable?: string | string[];
+    securityFallback?: string | string[];
+  }>();
   const loginMutation = useLoginMutation();
   const googleSignIn = useGoogleSignIn();
   const microsoftSignIn = useMicrosoftSignIn();
@@ -281,6 +286,19 @@ export default function LoginScreen() {
   const emailShakeX = useRef(new Animated.Value(0)).current;
   const passwordShakeX = useRef(new Animated.Value(0)).current;
   const loginBannerOpacity = useRef(new Animated.Value(1)).current;
+  const rawSecurityFallback = searchParams.securityFallback;
+  const securityFallback = Array.isArray(rawSecurityFallback)
+    ? rawSecurityFallback[0]
+    : rawSecurityFallback;
+  const isSecurityFallback = securityFallback === "1";
+  const rawMfaExpired = searchParams.mfaExpired;
+  const mfaExpired = Array.isArray(rawMfaExpired) ? rawMfaExpired[0] : rawMfaExpired;
+  const isMfaExpired = mfaExpired === "1";
+  const rawMfaUnavailable = searchParams.mfaUnavailable;
+  const mfaUnavailable = Array.isArray(rawMfaUnavailable)
+    ? rawMfaUnavailable[0]
+    : rawMfaUnavailable;
+  const isMfaUnavailable = mfaUnavailable === "1";
 
   useEffect(() => {
     const rawGoogleError = searchParams.googleError;
@@ -644,6 +662,24 @@ export default function LoginScreen() {
                     tone="error"
                   />
                 </Animated.View>
+              </View>
+            ) : isMfaExpired || isMfaUnavailable ? (
+              <View pointerEvents="none" style={styles.errorBannerAboveForm}>
+                <View style={styles.narrowBlock}>
+                  <Banner
+                    title={isMfaExpired ? "Security check expired" : "Security check unavailable"}
+                    message="Sign in again to request a new Authenticator check."
+                  />
+                </View>
+              </View>
+            ) : isSecurityFallback ? (
+              <View pointerEvents="none" style={styles.errorBannerAboveForm}>
+                <View style={styles.narrowBlock}>
+                  <Banner
+                    title="Sign in to continue"
+                    message="Use your password, Google, or Microsoft. If Authenticator is enabled, you'll verify it next."
+                  />
+                </View>
               </View>
             ) : null}
 

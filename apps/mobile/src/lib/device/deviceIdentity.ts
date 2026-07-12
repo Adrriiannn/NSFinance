@@ -1,7 +1,9 @@
+import * as Application from "expo-application";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
 import type { DeviceContextDto } from "../../types/api";
 import { appMetadata } from "../config/appMetadata";
+import { buildDeviceFingerprint } from "./deviceFingerprintPolicy";
 
 const GENERIC_DEVICE_LABEL_PATTERNS = [
   /^android$/i,
@@ -60,18 +62,17 @@ function resolveDeviceLabel() {
   return "Unknown device";
 }
 
-function hashSeed(input: string) {
-  let hash = 5381;
-  for (let i = 0; i < input.length; i += 1) {
-    hash = ((hash << 5) + hash) + input.charCodeAt(i);
-    hash |= 0;
+function resolveDeviceFingerprint() {
+  let platformScopedId: string | null = null;
+  if (Platform.OS === "android") {
+    try {
+      platformScopedId = normalizeValue(Application.getAndroidId());
+    } catch {
+      platformScopedId = null;
+    }
   }
 
-  return Math.abs(hash).toString(36);
-}
-
-function resolveDeviceFingerprint() {
-  const seedParts = [
+  const fallbackParts = [
     normalizeValue(Device.osBuildId),
     normalizeValue(Device.osInternalBuildId),
     normalizeValue(Device.osBuildFingerprint),
@@ -84,13 +85,13 @@ function resolveDeviceFingerprint() {
     normalizeValue(Device.deviceName),
     normalizeValue(Device.osVersion),
     Platform.OS
-  ].filter((part): part is string => Boolean(part));
+  ];
 
-  if (seedParts.length === 0) {
-    return `${Platform.OS}:unknown-device`;
-  }
-
-  return `${Platform.OS}:${hashSeed(seedParts.join("|"))}`;
+  return buildDeviceFingerprint({
+    platform: Platform.OS,
+    platformScopedId,
+    fallbackParts
+  });
 }
 
 export function buildDeviceContext(): DeviceContextDto {

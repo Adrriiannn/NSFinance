@@ -74,7 +74,10 @@ export function BiometricGate() {
 
   const returnToSignIn = async () => {
     await signInAnotherWay();
-    router.replace("/(auth)/login");
+    router.replace({
+      pathname: "/(auth)/login",
+      params: { securityFallback: "1" }
+    } as never);
   };
 
   const enable = async () => {
