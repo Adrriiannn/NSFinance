@@ -9387,7 +9387,6 @@ public class OpenBankingIntegrationTests
                 Locale = "en-GB",
                 PreferredCurrency = "GBP",
                 PlanTier = "standard",
-                BiometricUnlockEnabled = false
             };
 
             DbContext.Users.Add(user);

@@ -12,7 +12,6 @@ public sealed record UserProfileDetailsDto(
     string Locale,
     string PreferredCurrency,
     string OnboardingStatus,
-    bool BiometricUnlockEnabled,
     bool TwoFactorEnabled,
     string? PhoneNumber,
     DateTime? DateOfBirth,

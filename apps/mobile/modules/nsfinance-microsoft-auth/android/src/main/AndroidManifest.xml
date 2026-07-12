@@ -1,0 +1,20 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+  <application>
+    <activity
+      android:name="com.microsoft.identity.client.BrowserTabActivity"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data
+          android:scheme="msauth"
+          android:host="com.nsfinance.mobile"
+          android:path="/WAXW7GzMd4SdrMXmNycH7iEkZPs=" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

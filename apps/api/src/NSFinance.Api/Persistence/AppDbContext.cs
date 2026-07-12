@@ -11,7 +11,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<SessionRefreshToken> SessionRefreshTokens => Set<SessionRefreshToken>();
-    public DbSet<EmailActionToken> EmailActionTokens => Set<EmailActionToken>();
+    public DbSet<IdentityChallenge> IdentityChallenges => Set<IdentityChallenge>();
+    public DbSet<TransactionalMessage> TransactionalMessages => Set<TransactionalMessage>();
+    public DbSet<TotpAuthenticator> TotpAuthenticators => Set<TotpAuthenticator>();
+    public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
     public DbSet<AuthAttempt> AuthAttempts => Set<AuthAttempt>();
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
     public DbSet<UserFinancialContextProfile> UserFinancialContextProfiles => Set<UserFinancialContextProfile>();

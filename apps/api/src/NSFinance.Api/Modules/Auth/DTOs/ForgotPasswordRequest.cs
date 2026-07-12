@@ -1,3 +1,3 @@
 namespace NSFinance.Api.Modules.Auth.DTOs;
 
-public sealed record ForgotPasswordRequest(string Email);
+public sealed record ForgotPasswordRequest(string Identity);

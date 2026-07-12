@@ -8,9 +8,16 @@ public static class VerifyPasswordChangeCodeRequestValidator
     {
         var errors = new Dictionary<string, string[]>();
 
-        if (string.IsNullOrWhiteSpace(request.Code) || request.Code.Trim().Length < 6)
+        if (request.ChallengeId == Guid.Empty)
         {
-            errors["code"] = ["Verification code is required."];
+            errors["challengeId"] = ["Verification challenge is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Code)
+            || request.Code.Trim().Length != 6
+            || !request.Code.All(char.IsDigit))
+        {
+            errors["code"] = ["Enter the six-digit verification code."];
         }
 
         return errors;

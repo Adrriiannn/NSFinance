@@ -8,9 +8,14 @@ public static class ConfirmPasswordChangeCodeRequestValidator
     {
         var errors = new Dictionary<string, string[]>();
 
-        if (string.IsNullOrWhiteSpace(request.Code) || request.Code.Trim().Length < 6)
+        if (request.ChallengeId == Guid.Empty)
         {
-            errors["code"] = ["Verification code is required."];
+            errors["challengeId"] = ["Verification challenge is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.GrantToken))
+        {
+            errors["grantToken"] = ["Verified password-change authorization is required."];
         }
 
         var passwordErrors = PasswordPolicyValidator.Validate(request.NewPassword);

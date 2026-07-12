@@ -14,7 +14,6 @@ public sealed record UserProfileDto(
     string Role,
     bool EmailVerified,
     string OnboardingStatus,
-    bool BiometricUnlockEnabled,
     bool TwoFactorEnabled,
     string PlanTier,
     DateTime CreatedUtc,

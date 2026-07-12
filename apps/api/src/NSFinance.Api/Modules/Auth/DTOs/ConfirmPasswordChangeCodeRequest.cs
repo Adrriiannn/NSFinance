@@ -1,5 +1,6 @@
 namespace NSFinance.Api.Modules.Auth.DTOs;
 
 public sealed record ConfirmPasswordChangeCodeRequest(
-    string Code,
+    Guid ChallengeId,
+    string GrantToken,
     string NewPassword);

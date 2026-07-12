@@ -9,13 +9,6 @@ public static class UpdateUserProfileValidator
     {
         var errors = new Dictionary<string, string[]>();
 
-        if (string.IsNullOrWhiteSpace(request.PrimaryEmail)
-            || request.PrimaryEmail.Trim().Length > 256
-            || !request.PrimaryEmail.Contains('@'))
-        {
-            errors["primaryEmail"] = ["Primary email must be a valid email address and must not exceed 256 characters."];
-        }
-
         if (string.IsNullOrWhiteSpace(request.FullName) || request.FullName.Trim().Length is < 2 or > 160)
         {
             errors["fullName"] = ["Full name must be between 2 and 160 characters."];
@@ -60,11 +53,6 @@ public static class UpdateUserProfileValidator
         if (string.IsNullOrWhiteSpace(request.OnboardingStatus) || request.OnboardingStatus.Trim().Length > 40)
         {
             errors["onboardingStatus"] = ["Onboarding status is required and must not exceed 40 characters."];
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.PhoneNumber) && request.PhoneNumber.Trim().Length > 40)
-        {
-            errors["phoneNumber"] = ["Phone number must not exceed 40 characters."];
         }
 
         if (!string.IsNullOrWhiteSpace(request.CountryRegion) && request.CountryRegion.Trim().Length > 80)

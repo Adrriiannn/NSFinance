@@ -16,8 +16,13 @@ $gradlePropertiesPath = Join-Path $mobileRoot "android\gradle.properties"
 $androidStringsPath = Join-Path $mobileRoot "android\app\src\main\res\values\strings.xml"
 $androidColorsPath = Join-Path $mobileRoot "android\app\src\main\res\values\colors.xml"
 $androidManifestPath = Join-Path $mobileRoot "android\app\src\main\AndroidManifest.xml"
+$androidRootBuildGradlePath = Join-Path $mobileRoot "android\build.gradle"
 $androidBuildGradlePath = Join-Path $mobileRoot "android\app\build.gradle"
 $androidSettingsGradlePath = Join-Path $mobileRoot "android\settings.gradle"
+$microsoftModuleRoot = Join-Path $mobileRoot "modules\nsfinance-microsoft-auth"
+$microsoftModuleBuildGradlePath = Join-Path $microsoftModuleRoot "android\build.gradle"
+$microsoftModuleManifestPath = Join-Path $microsoftModuleRoot "android\src\main\AndroidManifest.xml"
+$microsoftModuleConfigPath = Join-Path $microsoftModuleRoot "android\src\main\res\raw\nsfinance_msal_config.json"
 
 function Assert-Equal {
     param(
@@ -85,6 +90,9 @@ Assert-Equal $runtimeConfig.apiBaseUrl "https://api.finance.nsireland.ie" "Publi
 Assert-Equal $runtimeConfig.turnstilePageBaseUrl "https://api.finance.nsireland.ie" "Turnstile page URL"
 Assert-NotBlank $runtimeConfig.googleOAuth.webClientId "Google web client ID"
 Assert-NotBlank $runtimeConfig.googleOAuth.androidClientId "Google Android client ID"
+Assert-NotBlank $runtimeConfig.microsoftOAuth.clientId "Microsoft client ID"
+Assert-Equal $runtimeConfig.microsoftOAuth.authority "https://login.microsoftonline.com/common/v2.0" "Microsoft authority"
+Assert-Equal $runtimeConfig.microsoftOAuth.scope "api://$($runtimeConfig.microsoftOAuth.clientId)/access_as_user" "Microsoft delegated API scope"
 if ([int]$runtimeConfig.bankingAutoSyncIntervalMinutes -lt 1) {
     throw "Banking auto-sync interval must be at least one minute."
 }
@@ -121,6 +129,10 @@ $imagePickerPlugin = @($appConfig.expo.plugins) |
     Select-Object -First 1
 if (-not $imagePickerPlugin) {
     throw "Expo ImagePicker must be configured explicitly for production permissions."
+}
+
+if ("./plugins/withMicrosoftMavenRepository" -notin @($appConfig.expo.plugins)) {
+    throw "Expo config must retain the Microsoft MSAL Maven repository plugin."
 }
 
 Assert-Equal ([bool]$imagePickerPlugin[1].cameraPermission) $false "ImagePicker camera permission"
@@ -181,6 +193,38 @@ foreach ($requiredManifestValue in @(
 if ($manifest.Contains('android:scheme="com.nsfinance.mobile"')) {
     throw "AndroidManifest.xml still exposes the obsolete browser OAuth redirect scheme."
 }
+
+$microsoftMavenRepository = "https://pkgs.dev.azure.com/MicrosoftDeviceSDK/DuoSDK-Public/_packaging/Duo-SDK-Feed/maven/v1"
+$androidRootBuildGradle = Get-Content -Raw $androidRootBuildGradlePath
+if (-not $androidRootBuildGradle.Contains($microsoftMavenRepository)) {
+    throw "Android root build.gradle is missing the Microsoft MSAL Maven repository."
+}
+
+$microsoftModuleBuildGradle = Get-Content -Raw $microsoftModuleBuildGradlePath
+if (-not $microsoftModuleBuildGradle.Contains("com.microsoft.identity.client:msal:8.3.2")) {
+    throw "The NSFinance Microsoft module must use the reviewed MSAL Android version."
+}
+
+$microsoftModuleManifest = Get-Content -Raw $microsoftModuleManifestPath
+foreach ($requiredMicrosoftManifestValue in @(
+    'android:name="com.microsoft.identity.client.BrowserTabActivity"',
+    'android:scheme="msauth"',
+    'android:host="com.nsfinance.mobile"',
+    'android:path="/WAXW7GzMd4SdrMXmNycH7iEkZPs="'
+)) {
+    if (-not $microsoftModuleManifest.Contains($requiredMicrosoftManifestValue)) {
+        throw "The NSFinance Microsoft module manifest is missing '$requiredMicrosoftManifestValue'."
+    }
+}
+
+$microsoftModuleConfig = Get-Content -Raw $microsoftModuleConfigPath | ConvertFrom-Json
+Assert-Equal $microsoftModuleConfig.client_id $runtimeConfig.microsoftOAuth.clientId "Microsoft native client ID"
+Assert-Equal $microsoftModuleConfig.redirect_uri "msauth://com.nsfinance.mobile/WAXW7GzMd4SdrMXmNycH7iEkZPs%3D" "Microsoft native redirect URI"
+Assert-Equal $microsoftModuleConfig.account_mode "MULTIPLE" "Microsoft native account mode"
+$microsoftAudience = @($microsoftModuleConfig.authorities) |
+    ForEach-Object { $_.audience.type } |
+    Select-Object -First 1
+Assert-Equal $microsoftAudience "AzureADandPersonalMicrosoftAccount" "Microsoft account audience"
 
 $gradleProperties = Get-Content -Raw $gradlePropertiesPath
 $newArchitectureMatch = [regex]::Match($gradleProperties, "(?m)^newArchEnabled=(true|false)\r?$")

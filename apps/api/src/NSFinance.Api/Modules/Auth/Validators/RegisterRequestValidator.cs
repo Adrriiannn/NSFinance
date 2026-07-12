@@ -43,6 +43,21 @@ public static partial class RegisterRequestValidator
             errors["captchaToken"] = ["Security verification is required."];
         }
 
+        if (!request.AcceptPolicies)
+        {
+            errors["acceptPolicies"] = ["You must accept the Terms of Service and Privacy Policy."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.TermsVersion))
+        {
+            errors["termsVersion"] = ["Terms version is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PrivacyVersion))
+        {
+            errors["privacyVersion"] = ["Privacy version is required."];
+        }
+
         return errors;
     }
 

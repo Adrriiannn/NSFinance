@@ -6,14 +6,17 @@ import { GlassCard } from "../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
+import { useMicrosoftSignIn } from "../../src/features/auth/useMicrosoftSignIn";
+import { stageEmailVerification, stageMfaLogin } from "../../src/features/auth/pendingAuthFlow";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 export default function AuthEntryScreen() {
-  const { sessionMessage, clearSessionMessage, isAuthTransitioning } = useAuthSession();
+  const { applyAuthTokenResponse, sessionMessage, clearSessionMessage, isAuthTransitioning } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const googleSignIn = useGoogleSignIn();
+  const microsoftSignIn = useMicrosoftSignIn();
   const [googleError, setGoogleError] = useState<string | null>(null);
 
   const handleGoogleSignIn = async () => {
@@ -33,8 +36,66 @@ export default function AuthEntryScreen() {
       return;
     }
 
-    playSuccess();
-    router.replace("/(tabs)");
+    const flow = result.flow;
+    if (flow?.status === "authenticated" && flow.session) {
+      await applyAuthTokenResponse(flow.session, true);
+      playSuccess();
+      router.replace("/(tabs)");
+      return;
+    }
+
+    if (flow?.status === "email_verification_required" && flow.emailVerification) {
+      stageEmailVerification({ ...flow.emailVerification, rememberMe: true });
+      router.push("/(auth)/verify-email" as never);
+      return;
+    }
+
+    if (flow?.status === "mfa_required" && flow.mfaChallenge) {
+      stageMfaLogin({ ...flow.mfaChallenge, rememberMe: true });
+      router.push("/(auth)/mfa" as never);
+      return;
+    }
+
+    setGoogleError("Google sign-in returned an incomplete response. Please try again.");
+  };
+
+  const handleMicrosoftSignIn = async () => {
+    if (isAuthTransitioning) {
+      setGoogleError("Finishing sign-out. Please try again in a moment.");
+      return;
+    }
+
+    clearSessionMessage();
+    setGoogleError(null);
+    const result = await microsoftSignIn.signInWithMicrosoft();
+    if (!result.succeeded) {
+      if (!result.cancelled) {
+        setGoogleError(result.message ?? "Microsoft sign-in failed.");
+      }
+      return;
+    }
+
+    const flow = result.flow;
+    if (flow?.status === "authenticated" && flow.session) {
+      await applyAuthTokenResponse(flow.session, true);
+      playSuccess();
+      router.replace("/(tabs)");
+      return;
+    }
+
+    if (flow?.status === "email_verification_required" && flow.emailVerification) {
+      stageEmailVerification({ ...flow.emailVerification, rememberMe: true });
+      router.push("/(auth)/verify-email" as never);
+      return;
+    }
+
+    if (flow?.status === "mfa_required" && flow.mfaChallenge) {
+      stageMfaLogin({ ...flow.mfaChallenge, rememberMe: true });
+      router.push("/(auth)/mfa" as never);
+      return;
+    }
+
+    setGoogleError("Microsoft sign-in returned an incomplete response. Please try again.");
   };
 
   return (
@@ -81,6 +142,11 @@ export default function AuthEntryScreen() {
           label={googleSignIn.isPending ? "Signing in with Google..." : "Sign in with Google"}
           onPress={() => void handleGoogleSignIn()}
           disabled={!googleSignIn.isConfigured || googleSignIn.isPending || isAuthTransitioning}
+        />
+        <SecondaryButton
+          label={microsoftSignIn.isPending ? "Signing in with Microsoft..." : "Sign in with Microsoft"}
+          onPress={() => void handleMicrosoftSignIn()}
+          disabled={!microsoftSignIn.isReady || microsoftSignIn.isPending || isAuthTransitioning}
         />
         {googleError ? <Text style={styles.googleError}>{googleError}</Text> : null}
 

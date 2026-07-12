@@ -6,6 +6,7 @@ import { type ComponentProps, useEffect, useMemo } from "react";
 import { Text, TextInput } from "react-native";
 import { GlobalFlashToast } from "../src/components/feedback/GlobalFlashToast";
 import { GlobalEnrichmentProgressDial } from "../src/components/feedback/GlobalEnrichmentProgressDial";
+import { BiometricGate } from "../src/components/auth/BiometricGate";
 import { AppProviders } from "../src/providers/AppProviders";
 import { ThemeRuntimeProvider, useThemeRuntime } from "../src/theme/runtime/ThemeRuntimeProvider";
 
@@ -95,6 +96,7 @@ function RootNavigator() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
       </Stack>
+      <BiometricGate />
     </ThemeProvider>
   );
 }

@@ -8,9 +8,16 @@ public static class CreateDeletionRequestValidator
     {
         var errors = new Dictionary<string, string[]>();
 
-        if (string.IsNullOrWhiteSpace(request.VerificationCode) || request.VerificationCode.Trim().Length < 6)
+        if (request.ChallengeId == Guid.Empty)
         {
-            errors["verificationCode"] = ["Verification code is required."];
+            errors["challengeId"] = ["Deletion verification challenge is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Code)
+            || request.Code.Trim().Length != 6
+            || !request.Code.All(char.IsDigit))
+        {
+            errors["code"] = ["Enter the six-digit verification code."];
         }
 
         if (!string.IsNullOrWhiteSpace(request.Notes) && request.Notes.Trim().Length > 4000)

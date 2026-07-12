@@ -25,9 +25,12 @@ public class User
     public string Locale { get; set; } = "en-US";
     public string PreferredCurrency { get; set; } = "EUR";
     public string PlanTier { get; set; } = "standard";
-    public bool BiometricUnlockEnabled { get; set; }
     public bool TwoFactorEnabled { get; set; }
     public string? PhoneNumber { get; set; }
+    public DateTime? PhoneVerifiedUtc { get; set; }
+    public string? PendingPhoneNumber { get; set; }
+    public DateTime? PendingPhoneRequestedUtc { get; set; }
+    public bool PhoneRecoveryEnabled { get; set; }
     public DateTime? DateOfBirth { get; set; }
     public string? CountryRegion { get; set; }
     public string? FinancialFocusJson { get; set; }
@@ -46,7 +49,9 @@ public class User
     public ICollection<SupportRequest> SupportRequests { get; set; } = [];
     public ICollection<DeletionRequest> DeletionRequests { get; set; } = [];
     public ICollection<ExportRequest> ExportRequests { get; set; } = [];
-    public ICollection<EmailActionToken> EmailActionTokens { get; set; } = [];
+    public ICollection<IdentityChallenge> IdentityChallenges { get; set; } = [];
+    public ICollection<TransactionalMessage> TransactionalMessages { get; set; } = [];
+    public ICollection<TotpAuthenticator> TotpAuthenticators { get; set; } = [];
     public ICollection<OpenBankingConnection> OpenBankingConnections { get; set; } = [];
     public ICollection<ExpenseTrackerEntry> ExpenseTrackerEntries { get; set; } = [];
     public ICollection<ExpensePlan> ExpensePlans { get; set; } = [];

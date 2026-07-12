@@ -25,6 +25,10 @@ public static class AuthModule
             .WithName("GoogleLogin")
             .RequireRateLimiting("auth-write");
 
+        group.MapPost("/microsoft", MicrosoftLoginEndpoint.HandleAsync)
+            .WithName("MicrosoftLogin")
+            .RequireRateLimiting("auth-write");
+
         group.MapPost("/refresh", RefreshTokenEndpoint.HandleAsync)
             .WithName("RefreshToken")
             .RequireRateLimiting("auth-refresh");
@@ -57,6 +61,32 @@ public static class AuthModule
             .WithName("ResetPassword")
             .RequireRateLimiting("auth-reset");
 
+        group.MapPost("/password-recovery/verify", VerifyPasswordRecoveryCodeEndpoint.HandleAsync)
+            .WithName("VerifyPasswordRecoveryCode")
+            .RequireRateLimiting("auth-reset");
+
+        group.MapPost("/mfa/challenge/verify", VerifyMfaLoginEndpoint.HandleAsync)
+            .WithName("VerifyMfaLogin")
+            .RequireRateLimiting("auth-write");
+
+        group.MapGet("/mfa/status", GetMfaStatusEndpoint.HandleAsync)
+            .WithName("GetMfaStatus")
+            .RequireAuthorization();
+
+        group.MapPost("/mfa/totp/enroll", BeginTotpEnrollmentEndpoint.HandleAsync)
+            .WithName("BeginTotpEnrollment")
+            .RequireAuthorization();
+
+        group.MapPost("/mfa/totp/confirm", ConfirmTotpEnrollmentEndpoint.HandleAsync)
+            .WithName("ConfirmTotpEnrollment")
+            .RequireAuthorization()
+            .RequireRateLimiting("auth-write");
+
+        group.MapPost("/mfa/totp/disable", DisableMfaEndpoint.HandleAsync)
+            .WithName("DisableMfa")
+            .RequireAuthorization()
+            .RequireRateLimiting("auth-write");
+
         group.MapPost("/verify-email/request", RequestEmailVerificationEndpoint.HandleAsync)
             .WithName("RequestEmailVerification")
             .RequireRateLimiting("auth-reset");
@@ -87,6 +117,9 @@ public static class AuthModule
 
         group.MapGet("/providers/google", GoogleAuthOptionsEndpoint.HandleAsync)
             .WithName("GetGoogleAuthOptions");
+
+        group.MapGet("/providers/microsoft", MicrosoftAuthOptionsEndpoint.Handle)
+            .WithName("GetMicrosoftAuthOptions");
 
         group.MapGet("/providers/google/callback", GoogleCallbackEndpoint.HandleAsync)
             .WithName("GoogleAuthCallback")

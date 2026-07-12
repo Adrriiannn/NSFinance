@@ -2,25 +2,37 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type {
   ChangePasswordRequest,
+  ConfirmTotpEnrollmentRequest,
+  DisableMfaRequest,
   ConfirmEmailVerificationRequest,
   ForgotPasswordRequest,
   GoogleLoginRequest,
   LoginRequest,
+  MicrosoftLoginRequest,
   RegisterRequest,
   RequestEmailVerificationRequest,
-  ResetPasswordRequest
+  ResetPasswordRequest,
+  VerifyMfaLoginRequest,
+  VerifyPasswordRecoveryCodeRequest
 } from "../../types/api";
 import { useAuthSession } from "../../providers/AuthProvider";
 import {
+  beginTotpEnrollment,
   changePassword,
   confirmEmailVerification,
+  confirmTotpEnrollment,
+  disableMfa,
   forgotPassword,
   getCurrentUser,
+  getMfaStatus,
   login,
   loginWithGoogle,
+  loginWithMicrosoft,
   requestEmailVerification,
   resetPassword,
-  register
+  register,
+  verifyMfaLogin,
+  verifyPasswordRecoveryCode
 } from "./authApi";
 
 export function useCurrentUserQuery() {
@@ -34,42 +46,26 @@ export function useCurrentUserQuery() {
 }
 
 export function useLoginMutation() {
-  const queryClient = useQueryClient();
-  const { applyAuthTokenResponse } = useAuthSession();
-
   return useMutation({
-    mutationFn: (payload: LoginRequest) => login(payload),
-    onSuccess: async (response) => {
-      await applyAuthTokenResponse(response);
-      await queryClient.invalidateQueries();
-    }
+    mutationFn: (payload: LoginRequest) => login(payload)
   });
 }
 
 export function useGoogleLoginMutation() {
-  const queryClient = useQueryClient();
-  const { applyAuthTokenResponse, refreshSessionUser } = useAuthSession();
-
   return useMutation({
-    mutationFn: (payload: GoogleLoginRequest) => loginWithGoogle(payload),
-    onSuccess: async (response) => {
-      await applyAuthTokenResponse(response);
-      void refreshSessionUser();
-      void queryClient.invalidateQueries();
-    }
+    mutationFn: (payload: GoogleLoginRequest) => loginWithGoogle(payload)
+  });
+}
+
+export function useMicrosoftLoginMutation() {
+  return useMutation({
+    mutationFn: (payload: MicrosoftLoginRequest) => loginWithMicrosoft(payload)
   });
 }
 
 export function useRegisterMutation() {
-  const queryClient = useQueryClient();
-  const { applyAuthTokenResponse } = useAuthSession();
-
   return useMutation({
-    mutationFn: (payload: RegisterRequest) => register(payload),
-    onSuccess: async (response) => {
-      await applyAuthTokenResponse(response);
-      await queryClient.invalidateQueries();
-    }
+    mutationFn: (payload: RegisterRequest) => register(payload)
   });
 }
 
@@ -85,6 +81,13 @@ export function useResetPasswordMutation() {
   });
 }
 
+export function useVerifyPasswordRecoveryCodeMutation() {
+  return useMutation({
+    mutationFn: (payload: VerifyPasswordRecoveryCodeRequest) =>
+      verifyPasswordRecoveryCode(payload)
+  });
+}
+
 export function useRequestEmailVerificationMutation() {
   return useMutation({
     mutationFn: (payload: RequestEmailVerificationRequest) => requestEmailVerification(payload)
@@ -94,6 +97,50 @@ export function useRequestEmailVerificationMutation() {
 export function useConfirmEmailVerificationMutation() {
   return useMutation({
     mutationFn: (payload: ConfirmEmailVerificationRequest) => confirmEmailVerification(payload)
+  });
+}
+
+export function useMfaStatusQuery() {
+  const { isAuthenticated } = useAuthSession();
+
+  return useQuery({
+    queryKey: [...queryKeys.auth.me, "mfa"],
+    queryFn: getMfaStatus,
+    enabled: isAuthenticated
+  });
+}
+
+export function useBeginTotpEnrollmentMutation() {
+  return useMutation({ mutationFn: beginTotpEnrollment });
+}
+
+export function useConfirmTotpEnrollmentMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: ConfirmTotpEnrollmentRequest) => confirmTotpEnrollment(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...queryKeys.auth.me, "mfa"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.auth.me });
+    }
+  });
+}
+
+export function useVerifyMfaLoginMutation() {
+  return useMutation({
+    mutationFn: (payload: VerifyMfaLoginRequest) => verifyMfaLogin(payload)
+  });
+}
+
+export function useDisableMfaMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: DisableMfaRequest) => disableMfa(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [...queryKeys.auth.me, "mfa"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.auth.me });
+    }
   });
 }
 

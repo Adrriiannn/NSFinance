@@ -48,23 +48,6 @@ public sealed class UserService(
             return ServiceResult<UserProfileDetailsDto>.Fail("User not found.", "user_not_found", StatusCodes.Status404NotFound);
         }
 
-        var normalizedEmail = request.PrimaryEmail.Trim().ToLowerInvariant();
-        var existingEmailOwner = await dbContext.Users
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.Id != userId && x.NormalizedEmail == normalizedEmail,
-                cancellationToken);
-
-        if (existingEmailOwner)
-        {
-            return ServiceResult<UserProfileDetailsDto>.Fail(
-                "Email is already in use.",
-                "email_already_in_use",
-                StatusCodes.Status409Conflict);
-        }
-
-        user.PrimaryEmail = request.PrimaryEmail.Trim();
-        user.NormalizedEmail = normalizedEmail;
         user.FullName = request.FullName.Trim();
 
         var normalizedNsTag = NsTagPolicy.Normalize(request.DisplayName);
@@ -98,9 +81,6 @@ public sealed class UserService(
         user.Locale = request.Locale.Trim();
         user.PreferredCurrency = request.PreferredCurrency.Trim().ToUpperInvariant();
         user.OnboardingStatus = request.OnboardingStatus.Trim();
-        user.BiometricUnlockEnabled = request.BiometricUnlockEnabled;
-        user.TwoFactorEnabled = request.TwoFactorEnabled;
-        user.PhoneNumber = NormalizeNullable(request.PhoneNumber);
         user.DateOfBirth = request.DateOfBirth?.Date;
         user.CountryRegion = NormalizeNullable(request.CountryRegion);
         user.FinancialFocusJson = SerializeFocus(request.FinancialFocus);
@@ -128,7 +108,6 @@ public sealed class UserService(
                 user.Locale,
                 user.PreferredCurrency,
                 user.OnboardingStatus,
-                user.BiometricUnlockEnabled,
                 user.TwoFactorEnabled
             },
             cancellationToken);
@@ -221,7 +200,6 @@ public sealed class UserService(
             user.Locale,
             user.PreferredCurrency,
             user.OnboardingStatus,
-            user.BiometricUnlockEnabled,
             user.TwoFactorEnabled,
             user.PhoneNumber,
             user.DateOfBirth,

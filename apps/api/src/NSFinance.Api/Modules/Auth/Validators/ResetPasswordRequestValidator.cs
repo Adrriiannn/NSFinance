@@ -8,9 +8,14 @@ public static class ResetPasswordRequestValidator
     {
         var errors = new Dictionary<string, string[]>();
 
-        if (string.IsNullOrWhiteSpace(request.Token))
+        if (request.ChallengeId == Guid.Empty)
         {
-            errors["token"] = ["Token is required."];
+            errors["challengeId"] = ["Recovery challenge is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.RecoveryToken))
+        {
+            errors["recoveryToken"] = ["Recovery authorization is required."];
         }
 
         var passwordErrors = PasswordPolicyValidator.Validate(request.NewPassword);

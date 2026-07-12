@@ -12,13 +12,15 @@ import { Button } from "../../src/components/ui/buttons/Button";
 import { Banner } from "../../src/components/ui/feedback/Banner";
 import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
 import { TextField } from "../../src/components/ui/TextField";
-import { persistRememberedEmail, readRememberedEmail } from "../../src/features/auth/rememberedEmail";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
+import { useMicrosoftSignIn } from "../../src/features/auth/useMicrosoftSignIn";
+import { stageEmailVerification, stageMfaLogin } from "../../src/features/auth/pendingAuthFlow";
 import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
+import type { AuthFlowResponse } from "../../src/types/api";
 import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"email" | "password", string>>;
@@ -261,7 +263,8 @@ export default function LoginScreen() {
   const searchParams = useLocalSearchParams<{ googleError?: string | string[] }>();
   const loginMutation = useLoginMutation();
   const googleSignIn = useGoogleSignIn();
-  const { isAuthTransitioning } = useAuthSession();
+  const microsoftSignIn = useMicrosoftSignIn();
+  const { applyAuthTokenResponse, isAuthTransitioning } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -271,7 +274,7 @@ export default function LoginScreen() {
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
-  const [rememberEmail, setRememberEmail] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [loginErrorBanner, setLoginErrorBanner] = useState<LoginErrorBannerState | null>(null);
   const [countdownNowMs, setCountdownNowMs] = useState(Date.now());
 
@@ -279,26 +282,6 @@ export default function LoginScreen() {
   const emailShakeX = useRef(new Animated.Value(0)).current;
   const passwordShakeX = useRef(new Animated.Value(0)).current;
   const loginBannerOpacity = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const hydrateRememberedEmail = async () => {
-      const remembered = await readRememberedEmail();
-      if (cancelled || !remembered.enabled) {
-        return;
-      }
-
-      setRememberEmail(true);
-      setEmail(remembered.email);
-    };
-
-    void hydrateRememberedEmail();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     const rawGoogleError = searchParams.googleError;
@@ -469,9 +452,6 @@ export default function LoginScreen() {
             }
           : null;
 
-  const isGoogleOnlyLoginBanner =
-    loginErrorBanner?.kind === "temporary_error" && loginErrorBanner.title === "This account uses Google sign-in.";
-
   const canSubmit = useMemo(
     () => email.trim().length > 0 && password.length > 0 && (!shouldShowCaptcha || Boolean(captchaToken)) && !isLockoutActive,
     [captchaToken, email, isLockoutActive, password, shouldShowCaptcha]
@@ -490,6 +470,33 @@ export default function LoginScreen() {
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
+  };
+
+  const completeAuthFlow = async (flow: AuthFlowResponse, verificationEmail?: string) => {
+    if (flow.status === "authenticated" && flow.session) {
+      await applyAuthTokenResponse(flow.session, rememberMe);
+      playSuccess();
+      router.replace("/(tabs)");
+      return;
+    }
+
+    if (flow.status === "email_verification_required" && flow.emailVerification) {
+      stageEmailVerification({
+        ...flow.emailVerification,
+        email: verificationEmail,
+        rememberMe
+      });
+      router.push("/(auth)/verify-email" as never);
+      return;
+    }
+
+    if (flow.status === "mfa_required" && flow.mfaChallenge) {
+      stageMfaLogin({ ...flow.mfaChallenge, rememberMe });
+      router.push("/(auth)/mfa" as never);
+      return;
+    }
+
+    throw new Error("The sign-in response was incomplete. Please try again.");
   };
 
   const handleLogin = async () => {
@@ -513,7 +520,7 @@ export default function LoginScreen() {
 
     setGoogleError(null);
     try {
-      await loginMutation.mutateAsync({
+      const flow = await loginMutation.mutateAsync({
         email: normalizedEmail,
         password,
         captchaToken: shouldShowCaptcha ? captchaToken : null,
@@ -523,9 +530,7 @@ export default function LoginScreen() {
       void clearPersistedLockoutUntil();
       setLoginErrorBanner(null);
       setFailedLoginAttempts(0);
-      await persistRememberedEmail(rememberEmail, email);
-      playSuccess();
-      router.replace("/(tabs)");
+      await completeAuthFlow(flow, normalizedEmail);
     } catch (error) {
       if (error instanceof ApiClientError) {
         const lockoutRetryAfterMs = tryParseLockoutRetryAfterMs(error);
@@ -537,25 +542,9 @@ export default function LoginScreen() {
             id: Date.now(),
             unlockAtMs: lockoutRetryAfterMs
           });
-        } else if (error.code === "account_not_found") {
-          setLoginErrorBanner(null);
-          setCaptchaToken(null);
-          setFailedLoginAttempts(0);
-          router.push((`/register?email=${encodeURIComponent(normalizedEmail)}`) as never);
-          return;
-        } else if (error.code === "password_login_unavailable") {
-          setLoginErrorBanner({
-            kind: "temporary_error",
-            id: Date.now(),
-            title: "This account uses Google sign-in.",
-            message: "Please try logging in via the Sign in with Google option.",
-            highlightTarget: "none"
-          });
         } else {
           let highlightTarget: ErrorFieldTarget = "none";
-          if (error.code === "invalid_password") {
-            highlightTarget = "password";
-          } else if ([400, 401, 403].includes(error.status)) {
+          if ([400, 401, 403].includes(error.status)) {
             highlightTarget = "both";
           }
 
@@ -601,12 +590,37 @@ export default function LoginScreen() {
       return;
     }
 
-    playSuccess();
-    router.replace("/(tabs)");
+    if (result.flow) {
+      try {
+        await completeAuthFlow(result.flow);
+      } catch (error) {
+        setGoogleError(formatUnknownError(error));
+      }
+    }
   };
 
-  const handleMicrosoftSignIn = () => {
-    setGoogleError("Microsoft sign-in is coming soon.");
+  const handleMicrosoftSignIn = async () => {
+    if (isAuthTransitioning) {
+      setGoogleError("Finishing sign-out. Please try again in a moment.");
+      return;
+    }
+
+    setGoogleError(null);
+    const result = await microsoftSignIn.signInWithMicrosoft();
+    if (!result.succeeded) {
+      if (!result.cancelled) {
+        setGoogleError(result.message ?? "Microsoft sign-in failed.");
+      }
+      return;
+    }
+
+    if (result.flow) {
+      try {
+        await completeAuthFlow(result.flow);
+      } catch (error) {
+        setGoogleError(formatUnknownError(error));
+      }
+    }
   };
 
   return (
@@ -627,14 +641,7 @@ export default function LoginScreen() {
                   <Banner
                     title={bannerCopy.title}
                     message={
-                      isGoogleOnlyLoginBanner ? (
-                        <>
-                          Please try logging in via the{" "}
-                          <Text style={styles.googleSignInMessageAccent}>Sign in with Google</Text> option.
-                        </>
-                      ) : (
-                        bannerCopy.message
-                      )
+                      bannerCopy.message
                     }
                     tone="error"
                   />
@@ -688,27 +695,27 @@ export default function LoginScreen() {
                 {shouldShowCaptcha ? <CaptchaGate token={captchaToken} onTokenChange={setCaptchaToken} showLabel={false} /> : null}
 
                 <View style={styles.narrowBlock}>
-                  <View style={styles.rememberEmailRow}>
-                    <View style={styles.rememberEmailLeft}>
+                  <View style={styles.rememberMeRow}>
+                    <View style={styles.rememberMeLeft}>
                       <Pressable
                         accessibilityRole="checkbox"
-                        accessibilityState={{ checked: rememberEmail }}
-                        onPress={() => setRememberEmail((current) => !current)}
+                        accessibilityState={{ checked: rememberMe }}
+                        onPress={() => setRememberMe((current) => !current)}
                         style={({ pressed }) => [
-                          styles.rememberEmailCheckbox,
-                          rememberEmail ? styles.rememberEmailCheckboxChecked : null,
-                          pressed ? styles.rememberEmailCheckboxPressed : null
+                          styles.rememberMeCheckbox,
+                          rememberMe ? styles.rememberMeCheckboxChecked : null,
+                          pressed ? styles.rememberMeCheckboxPressed : null
                         ]}
                       >
-                        {rememberEmail ? <Ionicons name="checkmark" size={14} color={palette.primary} /> : null}
+                        {rememberMe ? <Ionicons name="checkmark" size={14} color={palette.primary} /> : null}
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="Remember my email"
-                        onPress={() => setRememberEmail((current) => !current)}
+                        accessibilityLabel="Remember me"
+                        onPress={() => setRememberMe((current) => !current)}
                         style={({ pressed }) => [pressed ? styles.linkPressed : null]}
                       >
-                        <Text style={styles.rememberEmailLabel}>Remember my email</Text>
+                        <Text style={styles.rememberMeLabel}>Remember me</Text>
                       </Pressable>
                     </View>
 
@@ -752,7 +759,9 @@ export default function LoginScreen() {
                     label="Microsoft"
                     variant="secondary"
                     icon={<Ionicons name="logo-microsoft" size={16} color={palette.textPrimary} />}
-                    onPress={handleMicrosoftSignIn}
+                    onPress={() => void handleMicrosoftSignIn()}
+                    isLoading={microsoftSignIn.isPending}
+                    disabled={!microsoftSignIn.isReady || microsoftSignIn.isPending || isAuthTransitioning}
                     style={styles.authButton}
                   />
                 </View>
@@ -865,19 +874,19 @@ const styles = createRuntimeStyleSheet(() => ({
   authFieldInput: {
     paddingVertical: 8
   },
-  rememberEmailRow: {
+  rememberMeRow: {
     minHeight: 28,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing[10]
   },
-  rememberEmailLeft: {
+  rememberMeLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing[10]
   },
-  rememberEmailCheckbox: {
+  rememberMeCheckbox: {
     width: 20,
     height: 20,
     borderRadius: 6,
@@ -887,14 +896,14 @@ const styles = createRuntimeStyleSheet(() => ({
     alignItems: "center",
     justifyContent: "center"
   },
-  rememberEmailCheckboxPressed: {
+  rememberMeCheckboxPressed: {
     opacity: 0.86
   },
-  rememberEmailCheckboxChecked: {
+  rememberMeCheckboxChecked: {
     borderColor: palette.primary,
     backgroundColor: controls.activeFill
   },
-  rememberEmailLabel: {
+  rememberMeLabel: {
     color: palette.textPrimary,
     ...typography.body2,
     fontWeight: "600"
@@ -958,10 +967,6 @@ const styles = createRuntimeStyleSheet(() => ({
   googleError: {
     color: palette.negative,
     ...typography.caption
-  },
-  googleSignInMessageAccent: {
-    color: palette.primaryGlow,
-    fontWeight: "600"
   }
 }));
 

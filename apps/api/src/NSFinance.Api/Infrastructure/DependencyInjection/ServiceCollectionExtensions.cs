@@ -328,6 +328,33 @@ public static class ServiceCollectionExtensions
                     EnvironmentVariableNames.GoogleAndroidClientIdProd));
         });
 
+        services.Configure<IdentitySecurityOptions>(options =>
+        {
+            configuration.GetSection(IdentitySecurityOptions.SectionName).Bind(options);
+            OverrideIfSet(
+                value => options.CodePepper = value,
+                ResolveEnvironmentValue(configuration, EnvironmentVariableNames.IdentityCodePepper));
+        });
+
+        services.Configure<TransactionalEmailOptions>(options =>
+        {
+            configuration.GetSection(TransactionalEmailOptions.SectionName).Bind(options);
+            OverrideIfSet(
+                value => options.Endpoint = value,
+                ResolveEnvironmentValue(configuration, EnvironmentVariableNames.EmailEndpoint));
+            OverrideIfSet(
+                value => options.SenderAddress = value,
+                ResolveEnvironmentValue(configuration, EnvironmentVariableNames.EmailSenderAddress));
+        });
+
+        services.Configure<MicrosoftAuthOptions>(options =>
+        {
+            configuration.GetSection(MicrosoftAuthOptions.SectionName).Bind(options);
+            OverrideIfSet(
+                value => options.ClientId = value,
+                ResolveEnvironmentValue(configuration, EnvironmentVariableNames.MicrosoftClientId));
+        });
+
         services.Configure<TurnstileOptions>(options =>
         {
             configuration.GetSection(TurnstileOptions.SectionName).Bind(options);
@@ -428,8 +455,18 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddScoped<JwtTokenService>();
         services.AddScoped<TokenSecretService>();
+        services.AddSingleton<IIdentityCodeService, IdentityCodeService>();
+        services.AddSingleton<IdentityPayloadProtector>();
+        services.AddSingleton<MfaSecretProtector>();
+        services.AddSingleton<IdentityEmailRenderer>();
+        services.AddSingleton<ITransactionalEmailSender, AzureCommunicationEmailSender>();
+        services.AddScoped<TransactionalMessageService>();
+        services.AddScoped<IdentityChallengeService>();
+        services.AddScoped<TotpMfaService>();
         services.AddScoped<IGoogleIdTokenVerifier, GoogleIdTokenVerifier>();
         services.AddScoped<GoogleAuthService>();
+        services.AddHttpClient<IMicrosoftAccessTokenVerifier, MicrosoftAccessTokenVerifier>();
+        services.AddScoped<MicrosoftAuthService>();
         services.AddHttpClient<PwnedPasswordService>((sp, client) =>
         {
             var passwordPolicyOptions = sp.GetRequiredService<IOptions<PasswordPolicyOptions>>().Value;
@@ -500,6 +537,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<BankDisconnectBackgroundWorker>());
         services.AddScoped<PolicyDataSeeder>();
         services.AddHostedService<DatabaseInitializationHostedService>();
+        services.AddHostedService<TransactionalMessageBackgroundWorker>();
 
         return services;
     }

@@ -1,7 +1,6 @@
 namespace NSFinance.Api.Modules.Users.DTOs;
 
 public sealed record UpdateUserProfileRequest(
-    string PrimaryEmail,
     string FullName,
     string DisplayName,
     string? Handle,
@@ -11,9 +10,6 @@ public sealed record UpdateUserProfileRequest(
     string Locale,
     string PreferredCurrency,
     string OnboardingStatus,
-    bool BiometricUnlockEnabled,
-    bool TwoFactorEnabled,
-    string? PhoneNumber,
     DateTime? DateOfBirth,
     string? CountryRegion,
     IReadOnlyList<string>? FinancialFocus,

@@ -25,7 +25,6 @@ import { HeaderActionButton, HeaderShell } from "../../../src/layout/appHeader";
 import {
   countryCodeToFlag,
   findCountryByCode,
-  normalizePhoneNumber,
   supportedCountries,
   supportedCurrencies,
   supportedTimezones
@@ -434,37 +433,6 @@ function buildGenericPhonePlaceholder(countryCode: string) {
   return formatDigitsByGroups(digits.slice(0, rule.maxDigits), rule.groups);
 }
 
-function validatePhoneForCountry(countryCode: string, rawValue: string) {
-  const rule = getPhoneFormatRule(countryCode);
-  const digits = toPhoneDigits(rawValue);
-  if (!digits) {
-    return undefined;
-  }
-
-  if (rule.allowLeadingZero && digits.startsWith("0")) {
-    const coreDigits = digits.slice(1);
-    if (coreDigits.length < rule.minDigits) {
-      return "TOO_SHORT";
-    }
-
-    if (coreDigits.length > rule.maxDigits) {
-      return "TOO_LONG";
-    }
-
-    return undefined;
-  }
-
-  if (digits.length < rule.minDigits) {
-    return "TOO_SHORT";
-  }
-
-  if (digits.length > rule.maxDigits) {
-    return "TOO_LONG";
-  }
-
-  return undefined;
-}
-
 function buildDobIso(day: string, month: string, year: string) {
   if (!day && !month && !year) {
     return null;
@@ -867,23 +835,8 @@ export default function ProfileSettingsScreen() {
       return false;
     }
 
-    const selectedDialCode = findCountryByCode(phoneCountryCode)?.dialCode ?? "+353";
-    const phoneDigits = toPhoneDigits(phoneLocalNumber);
-    const phoneLengthValidation = phoneDigits
-      ? validatePhoneForCountry(phoneCountryCode, phoneDigits)
-      : undefined;
-    if (phoneLengthValidation) {
-      setLocalError("Phone number does not match the selected country format.");
-      return false;
-    }
-
-    const normalizedPhone = phoneDigits
-      ? normalizePhoneNumber(selectedDialCode, phoneDigits)
-      : null;
-
     try {
       await updateMutation.mutateAsync({
-        primaryEmail: primaryEmail.trim(),
         fullName: fullName.trim(),
         displayName: normalizedNsTag,
         handle: normalizedNsTag,
@@ -893,9 +846,6 @@ export default function ProfileSettingsScreen() {
         locale: profileQuery.data?.locale || deviceLocaleProfile.localeTag || "en-IE",
         preferredCurrency,
         onboardingStatus: profileQuery.data?.onboardingStatus ?? "completed",
-        biometricUnlockEnabled: profileQuery.data?.biometricUnlockEnabled ?? false,
-        twoFactorEnabled: profileQuery.data?.twoFactorEnabled ?? false,
-        phoneNumber: normalizedPhone,
         dateOfBirth: dobIso,
         countryRegion: country || null,
         financialFocus,
@@ -1083,7 +1033,7 @@ export default function ProfileSettingsScreen() {
             <TextField
               label="Email"
               value={primaryEmail}
-              onChangeText={setPrimaryEmail}
+              editable={false}
               autoCapitalize="none"
               keyboardType="email-address"
             />
@@ -1118,15 +1068,14 @@ export default function ProfileSettingsScreen() {
                   options={countryOptions}
                   onChange={setPhoneCountryCode}
                   placeholder="Country"
+                  disabled
                 />
               </View>
               <View style={styles.phoneInputWrap}>
                 <TextField
                   label="Phone number (optional)"
                   value={phoneLocalNumber}
-                  onChangeText={(nextValue) => {
-                    setPhoneLocalNumber(formatPhoneInputByCountry(phoneCountryCode, nextValue));
-                  }}
+                  editable={false}
                   keyboardType="phone-pad"
                   placeholder={phonePlaceholder}
                 />

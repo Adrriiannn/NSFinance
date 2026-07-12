@@ -2,7 +2,7 @@
   "expo": {
     "name": "NSFinance",
     "slug": "nsfinance-mobile",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "newArchEnabled": true,
     "scheme": "nsfinance",
@@ -27,6 +27,7 @@
           "locationWhenInUsePermission": "Allow NSFinance to use your location to autofill country and regional settings."
         }
       ],
+      "./plugins/withMicrosoftMavenRepository",
       "./plugins/withExpoAutolinkingCommand"
     ],
     "experiments": {
@@ -35,8 +36,8 @@
     },
     "android": {
       "package": "com.nsfinance.mobile",
-      "versionCode": 6,
-      "runtimeVersion": "1.0.1",
+      "versionCode": 7,
+      "runtimeVersion": "1.0.3",
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW"
       ]

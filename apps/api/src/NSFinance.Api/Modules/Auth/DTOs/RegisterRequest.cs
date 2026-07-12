@@ -8,4 +8,7 @@ public sealed record RegisterRequest(
     string? Locale,
     string? PreferredCurrency,
     DeviceContextDto? DeviceContext,
-    string? CaptchaToken = null);
+    string? CaptchaToken = null,
+    bool AcceptPolicies = false,
+    string? TermsVersion = null,
+    string? PrivacyVersion = null);

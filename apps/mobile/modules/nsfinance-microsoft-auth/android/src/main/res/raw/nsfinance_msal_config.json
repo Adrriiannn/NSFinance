@@ -1,0 +1,22 @@
+{
+  "client_id": "c6469beb-92b8-4927-805a-01f685431449",
+  "authorization_user_agent": "DEFAULT",
+  "redirect_uri": "msauth://com.nsfinance.mobile/WAXW7GzMd4SdrMXmNycH7iEkZPs%3D",
+  "broker_redirect_uri_registered": true,
+  "account_mode": "MULTIPLE",
+  "multiple_clouds_supported": false,
+  "authorities": [
+    {
+      "type": "AAD",
+      "audience": {
+        "type": "AzureADandPersonalMicrosoftAccount",
+        "tenant_id": "common"
+      }
+    }
+  ],
+  "logging": {
+    "pii_enabled": false,
+    "log_level": "WARNING",
+    "logcat_enabled": false
+  }
+}

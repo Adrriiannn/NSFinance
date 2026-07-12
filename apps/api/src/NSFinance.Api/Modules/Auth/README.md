@@ -9,4 +9,4 @@ Implements Phase 1 identity/session/security foundation:
 - login abuse lockout support
 - Google OIDC scaffold endpoints
 
-Critical state is server-owned via `Sessions`, `SessionRefreshTokens`, `EmailActionTokens`, and audit events.
+Critical state is server-owned via `Sessions`, `SessionRefreshTokens`, `IdentityChallenges`, `TransactionalMessages`, MFA authenticators, and audit events.

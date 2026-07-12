@@ -9,13 +9,14 @@ public static partial class ForgotPasswordRequestValidator
     {
         var errors = new Dictionary<string, string[]>();
 
-        if (string.IsNullOrWhiteSpace(request.Email))
+        if (string.IsNullOrWhiteSpace(request.Identity))
         {
-            errors["email"] = ["Email is required."];
+            errors["identity"] = ["Email or phone number is required."];
         }
-        else if (!EmailPattern().IsMatch(request.Email.Trim()))
+        else if (!EmailPattern().IsMatch(request.Identity.Trim())
+            && !PhonePattern().IsMatch(request.Identity.Trim()))
         {
-            errors["email"] = ["Email format is invalid."];
+            errors["identity"] = ["Enter a valid email address or international phone number."];
         }
 
         return errors;
@@ -23,4 +24,7 @@ public static partial class ForgotPasswordRequestValidator
 
     [GeneratedRegex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
     private static partial Regex EmailPattern();
+
+    [GeneratedRegex(@"^\+[1-9]\d{7,14}$", RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex PhonePattern();
 }

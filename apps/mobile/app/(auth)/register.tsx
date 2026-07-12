@@ -24,6 +24,9 @@ import {
 } from "../../src/features/auth/passwordPolicy";
 import { useRegisterMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
+import { useMicrosoftSignIn } from "../../src/features/auth/useMicrosoftSignIn";
+import { stageEmailVerification, stageMfaLogin } from "../../src/features/auth/pendingAuthFlow";
+import { usePrivacyPolicyQuery, useTermsPolicyQuery } from "../../src/features/policies/usePolicies";
 import { formatUnknownError } from "../../src/lib/api/errors";
 import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
 import { getLocaleLocationProfile } from "../../src/lib/device/deviceLocationProfile";
@@ -217,7 +220,10 @@ export default function RegisterScreen() {
 
   const registerMutation = useRegisterMutation();
   const googleSignIn = useGoogleSignIn();
-  const { isAuthTransitioning } = useAuthSession();
+  const microsoftSignIn = useMicrosoftSignIn();
+  const termsQuery = useTermsPolicyQuery();
+  const privacyQuery = usePrivacyPolicyQuery();
+  const { applyAuthTokenResponse, isAuthTransitioning } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState(prefilledEmail);
@@ -399,8 +405,14 @@ export default function RegisterScreen() {
     const locale = localeProfile.localeTag ?? (Intl.DateTimeFormat().resolvedOptions().locale || "en-US");
     const preferredCurrency = localeProfile.currencyCode ?? "EUR";
     const displayName = normalizeFullName(fullName);
+    const termsVersion = termsQuery.data?.version;
+    const privacyVersion = privacyQuery.data?.version;
+    if (!termsVersion || !privacyVersion) {
+      setSocialAuthMessage("Could not load the current Terms and Privacy Policy. Please try again.");
+      return;
+    }
 
-    await registerMutation.mutateAsync({
+    const delivery = await registerMutation.mutateAsync({
       email: email.trim().toLowerCase(),
       password,
       displayName,
@@ -408,16 +420,28 @@ export default function RegisterScreen() {
       locale,
       preferredCurrency,
       captchaToken,
-      deviceContext: buildDeviceContext()
+      deviceContext: buildDeviceContext(),
+      acceptPolicies: true,
+      termsVersion,
+      privacyVersion
     });
 
-    playSuccess();
-    router.replace("/(tabs)");
+    stageEmailVerification({
+      ...delivery,
+      email: email.trim().toLowerCase(),
+      rememberMe: true
+    });
+    router.push("/(auth)/verify-email" as never);
   };
 
   const handleGoogleSignIn = async () => {
     if (isAuthTransitioning) {
       setSocialAuthMessage("Finishing sign-out. Please try again in a moment.");
+      return;
+    }
+
+    if (!agreedToTerms) {
+      setSocialAuthMessage("Agree to the Terms and Privacy Policy to continue.");
       return;
     }
 
@@ -430,12 +454,70 @@ export default function RegisterScreen() {
       return;
     }
 
-    playSuccess();
-    router.replace("/(tabs)");
+    const flow = result.flow;
+    if (flow?.status === "authenticated" && flow.session) {
+      await applyAuthTokenResponse(flow.session, true);
+      playSuccess();
+      router.replace("/(tabs)");
+      return;
+    }
+
+    if (flow?.status === "email_verification_required" && flow.emailVerification) {
+      stageEmailVerification({ ...flow.emailVerification, rememberMe: true });
+      router.push("/(auth)/verify-email" as never);
+      return;
+    }
+
+    if (flow?.status === "mfa_required" && flow.mfaChallenge) {
+      stageMfaLogin({ ...flow.mfaChallenge, rememberMe: true });
+      router.push("/(auth)/mfa" as never);
+      return;
+    }
+
+    setSocialAuthMessage("Google sign-in returned an incomplete response. Please try again.");
   };
 
-  const handleMicrosoftSignIn = () => {
-    setSocialAuthMessage("Microsoft sign-in is coming soon.");
+  const handleMicrosoftSignIn = async () => {
+    if (isAuthTransitioning) {
+      setSocialAuthMessage("Finishing sign-out. Please try again in a moment.");
+      return;
+    }
+
+    if (!agreedToTerms) {
+      setSocialAuthMessage("Agree to the Terms and Privacy Policy to continue.");
+      return;
+    }
+
+    setSocialAuthMessage(null);
+    const result = await microsoftSignIn.signInWithMicrosoft();
+    if (!result.succeeded) {
+      if (!result.cancelled) {
+        setSocialAuthMessage(result.message ?? "Microsoft sign-in failed.");
+      }
+      return;
+    }
+
+    const flow = result.flow;
+    if (flow?.status === "authenticated" && flow.session) {
+      await applyAuthTokenResponse(flow.session, true);
+      playSuccess();
+      router.replace("/(tabs)");
+      return;
+    }
+
+    if (flow?.status === "email_verification_required" && flow.emailVerification) {
+      stageEmailVerification({ ...flow.emailVerification, rememberMe: true });
+      router.push("/(auth)/verify-email" as never);
+      return;
+    }
+
+    if (flow?.status === "mfa_required" && flow.mfaChallenge) {
+      stageMfaLogin({ ...flow.mfaChallenge, rememberMe: true });
+      router.push("/(auth)/mfa" as never);
+      return;
+    }
+
+    setSocialAuthMessage("Microsoft sign-in returned an incomplete response. Please try again.");
   };
 
   const fullNameBorderColor =
@@ -667,7 +749,9 @@ export default function RegisterScreen() {
               label="Microsoft"
               variant="secondary"
               icon={<Ionicons name="logo-microsoft" size={16} color={palette.textPrimary} />}
-              onPress={handleMicrosoftSignIn}
+              onPress={() => void handleMicrosoftSignIn()}
+              isLoading={microsoftSignIn.isPending}
+              disabled={!microsoftSignIn.isReady || microsoftSignIn.isPending || isAuthTransitioning}
               style={styles.authButton}
             />
           </View>

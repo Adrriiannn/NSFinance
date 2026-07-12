@@ -1,5 +1,6 @@
 namespace NSFinance.Api.Modules.Support.DTOs;
 
 public sealed record CreateDeletionRequestRequest(
-    string VerificationCode,
+    Guid ChallengeId,
+    string Code,
     string? Notes);

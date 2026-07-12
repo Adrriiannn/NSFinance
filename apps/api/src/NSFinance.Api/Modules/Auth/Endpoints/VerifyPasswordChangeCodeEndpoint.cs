@@ -18,7 +18,7 @@ public static class VerifyPasswordChangeCodeEndpoint
             return Results.ValidationProblem(errors);
         }
 
-        var result = await authService.VerifyPasswordChangeCodeAsync(request.Code, cancellationToken);
+        var result = await authService.VerifyPasswordChangeCodeAsync(request, cancellationToken);
         if (!result.Succeeded)
         {
             return result.Error!.ToApiError();

@@ -8,9 +8,16 @@ public static class ConfirmEmailVerificationRequestValidator
     {
         var errors = new Dictionary<string, string[]>();
 
-        if (string.IsNullOrWhiteSpace(request.Token))
+        if (request.ChallengeId == Guid.Empty)
         {
-            errors["token"] = ["Token is required."];
+            errors["challengeId"] = ["Verification challenge is required."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Code)
+            || request.Code.Length != 6
+            || !request.Code.All(char.IsDigit))
+        {
+            errors["code"] = ["Enter the six-digit code."];
         }
 
         return errors;

@@ -253,7 +253,6 @@ export type UserProfileDto = {
   role: string;
   emailVerified: boolean;
   onboardingStatus: string;
-  biometricUnlockEnabled: boolean;
   twoFactorEnabled: boolean;
   planTier: string;
   createdUtc: string;
@@ -267,6 +266,31 @@ export type AuthTokenResponse = {
   refreshTokenExpiresAtUtc: string;
   sessionId: string;
   user: UserProfileDto;
+};
+
+export type CodeDeliveryResponse = {
+  challengeId: string;
+  expiresUtc: string;
+  resendAfterSeconds: number;
+  message: string;
+};
+
+export type MfaLoginChallengeResponse = {
+  challengeId: string;
+  challengeToken: string;
+  expiresUtc: string;
+  methods: Array<"totp" | "recovery_code">;
+};
+
+export type AuthFlowResponse = {
+  status: "authenticated" | "mfa_required" | "email_verification_required";
+  session: AuthTokenResponse | null;
+  mfaChallenge: MfaLoginChallengeResponse | null;
+  emailVerification: CodeDeliveryResponse | null;
+};
+
+export type RegistrationResponse = CodeDeliveryResponse & {
+  status: "email_verification_required";
 };
 
 export type DeviceContextDto = {
@@ -286,6 +310,9 @@ export type RegisterRequest = {
   preferredCurrency?: string | null;
   captchaToken?: string | null;
   deviceContext?: DeviceContextDto | null;
+  acceptPolicies: boolean;
+  termsVersion: string;
+  privacyVersion: string;
 };
 
 export type LoginRequest = {
@@ -298,6 +325,17 @@ export type LoginRequest = {
 export type GoogleLoginRequest = {
   idToken: string;
   deviceContext?: DeviceContextDto | null;
+  acceptPolicies?: boolean;
+  termsVersion?: string | null;
+  privacyVersion?: string | null;
+};
+
+export type MicrosoftLoginRequest = {
+  accessToken: string;
+  deviceContext?: DeviceContextDto | null;
+  acceptPolicies?: boolean;
+  termsVersion?: string | null;
+  privacyVersion?: string | null;
 };
 
 export type RefreshTokenRequest = {
@@ -323,11 +361,23 @@ export type AuthActionResponse = {
 };
 
 export type ForgotPasswordRequest = {
-  email: string;
+  identity: string;
+};
+
+export type VerifyPasswordRecoveryCodeRequest = {
+  challengeId: string;
+  code: string;
+};
+
+export type PasswordRecoveryGrantResponse = {
+  challengeId: string;
+  recoveryToken: string;
+  expiresUtc: string;
 };
 
 export type ResetPasswordRequest = {
-  token: string;
+  challengeId: string;
+  recoveryToken: string;
   newPassword: string;
 };
 
@@ -336,7 +386,9 @@ export type RequestEmailVerificationRequest = {
 };
 
 export type ConfirmEmailVerificationRequest = {
-  token: string;
+  challengeId: string;
+  code: string;
+  deviceContext?: DeviceContextDto | null;
 };
 
 export type ChangePasswordRequest = {
@@ -345,12 +397,57 @@ export type ChangePasswordRequest = {
 };
 
 export type VerifyPasswordChangeCodeRequest = {
+  challengeId: string;
   code: string;
 };
 
 export type ConfirmPasswordChangeCodeRequest = {
-  code: string;
+  challengeId: string;
+  grantToken: string;
   newPassword: string;
+};
+
+export type MicrosoftAuthOptionsDto = {
+  isConfigured: boolean;
+  clientId: string | null;
+  authority: string;
+  scope: string | null;
+};
+
+export type MfaStatusResponse = {
+  enabled: boolean;
+  method: "totp" | null;
+  recoveryCodesRemaining: number;
+};
+
+export type BeginTotpEnrollmentResponse = {
+  authenticatorId: string;
+  secret: string;
+  otpAuthUri: string;
+  expiresUtc: string;
+};
+
+export type ConfirmTotpEnrollmentRequest = {
+  authenticatorId: string;
+  code: string;
+};
+
+export type ConfirmTotpEnrollmentResponse = {
+  enabled: boolean;
+  recoveryCodes: string[];
+};
+
+export type VerifyMfaLoginRequest = {
+  challengeId: string;
+  challengeToken: string;
+  code: string;
+  method: "totp" | "recovery_code";
+  deviceContext?: DeviceContextDto | null;
+};
+
+export type DisableMfaRequest = {
+  code: string;
+  method: "totp" | "recovery_code";
 };
 
 export type PasswordPolicyCheckRequest = {
@@ -377,7 +474,6 @@ export type UserProfileDetailsDto = {
   locale: string;
   preferredCurrency: string;
   onboardingStatus: string;
-  biometricUnlockEnabled: boolean;
   twoFactorEnabled: boolean;
   phoneNumber: string | null;
   dateOfBirth: string | null;
@@ -393,7 +489,6 @@ export type UserProfileDetailsDto = {
 };
 
 export type UpdateUserProfileRequest = {
-  primaryEmail: string;
   fullName: string;
   displayName: string;
   handle?: string | null;
@@ -403,9 +498,6 @@ export type UpdateUserProfileRequest = {
   locale: string;
   preferredCurrency: string;
   onboardingStatus: string;
-  biometricUnlockEnabled: boolean;
-  twoFactorEnabled: boolean;
-  phoneNumber?: string | null;
   dateOfBirth?: string | null;
   countryRegion?: string | null;
   financialFocus?: string[];

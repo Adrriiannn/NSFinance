@@ -17,10 +17,9 @@ public sealed class SupportService(
     ICurrentUserProvider currentUserProvider,
     IAuditService auditService,
     IRequestContextAccessor requestContext,
-    TokenSecretService tokenSecretService,
+    IdentityChallengeService identityChallengeService,
     ILogger<SupportService> logger)
 {
-    private const string PurposeAccountDeletion = "account_deletion";
     private static readonly TimeSpan ExportRetentionWindow = TimeSpan.FromMinutes(15);
     private const string ExportFormatXlsx = "xlsx";
 
@@ -140,7 +139,8 @@ public sealed class SupportService(
 
         var verificationResult = await ValidateDeletionVerificationCodeAsync(
             userId,
-            request.VerificationCode,
+            request.ChallengeId,
+            request.Code,
             cancellationToken);
         if (!verificationResult.Succeeded)
         {
@@ -945,45 +945,22 @@ public sealed class SupportService(
 
     private async Task<ServiceResult> ValidateDeletionVerificationCodeAsync(
         Guid userId,
+        Guid challengeId,
         string verificationCode,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(verificationCode))
-        {
-            return ServiceResult.Fail(
-                "Verification code is required.",
-                "verification_code_required",
-                StatusCodes.Status400BadRequest);
-        }
-
-        var now = DateTime.UtcNow;
-        var tokenHash = tokenSecretService.HashToken(verificationCode.Trim());
-        var token = await dbContext.EmailActionTokens
-            .SingleOrDefaultAsync(
-                x => x.UserId == userId
-                     && x.Purpose == PurposeAccountDeletion
-                     && x.TokenHash == tokenHash,
-                cancellationToken);
-
-        if (token is null || token.ExpiresUtc <= now)
-        {
-            return ServiceResult.Fail(
-                "Verification code is invalid or expired.",
-                "deletion_verification_invalid",
-                StatusCodes.Status400BadRequest);
-        }
-
-        if (token.UsedUtc is not null)
-        {
-            return ServiceResult.Fail(
-                "Verification code has already been used.",
-                "deletion_verification_reused",
-                StatusCodes.Status400BadRequest);
-        }
-
-        token.UsedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return ServiceResult.Ok();
+        var result = await identityChallengeService.VerifyCodeForCompletionAsync(
+            challengeId,
+            userId,
+            IdentityChallengePurposes.AccountDeletion,
+            verificationCode,
+            cancellationToken);
+        return result.Succeeded
+            ? ServiceResult.Ok()
+            : ServiceResult.Fail(
+                result.Error!.Message,
+                result.Error.Code,
+                result.Error.StatusCode);
     }
 
     private async Task<string> BuildDiagnosticsAsync(

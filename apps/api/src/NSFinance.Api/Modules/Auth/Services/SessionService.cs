@@ -430,7 +430,6 @@ public sealed class SessionService(
             user.Role,
             user.EmailVerified,
             user.OnboardingStatus,
-            user.BiometricUnlockEnabled,
             user.TwoFactorEnabled,
             user.PlanTier,
             user.CreatedUtc,

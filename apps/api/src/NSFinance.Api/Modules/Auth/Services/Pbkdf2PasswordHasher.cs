@@ -8,8 +8,19 @@ public sealed class Pbkdf2PasswordHasher : IPasswordHasher
     private const int KeySize = 32;
     private const int Iterations = 180_000;
     private const string AlgorithmId = "pbkdf2-sha256";
+    private static readonly string DummyHash = CreateHash("NSFinance constant-work login verification");
 
     public string HashPassword(string password)
+    {
+        return CreateHash(password);
+    }
+
+    public void PerformDummyVerification(string password)
+    {
+        _ = VerifyPassword(password, DummyHash);
+    }
+
+    private static string CreateHash(string password)
     {
         var salt = RandomNumberGenerator.GetBytes(SaltSize);
         var key = Rfc2898DeriveBytes.Pbkdf2(

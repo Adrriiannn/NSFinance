@@ -1,5 +1,6 @@
 namespace NSFinance.Api.Modules.Auth.DTOs;
 
 public sealed record ResetPasswordRequest(
-    string Token,
+    Guid ChallengeId,
+    string RecoveryToken,
     string NewPassword);

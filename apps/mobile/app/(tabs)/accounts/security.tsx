@@ -4,7 +4,8 @@ import { useNavigation } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Alert, Modal, Pressable, ScrollView, Switch, Text, View } from "react-native";
+  Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from "react-native";
+import QRCode from "react-native-qrcode-svg";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { AccountProviderBadge } from "../../../src/components/accounts/AccountProviderBadge";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
@@ -31,7 +32,11 @@ import {
 import { resolveConnectedBankIdentity } from "../../../src/features/accounts/providerBranding";
 import { ApiClientError, formatUnknownError } from "../../../src/lib/api/errors";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
-import type { BankConnectionStatus, LinkedBankAccountDto } from "../../../src/types/api";
+import type {
+  BankConnectionStatus,
+  BeginTotpEnrollmentResponse,
+  LinkedBankAccountDto
+} from "../../../src/types/api";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import {
   type PasswordBreachStatus,
@@ -47,9 +52,12 @@ import {
   useMyDeletionRequestsQuery
 } from "../../../src/features/support/useSupport";
 import {
-  useUpdateUserProfileMutation,
-  useUserProfileQuery
-} from "../../../src/features/users/useUserSettings";
+  useBeginTotpEnrollmentMutation,
+  useConfirmTotpEnrollmentMutation,
+  useDisableMfaMutation,
+  useMfaStatusQuery
+} from "../../../src/features/auth/useAuthMutations";
+import { useAuthSession } from "../../../src/providers/AuthProvider";
 
 const sessionKey = ["auth", "sessions"] as const;
 
@@ -148,8 +156,17 @@ export default function SecuritySettingsScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const queryClient = useQueryClient();
-  const profileQuery = useUserProfileQuery();
-  const updateProfileMutation = useUpdateUserProfileMutation();
+  const {
+    biometricEnabled,
+    biometricAvailable,
+    biometricLabel,
+    enableBiometrics,
+    disableBiometrics
+  } = useAuthSession();
+  const mfaStatusQuery = useMfaStatusQuery();
+  const beginMfaMutation = useBeginTotpEnrollmentMutation();
+  const confirmMfaMutation = useConfirmTotpEnrollmentMutation();
+  const disableMfaMutation = useDisableMfaMutation();
   const sessionsQuery = useQuery({ queryKey: sessionKey, queryFn: getSessions });
   const connectedBanksQuery = useConnectedBanksQuery();
   const linkedBankAccountsQuery = useLinkedBankAccountsQuery();
@@ -198,13 +215,13 @@ export default function SecuritySettingsScreen() {
     }
   });
 
-  const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [disconnectingConnectionId, setDisconnectingConnectionId] = useState<string | null>(null);
 
   const [passwordCodeModalVisible, setPasswordCodeModalVisible] = useState(false);
   const [passwordResetModalVisible, setPasswordResetModalVisible] = useState(false);
   const [passwordCode, setPasswordCode] = useState("");
-  const [verifiedPasswordCode, setVerifiedPasswordCode] = useState("");
+  const [passwordChallengeId, setPasswordChallengeId] = useState<string | null>(null);
+  const [passwordGrantToken, setPasswordGrantToken] = useState<string | null>(null);
   const [passwordCodeError, setPasswordCodeError] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
@@ -216,10 +233,13 @@ export default function SecuritySettingsScreen() {
   const [deletionCodeModalVisible, setDeletionCodeModalVisible] = useState(false);
   const [deletionCode, setDeletionCode] = useState("");
   const [deletionCodeError, setDeletionCodeError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setBiometricEnabled(profileQuery.data?.biometricUnlockEnabled ?? false);
-  }, [profileQuery.data?.biometricUnlockEnabled]);
+  const [mfaModalVisible, setMfaModalVisible] = useState(false);
+  const [mfaEnrollment, setMfaEnrollment] = useState<BeginTotpEnrollmentResponse | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaError, setMfaError] = useState<string | null>(null);
+  const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState<string[]>([]);
+  const [mfaDisableMode, setMfaDisableMode] = useState(false);
+  const [mfaMethod, setMfaMethod] = useState<"totp" | "recovery_code">("totp");
 
   const activeSessions = useMemo(
     () => (sessionsQuery.data ?? []).filter(isActiveSession),
@@ -293,41 +313,27 @@ export default function SecuritySettingsScreen() {
     };
   }, [newPassword, passwordResetModalVisible]);
 
-  const persistBiometricSetting = async () => {
-    if (!profileQuery.data) {
+  const updateBiometricSetting = async (enabled: boolean) => {
+    if (!enabled) {
+      await disableBiometrics();
+      showFlashMessage("Biometric unlock turned off.", { tone: "info" });
       return;
     }
 
-    await updateProfileMutation.mutateAsync({
-      primaryEmail: profileQuery.data.primaryEmail,
-      fullName: profileQuery.data.fullName,
-      displayName: profileQuery.data.displayName,
-      handle: profileQuery.data.handle,
-      profileImageUrl: profileQuery.data.profileImageUrl,
-      profileSubtitle: profileQuery.data.profileSubtitle,
-      timezone: profileQuery.data.timezone,
-      locale: profileQuery.data.locale,
-      preferredCurrency: profileQuery.data.preferredCurrency,
-      onboardingStatus: profileQuery.data.onboardingStatus,
-      biometricUnlockEnabled: biometricEnabled,
-      twoFactorEnabled: profileQuery.data.twoFactorEnabled,
-      phoneNumber: profileQuery.data.phoneNumber,
-      dateOfBirth: profileQuery.data.dateOfBirth,
-      countryRegion: profileQuery.data.countryRegion,
-      financialFocus: profileQuery.data.financialFocus,
-      employmentStatus: profileQuery.data.employmentStatus,
-      incomeStability: profileQuery.data.incomeStability,
-      primaryFinancialConcern: profileQuery.data.primaryFinancialConcern
-    });
-
-    showFlashMessage("Security settings updated.", { tone: "success" });
+    const result = await enableBiometrics();
+    if (result.succeeded) {
+      showFlashMessage("Biometric unlock is ready.", { tone: "success" });
+    } else if (result.message) {
+      showFlashMessage(result.message, { tone: "error", durationMs: 3200 });
+    }
   };
 
   const startPasswordChangeFlow = async () => {
     setPasswordCode("");
     setPasswordCodeError(null);
     try {
-      await requestPasswordChangeCode();
+      const delivery = await requestPasswordChangeCode();
+      setPasswordChallengeId(delivery.challengeId);
       setPasswordCodeModalVisible(true);
     } catch (error) {
       showFlashMessage(error instanceof Error ? error.message : "Could not request password code.", { tone: "error", durationMs: 3200 });
@@ -335,10 +341,18 @@ export default function SecuritySettingsScreen() {
   };
 
   const verifyCodeThenOpenPasswordModal = async () => {
+    if (!passwordChallengeId) {
+      setPasswordCodeError("Request a new code and try again.");
+      return;
+    }
+
     setPasswordCodeError(null);
     try {
-      await verifyPasswordChangeCode({ code: passwordCode.trim() });
-      setVerifiedPasswordCode(passwordCode.trim());
+      const grant = await verifyPasswordChangeCode({
+        challengeId: passwordChallengeId,
+        code: passwordCode.trim()
+      });
+      setPasswordGrantToken(grant.recoveryToken);
       setPasswordCodeModalVisible(false);
       setNewPassword("");
       setConfirmNewPassword("");
@@ -356,25 +370,97 @@ export default function SecuritySettingsScreen() {
       hasPasswordMismatch
       || hasPasswordLengthIssue
       || hasPasswordNumberSymbolIssue
-      || passwordBreachStatus !== "safe")
+      || passwordBreachStatus !== "safe"
+      || !passwordChallengeId
+      || !passwordGrantToken)
     {
       return;
     }
 
     try {
       await confirmPasswordChangeWithCode({
-        code: verifiedPasswordCode,
+        challengeId: passwordChallengeId,
+        grantToken: passwordGrantToken,
         newPassword
       });
 
       setPasswordResetModalVisible(false);
       setNewPassword("");
       setConfirmNewPassword("");
-      setVerifiedPasswordCode("");
+      setPasswordChallengeId(null);
+      setPasswordGrantToken(null);
       showFlashMessage("Password updated successfully.", { tone: "success" });
     } catch (error) {
       showFlashMessage(error instanceof Error ? error.message : "Could not update password.", { tone: "error", durationMs: 3200 });
     }
+  };
+
+  const openMfaFlow = async () => {
+    setMfaCode("");
+    setMfaError(null);
+    setMfaRecoveryCodes([]);
+    setMfaMethod("totp");
+
+    if (mfaStatusQuery.data?.enabled) {
+      setMfaDisableMode(true);
+      setMfaEnrollment(null);
+      setMfaModalVisible(true);
+      return;
+    }
+
+    setMfaDisableMode(false);
+    try {
+      const enrollment = await beginMfaMutation.mutateAsync();
+      setMfaEnrollment(enrollment);
+      setMfaModalVisible(true);
+    } catch (error) {
+      showFlashMessage(formatUnknownError(error), { tone: "error", durationMs: 3200 });
+    }
+  };
+
+  const submitMfaCode = async () => {
+    if (!mfaCode.trim()) {
+      setMfaError(mfaMethod === "totp" ? "Enter the six-digit code." : "Enter a recovery code.");
+      return;
+    }
+
+    setMfaError(null);
+    try {
+      if (mfaDisableMode) {
+        await disableMfaMutation.mutateAsync({ code: mfaCode.trim(), method: mfaMethod });
+        setMfaModalVisible(false);
+        setMfaCode("");
+        showFlashMessage("Authenticator verification turned off.", { tone: "success" });
+        return;
+      }
+
+      if (!mfaEnrollment) {
+        setMfaError("Start authenticator setup again.");
+        return;
+      }
+
+      const result = await confirmMfaMutation.mutateAsync({
+        authenticatorId: mfaEnrollment.authenticatorId,
+        code: mfaCode.trim()
+      });
+      setMfaRecoveryCodes(result.recoveryCodes);
+      setMfaCode("");
+      showFlashMessage("Authenticator verification is ready.", { tone: "success" });
+    } catch (error) {
+      setMfaCode("");
+      setMfaError(formatUnknownError(error));
+    }
+  };
+
+  const shareRecoveryCodes = async () => {
+    if (mfaRecoveryCodes.length === 0) {
+      return;
+    }
+
+    await Share.share({
+      title: "NSFinance recovery codes",
+      message: `NSFinance recovery codes\n\n${mfaRecoveryCodes.join("\n")}\n\nEach code works once.`
+    });
   };
 
   const requestDeletionCode = async () => {
@@ -479,25 +565,36 @@ export default function SecuritySettingsScreen() {
       >
         <GlassCard style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Login & authentication</Text>
-          <Text style={styles.metaLine}>2FA status: {profileQuery.data?.twoFactorEnabled ? "On" : "Off"}</Text>
+          <Text style={styles.metaLine}>
+            Authenticator: {mfaStatusQuery.data?.enabled ? "On" : "Off"}
+            {mfaStatusQuery.data?.enabled
+              ? ` | ${mfaStatusQuery.data.recoveryCodesRemaining} recovery codes left`
+              : ""}
+          </Text>
+
+          <SecondaryButton
+            label={mfaStatusQuery.data?.enabled ? "Turn off authenticator" : "Set up authenticator"}
+            onPress={() => void openMfaFlow()}
+            disabled={mfaStatusQuery.isLoading || beginMfaMutation.isPending}
+          />
 
           <View style={styles.toggleRow}>
-            <Text style={styles.toggleLabel}>Biometric unlock</Text>
+            <View style={styles.toggleCopy}>
+              <Text style={styles.toggleLabel}>
+                {biometricLabel === "fingerprint" ? "Fingerprint unlock" : "Biometric unlock"}
+              </Text>
+              <Text style={styles.metaLine}>
+                {biometricAvailable ? "Protects remembered sessions on this phone." : "Set up biometrics in Android settings."}
+              </Text>
+            </View>
             <Switch
               value={biometricEnabled}
-              onValueChange={setBiometricEnabled}
+              onValueChange={(value) => void updateBiometricSetting(value)}
+              disabled={!biometricAvailable && !biometricEnabled}
               thumbColor="#FFFFFF"
               trackColor={{ false: "rgba(120,120,120,0.45)", true: "rgba(242,140,40,0.8)" }}
             />
           </View>
-
-          <SecondaryButton
-            label="Save biometric setting"
-            onPress={() => {
-              void persistBiometricSetting();
-            }}
-            disabled={updateProfileMutation.isPending}
-          />
 
           <PrimaryButton
             label="Change your password"
@@ -828,13 +925,112 @@ export default function SecuritySettingsScreen() {
           ))}
         </GlassCard>
 
-        {updateProfileMutation.isError ? (
-          <Text style={styles.errorText}>{formatUnknownError(updateProfileMutation.error)}</Text>
-        ) : null}
         {logoutAllMutation.isError ? (
           <Text style={styles.errorText}>{formatUnknownError(logoutAllMutation.error)}</Text>
         ) : null}
       </ScrollView>
+
+      <Modal
+        visible={mfaModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMfaModalVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setMfaModalVisible(false)}>
+          <Pressable style={styles.modalCard} onPress={() => undefined}>
+            {mfaRecoveryCodes.length > 0 ? (
+              <>
+                <Text style={styles.modalTitle}>Save your recovery codes</Text>
+                <Text style={styles.metaLine}>
+                  Keep these somewhere private. Each code works once if you lose your authenticator.
+                </Text>
+                <View style={styles.recoveryCodes}>
+                  {mfaRecoveryCodes.map((recoveryCode) => (
+                    <Text key={recoveryCode} selectable style={styles.recoveryCode}>
+                      {recoveryCode}
+                    </Text>
+                  ))}
+                </View>
+                <SecondaryButton label="Share securely" onPress={() => void shareRecoveryCodes()} />
+                <PrimaryButton
+                  label="I've saved them"
+                  onPress={() => {
+                    setMfaModalVisible(false);
+                    setMfaRecoveryCodes([]);
+                    setMfaEnrollment(null);
+                  }}
+                />
+              </>
+            ) : mfaDisableMode ? (
+              <>
+                <Text style={styles.modalTitle}>Turn off authenticator?</Text>
+                <Text style={styles.metaLine}>
+                  Confirm with your authenticator or one unused recovery code.
+                </Text>
+                <TextField
+                  label={mfaMethod === "totp" ? "Authenticator code" : "Recovery code"}
+                  value={mfaCode}
+                  onChangeText={(value) => {
+                    setMfaCode(mfaMethod === "totp" ? value.replace(/\D/g, "").slice(0, 6) : value.toUpperCase());
+                    setMfaError(null);
+                  }}
+                  keyboardType={mfaMethod === "totp" ? "number-pad" : "default"}
+                  autoCapitalize={mfaMethod === "totp" ? "none" : "characters"}
+                  error={mfaError ?? undefined}
+                />
+                <SecondaryButton
+                  label={mfaMethod === "totp" ? "Use a recovery code" : "Use authenticator code"}
+                  onPress={() => {
+                    setMfaMethod((current) => (current === "totp" ? "recovery_code" : "totp"));
+                    setMfaCode("");
+                    setMfaError(null);
+                  }}
+                />
+                <PrimaryButton
+                  label="Turn off authenticator"
+                  onPress={() => void submitMfaCode()}
+                  disabled={!mfaCode.trim()}
+                  isLoading={disableMfaMutation.isPending}
+                />
+              </>
+            ) : mfaEnrollment ? (
+              <>
+                <Text style={styles.modalTitle}>Set up authenticator</Text>
+                <Text style={styles.metaLine}>
+                  Scan this QR code in Microsoft Authenticator, Google Authenticator, or another TOTP app.
+                </Text>
+                <View style={styles.qrWrap}>
+                  <QRCode
+                    value={mfaEnrollment.otpAuthUri}
+                    size={190}
+                    color="#111111"
+                    backgroundColor="#FFFFFF"
+                  />
+                </View>
+                <Text style={styles.metaLine}>Manual setup key</Text>
+                <Text selectable style={styles.manualSecret}>{mfaEnrollment.secret}</Text>
+                <TextField
+                  label="Six-digit code"
+                  value={mfaCode}
+                  onChangeText={(value) => {
+                    setMfaCode(value.replace(/\D/g, "").slice(0, 6));
+                    setMfaError(null);
+                  }}
+                  keyboardType="number-pad"
+                  autoComplete="one-time-code"
+                  error={mfaError ?? undefined}
+                />
+                <PrimaryButton
+                  label="Confirm authenticator"
+                  onPress={() => void submitMfaCode()}
+                  disabled={mfaCode.length !== 6}
+                  isLoading={confirmMfaMutation.isPending}
+                />
+              </>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={passwordCodeModalVisible}
@@ -1116,6 +1312,13 @@ const styles = createRuntimeStyleSheet(() => ({
     paddingHorizontal: spacing[12],
     backgroundColor: surfaces.field
   },
+  toggleCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing[2],
+    paddingVertical: spacing[10],
+    paddingRight: spacing[12]
+  },
   toggleLabel: {
     color: palette.textPrimary,
     ...typography.body2
@@ -1129,6 +1332,7 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   modalCard: {
     width: "100%",
+    maxWidth: 440,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
@@ -1139,6 +1343,31 @@ const styles = createRuntimeStyleSheet(() => ({
   modalTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong
+  },
+  qrWrap: {
+    alignSelf: "center",
+    padding: spacing[10],
+    borderRadius: 6,
+    backgroundColor: "#FFFFFF"
+  },
+  manualSecret: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    textAlign: "center"
+  },
+  recoveryCodes: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing[8]
+  },
+  recoveryCode: {
+    width: "47%",
+    color: palette.textPrimary,
+    ...typography.body2,
+    textAlign: "center",
+    paddingVertical: spacing[6],
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.border
   }
 }));
 

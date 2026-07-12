@@ -17,7 +17,7 @@ namespace NSFinance.Api.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.3")
+                .HasAnnotation("ProductVersion", "10.0.9")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -1156,53 +1156,6 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.ToTable("Devices", (string)null);
                 });
 
-            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.EmailActionToken", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedUtc")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("timezone('utc', now())");
-
-                    b.Property<DateTime>("ExpiresUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("MetadataJson")
-                        .HasColumnType("jsonb");
-
-                    b.Property<string>("Purpose")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)");
-
-                    b.Property<string>("RequestedByIp")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("TokenHash")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<DateTime?>("UsedUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
-                    b.HasIndex("UserId", "Purpose");
-
-                    b.ToTable("EmailActionTokens", (string)null);
-                });
-
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlan", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1878,6 +1831,85 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("FinancialAccounts", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.IdentityChallenge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<Guid>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ConsumedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DestinationHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime>("ExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("GrantExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("GrantHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("RequestedByIp")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SecretHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("SupersededUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("VerifiedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GrantHash");
+
+                    b.HasIndex("DestinationHash", "Purpose", "CreatedUtc");
+
+                    b.HasIndex("UserId", "Purpose", "CreatedUtc");
+
+                    b.ToTable("IdentityChallenges", (string)null);
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ImportJob", b =>
@@ -2682,6 +2714,35 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.HasIndex("MerchantId", "AttemptedUtc");
 
                     b.ToTable("MerchantRevalidationRecords", (string)null);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.MfaRecoveryCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TotpAuthenticatorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UsedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CodeHash");
+
+                    b.HasIndex("TotpAuthenticatorId", "UsedUtc");
+
+                    b.ToTable("MfaRecoveryCodes", (string)null);
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.NormalizedBankTransaction", b =>
@@ -3656,6 +3717,41 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.ToTable("SupportRequests", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TotpAuthenticator", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DisabledUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedSecret")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("EnrollmentExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("LastAcceptedTimeStep")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("VerifiedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "DisabledUtc");
+
+                    b.ToTable("TotpAuthenticators", (string)null);
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.Transaction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3987,6 +4083,95 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.ToTable("TransactionRelationships", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TransactionalMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeliveredUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedPayload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("FailedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("IdentityChallengeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastFailureCode")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<DateTime?>("LeaseExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LeaseId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("NextAttemptUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ProviderAcceptedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("TemplateKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("TemplateVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdentityChallengeId")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderMessageId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Status", "NextAttemptUtc");
+
+                    b.ToTable("TransactionalMessages", (string)null);
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.UnresolvedMerchant", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4115,9 +4300,6 @@ namespace NSFinance.Api.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<bool>("BiometricUnlockEnabled")
-                        .HasColumnType("boolean");
-
                     b.Property<string>("CountryRegion")
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
@@ -4188,9 +4370,21 @@ namespace NSFinance.Api.Persistence.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
 
+                    b.Property<string>("PendingPhoneNumber")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("PendingPhoneRequestedUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("PhoneNumber")
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<bool>("PhoneRecoveryEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("PhoneVerifiedUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PlanTier")
                         .IsRequired()
@@ -4652,17 +4846,6 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.EmailActionToken", b =>
-                {
-                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
-                        .WithMany("EmailActionTokens")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ExpensePlan", b =>
                 {
                     b.HasOne("NSFinance.Api.Persistence.Entities.ExpensePlanPublication", "ImportedFromPublicPlan")
@@ -4826,6 +5009,16 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.IdentityChallenge", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
+                        .WithMany("IdentityChallenges")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ImportJob", b =>
                 {
                     b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
@@ -4948,6 +5141,17 @@ namespace NSFinance.Api.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Merchant");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.MfaRecoveryCode", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.TotpAuthenticator", "TotpAuthenticator")
+                        .WithMany("RecoveryCodes")
+                        .HasForeignKey("TotpAuthenticatorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("TotpAuthenticator");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.NormalizedBankTransaction", b =>
@@ -5117,6 +5321,17 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TotpAuthenticator", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
+                        .WithMany("TotpAuthenticators")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.Transaction", b =>
                 {
                     b.HasOne("NSFinance.Api.Persistence.Entities.TransactionCategory", "Category")
@@ -5168,6 +5383,23 @@ namespace NSFinance.Api.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("TargetTransactionId")
                         .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TransactionalMessage", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.IdentityChallenge", "IdentityChallenge")
+                        .WithOne("Message")
+                        .HasForeignKey("NSFinance.Api.Persistence.Entities.TransactionalMessage", "IdentityChallengeId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
+                        .WithMany("TransactionalMessages")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("IdentityChallenge");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.UserAuthProvider", b =>
@@ -5262,6 +5494,11 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("Transactions");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.IdentityChallenge", b =>
+                {
+                    b.Navigation("Message");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.LinkedBankAccount", b =>
                 {
                     b.Navigation("BalanceSnapshots");
@@ -5326,6 +5563,11 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("RefreshTokens");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TotpAuthenticator", b =>
+                {
+                    b.Navigation("RecoveryCodes");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TransactionCategory", b =>
                 {
                     b.Navigation("Transactions");
@@ -5340,8 +5582,6 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("DeletionRequests");
 
                     b.Navigation("Devices");
-
-                    b.Navigation("EmailActionTokens");
 
                     b.Navigation("ExpensePlanPublicationDownloads");
 
@@ -5361,6 +5601,8 @@ namespace NSFinance.Api.Persistence.Migrations
 
                     b.Navigation("FinancialContextProfile");
 
+                    b.Navigation("IdentityChallenges");
+
                     b.Navigation("ImportJobs");
 
                     b.Navigation("OpenBankingConnections");
@@ -5374,6 +5616,10 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("Sessions");
 
                     b.Navigation("SupportRequests");
+
+                    b.Navigation("TotpAuthenticators");
+
+                    b.Navigation("TransactionalMessages");
                 });
 #pragma warning restore 612, 618
         }

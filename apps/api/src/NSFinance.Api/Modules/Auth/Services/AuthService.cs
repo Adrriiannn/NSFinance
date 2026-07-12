@@ -18,7 +18,10 @@ public sealed class AuthService(
     IPasswordHasher passwordHasher,
     SessionService sessionService,
     GoogleAuthService googleAuthService,
-    TokenSecretService tokenSecretService,
+    MicrosoftAuthService microsoftAuthService,
+    IdentityChallengeService identityChallengeService,
+    TransactionalMessageService transactionalMessageService,
+    TotpMfaService totpMfaService,
     ICurrentUserProvider currentUserProvider,
     AuthAbuseService authAbuseService,
     IAuditService auditService,
@@ -30,12 +33,11 @@ public sealed class AuthService(
 
     private const string ProviderTypeLocalPassword = "local_password";
     private const string ProviderTypeGoogleOidc = "google_oidc";
-    private const string PurposePasswordReset = "password_reset";
-    private const string PurposePasswordChange = "password_change";
-    private const string PurposeEmailVerification = "email_verification";
-    private const string PurposeAccountDeletion = "account_deletion";
+    private const string ProviderTypeMicrosoftOidc = "microsoft_oidc";
 
-    public async Task<ServiceResult<AuthTokenResponse>> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken)
+    private sealed record RegistrationPolicySet(PolicyVersion Terms, PolicyVersion Privacy);
+
+    public async Task<ServiceResult<RegistrationResponse>> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken)
     {
         var normalizedEmail = NormalizeEmail(request.Email);
         var emailExists = await dbContext.Users
@@ -44,8 +46,24 @@ public sealed class AuthService(
 
         if (emailExists)
         {
-            return ServiceResult<AuthTokenResponse>.Fail("Unable to register account.", "register_failed", StatusCodes.Status409Conflict);
+            return ServiceResult<RegistrationResponse>.Fail("Unable to register account.", "register_failed", StatusCodes.Status409Conflict);
         }
+
+        var policyResult = await ResolveRegistrationPoliciesAsync(
+            request.AcceptPolicies,
+            request.TermsVersion,
+            request.PrivacyVersion,
+            cancellationToken);
+        if (!policyResult.Succeeded)
+        {
+            return ServiceResult<RegistrationResponse>.Fail(
+                policyResult.Error!.Message,
+                policyResult.Error.Code,
+                policyResult.Error.StatusCode);
+        }
+
+        var termsPolicy = policyResult.Value!.Terms;
+        var privacyPolicy = policyResult.Value.Privacy;
 
         var utcNow = DateTime.UtcNow;
         var fullName = NormalizeFullName(request.DisplayName);
@@ -61,11 +79,11 @@ public sealed class AuthService(
             Handle = nsTag,
             ProfileSubtitle = null,
             Status = "active",
-            OnboardingStatus = "profile_created",
+            OnboardingStatus = "pending_email_verification",
             Role = "user",
             CreatedUtc = utcNow,
             UpdatedUtc = utcNow,
-            LastLoginUtc = utcNow,
+            LastLoginUtc = null,
             EmailVerified = false,
             IsDisabled = false,
             IsSuspended = false,
@@ -74,7 +92,6 @@ public sealed class AuthService(
             Locale = NormalizeOrDefault(request.Locale, "en-US"),
             PreferredCurrency = NormalizeCurrency(request.PreferredCurrency),
             PlanTier = "standard",
-            BiometricUnlockEnabled = false,
             TwoFactorEnabled = false
         };
 
@@ -104,47 +121,55 @@ public sealed class AuthService(
             UserId = user.Id,
             UpdatedUtc = utcNow
         });
+        dbContext.PolicyAcceptances.AddRange(
+            CreateRegistrationPolicyAcceptance(user.Id, termsPolicy, "terms_of_service", request.DeviceContext, utcNow),
+            CreateRegistrationPolicyAcceptance(user.Id, privacyPolicy, "privacy_policy", request.DeviceContext, utcNow));
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        var tokenResponse = await sessionService.CreateSessionAsync(user, request.DeviceContext, cancellationToken);
-
-        await auditService.WriteEventAsync(
+        StageAuditEvent(
             category: "auth",
-            eventName: "user_registered",
+            eventName: "user_registered_pending_verification",
             targetEntityType: "user",
             targetEntityId: user.Id.ToString(),
             actorId: user.Id,
             actorType: "user",
-            metadata: new { provider = ProviderTypeLocalPassword, nsTag },
-            cancellationToken);
+            metadata: new
+            {
+                provider = ProviderTypeLocalPassword,
+                nsTag,
+                termsVersion = termsPolicy.Version,
+                privacyVersion = privacyPolicy.Version
+            });
 
-        await IssueEmailActionTokenAsync(
-            user.Id,
-            PurposeEmailVerification,
-            _options.EmailVerificationTokenMinutes,
+        var challengeResult = await identityChallengeService.CreateEmailCodeAsync(
+            user,
+            user.PrimaryEmail,
+            IdentityChallengePurposes.EmailVerification,
+            IdentityEmailRenderer.EmailVerificationTemplate,
             cancellationToken);
+        if (!challengeResult.Succeeded)
+        {
+            return ServiceResult<RegistrationResponse>.Fail(
+                challengeResult.Error!.Message,
+                challengeResult.Error.Code,
+                challengeResult.Error.StatusCode);
+        }
 
-        await auditService.WriteEventAsync(
-            category: "auth",
-            eventName: "email_verification_requested",
-            targetEntityType: "user",
-            targetEntityId: user.Id.ToString(),
-            actorId: user.Id,
-            actorType: "user",
-            metadata: new { flow = "post_register" },
-            cancellationToken);
-
-        return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
+        var challenge = challengeResult.Value!;
+        return ServiceResult<RegistrationResponse>.Ok(new RegistrationResponse(
+            "email_verification_required",
+            challenge.ChallengeId,
+            challenge.ExpiresUtc,
+            challenge.ResendAfterSeconds,
+            "Enter the six-digit code sent to your email."));
     }
 
-    public async Task<ServiceResult<AuthTokenResponse>> LoginAsync(LoginRequest request, CancellationToken cancellationToken)
+    public async Task<ServiceResult<AuthFlowResponse>> LoginAsync(LoginRequest request, CancellationToken cancellationToken)
     {
         var normalizedEmail = NormalizeEmail(request.Email);
         var (lockedOut, retryAfterUtc) = await authAbuseService.IsLockedOutAsync(normalizedEmail, cancellationToken);
         if (lockedOut)
         {
-            return ServiceResult<AuthTokenResponse>.Fail(
+            return ServiceResult<AuthFlowResponse>.Fail(
                 $"Too many attempts. Try again after {retryAfterUtc:O}.",
                 "auth_locked",
                 StatusCodes.Status429TooManyRequests);
@@ -157,6 +182,7 @@ public sealed class AuthService(
 
         if (user is null)
         {
+            passwordHasher.PerformDummyVerification(request.Password);
             await authAbuseService.RecordAttemptAsync(normalizedEmail, null, requestContext.IpAddress, succeeded: false, "account_not_found", cancellationToken);
             await auditService.WriteEventAsync(
                 category: "auth",
@@ -168,7 +194,7 @@ public sealed class AuthService(
                 metadata: new { reason = "account_not_found" },
                 cancellationToken);
 
-            return ServiceResult<AuthTokenResponse>.Fail("No account was found for this email.", "account_not_found", StatusCodes.Status404NotFound);
+            return InvalidCredentialsResult();
         }
 
         var localProvider = user.AuthProviders.FirstOrDefault(x => x.ProviderType == ProviderTypeLocalPassword && x.IsActive);
@@ -176,6 +202,7 @@ public sealed class AuthService(
 
         if (localProvider is null || passwordCredential is null)
         {
+            passwordHasher.PerformDummyVerification(request.Password);
             await authAbuseService.RecordAttemptAsync(normalizedEmail, user.Id, requestContext.IpAddress, succeeded: false, "password_login_unavailable", cancellationToken);
             await auditService.WriteEventAsync(
                 category: "auth",
@@ -187,10 +214,7 @@ public sealed class AuthService(
                 metadata: new { reason = "password_login_unavailable" },
                 cancellationToken);
 
-            return ServiceResult<AuthTokenResponse>.Fail(
-                "This account uses Google sign-in. Continue with Google to log in.",
-                "password_login_unavailable",
-                StatusCodes.Status400BadRequest);
+            return InvalidCredentialsResult();
         }
 
         if (!passwordHasher.VerifyPassword(request.Password, passwordCredential.PasswordHash))
@@ -206,13 +230,24 @@ public sealed class AuthService(
                 metadata: new { reason = "invalid_password" },
                 cancellationToken);
 
-            return ServiceResult<AuthTokenResponse>.Fail("The password is incorrect.", "invalid_password", StatusCodes.Status401Unauthorized);
+            return InvalidCredentialsResult();
         }
 
         if (user.IsDisabled || user.IsSuspended)
         {
             await authAbuseService.RecordAttemptAsync(normalizedEmail, user.Id, requestContext.IpAddress, succeeded: false, "account_restricted", cancellationToken);
-            return ServiceResult<AuthTokenResponse>.Fail("Account access is restricted.", "account_restricted", StatusCodes.Status403Forbidden);
+            return ServiceResult<AuthFlowResponse>.Fail(
+                "Account access is restricted.",
+                "account_restricted",
+                StatusCodes.Status403Forbidden);
+        }
+
+        if (!user.EmailVerified)
+        {
+            return ServiceResult<AuthFlowResponse>.Fail(
+                "Confirm your email before signing in.",
+                "email_verification_required",
+                StatusCodes.Status403Forbidden);
         }
 
         if (passwordCredential.RequiresRehash || passwordHasher.NeedsRehash(passwordCredential.PasswordHash))
@@ -222,12 +257,41 @@ public sealed class AuthService(
             passwordCredential.UpdatedUtc = DateTime.UtcNow;
         }
 
-        user.LastLoginUtc = DateTime.UtcNow;
-        user.UpdatedUtc = DateTime.UtcNow;
-        localProvider.LastUsedAtUtc = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        var requiresMfa = await totpMfaService.IsEnabledAsync(user.Id, cancellationToken);
+        if (!requiresMfa)
+        {
+            user.LastLoginUtc = now;
+        }
+        user.UpdatedUtc = now;
+        localProvider.LastUsedAtUtc = now;
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await authAbuseService.RecordAttemptAsync(normalizedEmail, user.Id, requestContext.IpAddress, succeeded: true, failureReason: null, cancellationToken);
+        if (requiresMfa)
+        {
+            var mfaChallenge = await totpMfaService.CreateLoginChallengeAsync(user, cancellationToken);
+            if (!mfaChallenge.Succeeded)
+            {
+                return ServiceResult<AuthFlowResponse>.Fail(
+                    mfaChallenge.Error!.Message,
+                    mfaChallenge.Error.Code,
+                    mfaChallenge.Error.StatusCode);
+            }
+
+            await auditService.WriteEventAsync(
+                category: "auth",
+                eventName: "login_first_factor_succeeded",
+                targetEntityType: "user",
+                targetEntityId: user.Id.ToString(),
+                actorId: user.Id,
+                actorType: "user",
+                metadata: new { provider = ProviderTypeLocalPassword, mfaRequired = true },
+                cancellationToken);
+
+            return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.MfaRequired(mfaChallenge.Value!));
+        }
+
         var tokenResponse = await sessionService.CreateSessionAsync(user, request.DeviceContext, cancellationToken);
 
         await auditService.WriteEventAsync(
@@ -240,10 +304,46 @@ public sealed class AuthService(
             metadata: new { provider = ProviderTypeLocalPassword },
             cancellationToken);
 
+        return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.Authenticated(tokenResponse));
+    }
+
+    public async Task<ServiceResult<AuthTokenResponse>> VerifyMfaLoginAsync(
+        VerifyMfaLoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        var verification = await totpMfaService.VerifyLoginChallengeAsync(request, cancellationToken);
+        if (!verification.Succeeded)
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                verification.Error!.Message,
+                verification.Error.Code,
+                verification.Error.StatusCode);
+        }
+
+        var user = verification.Value!;
+        if (user.IsDisabled || user.IsSuspended)
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                "Account access is restricted.",
+                "account_restricted",
+                StatusCodes.Status403Forbidden);
+        }
+
+        var tokenResponse = await sessionService.CreateSessionAsync(user, request.DeviceContext, cancellationToken);
+        await auditService.WriteEventAsync(
+            category: "auth",
+            eventName: "mfa_login_success",
+            targetEntityType: "session",
+            targetEntityId: tokenResponse.SessionId.ToString(),
+            actorId: user.Id,
+            actorType: "user",
+            metadata: new { method = request.Method },
+            cancellationToken);
+
         return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
     }
 
-    public async Task<ServiceResult<AuthTokenResponse>> LoginWithGoogleAsync(
+    public async Task<ServiceResult<AuthFlowResponse>> LoginWithGoogleAsync(
         GoogleLoginRequest request,
         CancellationToken cancellationToken)
     {
@@ -253,7 +353,7 @@ public sealed class AuthService(
         if (!verification.Succeeded)
         {
             await WriteGoogleLoginFailureAuditAsync(null, verification.Error!.Code, cancellationToken);
-            return ServiceResult<AuthTokenResponse>.Fail(
+            return ServiceResult<AuthFlowResponse>.Fail(
                 verification.Error.Message,
                 verification.Error.Code,
                 verification.Error.StatusCode);
@@ -263,7 +363,7 @@ public sealed class AuthService(
         if (!identity.EmailVerified)
         {
             await WriteGoogleLoginFailureAuditAsync(null, "google_email_not_verified", cancellationToken);
-            return ServiceResult<AuthTokenResponse>.Fail(
+            return ServiceResult<AuthFlowResponse>.Fail(
                 "Google account email must be verified before sign-in is allowed.",
                 "google_email_not_verified",
                 StatusCodes.Status403Forbidden);
@@ -272,7 +372,7 @@ public sealed class AuthService(
         if (string.IsNullOrWhiteSpace(identity.Email))
         {
             await WriteGoogleLoginFailureAuditAsync(null, "google_email_missing", cancellationToken);
-            return ServiceResult<AuthTokenResponse>.Fail(
+            return ServiceResult<AuthFlowResponse>.Fail(
                 "Google account email is required.",
                 "google_email_missing",
                 StatusCodes.Status400BadRequest);
@@ -316,7 +416,7 @@ public sealed class AuthService(
             if (existingProviderLink.User is null)
             {
                 await WriteGoogleLoginFailureAuditAsync(null, "google_provider_user_not_found", cancellationToken);
-                return ServiceResult<AuthTokenResponse>.Fail(
+                return ServiceResult<AuthFlowResponse>.Fail(
                     "Google account link is invalid. Please contact support.",
                     "google_provider_user_not_found",
                     StatusCodes.Status409Conflict);
@@ -344,7 +444,7 @@ public sealed class AuthService(
                     && !string.Equals(existingUserGoogleProvider.ProviderSubject, identity.Subject, StringComparison.Ordinal))
                 {
                     await WriteGoogleLoginFailureAuditAsync(user.Id, "google_provider_conflict", cancellationToken);
-                    return ServiceResult<AuthTokenResponse>.Fail(
+                    return ServiceResult<AuthFlowResponse>.Fail(
                         "Google provider identity conflict detected. Please contact support.",
                         "google_provider_conflict",
                         StatusCodes.Status409Conflict);
@@ -373,6 +473,19 @@ public sealed class AuthService(
             }
             else
             {
+                var policyResult = await ResolveRegistrationPoliciesAsync(
+                    request.AcceptPolicies,
+                    request.TermsVersion,
+                    request.PrivacyVersion,
+                    cancellationToken);
+                if (!policyResult.Succeeded)
+                {
+                    return ServiceResult<AuthFlowResponse>.Fail(
+                        policyResult.Error!.Message,
+                        policyResult.Error.Code,
+                        policyResult.Error.StatusCode);
+                }
+
                 var fullName = NormalizeFullName(identity.Name ?? $"{identity.GivenName} {identity.FamilyName}".Trim());
                 var nsTagGenerationStartedTimestamp = Stopwatch.GetTimestamp();
                 var nsTag = await GenerateUniqueNsTagAsync(fullName, normalizedEmail, cancellationToken);
@@ -402,7 +515,6 @@ public sealed class AuthService(
                     Locale = "en-US",
                     PreferredCurrency = "EUR",
                     PlanTier = "standard",
-                    BiometricUnlockEnabled = false,
                     TwoFactorEnabled = false
                 };
 
@@ -424,6 +536,9 @@ public sealed class AuthService(
                     UserId = user.Id,
                     UpdatedUtc = utcNow
                 });
+                dbContext.PolicyAcceptances.AddRange(
+                    CreateRegistrationPolicyAcceptance(user.Id, policyResult.Value!.Terms, "terms_of_service", request.DeviceContext, utcNow),
+                    CreateRegistrationPolicyAcceptance(user.Id, policyResult.Value.Privacy, "privacy_policy", request.DeviceContext, utcNow));
 
                 providerLinkCreated = true;
                 createdViaGoogle = true;
@@ -433,7 +548,7 @@ public sealed class AuthService(
         if (user.IsDisabled || user.IsSuspended)
         {
             await WriteGoogleLoginFailureAuditAsync(user.Id, "account_restricted", cancellationToken);
-            return ServiceResult<AuthTokenResponse>.Fail(
+            return ServiceResult<AuthFlowResponse>.Fail(
                 "Account access is restricted.",
                 "account_restricted",
                 StatusCodes.Status403Forbidden);
@@ -458,8 +573,12 @@ public sealed class AuthService(
             user.ProfileImageUrl = identity.PictureUrl;
         }
 
+        var requiresMfa = await totpMfaService.IsEnabledAsync(user.Id, cancellationToken);
         user.EmailVerified = true;
-        user.LastLoginUtc = utcNow;
+        if (!requiresMfa)
+        {
+            user.LastLoginUtc = utcNow;
+        }
         user.UpdatedUtc = utcNow;
 
         var accountResolutionDurationMs = Stopwatch.GetElapsedTime(accountResolutionStartedTimestamp).TotalMilliseconds;
@@ -492,6 +611,41 @@ public sealed class AuthService(
                 actorId: user.Id,
                 actorType: "user",
                 metadata: new { provider = ProviderTypeGoogleOidc });
+        }
+
+        if (requiresMfa)
+        {
+            StageAuditEvent(
+                category: "auth",
+                eventName: "login_first_factor_succeeded",
+                targetEntityType: "user",
+                targetEntityId: user.Id.ToString(),
+                actorId: user.Id,
+                actorType: "user",
+                metadata: new { provider = ProviderTypeGoogleOidc, mfaRequired = true });
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            if (holdsConnectionOpen)
+            {
+                await dbContext.Database.CloseConnectionAsync();
+            }
+
+            var mfaChallenge = await totpMfaService.CreateLoginChallengeAsync(user, cancellationToken);
+            if (!mfaChallenge.Succeeded)
+            {
+                return ServiceResult<AuthFlowResponse>.Fail(
+                    mfaChallenge.Error!.Message,
+                    mfaChallenge.Error.Code,
+                    mfaChallenge.Error.StatusCode);
+            }
+
+            logger.LogInformation(
+                "Google first factor completed and requires MFA createdViaGoogle={CreatedViaGoogle} linkedByEmail={LinkedByEmail} totalDurationMs={TotalDurationMs}",
+                createdViaGoogle,
+                linkedToExistingByEmail,
+                Math.Round(Stopwatch.GetElapsedTime(totalStartedTimestamp).TotalMilliseconds));
+
+            return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.MfaRequired(mfaChallenge.Value!));
         }
 
         var sessionCreationStartedTimestamp = Stopwatch.GetTimestamp();
@@ -546,7 +700,225 @@ public sealed class AuthService(
             Math.Round(sessionPersistenceDurationMs),
             Math.Round(totalDurationMs));
 
-        return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
+        return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.Authenticated(tokenResponse));
+    }
+
+    public async Task<ServiceResult<AuthFlowResponse>> LoginWithMicrosoftAsync(
+        MicrosoftLoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        var verification = await microsoftAuthService.VerifyAccessTokenAsync(request.AccessToken, cancellationToken);
+        if (!verification.Succeeded)
+        {
+            await WriteMicrosoftLoginFailureAuditAsync(null, verification.Error!.Code, cancellationToken);
+            return ServiceResult<AuthFlowResponse>.Fail(
+                verification.Error.Message,
+                verification.Error.Code,
+                verification.Error.StatusCode);
+        }
+
+        var identity = verification.Value!;
+        var normalizedEmail = NormalizeEmail(identity.Email);
+        var matches = await dbContext.UserAuthProviders
+            .Include(x => x.User)
+            .ThenInclude(x => x!.AuthProviders)
+            .Where(x =>
+                (x.ProviderType == ProviderTypeMicrosoftOidc && x.ProviderSubject == identity.ProviderSubject)
+                || (x.User != null && x.User.NormalizedEmail == normalizedEmail))
+            .ToListAsync(cancellationToken);
+
+        var providerLink = matches.SingleOrDefault(x =>
+            x.ProviderType == ProviderTypeMicrosoftOidc
+            && x.ProviderSubject == identity.ProviderSubject);
+        var emailUser = matches
+            .Where(x => x.User?.NormalizedEmail == normalizedEmail)
+            .Select(x => x.User!)
+            .DistinctBy(x => x.Id)
+            .SingleOrDefault();
+        var now = DateTime.UtcNow;
+        var createdViaMicrosoft = false;
+        User user;
+
+        if (providerLink is not null)
+        {
+            if (providerLink.User is null)
+            {
+                await WriteMicrosoftLoginFailureAuditAsync(null, "microsoft_provider_user_not_found", cancellationToken);
+                return ServiceResult<AuthFlowResponse>.Fail(
+                    "Microsoft account link is invalid. Contact support.",
+                    "microsoft_provider_user_not_found",
+                    StatusCodes.Status409Conflict);
+            }
+
+            user = providerLink.User;
+        }
+        else
+        {
+            if (emailUser is not null)
+            {
+                await WriteMicrosoftLoginFailureAuditAsync(emailUser.Id, "microsoft_account_link_required", cancellationToken);
+                return ServiceResult<AuthFlowResponse>.Fail(
+                    "An NSFinance account already uses this email. Sign in to that account and link Microsoft from Security settings.",
+                    "microsoft_account_link_required",
+                    StatusCodes.Status409Conflict);
+            }
+
+            var policyResult = await ResolveRegistrationPoliciesAsync(
+                request.AcceptPolicies,
+                request.TermsVersion,
+                request.PrivacyVersion,
+                cancellationToken);
+            if (!policyResult.Succeeded)
+            {
+                return ServiceResult<AuthFlowResponse>.Fail(
+                    policyResult.Error!.Message,
+                    policyResult.Error.Code,
+                    policyResult.Error.StatusCode);
+            }
+
+            var fullName = NormalizeFullName(identity.Name ?? $"{identity.GivenName} {identity.FamilyName}".Trim());
+            var nsTag = await GenerateUniqueNsTagAsync(fullName, normalizedEmail, cancellationToken);
+            user = new User
+            {
+                Id = Guid.NewGuid(),
+                PrimaryEmail = normalizedEmail,
+                NormalizedEmail = normalizedEmail,
+                DisplayName = nsTag,
+                FullName = fullName,
+                Handle = nsTag,
+                Status = "active",
+                OnboardingStatus = "pending_email_verification",
+                Role = "user",
+                CreatedUtc = now,
+                UpdatedUtc = now,
+                EmailVerified = false,
+                Timezone = "UTC",
+                Locale = "en-US",
+                PreferredCurrency = "EUR",
+                PlanTier = "standard"
+            };
+            providerLink = new UserAuthProvider
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                ProviderType = ProviderTypeMicrosoftOidc,
+                ProviderSubject = identity.ProviderSubject,
+                LinkedAtUtc = now,
+                LastUsedAtUtc = now,
+                IsActive = true
+            };
+            dbContext.Users.Add(user);
+            dbContext.UserAuthProviders.Add(providerLink);
+            dbContext.UserPreferences.Add(new UserPreference
+            {
+                UserId = user.Id,
+                UpdatedUtc = now
+            });
+            dbContext.PolicyAcceptances.AddRange(
+                CreateRegistrationPolicyAcceptance(user.Id, policyResult.Value!.Terms, "terms_of_service", request.DeviceContext, now),
+                CreateRegistrationPolicyAcceptance(user.Id, policyResult.Value.Privacy, "privacy_policy", request.DeviceContext, now));
+            createdViaMicrosoft = true;
+        }
+
+        if (user.IsDisabled || user.IsSuspended)
+        {
+            await WriteMicrosoftLoginFailureAuditAsync(user.Id, "account_restricted", cancellationToken);
+            return ServiceResult<AuthFlowResponse>.Fail(
+                "Account access is restricted.",
+                "account_restricted",
+                StatusCodes.Status403Forbidden);
+        }
+
+        providerLink.ProviderSubject = identity.ProviderSubject;
+        providerLink.IsActive = true;
+        providerLink.LastUsedAtUtc = now;
+        user.UpdatedUtc = now;
+
+        if (string.IsNullOrWhiteSpace(user.FullName)
+            || string.Equals(user.FullName, "NSFinance User", StringComparison.OrdinalIgnoreCase))
+        {
+            user.FullName = NormalizeFullName(identity.Name ?? $"{identity.GivenName} {identity.FamilyName}".Trim());
+        }
+
+        if (!user.EmailVerified)
+        {
+            StageAuditEvent(
+                category: "auth",
+                eventName: createdViaMicrosoft
+                    ? "microsoft_user_created_pending_verification"
+                    : "microsoft_email_verification_required",
+                targetEntityType: "user",
+                targetEntityId: user.Id.ToString(),
+                actorId: user.Id,
+                actorType: "user",
+                metadata: new { provider = ProviderTypeMicrosoftOidc });
+
+            var challengeResult = await identityChallengeService.CreateEmailCodeAsync(
+                user,
+                user.PrimaryEmail,
+                IdentityChallengePurposes.EmailVerification,
+                IdentityEmailRenderer.EmailVerificationTemplate,
+                cancellationToken);
+            if (!challengeResult.Succeeded)
+            {
+                return ServiceResult<AuthFlowResponse>.Fail(
+                    challengeResult.Error!.Message,
+                    challengeResult.Error.Code,
+                    challengeResult.Error.StatusCode);
+            }
+
+            var challenge = challengeResult.Value!;
+            return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.EmailVerificationRequired(
+                new CodeDeliveryResponse(
+                    challenge.ChallengeId,
+                    challenge.ExpiresUtc,
+                    challenge.ResendAfterSeconds,
+                    "Confirm the email supplied by Microsoft to finish signing in.")));
+        }
+
+        var requiresMfa = await totpMfaService.IsEnabledAsync(user.Id, cancellationToken);
+        if (requiresMfa)
+        {
+            StageAuditEvent(
+                category: "auth",
+                eventName: "login_first_factor_succeeded",
+                targetEntityType: "user",
+                targetEntityId: user.Id.ToString(),
+                actorId: user.Id,
+                actorType: "user",
+                metadata: new { provider = ProviderTypeMicrosoftOidc, mfaRequired = true });
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var mfaChallenge = await totpMfaService.CreateLoginChallengeAsync(user, cancellationToken);
+            if (!mfaChallenge.Succeeded)
+            {
+                return ServiceResult<AuthFlowResponse>.Fail(
+                    mfaChallenge.Error!.Message,
+                    mfaChallenge.Error.Code,
+                    mfaChallenge.Error.StatusCode);
+            }
+
+            return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.MfaRequired(mfaChallenge.Value!));
+        }
+
+        user.LastLoginUtc = now;
+        var tokenResponse = await sessionService.CreateSessionAsync(
+            user,
+            request.DeviceContext,
+            cancellationToken,
+            saveImmediately: false,
+            userIsNew: createdViaMicrosoft);
+        StageAuditEvent(
+            category: "auth",
+            eventName: "microsoft_login_success",
+            targetEntityType: "session",
+            targetEntityId: tokenResponse.SessionId.ToString(),
+            actorId: user.Id,
+            actorType: "user",
+            metadata: new { provider = ProviderTypeMicrosoftOidc, createdViaMicrosoft });
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.Authenticated(tokenResponse));
     }
 
     public Task<ServiceResult<AuthTokenResponse>> RefreshAsync(RefreshTokenRequest request, CancellationToken cancellationToken)
@@ -664,38 +1036,90 @@ public sealed class AuthService(
         return ServiceResult.Ok();
     }
 
-    public async Task<ServiceResult<AuthActionResponse>> RequestPasswordResetAsync(
+    public async Task<ServiceResult<CodeDeliveryResponse>> RequestPasswordResetAsync(
         ForgotPasswordRequest request,
         CancellationToken cancellationToken)
     {
-        var normalizedEmail = NormalizeEmail(request.Email);
-        var user = await dbContext.Users
-            .AsNoTracking()
-            .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
-
-        if (user is not null && !user.IsDisabled && !user.IsSuspended)
+        var identity = request.Identity.Trim();
+        if (identity.StartsWith('+'))
         {
-            await IssueEmailActionTokenAsync(
-                user.Id,
-                PurposePasswordReset,
-                _options.PasswordResetTokenMinutes,
-                cancellationToken);
+            return ServiceResult<CodeDeliveryResponse>.Fail(
+                "Phone recovery is not available until SMS delivery is configured.",
+                "sms_recovery_unavailable",
+                StatusCodes.Status503ServiceUnavailable);
+        }
 
+        var normalizedEmail = NormalizeEmail(identity);
+        var user = await dbContext.Users
+            .Include(x => x.PasswordCredential)
+            .Include(x => x.AuthProviders)
+            .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
+        var eligibleUser = user is not null
+            && !user.IsDisabled
+            && !user.IsSuspended
+            && user.PasswordCredential is not null
+            && user.AuthProviders.Any(x => x.ProviderType == ProviderTypeLocalPassword && x.IsActive)
+                ? user
+                : null;
+
+        var challengeResult = await identityChallengeService.CreateEmailCodeAsync(
+            eligibleUser,
+            normalizedEmail,
+            IdentityChallengePurposes.PasswordReset,
+            IdentityEmailRenderer.PasswordResetTemplate,
+            cancellationToken);
+        if (!challengeResult.Succeeded)
+        {
+            return ServiceResult<CodeDeliveryResponse>.Fail(
+                challengeResult.Error!.Message,
+                challengeResult.Error.Code,
+                challengeResult.Error.StatusCode);
+        }
+
+        if (eligibleUser is not null)
+        {
             await auditService.WriteEventAsync(
                 category: "auth",
-                eventName: "password_reset_requested",
+                eventName: "password_reset_code_requested",
                 targetEntityType: "user",
-                targetEntityId: user.Id.ToString(),
+                targetEntityId: eligibleUser.Id.ToString(),
                 actorId: null,
                 actorType: "anonymous",
-                metadata: null,
+                metadata: new { channel = IdentityChannels.Email },
                 cancellationToken);
         }
 
-        var response = new AuthActionResponse(
-            "If your email is registered, a password reset link will be sent shortly.");
+        var challenge = challengeResult.Value!;
+        return ServiceResult<CodeDeliveryResponse>.Ok(new CodeDeliveryResponse(
+            challenge.ChallengeId,
+            challenge.ExpiresUtc,
+            challenge.ResendAfterSeconds,
+            "If an eligible account matches, a six-digit code will arrive shortly."));
+    }
 
-        return ServiceResult<AuthActionResponse>.Ok(response);
+    public async Task<ServiceResult<PasswordRecoveryGrantResponse>> VerifyPasswordRecoveryCodeAsync(
+        VerifyPasswordRecoveryCodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var verification = await identityChallengeService.VerifyCodeAsync(
+            request.ChallengeId,
+            IdentityChallengePurposes.PasswordReset,
+            request.Code,
+            issueGrant: true,
+            cancellationToken);
+        if (!verification.Succeeded)
+        {
+            return ServiceResult<PasswordRecoveryGrantResponse>.Fail(
+                verification.Error!.Message,
+                verification.Error.Code,
+                verification.Error.StatusCode);
+        }
+
+        var verified = verification.Value!;
+        return ServiceResult<PasswordRecoveryGrantResponse>.Ok(new PasswordRecoveryGrantResponse(
+            verified.Challenge.Id,
+            verified.GrantToken!,
+            verified.Challenge.GrantExpiresUtc!.Value));
     }
 
     public async Task<ServiceResult<AuthActionResponse>> ResetPasswordAsync(
@@ -703,38 +1127,48 @@ public sealed class AuthService(
         CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
-        var tokenHash = tokenSecretService.HashToken(request.Token);
-        var token = await dbContext.EmailActionTokens
-            .SingleOrDefaultAsync(
-                x => x.TokenHash == tokenHash && x.Purpose == PurposePasswordReset,
-                cancellationToken);
-
-        if (token is null || token.ExpiresUtc <= now)
+        var grantResult = await identityChallengeService.ConsumeGrantAsync(
+            request.ChallengeId,
+            IdentityChallengePurposes.PasswordReset,
+            request.RecoveryToken,
+            cancellationToken);
+        if (!grantResult.Succeeded)
         {
-            return ServiceResult<AuthActionResponse>.Fail("Reset token is invalid or expired.", "reset_token_invalid", StatusCodes.Status400BadRequest);
+            return ServiceResult<AuthActionResponse>.Fail(
+                grantResult.Error!.Message,
+                grantResult.Error.Code,
+                grantResult.Error.StatusCode);
         }
 
-        if (token.UsedUtc is not null)
-        {
-            return ServiceResult<AuthActionResponse>.Fail("Reset token has already been used.", "reset_token_reused", StatusCodes.Status400BadRequest);
-        }
-
+        var challenge = grantResult.Value!;
         var user = await dbContext.Users
             .Include(x => x.PasswordCredential)
-            .SingleOrDefaultAsync(x => x.Id == token.UserId, cancellationToken);
+            .SingleOrDefaultAsync(x => x.Id == challenge.UserId, cancellationToken);
 
         if (user is null || user.PasswordCredential is null)
         {
-            return ServiceResult<AuthActionResponse>.Fail("Reset token is invalid.", "reset_token_invalid", StatusCodes.Status400BadRequest);
+            return ServiceResult<AuthActionResponse>.Fail(
+                "Recovery authorization is invalid or expired.",
+                "recovery_grant_invalid",
+                StatusCodes.Status400BadRequest);
         }
 
         user.PasswordCredential.PasswordHash = passwordHasher.HashPassword(request.NewPassword);
         user.PasswordCredential.RequiresRehash = false;
         user.PasswordCredential.UpdatedUtc = now;
         user.UpdatedUtc = now;
-        token.UsedUtc = now;
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return ServiceResult<AuthActionResponse>.Fail(
+                "Recovery authorization is invalid or expired.",
+                "recovery_grant_invalid",
+                StatusCodes.Status400BadRequest);
+        }
         await sessionService.RevokeAllSessionsForUserAsync(user.Id, "password_reset", cancellationToken);
 
         await auditService.WriteEventAsync(
@@ -750,71 +1184,130 @@ public sealed class AuthService(
         return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Password has been updated."));
     }
 
-    public async Task<ServiceResult<AuthActionResponse>> RequestEmailVerificationAsync(
+    public async Task<ServiceResult<CodeDeliveryResponse>> RequestEmailVerificationAsync(
         RequestEmailVerificationRequest request,
         CancellationToken cancellationToken)
     {
         var normalizedEmail = NormalizeEmail(request.Email);
         var user = await dbContext.Users
-            .AsNoTracking()
             .SingleOrDefaultAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
-
-        if (user is not null && !user.EmailVerified)
+        var eligibleUser = user is not null
+            && !user.EmailVerified
+            && !user.IsDisabled
+            && !user.IsSuspended
+                ? user
+                : null;
+        var challengeResult = await identityChallengeService.CreateEmailCodeAsync(
+            eligibleUser,
+            normalizedEmail,
+            IdentityChallengePurposes.EmailVerification,
+            IdentityEmailRenderer.EmailVerificationTemplate,
+            cancellationToken);
+        if (!challengeResult.Succeeded)
         {
-            await IssueEmailActionTokenAsync(
-                user.Id,
-                PurposeEmailVerification,
-                _options.EmailVerificationTokenMinutes,
-                cancellationToken);
+            return ServiceResult<CodeDeliveryResponse>.Fail(
+                challengeResult.Error!.Message,
+                challengeResult.Error.Code,
+                challengeResult.Error.StatusCode);
+        }
 
+        if (eligibleUser is not null)
+        {
             await auditService.WriteEventAsync(
                 category: "auth",
-                eventName: "email_verification_requested",
+                eventName: "email_verification_code_requested",
                 targetEntityType: "user",
-                targetEntityId: user.Id.ToString(),
-                actorId: user.Id,
+                targetEntityId: eligibleUser.Id.ToString(),
+                actorId: eligibleUser.Id,
                 actorType: "user",
-                metadata: null,
+                metadata: new { channel = IdentityChannels.Email },
                 cancellationToken);
         }
 
-        var response = new AuthActionResponse(
-            "If your account requires verification, an email verification link will be sent.");
-
-        return ServiceResult<AuthActionResponse>.Ok(response);
+        var challenge = challengeResult.Value!;
+        return ServiceResult<CodeDeliveryResponse>.Ok(new CodeDeliveryResponse(
+            challenge.ChallengeId,
+            challenge.ExpiresUtc,
+            challenge.ResendAfterSeconds,
+            "If the account needs verification, a six-digit code will arrive shortly."));
     }
 
-    public async Task<ServiceResult<AuthActionResponse>> ConfirmEmailVerificationAsync(
+    public async Task<ServiceResult<AuthTokenResponse>> ConfirmEmailVerificationAsync(
         ConfirmEmailVerificationRequest request,
         CancellationToken cancellationToken)
     {
+        var verification = await identityChallengeService.VerifyCodeAsync(
+            request.ChallengeId,
+            IdentityChallengePurposes.EmailVerification,
+            request.Code,
+            issueGrant: true,
+            cancellationToken);
+        if (!verification.Succeeded)
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                verification.Error!.Message,
+                verification.Error.Code,
+                verification.Error.StatusCode);
+        }
+
+        var verified = verification.Value!;
+        var grantResult = await identityChallengeService.ConsumeGrantAsync(
+            verified.Challenge.Id,
+            IdentityChallengePurposes.EmailVerification,
+            verified.GrantToken!,
+            cancellationToken);
+        if (!grantResult.Succeeded)
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                grantResult.Error!.Message,
+                grantResult.Error.Code,
+                grantResult.Error.StatusCode);
+        }
+
         var now = DateTime.UtcNow;
-        var tokenHash = tokenSecretService.HashToken(request.Token);
-        var token = await dbContext.EmailActionTokens
-            .SingleOrDefaultAsync(
-                x => x.TokenHash == tokenHash && x.Purpose == PurposeEmailVerification,
-                cancellationToken);
-
-        if (token is null || token.ExpiresUtc <= now)
-        {
-            return ServiceResult<AuthActionResponse>.Fail("Verification token is invalid or expired.", "email_verification_invalid", StatusCodes.Status400BadRequest);
-        }
-
-        if (token.UsedUtc is not null)
-        {
-            return ServiceResult<AuthActionResponse>.Fail("Verification token has already been used.", "email_verification_reused", StatusCodes.Status400BadRequest);
-        }
-
-        var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == token.UserId, cancellationToken);
+        var user = await dbContext.Users.SingleOrDefaultAsync(
+            x => x.Id == grantResult.Value!.UserId,
+            cancellationToken);
         if (user is null)
         {
-            return ServiceResult<AuthActionResponse>.Fail("Verification token is invalid.", "email_verification_invalid", StatusCodes.Status400BadRequest);
+            return ServiceResult<AuthTokenResponse>.Fail(
+                "The code is invalid or expired.",
+                "identity_code_invalid",
+                StatusCodes.Status400BadRequest);
         }
 
-        token.UsedUtc = now;
         user.EmailVerified = true;
+        user.OnboardingStatus = "profile_created";
+        user.LastLoginUtc = now;
         user.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                "The code is invalid or expired.",
+                "identity_code_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var tokenResponse = await sessionService.CreateSessionAsync(user, request.DeviceContext, cancellationToken);
+
+        if (transactionalMessageService.IsEmailConfigured)
+        {
+            transactionalMessageService.QueueEmail(
+                user.Id,
+                challengeId: null,
+                user.PrimaryEmail,
+                IdentityEmailRenderer.AccountCreatedTemplate,
+                new IdentityEmailPayload(
+                    user.DisplayName ?? user.FullName,
+                    Code: null,
+                    ExpiresInMinutes: null,
+                    OccurredUtc: now));
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
 
         await auditService.WriteEventAsync(
             category: "auth",
@@ -826,7 +1319,7 @@ public sealed class AuthService(
             metadata: null,
             cancellationToken);
 
-        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Email has been verified."));
+        return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
     }
 
     public async Task<ServiceResult<AuthActionResponse>> ChangePasswordAsync(
@@ -873,26 +1366,33 @@ public sealed class AuthService(
         return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Password updated. Please sign in again on your devices."));
     }
 
-    public async Task<ServiceResult<AuthActionResponse>> RequestPasswordChangeCodeAsync(CancellationToken cancellationToken)
+    public async Task<ServiceResult<CodeDeliveryResponse>> RequestPasswordChangeCodeAsync(CancellationToken cancellationToken)
     {
         if (!currentUserProvider.TryGetUserId(out var userId))
         {
-            return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
+            return ServiceResult<CodeDeliveryResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
         }
 
         var user = await dbContext.Users
-            .AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
         if (user is null)
         {
-            return ServiceResult<AuthActionResponse>.Fail("User not found.", "user_not_found", StatusCodes.Status404NotFound);
+            return ServiceResult<CodeDeliveryResponse>.Fail("User not found.", "user_not_found", StatusCodes.Status404NotFound);
         }
 
-        await IssueEmailActionTokenAsync(
-            userId,
-            PurposePasswordChange,
-            _options.PasswordResetTokenMinutes,
+        var challengeResult = await identityChallengeService.CreateEmailCodeAsync(
+            user,
+            user.PrimaryEmail,
+            IdentityChallengePurposes.PasswordChange,
+            IdentityEmailRenderer.PasswordChangeTemplate,
             cancellationToken);
+        if (!challengeResult.Succeeded)
+        {
+            return ServiceResult<CodeDeliveryResponse>.Fail(
+                challengeResult.Error!.Message,
+                challengeResult.Error.Code,
+                challengeResult.Error.StatusCode);
+        }
 
         await auditService.WriteEventAsync(
             category: "security",
@@ -904,38 +1404,47 @@ public sealed class AuthService(
             metadata: null,
             cancellationToken);
 
-        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse(
-            "A password change code was requested. Check your email to continue."));
+        var challenge = challengeResult.Value!;
+        return ServiceResult<CodeDeliveryResponse>.Ok(new CodeDeliveryResponse(
+            challenge.ChallengeId,
+            challenge.ExpiresUtc,
+            challenge.ResendAfterSeconds,
+            "Enter the six-digit code sent to your email."));
     }
 
-    public async Task<ServiceResult<AuthActionResponse>> VerifyPasswordChangeCodeAsync(
-        string code,
+    public async Task<ServiceResult<PasswordRecoveryGrantResponse>> VerifyPasswordChangeCodeAsync(
+        VerifyPasswordChangeCodeRequest request,
         CancellationToken cancellationToken)
     {
         if (!currentUserProvider.TryGetUserId(out var userId))
         {
-            return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
+            return ServiceResult<PasswordRecoveryGrantResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
         }
 
-        var validation = await ValidateEmailActionTokenForUserAsync(
-            userId,
-            code,
-            PurposePasswordChange,
-            consumeToken: false,
+        var verification = await identityChallengeService.VerifyCodeAsync(
+            request.ChallengeId,
+            IdentityChallengePurposes.PasswordChange,
+            request.Code,
+            issueGrant: true,
             cancellationToken);
-        if (!validation.Succeeded)
+        if (!verification.Succeeded || verification.Value!.Challenge.UserId != userId)
         {
-            return ServiceResult<AuthActionResponse>.Fail(
-                validation.Error!.Message,
-                validation.Error.Code,
-                validation.Error.StatusCode);
+            return ServiceResult<PasswordRecoveryGrantResponse>.Fail(
+                "The code is invalid or expired.",
+                "identity_code_invalid",
+                StatusCodes.Status400BadRequest);
         }
 
-        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Code verified."));
+        var verified = verification.Value;
+        return ServiceResult<PasswordRecoveryGrantResponse>.Ok(new PasswordRecoveryGrantResponse(
+            verified.Challenge.Id,
+            verified.GrantToken!,
+            verified.Challenge.GrantExpiresUtc!.Value));
     }
 
     public async Task<ServiceResult<AuthActionResponse>> ConfirmPasswordChangeWithCodeAsync(
-        string code,
+        Guid challengeId,
+        string grantToken,
         string newPassword,
         CancellationToken cancellationToken)
     {
@@ -944,18 +1453,17 @@ public sealed class AuthService(
             return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
         }
 
-        var validation = await ValidateEmailActionTokenForUserAsync(
-            userId,
-            code,
-            PurposePasswordChange,
-            consumeToken: true,
+        var grantResult = await identityChallengeService.ConsumeGrantAsync(
+            challengeId,
+            IdentityChallengePurposes.PasswordChange,
+            grantToken,
             cancellationToken);
-        if (!validation.Succeeded)
+        if (!grantResult.Succeeded || grantResult.Value!.UserId != userId)
         {
             return ServiceResult<AuthActionResponse>.Fail(
-                validation.Error!.Message,
-                validation.Error.Code,
-                validation.Error.StatusCode);
+                "Password-change authorization is invalid or expired.",
+                "password_change_grant_invalid",
+                StatusCodes.Status400BadRequest);
         }
 
         var user = await dbContext.Users
@@ -986,18 +1494,32 @@ public sealed class AuthService(
         return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse("Password updated. Please sign in again on your devices."));
     }
 
-    public async Task<ServiceResult<AuthActionResponse>> RequestAccountDeletionCodeAsync(CancellationToken cancellationToken)
+    public async Task<ServiceResult<CodeDeliveryResponse>> RequestAccountDeletionCodeAsync(CancellationToken cancellationToken)
     {
         if (!currentUserProvider.TryGetUserId(out var userId))
         {
-            return ServiceResult<AuthActionResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
+            return ServiceResult<CodeDeliveryResponse>.Fail("Unauthorized.", "unauthorized", StatusCodes.Status401Unauthorized);
         }
 
-        await IssueEmailActionTokenAsync(
-            userId,
-            PurposeAccountDeletion,
-            _options.PasswordResetTokenMinutes,
+        var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+        if (user is null)
+        {
+            return ServiceResult<CodeDeliveryResponse>.Fail("User not found.", "user_not_found", StatusCodes.Status404NotFound);
+        }
+
+        var challengeResult = await identityChallengeService.CreateEmailCodeAsync(
+            user,
+            user.PrimaryEmail,
+            IdentityChallengePurposes.AccountDeletion,
+            IdentityEmailRenderer.AccountDeletionTemplate,
             cancellationToken);
+        if (!challengeResult.Succeeded)
+        {
+            return ServiceResult<CodeDeliveryResponse>.Fail(
+                challengeResult.Error!.Message,
+                challengeResult.Error.Code,
+                challengeResult.Error.StatusCode);
+        }
 
         await auditService.WriteEventAsync(
             category: "security",
@@ -1009,8 +1531,12 @@ public sealed class AuthService(
             metadata: null,
             cancellationToken);
 
-        return ServiceResult<AuthActionResponse>.Ok(new AuthActionResponse(
-            "A deletion verification code was requested. Check your email to continue."));
+        var challenge = challengeResult.Value!;
+        return ServiceResult<CodeDeliveryResponse>.Ok(new CodeDeliveryResponse(
+            challenge.ChallengeId,
+            challenge.ExpiresUtc,
+            challenge.ResendAfterSeconds,
+            "Enter the six-digit code sent to your email."));
     }
 
     public GoogleAuthOptionsDto GetGoogleAuthOptions()
@@ -1082,86 +1608,28 @@ public sealed class AuthService(
             cancellationToken);
     }
 
-    private async Task<string> IssueEmailActionTokenAsync(
-        Guid userId,
-        string purpose,
-        int expiryMinutes,
+    private Task WriteMicrosoftLoginFailureAuditAsync(
+        Guid? actorId,
+        string reason,
         CancellationToken cancellationToken)
     {
-        var now = DateTime.UtcNow;
-
-        var activeTokens = await dbContext.EmailActionTokens
-            .Where(x => x.UserId == userId && x.Purpose == purpose && x.UsedUtc == null && x.ExpiresUtc > now)
-            .ToListAsync(cancellationToken);
-
-        foreach (var token in activeTokens)
-        {
-            token.UsedUtc = now;
-        }
-
-        var rawToken = tokenSecretService.CreateToken();
-        dbContext.EmailActionTokens.Add(new EmailActionToken
-        {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            Purpose = purpose,
-            TokenHash = tokenSecretService.HashToken(rawToken),
-            CreatedUtc = now,
-            ExpiresUtc = now.AddMinutes(expiryMinutes),
-            RequestedByIp = requestContext.IpAddress
-        });
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return rawToken;
+        return auditService.WriteEventAsync(
+            category: "auth",
+            eventName: "microsoft_login_failed",
+            targetEntityType: "user",
+            targetEntityId: actorId?.ToString(),
+            actorId: actorId,
+            actorType: actorId.HasValue ? "user" : "anonymous",
+            metadata: new { provider = ProviderTypeMicrosoftOidc, reason },
+            cancellationToken);
     }
 
-    private async Task<ServiceResult<EmailActionToken>> ValidateEmailActionTokenForUserAsync(
-        Guid userId,
-        string rawToken,
-        string purpose,
-        bool consumeToken,
-        CancellationToken cancellationToken)
+    private static ServiceResult<AuthFlowResponse> InvalidCredentialsResult()
     {
-        if (string.IsNullOrWhiteSpace(rawToken))
-        {
-            return ServiceResult<EmailActionToken>.Fail(
-                "Verification code is required.",
-                "verification_code_required",
-                StatusCodes.Status400BadRequest);
-        }
-
-        var tokenHash = tokenSecretService.HashToken(rawToken.Trim());
-        var now = DateTime.UtcNow;
-        var token = await dbContext.EmailActionTokens
-            .SingleOrDefaultAsync(
-                x => x.UserId == userId
-                     && x.Purpose == purpose
-                     && x.TokenHash == tokenHash,
-                cancellationToken);
-
-        if (token is null || token.ExpiresUtc <= now)
-        {
-            return ServiceResult<EmailActionToken>.Fail(
-                "Verification code is invalid or expired.",
-                "verification_code_invalid",
-                StatusCodes.Status400BadRequest);
-        }
-
-        if (token.UsedUtc is not null)
-        {
-            return ServiceResult<EmailActionToken>.Fail(
-                "Verification code has already been used.",
-                "verification_code_reused",
-                StatusCodes.Status400BadRequest);
-        }
-
-        if (consumeToken)
-        {
-            token.UsedUtc = now;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
-        return ServiceResult<EmailActionToken>.Ok(token);
+        return ServiceResult<AuthFlowResponse>.Fail(
+            "Email or password is incorrect.",
+            "invalid_credentials",
+            StatusCodes.Status401Unauthorized);
     }
 
     private static UserProfileDto MapUserProfile(User user)
@@ -1180,11 +1648,67 @@ public sealed class AuthService(
             user.Role,
             user.EmailVerified,
             user.OnboardingStatus,
-            user.BiometricUnlockEnabled,
             user.TwoFactorEnabled,
             user.PlanTier,
             user.CreatedUtc,
             user.LastLoginUtc);
+    }
+
+    private static PolicyAcceptance CreateRegistrationPolicyAcceptance(
+        Guid userId,
+        PolicyVersion policyVersion,
+        string policyType,
+        DeviceContextDto? deviceContext,
+        DateTime acceptedUtc)
+    {
+        return new PolicyAcceptance
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            PolicyVersionId = policyVersion.Id,
+            PolicyType = policyType,
+            PolicyVersion = policyVersion.Version,
+            AcceptedUtc = acceptedUtc,
+            AcceptanceContext = "registration",
+            Platform = deviceContext?.Platform,
+            AppVersion = deviceContext?.AppVersion
+        };
+    }
+
+    private async Task<ServiceResult<RegistrationPolicySet>> ResolveRegistrationPoliciesAsync(
+        bool acceptPolicies,
+        string? termsVersion,
+        string? privacyVersion,
+        CancellationToken cancellationToken)
+    {
+        if (!acceptPolicies)
+        {
+            return ServiceResult<RegistrationPolicySet>.Fail(
+                "Accept the Terms of Service and Privacy Policy to create an account.",
+                "registration_policy_acceptance_required",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var requiredPolicyTypes = new[] { "terms_of_service", "privacy_policy" };
+        var activePolicies = await dbContext.PolicyVersions
+            .AsNoTracking()
+            .Include(x => x.PolicyDocument)
+            .Where(x => x.IsActive && requiredPolicyTypes.Contains(x.PolicyDocument!.PolicyType))
+            .ToListAsync(cancellationToken);
+        var termsPolicy = activePolicies.SingleOrDefault(x => x.PolicyDocument!.PolicyType == "terms_of_service");
+        var privacyPolicy = activePolicies.SingleOrDefault(x => x.PolicyDocument!.PolicyType == "privacy_policy");
+        if (termsPolicy is null
+            || privacyPolicy is null
+            || !string.Equals(termsPolicy.Version, termsVersion?.Trim(), StringComparison.Ordinal)
+            || !string.Equals(privacyPolicy.Version, privacyVersion?.Trim(), StringComparison.Ordinal))
+        {
+            return ServiceResult<RegistrationPolicySet>.Fail(
+                "The Terms or Privacy Policy changed. Review the current versions and try again.",
+                "registration_policy_version_changed",
+                StatusCodes.Status409Conflict);
+        }
+
+        return ServiceResult<RegistrationPolicySet>.Ok(new RegistrationPolicySet(termsPolicy, privacyPolicy));
     }
 
     private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();

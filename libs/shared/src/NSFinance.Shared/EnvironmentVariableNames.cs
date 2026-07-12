@@ -12,7 +12,9 @@ public static class EnvironmentVariableNames
     public const string GoogleClientSecret = "NSFINANCE_GOOGLE_CLIENT_SECRET";
     public const string GoogleRedirectUri = "NSFINANCE_GOOGLE_REDIRECT_URI";
     public const string EmailSenderAddress = "NSFINANCE_EMAIL_SENDER_ADDRESS";
-    public const string EmailTransportMode = "NSFINANCE_EMAIL_TRANSPORT_MODE";
+    public const string EmailEndpoint = "NSFINANCE_EMAIL_ENDPOINT";
+    public const string IdentityCodePepper = "NSFINANCE_IDENTITY_CODE_PEPPER";
+    public const string MicrosoftClientId = "NSFINANCE_MICROSOFT_CLIENT_ID";
     public const string TrueLayerClientId = "TRUELAYER_CLIENT_ID";
     public const string TrueLayerClientSecret = "TRUELAYER_CLIENT_SECRET";
     public const string TrueLayerRedirectUri = "TRUELAYER_REDIRECT_URI";

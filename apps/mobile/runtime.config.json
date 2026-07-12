@@ -5,6 +5,11 @@
     "webClientId": "205425768766-3688b2vlk03u2bn58rkv4in1p1cqdsrc.apps.googleusercontent.com",
     "androidClientId": "205425768766-8l75g6rfu2q71pamp685v8gi6bnjgl1f.apps.googleusercontent.com"
   },
+  "microsoftOAuth": {
+    "clientId": "c6469beb-92b8-4927-805a-01f685431449",
+    "authority": "https://login.microsoftonline.com/common/v2.0",
+    "scope": "api://c6469beb-92b8-4927-805a-01f685431449/access_as_user"
+  },
   "bankingAutoSyncIntervalMinutes": 10,
   "websiteUrl": "https://nsireland.ie"
 }

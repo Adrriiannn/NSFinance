@@ -29,7 +29,8 @@ public static class ConfirmPasswordChangeCodeEndpoint
         }
 
         var result = await authService.ConfirmPasswordChangeWithCodeAsync(
-            request.Code,
+            request.ChallengeId,
+            request.GrantToken,
             request.NewPassword,
             cancellationToken);
         if (!result.Succeeded)
