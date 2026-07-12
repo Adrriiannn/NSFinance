@@ -88,7 +88,7 @@ function Invoke-InShortBuildWorkspace {
     else {
         Join-Path $env:USERPROFILE "NFB"
     }
-    $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $workspaceParent "w"))
+    $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $workspaceParent "w-copy-v1"))
     $expectedPrefix = $workspaceParent.TrimEnd("\", "/") + [IO.Path]::DirectorySeparatorChar
     if (-not $workspaceRoot.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw "The Android build workspace must remain inside its configured parent directory."
@@ -132,6 +132,7 @@ function Invoke-InShortBuildWorkspace {
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pnpmVersion)) {
         throw "Unable to determine the pnpm version for the Android build workspace."
     }
+    $packageImportMethod = "copy"
 
     $dependencyFiles = @(
         (Join-Path $workspaceRoot "package.json"),
@@ -141,6 +142,7 @@ function Invoke-InShortBuildWorkspace {
     )
     $dependencyFingerprintSource = @(
         "pnpm=$pnpmVersion"
+        "packageImportMethod=$packageImportMethod"
         foreach ($dependencyFile in $dependencyFiles) {
             "$([IO.Path]::GetFileName($dependencyFile))=$((Get-FileHash -LiteralPath $dependencyFile -Algorithm SHA256).Hash)"
         }
@@ -156,16 +158,27 @@ function Invoke-InShortBuildWorkspace {
         (Join-Path $workspaceRoot "node_modules\react-native\package.json"),
         (Join-Path $workspaceRoot "node_modules\typescript\package.json")
     )
+    $requiredRegularDependencyFiles = @(
+        (Join-Path $workspaceRoot "node_modules\expo-modules-autolinking\android\expo-gradle-plugin\expo-autolinking-plugin-shared\src\main\kotlin\expo\modules\plugin\AutolinkigCommandBuilder.kt"),
+        (Join-Path $workspaceRoot "node_modules\@react-native\gradle-plugin\shared\src\main\kotlin\com\facebook\react\model\ModelAutolinkingAndroidProjectJson.kt")
+    )
     $dependenciesReady = $requiredDependencies.Count -eq @(
         $requiredDependencies | Where-Object { Test-Path -LiteralPath $_ }
+    ).Count
+    $dependenciesReady = $dependenciesReady -and $requiredRegularDependencyFiles.Count -eq @(
+        $requiredRegularDependencyFiles | Where-Object {
+            (Test-Path -LiteralPath $_) -and
+            -not ((Get-Item -Force -LiteralPath $_).Attributes -band [IO.FileAttributes]::ReparsePoint)
+        }
     ).Count
     if ($dependenciesReady -and (Test-Path -LiteralPath $dependencyMarkerPath)) {
         try {
             $dependencyMarker = Get-Content -LiteralPath $dependencyMarkerPath -Raw | ConvertFrom-Json
             $dependenciesReady = (
-                [int]$dependencyMarker.schemaVersion -eq 1 -and
+                [int]$dependencyMarker.schemaVersion -eq 2 -and
                 [string]$dependencyMarker.fingerprint -eq $dependencyFingerprint -and
-                [string]$dependencyMarker.pnpmVersion -eq $pnpmVersion
+                [string]$dependencyMarker.pnpmVersion -eq $pnpmVersion -and
+                [string]$dependencyMarker.packageImportMethod -eq $packageImportMethod
             )
         }
         catch {
@@ -202,7 +215,7 @@ function Invoke-InShortBuildWorkspace {
 
         Push-Location $workspaceRoot
         try {
-            & $pnpm install --frozen-lockfile --prefer-offline
+            & $pnpm install --frozen-lockfile --prefer-offline "--package-import-method=$packageImportMethod"
             if ($LASTEXITCODE -ne 0) {
                 throw "Unable to install the synchronized Android workspace dependencies."
             }
@@ -216,10 +229,19 @@ function Invoke-InShortBuildWorkspace {
                 throw "The synchronized Android workspace is missing dependency '$requiredDependency'."
             }
         }
+        foreach ($requiredRegularDependencyFile in $requiredRegularDependencyFiles) {
+            if (-not (Test-Path -LiteralPath $requiredRegularDependencyFile)) {
+                throw "The synchronized Android workspace is missing Gradle source '$requiredRegularDependencyFile'."
+            }
+            if ((Get-Item -Force -LiteralPath $requiredRegularDependencyFile).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "The synchronized Android workspace contains a reparse-point Gradle source '$requiredRegularDependencyFile'."
+            }
+        }
         $dependencyMarker = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             fingerprint = $dependencyFingerprint
             pnpmVersion = $pnpmVersion
+            packageImportMethod = $packageImportMethod
             installedAtUtc = [DateTime]::UtcNow.ToString("o")
         }
         [IO.File]::WriteAllText(
