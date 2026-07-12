@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
-import { AppState, type AppStateStatus } from "react-native";
+import { AppState } from "react-native";
 import {
   getCurrentUser,
   logout as logoutApi,
+  logoutWithAccessToken,
   refreshToken as refreshTokenApi
 } from "../features/auth/authApi";
 import { clearNativeGoogleSignInState } from "../features/auth/googleNativeSignIn";
@@ -14,6 +15,12 @@ import {
   writeBiometricPreference
 } from "../features/auth/biometricSecurity";
 import { clearPendingAuthFlows } from "../features/auth/pendingAuthFlow";
+import {
+  shouldOfferSessionProtection,
+  shouldRememberSession,
+  shouldReviewBiometricFallback,
+  shouldLockSessionForAppExit
+} from "../features/auth/sessionProtectionPolicy";
 import {
   setApiTokenResolver,
   setApiUnauthorizedHandler
@@ -41,16 +48,21 @@ type AuthContextValue = {
   biometricEnabled: boolean;
   biometricAvailable: boolean;
   biometricLabel: string;
-  biometricFailureCount: number;
   shouldOfferBiometrics: boolean;
+  shouldReviewBiometricAfterFallback: boolean;
+  allowAutomaticBiometricPrompt: boolean;
+  lockedAccountDisplayName: string | null;
   session: StoredSession | null;
   sessionMessage: string | null;
-  applyAuthTokenResponse: (response: AuthTokenResponse, rememberMe?: boolean) => Promise<void>;
+  applyAuthTokenResponse: (response: AuthTokenResponse, rememberSession?: boolean) => Promise<void>;
   refreshSessionUser: () => Promise<void>;
   unlockWithBiometrics: () => Promise<{ succeeded: boolean; message?: string }>;
   enableBiometrics: () => Promise<{ succeeded: boolean; message?: string }>;
   disableBiometrics: () => Promise<void>;
   declineBiometrics: () => Promise<void>;
+  keepBiometricsAfterFallback: () => Promise<void>;
+  signInAnotherWay: () => Promise<void>;
+  prepareForAppExit: () => void;
   logout: (reason?: string) => Promise<void>;
   clearSessionMessage: () => void;
   notifyUserInteraction: () => void;
@@ -71,14 +83,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricLabel, setBiometricLabel] = useState("biometrics");
-  const [biometricFailureCount, setBiometricFailureCount] = useState(0);
   const [shouldOfferBiometrics, setShouldOfferBiometrics] = useState(false);
+  const [shouldReviewBiometricAfterFallback, setShouldReviewBiometricAfterFallback] = useState(false);
+  const [allowAutomaticBiometricPrompt, setAllowAutomaticBiometricPrompt] = useState(true);
+  const [lockedAccountDisplayName, setLockedAccountDisplayName] = useState<string | null>(null);
   const accessTokenRef = useRef<string | null>(null);
   const sessionRef = useRef<StoredSession | null>(null);
+  const lockedSessionRef = useRef<StoredSession | null>(null);
   const rememberSessionRef = useRef(false);
   const biometricEnabledRef = useRef(false);
+  const allowAutomaticBiometricPromptRef = useRef(true);
   const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
   const logoutPromiseRef = useRef<Promise<void> | null>(null);
+  const biometricFallbackUserIdRef = useRef<string | null>(null);
 
   const clearSessionStorage = useCallback(async () => {
     try {
@@ -108,17 +125,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setIsAuthTransitioning(true);
         refreshPromiseRef.current = null;
 
-        const hadSession = Boolean(accessTokenRef.current);
-        const tokenBeforeClear = accessTokenRef.current;
+        const tokenBeforeClear = accessTokenRef.current ?? lockedSessionRef.current?.accessToken ?? null;
+        const hadSession = Boolean(tokenBeforeClear);
         accessTokenRef.current = null;
         sessionRef.current = null;
+        lockedSessionRef.current = null;
         rememberSessionRef.current = false;
         biometricEnabledRef.current = false;
+        allowAutomaticBiometricPromptRef.current = true;
         setSession(null);
         setIsAppLocked(false);
+        setLockedAccountDisplayName(null);
         setBiometricEnabled(false);
-        setBiometricFailureCount(0);
+        setAllowAutomaticBiometricPrompt(true);
         setShouldOfferBiometrics(false);
+        setShouldReviewBiometricAfterFallback(false);
         setApiTokenResolver(() => accessTokenRef.current);
         await clearSessionStorage();
         await clearNativeGoogleSignInState();
@@ -158,7 +179,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const applyAuthTokenResponse = useCallback(
-    async (response: AuthTokenResponse, rememberMe = true) => {
+    async (response: AuthTokenResponse, rememberSession?: boolean) => {
       const nextSession: StoredSession = {
         accessToken: response.accessToken,
         accessTokenExpiresAtUtc: response.accessTokenExpiresAtUtc,
@@ -168,28 +189,44 @@ export function AuthProvider({ children }: AuthProviderProps) {
         user: response.user
       };
 
+      const [availability, preference] = await Promise.all([
+        getBiometricAvailability(),
+        readBiometricPreference(response.user.id)
+      ]);
+      const preferenceEnabled = preference?.decision === "enabled";
+      const shouldRemember = shouldRememberSession({
+        explicitDecision: rememberSession,
+        biometricPreference: preference
+      });
+
       accessTokenRef.current = response.accessToken;
       sessionRef.current = nextSession;
-      rememberSessionRef.current = rememberMe;
+      rememberSessionRef.current = shouldRemember;
       setSession(nextSession);
       setApiTokenResolver(() => accessTokenRef.current);
       setSessionMessage(null);
       await persistSession(nextSession);
 
-      const [availability, preference] = await Promise.all([
-        getBiometricAvailability(),
-        readBiometricPreference(response.user.id)
-      ]);
-      const isEnabled = availability.available && preference?.decision === "enabled";
-      biometricEnabledRef.current = isEnabled;
       setBiometricAvailable(availability.available);
       setBiometricLabel(availability.label);
-      setBiometricEnabled(isEnabled);
-      setIsAppLocked(false);
-      setBiometricFailureCount(0);
-      setShouldOfferBiometrics(
-        rememberMe && availability.available && preference === null
-      );
+      setBiometricEnabled(preferenceEnabled);
+      biometricEnabledRef.current = preferenceEnabled;
+      if (!lockedSessionRef.current) {
+        setIsAppLocked(false);
+        setLockedAccountDisplayName(null);
+      }
+      setShouldOfferBiometrics(shouldOfferSessionProtection({
+        explicitDecision: rememberSession,
+        biometricAvailable: availability.available,
+        biometricPreference: preference
+      }));
+      const fallbackUserId = biometricFallbackUserIdRef.current;
+      biometricFallbackUserIdRef.current = null;
+      setShouldReviewBiometricAfterFallback(shouldReviewBiometricFallback({
+        fallbackUserId,
+        authenticatedUserId: response.user.id,
+        biometricPreference: preference
+      }));
     },
     [persistSession]
   );
@@ -258,7 +295,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [applyAuthTokenResponse, logout]);
 
   const unlockWithBiometrics = useCallback(async () => {
-    if (!sessionRef.current) {
+    const lockedSession = lockedSessionRef.current;
+    if (!lockedSession) {
       return { succeeded: false, message: "Sign in again to continue." };
     }
 
@@ -268,35 +306,59 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (!availability.available) {
       return {
         succeeded: false,
-        message: "Biometrics are unavailable. Use your password to sign in again."
+        message: "Biometrics are unavailable. Sign in another way to continue."
       };
     }
 
-    const result = await authenticateWithBiometrics("Unlock NSFinance");
+    const result = await authenticateWithBiometrics({
+      promptMessage: "Welcome back!",
+      promptDescription: "Use your fingerprint to log back into your account.",
+      cancelLabel: "Use another method"
+    });
     if (!result.success) {
-      if (result.error !== "user_cancel" && result.error !== "system_cancel" && result.error !== "app_cancel") {
-        setBiometricFailureCount((current) => current + 1);
-      }
+      const wasCancelled = ["user_cancel", "system_cancel", "app_cancel", "user_fallback"]
+        .includes(result.error);
       return {
         succeeded: false,
-        message: result.error === "user_cancel"
+        message: wasCancelled
           ? undefined
           : "Your identity could not be verified. Try again or use another method."
       };
     }
 
-    setBiometricFailureCount(0);
+    rememberSessionRef.current = true;
+    accessTokenRef.current = lockedSession.accessToken;
+    sessionRef.current = lockedSession;
+    setApiTokenResolver(() => accessTokenRef.current);
+
+    const accessExpiry = Date.parse(lockedSession.accessTokenExpiresAtUtc);
+    if (Number.isNaN(accessExpiry) || accessExpiry <= Date.now()) {
+      const refreshedToken = await refreshAccessToken();
+      if (!refreshedToken || !sessionRef.current) {
+        return {
+          succeeded: false,
+          message: "Your remembered session is no longer available. Sign in again to continue."
+        };
+      }
+    } else {
+      setSession(lockedSession);
+    }
+
+    lockedSessionRef.current = null;
+    allowAutomaticBiometricPromptRef.current = true;
+    setLockedAccountDisplayName(null);
     setIsAppLocked(false);
+    setAllowAutomaticBiometricPrompt(true);
     void refreshSessionUser();
     return { succeeded: true };
-  }, [refreshSessionUser]);
+  }, [refreshAccessToken, refreshSessionUser]);
 
   const enableBiometrics = useCallback(async () => {
     const current = sessionRef.current;
-    if (!current || !rememberSessionRef.current) {
+    if (!current) {
       return {
         succeeded: false,
-        message: "Turn on Remember me before enabling biometric unlock."
+        message: "Sign in again before enabling fingerprint unlock."
       };
     }
 
@@ -310,7 +372,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       };
     }
 
-    const result = await authenticateWithBiometrics("Use biometrics with NSFinance");
+    const result = await authenticateWithBiometrics({
+      promptMessage: "Use fingerprint with NSFinance",
+      promptDescription: "Confirm your fingerprint to protect this remembered session.",
+      cancelLabel: "Not now"
+    });
     if (!result.success) {
       return {
         succeeded: false,
@@ -318,45 +384,118 @@ export function AuthProvider({ children }: AuthProviderProps) {
       };
     }
 
-    await writeBiometricPreference({ userId: current.user.id, decision: "enabled" });
-    biometricEnabledRef.current = true;
-    setBiometricEnabled(true);
-    setShouldOfferBiometrics(false);
-    setBiometricFailureCount(0);
-    return { succeeded: true };
-  }, []);
+    try {
+      rememberSessionRef.current = true;
+      await persistSession(current);
+      await writeBiometricPreference({
+        userId: current.user.id,
+        decision: "enabled",
+        fallbackReviewDismissed: false
+      });
+      setBiometricEnabled(true);
+      biometricEnabledRef.current = true;
+      setShouldOfferBiometrics(false);
+      return { succeeded: true };
+    } catch {
+      rememberSessionRef.current = false;
+      await clearSessionStorage();
+      return {
+        succeeded: false,
+        message: "Fingerprint unlock could not be saved on this device."
+      };
+    }
+  }, [clearSessionStorage, persistSession]);
 
   const disableBiometrics = useCallback(async () => {
     const current = sessionRef.current;
     if (current) {
       await writeBiometricPreference({ userId: current.user.id, decision: "declined" });
     }
-    biometricEnabledRef.current = false;
+    rememberSessionRef.current = false;
+    await clearSessionStorage();
     setBiometricEnabled(false);
+    biometricEnabledRef.current = false;
     setIsAppLocked(false);
     setShouldOfferBiometrics(false);
-    setBiometricFailureCount(0);
-  }, []);
+    setShouldReviewBiometricAfterFallback(false);
+  }, [clearSessionStorage]);
 
   const declineBiometrics = useCallback(async () => {
     const current = sessionRef.current;
     if (current) {
       await writeBiometricPreference({ userId: current.user.id, decision: "declined" });
     }
-    biometricEnabledRef.current = false;
+    rememberSessionRef.current = false;
+    await clearSessionStorage();
     setBiometricEnabled(false);
+    biometricEnabledRef.current = false;
     setShouldOfferBiometrics(false);
+  }, [clearSessionStorage]);
+
+  const keepBiometricsAfterFallback = useCallback(async () => {
+    const current = sessionRef.current;
+    if (current) {
+      await writeBiometricPreference({
+        userId: current.user.id,
+        decision: "enabled",
+        fallbackReviewDismissed: true
+      });
+    }
+    setShouldReviewBiometricAfterFallback(false);
   }, []);
 
+  const signInAnotherWay = useCallback(async () => {
+    const lockedUserId = lockedSessionRef.current?.user.id ?? null;
+    await logout();
+    biometricFallbackUserIdRef.current = lockedUserId;
+  }, [logout]);
+
+  const prepareForAppExit = useCallback(() => {
+    const current = sessionRef.current;
+    if (!current) {
+      return;
+    }
+
+    void queryClient.cancelQueries();
+    queryClient.clear();
+
+    if (shouldLockSessionForAppExit({
+      rememberedSession: rememberSessionRef.current,
+      biometricEnabled: biometricEnabledRef.current
+    })) {
+      lockedSessionRef.current = current;
+      accessTokenRef.current = null;
+      sessionRef.current = null;
+      setSession(null);
+      setApiTokenResolver(() => null);
+      setLockedAccountDisplayName(current.user.displayName || current.user.fullName || null);
+      allowAutomaticBiometricPromptRef.current = false;
+      setAllowAutomaticBiometricPrompt(false);
+      setIsAppLocked(true);
+      return;
+    }
+
+    const accessToken = current.accessToken;
+    accessTokenRef.current = null;
+    sessionRef.current = null;
+    rememberSessionRef.current = false;
+    setSession(null);
+    setShouldOfferBiometrics(false);
+    setShouldReviewBiometricAfterFallback(false);
+    setApiTokenResolver(() => null);
+    void clearSessionStorage();
+    void logoutWithAccessToken(accessToken).catch(() => undefined);
+  }, [clearSessionStorage]);
+
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
       if (
-        nextState !== "active"
-        && biometricEnabledRef.current
-        && rememberSessionRef.current
-        && sessionRef.current
+        nextState === "active"
+        && lockedSessionRef.current
+        && !allowAutomaticBiometricPromptRef.current
       ) {
-        setIsAppLocked(true);
+        allowAutomaticBiometricPromptRef.current = true;
+        setAllowAutomaticBiometricPrompt(true);
       }
     });
 
@@ -394,12 +533,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
           return;
         }
 
-        rememberSessionRef.current = true;
-        accessTokenRef.current = parsed.accessToken;
-        sessionRef.current = parsed;
-        setSession(parsed);
-        setApiTokenResolver(() => accessTokenRef.current);
-
         const [availability, preference] = await Promise.all([
           getBiometricAvailability(),
           readBiometricPreference(parsed.user.id)
@@ -411,10 +544,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setBiometricEnabled(preferenceEnabled);
         setShouldOfferBiometrics(availability.available && preference === null);
 
+        if (preference?.decision === "declined") {
+          await clearSessionStorage();
+          return;
+        }
+
         if (preferenceEnabled) {
+          rememberSessionRef.current = true;
+          lockedSessionRef.current = parsed;
+          setLockedAccountDisplayName(parsed.user.displayName || parsed.user.fullName || null);
           setIsAppLocked(true);
           return;
         }
+
+        rememberSessionRef.current = true;
+        accessTokenRef.current = parsed.accessToken;
+        sessionRef.current = parsed;
+        setSession(parsed);
+        setApiTokenResolver(() => accessTokenRef.current);
 
         const accessExpiry = Date.parse(parsed.accessTokenExpiresAtUtc);
         if (Number.isNaN(accessExpiry) || accessExpiry <= Date.now()) {
@@ -438,11 +585,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         await clearSessionStorage();
         accessTokenRef.current = null;
         sessionRef.current = null;
+        lockedSessionRef.current = null;
         rememberSessionRef.current = false;
         biometricEnabledRef.current = false;
         setSession(null);
         setIsAppLocked(false);
+        setLockedAccountDisplayName(null);
         setBiometricEnabled(false);
+        setShouldReviewBiometricAfterFallback(false);
       } finally {
         setIsBootstrapping(false);
       }
@@ -460,8 +610,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       biometricEnabled,
       biometricAvailable,
       biometricLabel,
-      biometricFailureCount,
       shouldOfferBiometrics,
+      shouldReviewBiometricAfterFallback,
+      allowAutomaticBiometricPrompt,
+      lockedAccountDisplayName,
       session,
       sessionMessage,
       applyAuthTokenResponse,
@@ -470,15 +622,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
       enableBiometrics,
       disableBiometrics,
       declineBiometrics,
+      keepBiometricsAfterFallback,
+      signInAnotherWay,
+      prepareForAppExit,
       logout,
       clearSessionMessage: () => setSessionMessage(null),
       notifyUserInteraction
     }),
     [
       applyAuthTokenResponse,
+      allowAutomaticBiometricPrompt,
       biometricAvailable,
       biometricEnabled,
-      biometricFailureCount,
       biometricLabel,
       declineBiometrics,
       disableBiometrics,
@@ -487,10 +642,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isBootstrapping,
       isAuthTransitioning,
       isAppLocked,
+      keepBiometricsAfterFallback,
+      lockedAccountDisplayName,
       logout,
       notifyUserInteraction,
+      prepareForAppExit,
       session,
       sessionMessage,
+      shouldReviewBiometricAfterFallback,
+      signInAnotherWay,
       shouldOfferBiometrics,
       unlockWithBiometrics
     ]

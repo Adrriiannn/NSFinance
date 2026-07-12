@@ -21,7 +21,7 @@ import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
 import type { AuthFlowResponse } from "../../src/types/api";
-import { controls, palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
+import { palette, spacing, typography, createRuntimeStyleSheet } from "../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"email" | "password", string>>;
 type FocusField = "email" | "password" | null;
@@ -274,7 +274,6 @@ export default function LoginScreen() {
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
-  const [rememberMe, setRememberMe] = useState(false);
   const [loginErrorBanner, setLoginErrorBanner] = useState<LoginErrorBannerState | null>(null);
   const [countdownNowMs, setCountdownNowMs] = useState(Date.now());
 
@@ -474,7 +473,7 @@ export default function LoginScreen() {
 
   const completeAuthFlow = async (flow: AuthFlowResponse, verificationEmail?: string) => {
     if (flow.status === "authenticated" && flow.session) {
-      await applyAuthTokenResponse(flow.session, rememberMe);
+      await applyAuthTokenResponse(flow.session);
       playSuccess();
       router.replace("/(tabs)");
       return;
@@ -483,15 +482,14 @@ export default function LoginScreen() {
     if (flow.status === "email_verification_required" && flow.emailVerification) {
       stageEmailVerification({
         ...flow.emailVerification,
-        email: verificationEmail,
-        rememberMe
+        email: verificationEmail
       });
       router.push("/(auth)/verify-email" as never);
       return;
     }
 
     if (flow.status === "mfa_required" && flow.mfaChallenge) {
-      stageMfaLogin({ ...flow.mfaChallenge, rememberMe });
+      stageMfaLogin(flow.mfaChallenge);
       router.push("/(auth)/mfa" as never);
       return;
     }
@@ -695,30 +693,7 @@ export default function LoginScreen() {
                 {shouldShowCaptcha ? <CaptchaGate token={captchaToken} onTokenChange={setCaptchaToken} showLabel={false} /> : null}
 
                 <View style={styles.narrowBlock}>
-                  <View style={styles.rememberMeRow}>
-                    <View style={styles.rememberMeLeft}>
-                      <Pressable
-                        accessibilityRole="checkbox"
-                        accessibilityState={{ checked: rememberMe }}
-                        onPress={() => setRememberMe((current) => !current)}
-                        style={({ pressed }) => [
-                          styles.rememberMeCheckbox,
-                          rememberMe ? styles.rememberMeCheckboxChecked : null,
-                          pressed ? styles.rememberMeCheckboxPressed : null
-                        ]}
-                      >
-                        {rememberMe ? <Ionicons name="checkmark" size={14} color={palette.primary} /> : null}
-                      </Pressable>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Remember me"
-                        onPress={() => setRememberMe((current) => !current)}
-                        style={({ pressed }) => [pressed ? styles.linkPressed : null]}
-                      >
-                        <Text style={styles.rememberMeLabel}>Remember me</Text>
-                      </Pressable>
-                    </View>
-
+                  <View style={styles.accountHelpRow}>
                     <Pressable
                       onPress={() => router.push("/forgot-password" as never)}
                       style={({ pressed }) => [pressed ? styles.linkPressed : null]}
@@ -874,39 +849,11 @@ const styles = createRuntimeStyleSheet(() => ({
   authFieldInput: {
     paddingVertical: 8
   },
-  rememberMeRow: {
+  accountHelpRow: {
     minHeight: 28,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing[10]
-  },
-  rememberMeLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[10]
-  },
-  rememberMeCheckbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: palette.borderStrong,
-    backgroundColor: "transparent",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  rememberMeCheckboxPressed: {
-    opacity: 0.86
-  },
-  rememberMeCheckboxChecked: {
-    borderColor: palette.primary,
-    backgroundColor: controls.activeFill
-  },
-  rememberMeLabel: {
-    color: palette.textPrimary,
-    ...typography.body2,
-    fontWeight: "600"
+    justifyContent: "flex-end"
   },
   ctaGroup: {
     marginTop: spacing[16],

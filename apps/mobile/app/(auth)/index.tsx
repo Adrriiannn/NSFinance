@@ -38,20 +38,20 @@ export default function AuthEntryScreen() {
 
     const flow = result.flow;
     if (flow?.status === "authenticated" && flow.session) {
-      await applyAuthTokenResponse(flow.session, true);
+      await applyAuthTokenResponse(flow.session);
       playSuccess();
       router.replace("/(tabs)");
       return;
     }
 
     if (flow?.status === "email_verification_required" && flow.emailVerification) {
-      stageEmailVerification({ ...flow.emailVerification, rememberMe: true });
+      stageEmailVerification(flow.emailVerification);
       router.push("/(auth)/verify-email" as never);
       return;
     }
 
     if (flow?.status === "mfa_required" && flow.mfaChallenge) {
-      stageMfaLogin({ ...flow.mfaChallenge, rememberMe: true });
+      stageMfaLogin(flow.mfaChallenge);
       router.push("/(auth)/mfa" as never);
       return;
     }
@@ -77,20 +77,20 @@ export default function AuthEntryScreen() {
 
     const flow = result.flow;
     if (flow?.status === "authenticated" && flow.session) {
-      await applyAuthTokenResponse(flow.session, true);
+      await applyAuthTokenResponse(flow.session);
       playSuccess();
       router.replace("/(tabs)");
       return;
     }
 
     if (flow?.status === "email_verification_required" && flow.emailVerification) {
-      stageEmailVerification({ ...flow.emailVerification, rememberMe: true });
+      stageEmailVerification(flow.emailVerification);
       router.push("/(auth)/verify-email" as never);
       return;
     }
 
     if (flow?.status === "mfa_required" && flow.mfaChallenge) {
-      stageMfaLogin({ ...flow.mfaChallenge, rememberMe: true });
+      stageMfaLogin(flow.mfaChallenge);
       router.push("/(auth)/mfa" as never);
       return;
     }

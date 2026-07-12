@@ -6,6 +6,7 @@ const BIOMETRIC_PREFERENCE_KEY = "nsfinance.auth.biometric.preference";
 export type BiometricPreference = {
   userId: string;
   decision: "enabled" | "declined";
+  fallbackReviewDismissed?: boolean;
 };
 
 export type BiometricAvailability = {
@@ -57,11 +58,21 @@ export async function writeBiometricPreference(preference: BiometricPreference) 
   await SecureStore.setItemAsync(BIOMETRIC_PREFERENCE_KEY, JSON.stringify(preference));
 }
 
-export async function authenticateWithBiometrics(promptMessage: string) {
+export async function authenticateWithBiometrics({
+  promptMessage,
+  promptDescription,
+  cancelLabel
+}: {
+  promptMessage: string;
+  promptDescription: string;
+  cancelLabel: string;
+}) {
   return LocalAuthentication.authenticateAsync({
     promptMessage,
-    cancelLabel: "Use another method",
+    promptDescription,
+    cancelLabel,
     disableDeviceFallback: true,
-    biometricsSecurityLevel: "strong"
+    biometricsSecurityLevel: "strong",
+    requireConfirmation: true
   });
 }

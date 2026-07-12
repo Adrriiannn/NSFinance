@@ -316,13 +316,13 @@ export default function SecuritySettingsScreen() {
   const updateBiometricSetting = async (enabled: boolean) => {
     if (!enabled) {
       await disableBiometrics();
-      showFlashMessage("Biometric unlock turned off.", { tone: "info" });
+      showFlashMessage("Fingerprint unlock and remembered sign-in turned off.", { tone: "info" });
       return;
     }
 
     const result = await enableBiometrics();
     if (result.succeeded) {
-      showFlashMessage("Biometric unlock is ready.", { tone: "success" });
+      showFlashMessage("Fingerprint unlock and remembered sign-in are ready.", { tone: "success" });
     } else if (result.message) {
       showFlashMessage(result.message, { tone: "error", durationMs: 3200 });
     }
@@ -584,7 +584,9 @@ export default function SecuritySettingsScreen() {
                 {biometricLabel === "fingerprint" ? "Fingerprint unlock" : "Biometric unlock"}
               </Text>
               <Text style={styles.metaLine}>
-                {biometricAvailable ? "Protects remembered sessions on this phone." : "Set up biometrics in Android settings."}
+                {biometricAvailable
+                  ? "Keeps this phone signed in and protects the next app launch."
+                  : "Set up biometrics in Android settings."}
               </Text>
             </View>
             <Switch

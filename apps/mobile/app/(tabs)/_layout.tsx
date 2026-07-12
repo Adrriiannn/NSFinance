@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Redirect, Tabs } from "expo-router";
+import { Redirect, Tabs, useSegments } from "expo-router";
 import { useEffect, useState } from "react";
+import { BackHandler, Platform, StyleSheet, View } from "react-native";
 import { PremiumTabBar } from "../../src/components/layout/PremiumTabBar";
 import { LocationPermissionPromptModal } from "../../src/features/ai/location/LocationPermissionPromptModal";
+import { canRenderProtectedRoutes } from "../../src/features/auth/sessionProtectionPolicy";
 import {
   getLocationUxState,
   markBootExplainerShown,
@@ -13,8 +15,9 @@ import { useAuthSession } from "../../src/providers/AuthProvider";
 import { useThemeRuntime } from "../../src/theme/runtime/ThemeRuntimeProvider";
 
 export default function TabsLayout() {
-  const { isBootstrapping, isAuthenticated } = useAuthSession();
+  const { isBootstrapping, isAuthenticated, isAppLocked, prepareForAppExit } = useAuthSession();
   const { theme } = useThemeRuntime();
+  const segments = useSegments();
   const [bootLocationPromptVisible, setBootLocationPromptVisible] = useState(false);
   const [bootPromptBusy, setBootPromptBusy] = useState(false);
 
@@ -66,7 +69,32 @@ export default function TabsLayout() {
     }
   };
 
-  if (!isBootstrapping && !isAuthenticated) {
+  const canRenderTabs = canRenderProtectedRoutes({
+    isBootstrapping,
+    isLocked: isAppLocked,
+    isAuthenticated
+  });
+  const isTopLevelTabRoute = segments[0] === "(tabs)" && segments.length <= 2;
+
+  useEffect(() => {
+    if (Platform.OS !== "android" || !canRenderTabs || !isTopLevelTabRoute) {
+      return;
+    }
+
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      prepareForAppExit();
+      requestAnimationFrame(() => BackHandler.exitApp());
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [canRenderTabs, isTopLevelTabRoute, prepareForAppExit]);
+
+  if (!canRenderTabs && (isBootstrapping || isAppLocked)) {
+    return <View style={[styles.secureBoundary, { backgroundColor: theme.colors.canvas }]} />;
+  }
+
+  if (!canRenderTabs) {
     return <Redirect href={"/login" as never} />;
   }
 
@@ -186,4 +214,10 @@ export default function TabsLayout() {
     </AdaptiveAppShell>
   );
 }
+
+const styles = StyleSheet.create({
+  secureBoundary: {
+    flex: 1
+  }
+});
 

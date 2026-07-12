@@ -95,6 +95,15 @@ export function logout(): Promise<void> {
   });
 }
 
+export function logoutWithAccessToken(accessToken: string): Promise<void> {
+  return apiRequest<void>("/api/auth/logout", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+}
+
 export function logoutAll(): Promise<{ revokedSessions: number }> {
   return apiRequest<{ revokedSessions: number }>("/api/auth/logout-all", {
     method: "POST"
