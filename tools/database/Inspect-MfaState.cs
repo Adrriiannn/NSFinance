@@ -114,6 +114,28 @@ try
                   AND "ConsumedUtc" IS NULL
                   AND "SupersededUtc" IS NULL
                   AND "ExpiresUtc" > timezone('utc', now())
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "MfaTrustedDevices"
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "MfaTrustedDevices"
+                WHERE "RevokedUtc" IS NULL
+                  AND "ExpiresUtc" > timezone('utc', now())
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "MfaTrustedDevices"
+                WHERE "RevokedUtc" IS NULL
+                  AND "ExpiresUtc" <= timezone('utc', now())
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "MfaTrustedDevices" AS trusted
+                JOIN "Devices" AS devices ON devices."Id" = trusted."DeviceId"
+                WHERE trusted."UserId" <> devices."UserId"
             )
         """;
 
@@ -134,6 +156,10 @@ try
     Console.WriteLine($"mfaSessionResumeChallengesLast24Hours={reader.GetInt64(9)}");
     Console.WriteLine($"mfaSessionResumeChallengesConsumed={reader.GetInt64(10)}");
     Console.WriteLine($"mfaSessionResumeChallengesOpen={reader.GetInt64(11)}");
+    Console.WriteLine($"mfaTrustedDevicesTotal={reader.GetInt64(12)}");
+    Console.WriteLine($"mfaTrustedDevicesActive={reader.GetInt64(13)}");
+    Console.WriteLine($"mfaTrustedDevicesExpiredUnrevoked={reader.GetInt64(14)}");
+    Console.WriteLine($"mfaTrustedDeviceBindingMismatches={reader.GetInt64(15)}");
 
     await reader.DisposeAsync();
     await transaction.CommitAsync(timeout.Token);

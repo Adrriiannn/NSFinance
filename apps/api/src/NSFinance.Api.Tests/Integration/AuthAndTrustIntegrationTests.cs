@@ -665,9 +665,11 @@ public class AuthAndTrustIntegrationTests
                 recoveryFirstFactor.Value.MfaChallenge.ChallengeToken,
                 recoveryCode,
                 "recovery_code",
-                null),
+                new DeviceContextDto("recovery-device", "Recovery Phone", "android", "16", "1.0.3"),
+                RememberDevice: true),
             CancellationToken.None);
         Assert.True(recoveryResult.Succeeded);
+        Assert.Null(recoveryResult.Value!.MfaTrustedDevice);
 
         var reuseFirstFactor = await harness.AuthService.LoginAsync(
             new LoginRequest("mfa.flow@test.local", "ValidPassword123", null),
@@ -812,9 +814,177 @@ public class AuthAndTrustIntegrationTests
     }
 
     [Fact]
+    public async Task MfaTrustedDevice_SkipsOnlyTheSameAccountsMfaOnTheSameDeviceUntilExpiry()
+    {
+        await using var harness = new TestHarness();
+        var deviceA = new DeviceContextDto("trusted-device-a", "Phone A", "android", "16", "1.0.3");
+        var deviceB = new DeviceContextDto("trusted-device-b", "Phone B", "android", "16", "1.0.3");
+        var registered = await harness.RegisterAsync("trusted.mfa@test.local", "ValidPassword123");
+        var totp = await EnableTotpAsync(harness, registered.Value);
+
+        var firstFactor = await harness.AuthService.LoginAsync(
+            new LoginRequest("trusted.mfa@test.local", "ValidPassword123", deviceA),
+            CancellationToken.None);
+        var verified = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                firstFactor.Value!.MfaChallenge!.ChallengeId,
+                firstFactor.Value.MfaChallenge.ChallengeToken,
+                totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30)),
+                "totp",
+                deviceA,
+                RememberDevice: true),
+            CancellationToken.None);
+
+        Assert.True(verified.Succeeded);
+        var trustedCredential = Assert.IsType<MfaTrustedDeviceCredentialResponse>(
+            verified.Value!.MfaTrustedDevice);
+        var storedCredential = await harness.DbContext.MfaTrustedDevices
+            .Include(x => x.Device)
+            .SingleAsync();
+        Assert.Equal(harness.TokenSecretService.HashToken(trustedCredential.Token), storedCredential.TokenHash);
+        Assert.NotEqual(trustedCredential.Token, storedCredential.TokenHash);
+        Assert.Equal("trusted-device-a", storedCredential.Device!.DeviceFingerprint);
+        Assert.InRange(
+            trustedCredential.ExpiresUtc,
+            DateTime.UtcNow.AddDays(29.9),
+            DateTime.UtcNow.AddDays(30.1));
+
+        var sameAccountAndDevice = await harness.AuthService.LoginAsync(
+            new LoginRequest(
+                "trusted.mfa@test.local",
+                "ValidPassword123",
+                deviceA,
+                MfaTrustedDeviceToken: trustedCredential.Token),
+            CancellationToken.None);
+        Assert.True(sameAccountAndDevice.Succeeded);
+        Assert.Equal("authenticated", sameAccountAndDevice.Value!.Status);
+
+        var wrongDevice = await harness.AuthService.LoginAsync(
+            new LoginRequest(
+                "trusted.mfa@test.local",
+                "ValidPassword123",
+                deviceB,
+                MfaTrustedDeviceToken: trustedCredential.Token),
+            CancellationToken.None);
+        Assert.True(wrongDevice.Succeeded);
+        Assert.Equal("mfa_required", wrongDevice.Value!.Status);
+
+        var otherAccount = await harness.RegisterAsync("trusted.other@test.local", "ValidPassword123");
+        await EnableTotpAsync(harness, otherAccount.Value);
+        var wrongAccount = await harness.AuthService.LoginAsync(
+            new LoginRequest(
+                "trusted.other@test.local",
+                "ValidPassword123",
+                deviceA,
+                MfaTrustedDeviceToken: trustedCredential.Token),
+            CancellationToken.None);
+        Assert.True(wrongAccount.Succeeded);
+        Assert.Equal("mfa_required", wrongAccount.Value!.Status);
+
+        storedCredential.ExpiresUtc = DateTime.UtcNow.AddSeconds(-1);
+        await harness.DbContext.SaveChangesAsync();
+        var expired = await harness.AuthService.LoginAsync(
+            new LoginRequest(
+                "trusted.mfa@test.local",
+                "ValidPassword123",
+                deviceA,
+                MfaTrustedDeviceToken: trustedCredential.Token),
+            CancellationToken.None);
+        Assert.True(expired.Succeeded);
+        Assert.Equal("mfa_required", expired.Value!.Status);
+        Assert.Equal("expired", storedCredential.RevocationReason);
+    }
+
+    [Fact]
+    public async Task MfaTrustedDevice_ResumesAndRotatesOnlyTheMatchingRememberedSession()
+    {
+        await using var harness = new TestHarness();
+        var device = new DeviceContextDto("trusted-resume", "Trusted Phone", "android", "16", "1.0.3");
+        var otherDevice = new DeviceContextDto("trusted-resume-other", "Other Phone", "android", "16", "1.0.3");
+        var registered = await harness.RegisterAsync("trusted.resume@test.local", "ValidPassword123");
+        var totp = await EnableTotpAsync(harness, registered.Value);
+        var firstFactor = await harness.AuthService.LoginAsync(
+            new LoginRequest("trusted.resume@test.local", "ValidPassword123", device),
+            CancellationToken.None);
+        var verified = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                firstFactor.Value!.MfaChallenge!.ChallengeId,
+                firstFactor.Value.MfaChallenge.ChallengeToken,
+                totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30)),
+                "totp",
+                device,
+                RememberDevice: true),
+            CancellationToken.None);
+        var credential = verified.Value!.MfaTrustedDevice!;
+
+        var resumed = await harness.AuthService.ResumeRememberedSessionWithTrustedDeviceAsync(
+            new ResumeRememberedSessionWithTrustedDeviceRequest(
+                verified.Value.RefreshToken,
+                credential.Token,
+                device),
+            CancellationToken.None);
+        Assert.True(resumed.Succeeded);
+        Assert.Equal(verified.Value.SessionId, resumed.Value!.SessionId);
+        Assert.NotEqual(verified.Value.RefreshToken, resumed.Value.RefreshToken);
+
+        var wrongDevice = await harness.AuthService.ResumeRememberedSessionWithTrustedDeviceAsync(
+            new ResumeRememberedSessionWithTrustedDeviceRequest(
+                resumed.Value.RefreshToken,
+                credential.Token,
+                otherDevice),
+            CancellationToken.None);
+        Assert.False(wrongDevice.Succeeded);
+        Assert.Equal("mfa_trusted_device_invalid", wrongDevice.Error?.Code);
+        Assert.Null((await harness.DbContext.SessionRefreshTokens.SingleAsync(
+            x => x.TokenHash == harness.TokenSecretService.HashToken(resumed.Value.RefreshToken))).UsedUtc);
+    }
+
+    [Fact]
+    public async Task MfaTrustedDevice_DisablingAuthenticatorRevokesDeviceTrust()
+    {
+        await using var harness = new TestHarness();
+        var device = new DeviceContextDto("trusted-disable", "Trusted Phone", "android", "16", "1.0.3");
+        var registered = await harness.RegisterAsync("trusted.disable@test.local", "ValidPassword123");
+        var totp = await EnableTotpAsync(harness, registered.Value);
+        var firstFactor = await harness.AuthService.LoginAsync(
+            new LoginRequest("trusted.disable@test.local", "ValidPassword123", device),
+            CancellationToken.None);
+        var verified = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                firstFactor.Value!.MfaChallenge!.ChallengeId,
+                firstFactor.Value.MfaChallenge.ChallengeToken,
+                totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30)),
+                "totp",
+                device,
+                RememberDevice: true),
+            CancellationToken.None);
+        Assert.NotNull(verified.Value!.MfaTrustedDevice);
+
+        var authenticator = await harness.DbContext.TotpAuthenticators.SingleAsync(
+            x => x.UserId == registered.User.Id && x.DisabledUtc == null);
+        authenticator.LastAcceptedTimeStep = null;
+        await harness.DbContext.SaveChangesAsync();
+        harness.CurrentUserProvider.Set(registered.User.Id, verified.Value.SessionId);
+        var disabled = await harness.MfaService.DisableAsync(
+            new DisableMfaRequest(
+                totp.ComputeTotp(),
+                "totp"),
+            CancellationToken.None);
+
+        Assert.True(disabled.Succeeded);
+        var credential = await harness.DbContext.MfaTrustedDevices
+            .Include(x => x.Device)
+            .SingleAsync();
+        Assert.NotNull(credential.RevokedUtc);
+        Assert.Equal("mfa_disabled", credential.RevocationReason);
+        Assert.False(credential.Device!.IsTrusted);
+    }
+
+    [Fact]
     public async Task GoogleLogin_EnabledTotp_BlocksFreshProviderLoginBeforeSessionIssuance()
     {
         await using var harness = new TestHarness();
+        var device = new DeviceContextDto("google-trusted-device", "Google Phone", "android", "16", "1.0.3");
         var payload = CreateGooglePayload(
             "sub-google-mfa",
             "google.mfa@test.local",
@@ -832,12 +1002,12 @@ public class AuthAndTrustIntegrationTests
             CancellationToken.None);
         Assert.True(initialLogin.Succeeded);
         Assert.Equal("authenticated", initialLogin.Value!.Status);
-        await EnableTotpAsync(harness, initialLogin.Value.Session!);
+        var totp = await EnableTotpAsync(harness, initialLogin.Value.Session!);
 
         var sessionCountBeforeFreshLogin = await harness.DbContext.Sessions.CountAsync();
         harness.ConfigureGoogleToken("google-mfa-fresh-token", payload);
         var freshLogin = await harness.AuthService.LoginWithGoogleAsync(
-            new GoogleLoginRequest("google-mfa-fresh-token", null),
+            new GoogleLoginRequest("google-mfa-fresh-token", device),
             CancellationToken.None);
 
         Assert.True(freshLogin.Succeeded);
@@ -845,12 +1015,33 @@ public class AuthAndTrustIntegrationTests
         Assert.Null(freshLogin.Value.Session);
         Assert.NotNull(freshLogin.Value.MfaChallenge);
         Assert.Equal(sessionCountBeforeFreshLogin, await harness.DbContext.Sessions.CountAsync());
+
+        var verified = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                freshLogin.Value.MfaChallenge!.ChallengeId,
+                freshLogin.Value.MfaChallenge.ChallengeToken,
+                totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30)),
+                "totp",
+                device,
+                RememberDevice: true),
+            CancellationToken.None);
+        var trustedToken = verified.Value!.MfaTrustedDevice!.Token;
+        harness.ConfigureGoogleToken("google-mfa-trusted-token", payload);
+        var trustedLogin = await harness.AuthService.LoginWithGoogleAsync(
+            new GoogleLoginRequest(
+                "google-mfa-trusted-token",
+                device,
+                MfaTrustedDeviceToken: trustedToken),
+            CancellationToken.None);
+        Assert.True(trustedLogin.Succeeded);
+        Assert.Equal("authenticated", trustedLogin.Value!.Status);
     }
 
     [Fact]
     public async Task MicrosoftLogin_EnabledTotp_BlocksFreshProviderLoginBeforeSessionIssuance()
     {
         await using var harness = new TestHarness();
+        var device = new DeviceContextDto("microsoft-trusted-device", "Microsoft Phone", "android", "16", "1.0.3");
         var principal = CreateMicrosoftPrincipal(
             tenantId: "tenant-mfa",
             objectId: "object-mfa",
@@ -877,12 +1068,12 @@ public class AuthAndTrustIntegrationTests
                 null),
             CancellationToken.None);
         Assert.True(confirmed.Succeeded);
-        await EnableTotpAsync(harness, confirmed.Value!);
+        var totp = await EnableTotpAsync(harness, confirmed.Value!);
 
         var sessionCountBeforeFreshLogin = await harness.DbContext.Sessions.CountAsync();
         harness.ConfigureMicrosoftToken("microsoft-mfa-fresh-token", principal);
         var freshLogin = await harness.AuthService.LoginWithMicrosoftAsync(
-            new MicrosoftLoginRequest("microsoft-mfa-fresh-token", null),
+            new MicrosoftLoginRequest("microsoft-mfa-fresh-token", device),
             CancellationToken.None);
 
         Assert.True(freshLogin.Succeeded);
@@ -890,6 +1081,26 @@ public class AuthAndTrustIntegrationTests
         Assert.Null(freshLogin.Value.Session);
         Assert.NotNull(freshLogin.Value.MfaChallenge);
         Assert.Equal(sessionCountBeforeFreshLogin, await harness.DbContext.Sessions.CountAsync());
+
+        var verified = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                freshLogin.Value.MfaChallenge!.ChallengeId,
+                freshLogin.Value.MfaChallenge.ChallengeToken,
+                totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30)),
+                "totp",
+                device,
+                RememberDevice: true),
+            CancellationToken.None);
+        var trustedToken = verified.Value!.MfaTrustedDevice!.Token;
+        harness.ConfigureMicrosoftToken("microsoft-mfa-trusted-token", principal);
+        var trustedLogin = await harness.AuthService.LoginWithMicrosoftAsync(
+            new MicrosoftLoginRequest(
+                "microsoft-mfa-trusted-token",
+                device,
+                MfaTrustedDeviceToken: trustedToken),
+            CancellationToken.None);
+        Assert.True(trustedLogin.Succeeded);
+        Assert.Equal("authenticated", trustedLogin.Value!.Status);
     }
 
     [Fact]
@@ -1127,6 +1338,7 @@ public class AuthAndTrustIntegrationTests
         public StubGoogleIdTokenVerifier GoogleIdTokenVerifier { get; }
         public StubMicrosoftAccessTokenVerifier MicrosoftAccessTokenVerifier { get; }
         public TotpMfaService MfaService { get; }
+        public MfaTrustedDeviceService TrustedDeviceService { get; }
         public AuthService AuthService { get; }
         public UserService UserService { get; }
         public PolicyService PolicyService { get; }
@@ -1214,12 +1426,17 @@ public class AuthAndTrustIntegrationTests
                 jwtOptions,
                 requestContext,
                 NullLogger<SessionService>.Instance);
+            TrustedDeviceService = new MfaTrustedDeviceService(
+                DbContext,
+                TokenSecretService,
+                identityOptions);
             MfaService = new TotpMfaService(
                 DbContext,
                 CurrentUserProvider,
                 new MfaSecretProtector(dataProtectionProvider),
                 IdentityCodeService,
                 TokenSecretService,
+                TrustedDeviceService,
                 auditService,
                 identityOptions);
 
@@ -1232,6 +1449,7 @@ public class AuthAndTrustIntegrationTests
                 challengeService,
                 messageService,
                 MfaService,
+                TrustedDeviceService,
                 CurrentUserProvider,
                 new AuthAbuseService(DbContext, jwtOptions),
                 auditService,

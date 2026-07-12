@@ -11,5 +11,6 @@ public sealed class IdentitySecurityOptions
     public int ResendCooldownSeconds { get; set; } = 60;
     public int MaxCodeAttempts { get; set; } = 5;
     public int RecoveryCodeCount { get; set; } = 10;
+    public int MfaTrustedDeviceLifetimeDays { get; set; } = 30;
     public string TotpIssuer { get; set; } = "NSFinance";
 }

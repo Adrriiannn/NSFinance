@@ -1,6 +1,7 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, BackHandler, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, Pressable, StyleSheet, Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import {
   OtpCodeField,
@@ -44,6 +45,7 @@ export default function MfaScreen() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [canRetry, setCanRetry] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(false);
   const [isRememberedSessionPending, setIsRememberedSessionPending] = useState(false);
   const codeFieldRef = useRef<OtpCodeFieldHandle | null>(null);
   const lastAttemptKeyRef = useRef<string | null>(null);
@@ -121,14 +123,18 @@ export default function MfaScreen() {
         challengeToken: pending.challengeToken,
         code: code.trim(),
         method,
-        deviceContext: buildDeviceContext()
+        deviceContext: buildDeviceContext(),
+        rememberDevice: method === "totp" && rememberDevice
       };
       if (pending.context === "remembered_session") {
         setIsRememberedSessionPending(true);
         await completeRememberedSessionMfa(request);
       } else {
         const session = await verifyMutation.mutateAsync(request);
-        await applyAuthTokenResponse(session, pending.rememberSession);
+        await applyAuthTokenResponse(session, {
+          rememberSession: pending.rememberSession,
+          completedViaMfa: true
+        });
       }
       clearPendingMfaLogin();
       playSuccess();
@@ -161,6 +167,7 @@ export default function MfaScreen() {
     method,
     pending,
     playSuccess,
+    rememberDevice,
     verifyMutation
   ]);
 
@@ -256,6 +263,26 @@ export default function MfaScreen() {
         </View>
 
         {method === "totp" ? (
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: rememberDevice }}
+            accessibilityLabel="Remember this device for 30 days"
+            onPress={() => setRememberDevice((current) => !current)}
+            style={({ pressed }) => [styles.rememberDevice, pressed ? styles.pressed : null]}
+          >
+            <View style={[
+              styles.checkbox,
+              rememberDevice ? styles.checkboxChecked : null
+            ]}>
+              {rememberDevice ? (
+                <Ionicons name="checkmark" size={14} color={palette.appBackground} />
+              ) : null}
+            </View>
+            <Text style={styles.rememberDeviceLabel}>Remember this device for 30 days</Text>
+          </Pressable>
+        ) : null}
+
+        {method === "totp" ? (
           <OtpCodeField
             ref={codeFieldRef}
             value={code}
@@ -313,6 +340,7 @@ export default function MfaScreen() {
                 setCode("");
                 setError(null);
                 setCanRetry(false);
+                setRememberDevice(false);
                 lastAttemptKeyRef.current = null;
               }}
             />
@@ -353,6 +381,35 @@ const styles = StyleSheet.create({
     fontSize: typography.body.fontSize,
     lineHeight: typography.body.lineHeight,
     fontFamily: typography.body.fontFamily
+  },
+  rememberDevice: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[12],
+    alignSelf: "flex-start"
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  checkboxChecked: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary
+  },
+  rememberDeviceLabel: {
+    color: palette.textSecondary,
+    fontSize: typography.body.fontSize,
+    lineHeight: typography.body.lineHeight,
+    fontFamily: typography.body.fontFamily
+  },
+  pressed: {
+    opacity: 0.7
   },
   actions: {
     gap: spacing[12]

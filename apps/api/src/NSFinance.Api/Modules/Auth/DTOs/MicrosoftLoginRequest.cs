@@ -5,7 +5,8 @@ public sealed record MicrosoftLoginRequest(
     DeviceContextDto? DeviceContext,
     bool AcceptPolicies = false,
     string? TermsVersion = null,
-    string? PrivacyVersion = null);
+    string? PrivacyVersion = null,
+    string? MfaTrustedDeviceToken = null);
 
 public sealed record MicrosoftAuthOptionsResponse(
     bool IsConfigured,

@@ -77,6 +77,10 @@ public static class AuthModule
             .WithName("VerifyRememberedSessionMfa")
             .RequireRateLimiting("auth-write");
 
+        group.MapPost("/mfa/remembered-session/trusted-device", ResumeRememberedSessionWithTrustedDeviceEndpoint.HandleAsync)
+            .WithName("ResumeRememberedSessionWithTrustedDevice")
+            .RequireRateLimiting("auth-refresh");
+
         group.MapGet("/mfa/status", GetMfaStatusEndpoint.HandleAsync)
             .WithName("GetMfaStatus")
             .RequireAuthorization();

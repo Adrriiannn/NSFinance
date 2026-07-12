@@ -11,6 +11,7 @@ import {
   requestNativeGoogleSignIn
 } from "./googleNativeSignIn";
 import { useGoogleLoginMutation } from "./useAuthMutations";
+import { readMfaTrustedDeviceCredential } from "./mfaTrustedDevice";
 
 type GoogleSignInResult = {
   succeeded: boolean;
@@ -74,9 +75,14 @@ export function useGoogleSignIn() {
       }
 
       try {
+        const deviceContext = buildDeviceContext();
+        const trustedDevice = await readMfaTrustedDeviceCredential({
+          deviceFingerprint: deviceContext.deviceFingerprint
+        });
         const flow = await googleLoginMutation.mutateAsync({
           idToken: nativeResult.idToken,
-          deviceContext: buildDeviceContext(),
+          deviceContext,
+          mfaTrustedDeviceToken: trustedDevice?.token,
           acceptPolicies: true,
           termsVersion,
           privacyVersion

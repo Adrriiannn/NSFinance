@@ -4,4 +4,5 @@ public sealed record LoginRequest(
     string Email,
     string Password,
     DeviceContextDto? DeviceContext,
-    string? CaptchaToken = null);
+    string? CaptchaToken = null,
+    string? MfaTrustedDeviceToken = null);

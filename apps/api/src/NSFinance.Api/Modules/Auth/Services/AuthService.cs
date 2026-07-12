@@ -22,6 +22,7 @@ public sealed class AuthService(
     IdentityChallengeService identityChallengeService,
     TransactionalMessageService transactionalMessageService,
     TotpMfaService totpMfaService,
+    MfaTrustedDeviceService mfaTrustedDeviceService,
     ICurrentUserProvider currentUserProvider,
     AuthAbuseService authAbuseService,
     IAuditService auditService,
@@ -259,7 +260,12 @@ public sealed class AuthService(
 
         var now = DateTime.UtcNow;
         var requiresMfa = await totpMfaService.IsEnabledAsync(user.Id, cancellationToken);
-        if (!requiresMfa)
+        var trustedDeviceAccepted = requiresMfa && await mfaTrustedDeviceService.ValidateAsync(
+            user.Id,
+            request.MfaTrustedDeviceToken,
+            request.DeviceContext,
+            cancellationToken);
+        if (!requiresMfa || trustedDeviceAccepted)
         {
             user.LastLoginUtc = now;
         }
@@ -268,7 +274,7 @@ public sealed class AuthService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await authAbuseService.RecordAttemptAsync(normalizedEmail, user.Id, requestContext.IpAddress, succeeded: true, failureReason: null, cancellationToken);
-        if (requiresMfa)
+        if (requiresMfa && !trustedDeviceAccepted)
         {
             var mfaChallenge = await totpMfaService.CreateLoginChallengeAsync(user, cancellationToken);
             if (!mfaChallenge.Succeeded)
@@ -301,7 +307,7 @@ public sealed class AuthService(
             targetEntityId: tokenResponse.SessionId.ToString(),
             actorId: user.Id,
             actorType: "user",
-            metadata: new { provider = ProviderTypeLocalPassword },
+            metadata: new { provider = ProviderTypeLocalPassword, mfaTrustedDevice = trustedDeviceAccepted },
             cancellationToken);
 
         return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.Authenticated(tokenResponse));
@@ -330,6 +336,16 @@ public sealed class AuthService(
         }
 
         var tokenResponse = await sessionService.CreateSessionAsync(user, request.DeviceContext, cancellationToken);
+        if (request.RememberDevice && request.Method == "totp")
+        {
+            tokenResponse = tokenResponse with
+            {
+                MfaTrustedDevice = await mfaTrustedDeviceService.IssueAsync(
+                    user.Id,
+                    request.DeviceContext,
+                    cancellationToken)
+            };
+        }
         await auditService.WriteEventAsync(
             category: "auth",
             eventName: "mfa_login_success",
@@ -337,7 +353,11 @@ public sealed class AuthService(
             targetEntityId: tokenResponse.SessionId.ToString(),
             actorId: user.Id,
             actorType: "user",
-            metadata: new { method = request.Method },
+            metadata: new
+            {
+                method = request.Method,
+                rememberedDevice = tokenResponse.MfaTrustedDevice is not null
+            },
             cancellationToken);
 
         return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
@@ -417,6 +437,17 @@ public sealed class AuthService(
             return refreshed;
         }
 
+        if (request.RememberDevice && request.Method == "totp")
+        {
+            refreshed = ServiceResult<AuthTokenResponse>.Ok(refreshed.Value! with
+            {
+                MfaTrustedDevice = await mfaTrustedDeviceService.IssueAsync(
+                    user.Id,
+                    request.DeviceContext,
+                    cancellationToken)
+            });
+        }
+
         await auditService.WriteEventAsync(
             category: "auth",
             eventName: "remembered_session_mfa_succeeded",
@@ -424,7 +455,63 @@ public sealed class AuthService(
             targetEntityId: refreshed.Value!.SessionId.ToString(),
             actorId: user.Id,
             actorType: "user",
-            metadata: new { method = request.Method },
+            metadata: new
+            {
+                method = request.Method,
+                rememberedDevice = refreshed.Value!.MfaTrustedDevice is not null
+            },
+            cancellationToken);
+
+        return refreshed;
+    }
+
+    public async Task<ServiceResult<AuthTokenResponse>> ResumeRememberedSessionWithTrustedDeviceAsync(
+        ResumeRememberedSessionWithTrustedDeviceRequest request,
+        CancellationToken cancellationToken)
+    {
+        var rememberedSession = await sessionService.ValidateRememberedSessionAsync(
+            request.RefreshToken,
+            cancellationToken);
+        if (!rememberedSession.Succeeded)
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                rememberedSession.Error!.Message,
+                rememberedSession.Error.Code,
+                rememberedSession.Error.StatusCode);
+        }
+
+        var user = rememberedSession.Value!;
+        var trusted = await mfaTrustedDeviceService.ValidateAsync(
+            user.Id,
+            request.TrustedDeviceToken,
+            request.DeviceContext,
+            cancellationToken);
+        if (!trusted || !await totpMfaService.IsEnabledAsync(user.Id, cancellationToken))
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                "This device must complete an Authenticator check.",
+                "mfa_trusted_device_invalid",
+                StatusCodes.Status401Unauthorized);
+        }
+
+        var refreshed = await sessionService.RefreshRememberedSessionAsync(
+            request.RefreshToken,
+            user.Id,
+            request.DeviceContext,
+            cancellationToken);
+        if (!refreshed.Succeeded)
+        {
+            return refreshed;
+        }
+
+        await auditService.WriteEventAsync(
+            category: "auth",
+            eventName: "remembered_session_trusted_device_succeeded",
+            targetEntityType: "session",
+            targetEntityId: refreshed.Value!.SessionId.ToString(),
+            actorId: user.Id,
+            actorType: "user",
+            metadata: null,
             cancellationToken);
 
         return refreshed;
@@ -661,8 +748,13 @@ public sealed class AuthService(
         }
 
         var requiresMfa = await totpMfaService.IsEnabledAsync(user.Id, cancellationToken);
+        var trustedDeviceAccepted = requiresMfa && await mfaTrustedDeviceService.ValidateAsync(
+            user.Id,
+            request.MfaTrustedDeviceToken,
+            request.DeviceContext,
+            cancellationToken);
         user.EmailVerified = true;
-        if (!requiresMfa)
+        if (!requiresMfa || trustedDeviceAccepted)
         {
             user.LastLoginUtc = utcNow;
         }
@@ -700,7 +792,7 @@ public sealed class AuthService(
                 metadata: new { provider = ProviderTypeGoogleOidc });
         }
 
-        if (requiresMfa)
+        if (requiresMfa && !trustedDeviceAccepted)
         {
             StageAuditEvent(
                 category: "auth",
@@ -755,7 +847,8 @@ public sealed class AuthService(
             {
                 provider = ProviderTypeGoogleOidc,
                 linkedByEmail = linkedToExistingByEmail,
-                createdViaGoogle
+                createdViaGoogle,
+                mfaTrustedDevice = trustedDeviceAccepted
             });
 
         var saveChangesStartedTimestamp = Stopwatch.GetTimestamp();
@@ -964,7 +1057,12 @@ public sealed class AuthService(
         }
 
         var requiresMfa = await totpMfaService.IsEnabledAsync(user.Id, cancellationToken);
-        if (requiresMfa)
+        var trustedDeviceAccepted = requiresMfa && await mfaTrustedDeviceService.ValidateAsync(
+            user.Id,
+            request.MfaTrustedDeviceToken,
+            request.DeviceContext,
+            cancellationToken);
+        if (requiresMfa && !trustedDeviceAccepted)
         {
             StageAuditEvent(
                 category: "auth",
@@ -1002,7 +1100,12 @@ public sealed class AuthService(
             targetEntityId: tokenResponse.SessionId.ToString(),
             actorId: user.Id,
             actorType: "user",
-            metadata: new { provider = ProviderTypeMicrosoftOidc, createdViaMicrosoft });
+            metadata: new
+            {
+                provider = ProviderTypeMicrosoftOidc,
+                createdViaMicrosoft,
+                mfaTrustedDevice = trustedDeviceAccepted
+            });
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return ServiceResult<AuthFlowResponse>.Ok(AuthFlowResponse.Authenticated(tokenResponse));
@@ -1257,6 +1360,10 @@ public sealed class AuthService(
                 StatusCodes.Status400BadRequest);
         }
         await sessionService.RevokeAllSessionsForUserAsync(user.Id, "password_reset", cancellationToken);
+        await mfaTrustedDeviceService.RevokeAllForUserAsync(
+            user.Id,
+            "password_reset",
+            cancellationToken);
 
         await auditService.WriteEventAsync(
             category: "auth",
@@ -1439,6 +1546,10 @@ public sealed class AuthService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await sessionService.RevokeAllSessionsForUserAsync(user.Id, "password_changed", cancellationToken);
+        await mfaTrustedDeviceService.RevokeAllForUserAsync(
+            user.Id,
+            "password_changed",
+            cancellationToken);
 
         await auditService.WriteEventAsync(
             category: "auth",
@@ -1567,6 +1678,10 @@ public sealed class AuthService(
         user.UpdatedUtc = DateTime.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
         await sessionService.RevokeAllSessionsForUserAsync(user.Id, "password_changed", cancellationToken);
+        await mfaTrustedDeviceService.RevokeAllForUserAsync(
+            user.Id,
+            "password_changed",
+            cancellationToken);
 
         await auditService.WriteEventAsync(
             category: "security",

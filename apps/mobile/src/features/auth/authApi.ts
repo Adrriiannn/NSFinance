@@ -26,6 +26,7 @@ import type {
   RegisterRequest,
   RegistrationResponse,
   RequestEmailVerificationRequest,
+  ResumeRememberedSessionWithTrustedDeviceRequest,
   ResetPasswordRequest,
   SessionDto,
   UserProfileDto,
@@ -240,6 +241,15 @@ export function verifyRememberedSessionMfa(
   payload: VerifyRememberedSessionMfaRequest
 ): Promise<AuthTokenResponse> {
   return apiRequest<AuthTokenResponse>("/api/auth/mfa/remembered-session/verify", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function resumeRememberedSessionWithTrustedDevice(
+  payload: ResumeRememberedSessionWithTrustedDeviceRequest
+): Promise<AuthTokenResponse> {
+  return apiRequest<AuthTokenResponse>("/api/auth/mfa/remembered-session/trusted-device", {
     method: "POST",
     body: JSON.stringify(payload)
   });

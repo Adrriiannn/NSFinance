@@ -5,4 +5,5 @@ public sealed record GoogleLoginRequest(
     DeviceContextDto? DeviceContext,
     bool AcceptPolicies = false,
     string? TermsVersion = null,
-    string? PrivacyVersion = null);
+    string? PrivacyVersion = null,
+    string? MfaTrustedDeviceToken = null);

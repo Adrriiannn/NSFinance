@@ -52,6 +52,7 @@ public class User
     public ICollection<IdentityChallenge> IdentityChallenges { get; set; } = [];
     public ICollection<TransactionalMessage> TransactionalMessages { get; set; } = [];
     public ICollection<TotpAuthenticator> TotpAuthenticators { get; set; } = [];
+    public ICollection<MfaTrustedDevice> MfaTrustedDevices { get; set; } = [];
     public ICollection<OpenBankingConnection> OpenBankingConnections { get; set; } = [];
     public ICollection<ExpenseTrackerEntry> ExpenseTrackerEntries { get; set; } = [];
     public ICollection<ExpensePlan> ExpensePlans { get; set; } = [];

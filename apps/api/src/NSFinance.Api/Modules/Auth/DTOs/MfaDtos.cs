@@ -24,7 +24,8 @@ public sealed record VerifyMfaLoginRequest(
     string ChallengeToken,
     string Code,
     string Method,
-    DeviceContextDto? DeviceContext);
+    DeviceContextDto? DeviceContext,
+    bool RememberDevice = false);
 
 public sealed record VerifyRememberedSessionMfaRequest(
     Guid ChallengeId,
@@ -32,7 +33,17 @@ public sealed record VerifyRememberedSessionMfaRequest(
     string Code,
     string Method,
     string RefreshToken,
+    DeviceContextDto? DeviceContext,
+    bool RememberDevice = false);
+
+public sealed record ResumeRememberedSessionWithTrustedDeviceRequest(
+    string RefreshToken,
+    string TrustedDeviceToken,
     DeviceContextDto? DeviceContext);
+
+public sealed record MfaTrustedDeviceCredentialResponse(
+    string Token,
+    DateTime ExpiresUtc);
 
 public sealed record DisableMfaRequest(
     string Code,

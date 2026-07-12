@@ -15,6 +15,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<TransactionalMessage> TransactionalMessages => Set<TransactionalMessage>();
     public DbSet<TotpAuthenticator> TotpAuthenticators => Set<TotpAuthenticator>();
     public DbSet<MfaRecoveryCode> MfaRecoveryCodes => Set<MfaRecoveryCode>();
+    public DbSet<MfaTrustedDevice> MfaTrustedDevices => Set<MfaTrustedDevice>();
     public DbSet<AuthAttempt> AuthAttempts => Set<AuthAttempt>();
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
     public DbSet<UserFinancialContextProfile> UserFinancialContextProfiles => Set<UserFinancialContextProfile>();

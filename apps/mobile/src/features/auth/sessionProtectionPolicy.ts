@@ -37,13 +37,16 @@ export function resolveSessionProtection({
 export function shouldReviewBiometricFallback({
   fallbackUserId,
   authenticatedUserId,
-  biometricPreference
+  biometricPreference,
+  completedViaMfa = false
 }: {
   fallbackUserId: string | null;
   authenticatedUserId: string;
   biometricPreference: BiometricPreference | null;
+  completedViaMfa?: boolean;
 }): boolean {
-  return fallbackUserId === authenticatedUserId
+  return !completedViaMfa
+    && fallbackUserId === authenticatedUserId
     && biometricPreference?.decision === "enabled"
     && biometricPreference.fallbackReviewDismissed !== true;
 }

@@ -72,7 +72,7 @@ export default function VerifyEmailScreen() {
         code,
         deviceContext: buildDeviceContext()
       });
-      await applyAuthTokenResponse(session, pending.rememberSession);
+      await applyAuthTokenResponse(session, { rememberSession: pending.rememberSession });
       clearPendingEmailVerification();
       playSuccess();
       router.replace("/(tabs)");

@@ -463,6 +463,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TransactionalMessageService>();
         services.AddScoped<IdentityChallengeService>();
         services.AddScoped<TotpMfaService>();
+        services.AddScoped<MfaTrustedDeviceService>();
         services.AddScoped<IGoogleIdTokenVerifier, GoogleIdTokenVerifier>();
         services.AddScoped<GoogleAuthService>();
         services.AddHttpClient<IMicrosoftAccessTokenVerifier, MicrosoftAccessTokenVerifier>();

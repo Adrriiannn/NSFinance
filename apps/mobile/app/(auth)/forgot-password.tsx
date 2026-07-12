@@ -8,6 +8,7 @@ import { PasswordField } from "../../src/components/ui/PasswordField";
 import { TextField } from "../../src/components/ui/TextField";
 import { Button } from "../../src/components/ui/buttons/Button";
 import { checkPasswordPolicy } from "../../src/features/auth/authApi";
+import { clearMfaTrustedDeviceCredential } from "../../src/features/auth/mfaTrustedDevice";
 import {
   hasNumberOrSymbol,
   isLengthWithinPolicy,
@@ -107,6 +108,7 @@ export default function ForgotPasswordScreen() {
         recoveryToken: grant.recoveryToken,
         newPassword: password
       });
+      await clearMfaTrustedDeviceCredential();
       setPassword("");
       setConfirmPassword("");
       setGrant(null);

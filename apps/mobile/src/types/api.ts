@@ -266,6 +266,12 @@ export type AuthTokenResponse = {
   refreshTokenExpiresAtUtc: string;
   sessionId: string;
   user: UserProfileDto;
+  mfaTrustedDevice?: MfaTrustedDeviceCredentialResponse | null;
+};
+
+export type MfaTrustedDeviceCredentialResponse = {
+  token: string;
+  expiresUtc: string;
 };
 
 export type CodeDeliveryResponse = {
@@ -320,6 +326,7 @@ export type LoginRequest = {
   password: string;
   captchaToken?: string | null;
   deviceContext?: DeviceContextDto | null;
+  mfaTrustedDeviceToken?: string | null;
 };
 
 export type GoogleLoginRequest = {
@@ -328,6 +335,7 @@ export type GoogleLoginRequest = {
   acceptPolicies?: boolean;
   termsVersion?: string | null;
   privacyVersion?: string | null;
+  mfaTrustedDeviceToken?: string | null;
 };
 
 export type MicrosoftLoginRequest = {
@@ -336,6 +344,7 @@ export type MicrosoftLoginRequest = {
   acceptPolicies?: boolean;
   termsVersion?: string | null;
   privacyVersion?: string | null;
+  mfaTrustedDeviceToken?: string | null;
 };
 
 export type RefreshTokenRequest = {
@@ -443,10 +452,17 @@ export type VerifyMfaLoginRequest = {
   code: string;
   method: "totp" | "recovery_code";
   deviceContext?: DeviceContextDto | null;
+  rememberDevice?: boolean;
 };
 
 export type VerifyRememberedSessionMfaRequest = VerifyMfaLoginRequest & {
   refreshToken: string;
+};
+
+export type ResumeRememberedSessionWithTrustedDeviceRequest = {
+  refreshToken: string;
+  trustedDeviceToken: string;
+  deviceContext?: DeviceContextDto | null;
 };
 
 export type DisableMfaRequest = {

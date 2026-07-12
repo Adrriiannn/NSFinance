@@ -167,6 +167,12 @@ test("fallback review is one-time and scoped to the same account", () => {
     authenticatedUserId: "user-2",
     biometricPreference: { userId: "user-2", decision: "enabled" }
   }), false);
+  assert.equal(shouldReviewBiometricFallback({
+    fallbackUserId: "user-1",
+    authenticatedUserId: "user-1",
+    biometricPreference: { userId: "user-1", decision: "enabled" },
+    completedViaMfa: true
+  }), false);
 });
 
 test("Android Back locks remembered sessions protected by fingerprint or MFA", () => {

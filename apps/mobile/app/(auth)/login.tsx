@@ -16,6 +16,7 @@ import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { useMicrosoftSignIn } from "../../src/features/auth/useMicrosoftSignIn";
 import { stageEmailVerification, stageMfaLogin } from "../../src/features/auth/pendingAuthFlow";
+import { readMfaTrustedDeviceCredential } from "../../src/features/auth/mfaTrustedDevice";
 import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
@@ -501,7 +502,7 @@ export default function LoginScreen() {
     rememberSession: boolean
   ) => {
     if (flow.status === "authenticated" && flow.session) {
-      await applyAuthTokenResponse(flow.session, rememberSession);
+      await applyAuthTokenResponse(flow.session, { rememberSession });
       playSuccess();
       router.replace("/(tabs)");
       return;
@@ -552,11 +553,16 @@ export default function LoginScreen() {
     clearSessionMessage();
     setGoogleError(null);
     try {
+      const deviceContext = buildDeviceContext();
+      const trustedDevice = await readMfaTrustedDeviceCredential({
+        deviceFingerprint: deviceContext.deviceFingerprint
+      });
       const flow = await loginMutation.mutateAsync({
         email: normalizedEmail,
         password,
         captchaToken: shouldShowCaptcha ? captchaToken : null,
-        deviceContext: buildDeviceContext()
+        deviceContext,
+        mfaTrustedDeviceToken: trustedDevice?.token
       });
 
       void clearPersistedLockoutUntil();

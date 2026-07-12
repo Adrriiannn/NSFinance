@@ -18,6 +18,7 @@ public sealed class TotpMfaService(
     MfaSecretProtector secretProtector,
     IIdentityCodeService identityCodeService,
     TokenSecretService tokenSecretService,
+    MfaTrustedDeviceService trustedDeviceService,
     IAuditService auditService,
     IOptions<IdentitySecurityOptions> options)
 {
@@ -405,6 +406,10 @@ public sealed class TotpMfaService(
         authenticator.User!.TwoFactorEnabled = false;
         authenticator.User.UpdatedUtc = now;
         await dbContext.SaveChangesAsync(cancellationToken);
+        await trustedDeviceService.RevokeAllForUserAsync(
+            userId,
+            "mfa_disabled",
+            cancellationToken);
         await auditService.WriteEventAsync(
             category: "security",
             eventName: "totp_disabled",

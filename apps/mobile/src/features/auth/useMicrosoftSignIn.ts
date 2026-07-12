@@ -7,6 +7,7 @@ import {
   requestNativeMicrosoftSignIn
 } from "./microsoftNativeSignIn";
 import { useMicrosoftLoginMutation } from "./useAuthMutations";
+import { readMfaTrustedDeviceCredential } from "./mfaTrustedDevice";
 
 type MicrosoftSignInResult = {
   succeeded: boolean;
@@ -52,9 +53,14 @@ export function useMicrosoftSignIn() {
         return { succeeded: false, message: nativeResult.message };
       }
 
+      const deviceContext = buildDeviceContext();
+      const trustedDevice = await readMfaTrustedDeviceCredential({
+        deviceFingerprint: deviceContext.deviceFingerprint
+      });
       const flow = await loginMutation.mutateAsync({
         accessToken: nativeResult.accessToken,
-        deviceContext: buildDeviceContext(),
+        deviceContext,
+        mfaTrustedDeviceToken: trustedDevice?.token,
         acceptPolicies: true,
         termsVersion,
         privacyVersion

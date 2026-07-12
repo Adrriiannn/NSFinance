@@ -15,4 +15,5 @@ public class Device
 
     public User? User { get; set; }
     public ICollection<Session> Sessions { get; set; } = [];
+    public ICollection<MfaTrustedDevice> MfaTrustedDevices { get; set; } = [];
 }

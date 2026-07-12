@@ -7,6 +7,7 @@ import {
   logout as logoutApi,
   logoutWithAccessToken,
   refreshToken as refreshTokenApi,
+  resumeRememberedSessionWithTrustedDevice as resumeRememberedSessionWithTrustedDeviceApi,
   verifyRememberedSessionMfa as verifyRememberedSessionMfaApi
 } from "../features/auth/authApi";
 import { clearNativeGoogleSignInState } from "../features/auth/googleNativeSignIn";
@@ -18,6 +19,11 @@ import {
 } from "../features/auth/biometricSecurity";
 import { clearPendingAuthFlows } from "../features/auth/pendingAuthFlow";
 import {
+  clearMfaTrustedDeviceCredential,
+  readMfaTrustedDeviceCredential,
+  writeMfaTrustedDeviceCredential
+} from "../features/auth/mfaTrustedDevice";
+import {
   resolveSessionProtection,
   type RememberedSessionUnlockMethod,
   shouldReviewBiometricFallback,
@@ -27,6 +33,7 @@ import {
   setApiTokenResolver,
   setApiUnauthorizedHandler
 } from "../lib/api/client";
+import { ApiClientError } from "../lib/api/errors";
 import { buildDeviceContext } from "../lib/device/deviceIdentity";
 import type {
   AuthTokenResponse,
@@ -65,8 +72,7 @@ type AuthContextValue = {
   sessionMessage: string | null;
   applyAuthTokenResponse: (
     response: AuthTokenResponse,
-    rememberSession?: boolean,
-    offerProtectionSetup?: boolean
+    options?: ApplyAuthTokenOptions
   ) => Promise<void>;
   refreshSessionUser: () => Promise<void>;
   unlockWithBiometrics: () => Promise<{ succeeded: boolean; message?: string }>;
@@ -87,6 +93,12 @@ type AuthContextValue = {
   logout: (reason?: string) => Promise<void>;
   clearSessionMessage: () => void;
   notifyUserInteraction: () => void;
+};
+
+type ApplyAuthTokenOptions = {
+  rememberSession?: boolean;
+  offerProtectionSetup?: boolean;
+  completedViaMfa?: boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -209,9 +221,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const applyAuthTokenResponse = useCallback(
     async (
       response: AuthTokenResponse,
-      rememberSession?: boolean,
-      offerProtectionSetup = true
+      options: ApplyAuthTokenOptions = {}
     ) => {
+      const {
+        rememberSession = false,
+        offerProtectionSetup = true,
+        completedViaMfa = false
+      } = options;
       const nextSession: StoredSession = {
         accessToken: response.accessToken,
         accessTokenExpiresAtUtc: response.accessTokenExpiresAtUtc,
@@ -227,7 +243,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       ]);
       const preferenceEnabled = preference?.decision === "enabled";
       const protection = resolveSessionProtection({
-        rememberRequested: rememberSession === true,
+        rememberRequested: rememberSession,
         biometricAvailable: availability.available,
         biometricPreference: preference,
         mfaEnabled: response.user.twoFactorEnabled
@@ -242,6 +258,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setApiTokenResolver(() => accessTokenRef.current);
       setSessionMessage(null);
       await persistSession(nextSession);
+      if (response.mfaTrustedDevice) {
+        const deviceFingerprint = buildDeviceContext().deviceFingerprint;
+        if (deviceFingerprint) {
+          try {
+            await writeMfaTrustedDeviceCredential({
+              userId: response.user.id,
+              deviceFingerprint,
+              credential: response.mfaTrustedDevice
+            });
+          } catch {
+            // The authenticated session remains valid even if local trusted-device storage fails.
+          }
+        }
+      }
 
       setBiometricAvailable(availability.available);
       setBiometricLabel(availability.label);
@@ -256,12 +286,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setRequiresRememberProtectionSetup(
         offerProtectionSetup && protection.requiresProtectionSetup
       );
-      const fallbackUserId = biometricFallbackUserIdRef.current;
+      const fallbackUserId = completedViaMfa ? null : biometricFallbackUserIdRef.current;
       biometricFallbackUserIdRef.current = null;
       setShouldReviewBiometricAfterFallback(shouldReviewBiometricFallback({
         fallbackUserId,
         authenticatedUserId: response.user.id,
-        biometricPreference: preference
+        biometricPreference: preference,
+        completedViaMfa
       }));
     },
     [persistSession]
@@ -329,7 +360,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
           refreshToken: current.refreshToken,
           deviceContext: buildDeviceContext()
         });
-        await applyAuthTokenResponse(refreshed, rememberSessionRef.current, false);
+        await applyAuthTokenResponse(refreshed, {
+          rememberSession: rememberSessionRef.current,
+          offerProtectionSetup: false
+        });
         return refreshed.accessToken;
       } catch {
         await logout("Session expired. Please sign in again.");
@@ -358,7 +392,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         refreshToken: lockedSession.refreshToken,
         deviceContext: buildDeviceContext()
       });
-      biometricFallbackUserIdRef.current = lockedSession.user.id;
       setRememberedUnlockMethod("mfa");
       setIsAppLocked(false);
       setAllowAutomaticBiometricPrompt(false);
@@ -383,7 +416,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       deviceContext: buildDeviceContext()
     });
     lockedSessionRef.current = null;
-    await applyAuthTokenResponse(response, true, false);
+    await applyAuthTokenResponse(response, {
+      rememberSession: true,
+      offerProtectionSetup: false,
+      completedViaMfa: true
+    });
     setIsAppLocked(false);
     setAllowAutomaticBiometricPrompt(true);
     return response;
@@ -696,6 +733,37 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         rememberSessionRef.current = true;
         rememberProtectionSetupRequestedRef.current = false;
+
+        if (protection.unlockMethod === "mfa") {
+          const deviceContext = buildDeviceContext();
+          const trustedDevice = await readMfaTrustedDeviceCredential({
+            deviceFingerprint: deviceContext.deviceFingerprint,
+            expectedUserId: parsed.user.id
+          });
+          if (trustedDevice) {
+            try {
+              const resumed = await resumeRememberedSessionWithTrustedDeviceApi({
+                refreshToken: parsed.refreshToken,
+                trustedDeviceToken: trustedDevice.token,
+                deviceContext
+              });
+              lockedSessionRef.current = null;
+              await applyAuthTokenResponse(resumed, {
+                rememberSession: true,
+                offerProtectionSetup: false,
+                completedViaMfa: true
+              });
+              setIsAppLocked(false);
+              return;
+            } catch (error) {
+              if (error instanceof ApiClientError
+                && error.code === "mfa_trusted_device_invalid") {
+                await clearMfaTrustedDeviceCredential();
+              }
+            }
+          }
+        }
+
         lockedSessionRef.current = parsed;
         setIsAppLocked(true);
       } catch {
@@ -719,7 +787,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
 
     void bootstrap();
-  }, [clearSessionStorage, persistSession, refreshAccessToken]);
+  }, [applyAuthTokenResponse, clearSessionStorage, persistSession, refreshAccessToken]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

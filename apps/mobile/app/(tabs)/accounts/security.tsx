@@ -58,6 +58,7 @@ import {
   useMfaStatusQuery
 } from "../../../src/features/auth/useAuthMutations";
 import { useAuthSession } from "../../../src/providers/AuthProvider";
+import { clearMfaTrustedDeviceCredential } from "../../../src/features/auth/mfaTrustedDevice";
 
 const sessionKey = ["auth", "sessions"] as const;
 
@@ -389,6 +390,7 @@ export default function SecuritySettingsScreen() {
         grantToken: passwordGrantToken,
         newPassword
       });
+      await clearMfaTrustedDeviceCredential();
 
       setPasswordResetModalVisible(false);
       setNewPassword("");
@@ -434,6 +436,7 @@ export default function SecuritySettingsScreen() {
     try {
       if (mfaDisableMode) {
         await disableMfaMutation.mutateAsync({ code: mfaCode.trim(), method: mfaMethod });
+        await clearMfaTrustedDeviceCredential();
         await refreshSessionUser();
         setMfaModalVisible(false);
         setMfaCode("");

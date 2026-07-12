@@ -114,6 +114,29 @@ public static class VerifyRememberedSessionMfaEndpoint
     }
 }
 
+public static class ResumeRememberedSessionWithTrustedDeviceEndpoint
+{
+    public static async Task<IResult> HandleAsync(
+        ResumeRememberedSessionWithTrustedDeviceRequest request,
+        AuthService authService,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken)
+            || string.IsNullOrWhiteSpace(request.TrustedDeviceToken))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["trustedDeviceToken"] = ["A valid trusted-device credential is required."]
+            });
+        }
+
+        var result = await authService.ResumeRememberedSessionWithTrustedDeviceAsync(
+            request,
+            cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : result.Error!.ToApiError();
+    }
+}
+
 public static class DisableMfaEndpoint
 {
     public static async Task<IResult> HandleAsync(

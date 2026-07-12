@@ -6,4 +6,5 @@ public sealed record AuthTokenResponse(
     string RefreshToken,
     DateTime RefreshTokenExpiresAtUtc,
     Guid SessionId,
-    UserProfileDto User);
+    UserProfileDto User,
+    MfaTrustedDeviceCredentialResponse? MfaTrustedDevice = null);
