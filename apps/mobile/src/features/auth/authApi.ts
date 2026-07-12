@@ -15,6 +15,7 @@ import type {
   GoogleLoginRequest,
   GoogleAuthOptionsDto,
   LoginRequest,
+  MfaLoginChallengeResponse,
   MfaStatusResponse,
   MicrosoftAuthOptionsDto,
   MicrosoftLoginRequest,
@@ -29,6 +30,7 @@ import type {
   SessionDto,
   UserProfileDto,
   VerifyMfaLoginRequest,
+  VerifyRememberedSessionMfaRequest,
   VerifyPasswordRecoveryCodeRequest,
   VerifyPasswordChangeCodeRequest
 } from "../../types/api";
@@ -220,6 +222,24 @@ export function confirmTotpEnrollment(
 
 export function verifyMfaLogin(payload: VerifyMfaLoginRequest): Promise<AuthTokenResponse> {
   return apiRequest<AuthTokenResponse>("/api/auth/mfa/challenge/verify", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function beginRememberedSessionMfa(
+  payload: RefreshTokenRequest
+): Promise<MfaLoginChallengeResponse> {
+  return apiRequest<MfaLoginChallengeResponse>("/api/auth/mfa/remembered-session", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function verifyRememberedSessionMfa(
+  payload: VerifyRememberedSessionMfaRequest
+): Promise<AuthTokenResponse> {
+  return apiRequest<AuthTokenResponse>("/api/auth/mfa/remembered-session/verify", {
     method: "POST",
     body: JSON.stringify(payload)
   });

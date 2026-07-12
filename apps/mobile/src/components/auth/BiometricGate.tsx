@@ -3,7 +3,11 @@ import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { shouldAutoPromptBiometric } from "../../features/auth/sessionProtectionPolicy";
+import {
+  shouldAutoPromptBiometric,
+  shouldAutoStartRememberedMfa
+} from "../../features/auth/sessionProtectionPolicy";
+import { stageMfaLogin } from "../../features/auth/pendingAuthFlow";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { Button } from "../ui/buttons/Button";
 import { palette, spacing, surfaces, typography, zIndex } from "../../theme/tokens";
@@ -14,14 +18,20 @@ export function BiometricGate() {
     biometricAvailable,
     biometricLabel,
     shouldOfferBiometrics,
+    requiresRememberProtectionSetup,
     shouldReviewBiometricAfterFallback,
     allowAutomaticBiometricPrompt,
+    rememberedUnlockMethod,
+    canUseRememberedSessionMfa,
     lockedAccountDisplayName,
     unlockWithBiometrics,
+    beginRememberedSessionMfa,
     enableBiometrics,
     disableBiometrics,
     declineBiometrics,
     keepBiometricsAfterFallback,
+    continueWithoutRemembering,
+    openRememberProtectionSetup,
     signInAnotherWay
   } = useAuthSession();
   const insets = useSafeAreaInsets();
@@ -44,6 +54,29 @@ export function BiometricGate() {
     setIsWorking(false);
   }, [isWorking, unlockWithBiometrics]);
 
+  const runAuthenticator = useCallback(async () => {
+    if (isWorking) {
+      return;
+    }
+
+    setIsWorking(true);
+    setMessage(null);
+    const result = await beginRememberedSessionMfa();
+    if (!result.succeeded || !result.challenge) {
+      setMessage(result.message ?? "The Authenticator check could not be started.");
+      setIsWorking(false);
+      return;
+    }
+
+    stageMfaLogin({
+      ...result.challenge,
+      context: "remembered_session",
+      rememberSession: true
+    });
+    setIsWorking(false);
+    router.replace("/(auth)/mfa" as never);
+  }, [beginRememberedSessionMfa, isWorking]);
+
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       setIsForeground(nextState === "active");
@@ -64,15 +97,55 @@ export function BiometricGate() {
       biometricAvailable,
       isForeground,
       alreadyAttempted: automaticAttemptRef.current
-    }) || !allowAutomaticBiometricPrompt) {
+    }) || !allowAutomaticBiometricPrompt || rememberedUnlockMethod !== "biometric") {
       return;
     }
 
     automaticAttemptRef.current = true;
     void runUnlock();
-  }, [allowAutomaticBiometricPrompt, biometricAvailable, isAppLocked, isForeground, runUnlock]);
+  }, [
+    allowAutomaticBiometricPrompt,
+    biometricAvailable,
+    isAppLocked,
+    isForeground,
+    rememberedUnlockMethod,
+    runUnlock
+  ]);
+
+  useEffect(() => {
+    if (!shouldAutoStartRememberedMfa({
+      isLocked: isAppLocked,
+      unlockMethod: rememberedUnlockMethod,
+      isForeground,
+      alreadyAttempted: automaticAttemptRef.current
+    }) || !allowAutomaticBiometricPrompt) {
+      return;
+    }
+
+    automaticAttemptRef.current = true;
+    void runAuthenticator();
+  }, [
+    allowAutomaticBiometricPrompt,
+    isAppLocked,
+    isForeground,
+    rememberedUnlockMethod,
+    runAuthenticator
+  ]);
 
   const returnToSignIn = async () => {
+    if (canUseRememberedSessionMfa) {
+      await runAuthenticator();
+      return;
+    }
+
+    await signInAnotherWay();
+    router.replace({
+      pathname: "/(auth)/login",
+      params: { securityFallback: "1" }
+    } as never);
+  };
+
+  const signInDirectly = async () => {
     await signInAnotherWay();
     router.replace({
       pathname: "/(auth)/login",
@@ -94,7 +167,12 @@ export function BiometricGate() {
     setIsWorking(false);
   };
 
-  if (!isAppLocked && !shouldOfferBiometrics && !shouldReviewBiometricAfterFallback) {
+  if (
+    !isAppLocked
+    && !shouldOfferBiometrics
+    && !requiresRememberProtectionSetup
+    && !shouldReviewBiometricAfterFallback
+  ) {
     return null;
   }
 
@@ -132,7 +210,49 @@ export function BiometricGate() {
     );
   }
 
+  if (!isAppLocked && requiresRememberProtectionSetup) {
+    return (
+      <View
+        accessibilityViewIsModal
+        style={[
+          styles.overlay,
+          { paddingTop: insets.top + spacing[24], paddingBottom: insets.bottom + spacing[24] }
+        ]}
+      >
+        <View style={styles.content}>
+          <View style={styles.intro}>
+            <View style={styles.iconWrap}>
+              <Ionicons name="shield-checkmark-outline" size={48} color={palette.primary} />
+            </View>
+            <View style={styles.copy}>
+              <Text style={styles.title}>Protect remembered sign-in</Text>
+              <Text style={styles.body}>
+                Remember me needs fingerprint or Authenticator protection on this device. Your
+                current session can continue without being stored.
+              </Text>
+            </View>
+          </View>
+          <View style={styles.actions}>
+            <Button
+              label="Set up Authenticator"
+              onPress={() => {
+                openRememberProtectionSetup();
+                router.push("/(tabs)/accounts/security" as never);
+              }}
+            />
+            <Button
+              label="Continue without remembering"
+              variant="ghost"
+              onPress={() => void continueWithoutRemembering()}
+            />
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   const isOffer = !isAppLocked && shouldOfferBiometrics;
+  const isMfaUnlock = isAppLocked && rememberedUnlockMethod === "mfa";
   const friendlyLabel = biometricLabel === "fingerprint" ? "fingerprint" : "biometrics";
 
   return (
@@ -154,11 +274,13 @@ export function BiometricGate() {
           </View>
 
           <View style={styles.copy}>
-            <Text style={styles.title}>{isOffer ? "Remember this device?" : "Welcome back!"}</Text>
+            <Text style={styles.title}>{isOffer ? "Set up fingerprint unlock" : "Welcome back!"}</Text>
             <Text style={styles.body}>
               {isOffer
-                ? `Stay signed in on this phone and use your ${friendlyLabel} to unlock NSFinance next time. Your password is never stored.`
-                : `Use your ${friendlyLabel} to log back into your account.`}
+                ? `You selected Remember me. Use your ${friendlyLabel} to protect this account on this device. Your password is never stored.`
+                : isMfaUnlock
+                  ? "Use Authenticator to unlock this remembered account."
+                  : `Use your ${friendlyLabel} to log back into your account.`}
             </Text>
             {!isOffer && lockedAccountDisplayName ? (
               <Text style={styles.accountName}>{lockedAccountDisplayName}</Text>
@@ -169,20 +291,43 @@ export function BiometricGate() {
 
         <View style={styles.actions}>
           <Button
-            label={isOffer ? `Remember with ${friendlyLabel}` : `Unlock with ${friendlyLabel}`}
-            onPress={() => void (isOffer ? enable() : runUnlock())}
-            disabled={!biometricAvailable}
+            label={
+              isOffer
+                ? `Set up ${friendlyLabel}`
+                : isMfaUnlock
+                  ? "Continue with Authenticator"
+                  : `Unlock with ${friendlyLabel}`
+            }
+            onPress={() => void (isOffer ? enable() : isMfaUnlock ? runAuthenticator() : runUnlock())}
+            disabled={!isMfaUnlock && !biometricAvailable}
             isLoading={isWorking}
             icon={
               isWorking ? undefined : (
-                <Ionicons name="finger-print" size={20} color={palette.appBackground} />
+                <Ionicons
+                  name={isMfaUnlock ? "keypad-outline" : "finger-print"}
+                  size={20}
+                  color={palette.appBackground}
+                />
               )
             }
           />
           {isOffer ? (
-            <Button label="Not now" variant="ghost" onPress={() => void declineBiometrics()} />
+            <Button
+              label={canUseRememberedSessionMfa ? "Use Authenticator instead" : "Continue without remembering"}
+              variant="ghost"
+              onPress={() => void declineBiometrics()}
+            />
           ) : (
-            <Button label="Sign in another way" variant="ghost" onPress={() => void returnToSignIn()} />
+            <>
+              {!isMfaUnlock && canUseRememberedSessionMfa ? (
+                <Button
+                  label="Use Authenticator"
+                  variant="ghost"
+                  onPress={() => void returnToSignIn()}
+                />
+              ) : null}
+              <Button label="Sign in instead" variant="ghost" onPress={() => void signInDirectly()} />
+            </>
           )}
         </View>
 

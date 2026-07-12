@@ -26,6 +26,14 @@ public sealed record VerifyMfaLoginRequest(
     string Method,
     DeviceContextDto? DeviceContext);
 
+public sealed record VerifyRememberedSessionMfaRequest(
+    Guid ChallengeId,
+    string ChallengeToken,
+    string Code,
+    string Method,
+    string RefreshToken,
+    DeviceContextDto? DeviceContext);
+
 public sealed record DisableMfaRequest(
     string Code,
     string Method);

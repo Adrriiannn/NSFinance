@@ -19,6 +19,7 @@ public static class IdentityChallengePurposes
     public const string PasswordChange = "password_change";
     public const string AccountDeletion = "account_deletion";
     public const string MfaLogin = "mfa_login";
+    public const string MfaSessionResume = "mfa_session_resume";
     public const string PhoneVerification = "phone_verification";
 }
 

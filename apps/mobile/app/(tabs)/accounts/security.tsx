@@ -161,7 +161,8 @@ export default function SecuritySettingsScreen() {
     biometricAvailable,
     biometricLabel,
     enableBiometrics,
-    disableBiometrics
+    disableBiometrics,
+    refreshSessionUser
   } = useAuthSession();
   const mfaStatusQuery = useMfaStatusQuery();
   const beginMfaMutation = useBeginTotpEnrollmentMutation();
@@ -316,7 +317,12 @@ export default function SecuritySettingsScreen() {
   const updateBiometricSetting = async (enabled: boolean) => {
     if (!enabled) {
       await disableBiometrics();
-      showFlashMessage("Fingerprint unlock and remembered sign-in turned off.", { tone: "info" });
+      showFlashMessage(
+        mfaStatusQuery.data?.enabled
+          ? "Fingerprint unlock is off. Remembered sign-in will use Authenticator."
+          : "Fingerprint unlock and remembered sign-in are off.",
+        { tone: "info" }
+      );
       return;
     }
 
@@ -428,6 +434,7 @@ export default function SecuritySettingsScreen() {
     try {
       if (mfaDisableMode) {
         await disableMfaMutation.mutateAsync({ code: mfaCode.trim(), method: mfaMethod });
+        await refreshSessionUser();
         setMfaModalVisible(false);
         setMfaCode("");
         showFlashMessage("Authenticator verification turned off.", { tone: "success" });
@@ -443,6 +450,7 @@ export default function SecuritySettingsScreen() {
         authenticatorId: mfaEnrollment.authenticatorId,
         code: mfaCode.trim()
       });
+      await refreshSessionUser();
       setMfaRecoveryCodes(result.recoveryCodes);
       setMfaCode("");
       showFlashMessage("Authenticator verification is ready.", { tone: "success" });
@@ -582,7 +590,7 @@ export default function SecuritySettingsScreen() {
               </Text>
               <Text style={styles.metaLine}>
                 {biometricAvailable
-                  ? "Keeps this phone signed in and protects the next app launch."
+                  ? "Protects this account on this device when Remember me is selected."
                   : "Set up biometrics in Android settings."}
               </Text>
             </View>

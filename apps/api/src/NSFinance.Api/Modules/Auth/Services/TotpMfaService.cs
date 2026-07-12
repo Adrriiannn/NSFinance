@@ -195,10 +195,25 @@ public sealed class TotpMfaService(
         User user,
         CancellationToken cancellationToken)
     {
+        return await CreateChallengeAsync(user, IdentityChallengePurposes.MfaLogin, cancellationToken);
+    }
+
+    public async Task<ServiceResult<MfaLoginChallengeResponse>> CreateSessionResumeChallengeAsync(
+        User user,
+        CancellationToken cancellationToken)
+    {
+        return await CreateChallengeAsync(user, IdentityChallengePurposes.MfaSessionResume, cancellationToken);
+    }
+
+    private async Task<ServiceResult<MfaLoginChallengeResponse>> CreateChallengeAsync(
+        User user,
+        string purpose,
+        CancellationToken cancellationToken)
+    {
         var now = DateTime.UtcNow;
         var active = await dbContext.IdentityChallenges
             .Where(x => x.UserId == user.Id
-                && x.Purpose == IdentityChallengePurposes.MfaLogin
+                && x.Purpose == purpose
                 && x.ConsumedUtc == null
                 && x.SupersededUtc == null
                 && x.ExpiresUtc > now)
@@ -216,7 +231,7 @@ public sealed class TotpMfaService(
         {
             Id = challengeId,
             UserId = user.Id,
-            Purpose = IdentityChallengePurposes.MfaLogin,
+            Purpose = purpose,
             Channel = IdentityChannels.Authenticator,
             DestinationHash = identityCodeService.HashDestination(IdentityChannels.Authenticator, user.Id.ToString("N")),
             SecretHash = tokenSecretService.HashToken(challengeToken),
@@ -239,10 +254,31 @@ public sealed class TotpMfaService(
         VerifyMfaLoginRequest request,
         CancellationToken cancellationToken)
     {
+        return await VerifyChallengeAsync(
+            request,
+            IdentityChallengePurposes.MfaLogin,
+            cancellationToken);
+    }
+
+    public async Task<ServiceResult<User>> VerifySessionResumeChallengeAsync(
+        VerifyMfaLoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        return await VerifyChallengeAsync(
+            request,
+            IdentityChallengePurposes.MfaSessionResume,
+            cancellationToken);
+    }
+
+    private async Task<ServiceResult<User>> VerifyChallengeAsync(
+        VerifyMfaLoginRequest request,
+        string purpose,
+        CancellationToken cancellationToken)
+    {
         var challenge = await dbContext.IdentityChallenges
             .Include(x => x.User)
             .SingleOrDefaultAsync(
-                x => x.Id == request.ChallengeId && x.Purpose == IdentityChallengePurposes.MfaLogin,
+                x => x.Id == request.ChallengeId && x.Purpose == purpose,
                 cancellationToken);
         var now = DateTime.UtcNow;
         if (challenge is null
@@ -310,8 +346,11 @@ public sealed class TotpMfaService(
 
         challenge.ConsumedUtc = now;
         challenge.ConcurrencyToken = Guid.NewGuid();
-        challenge.User.LastLoginUtc = now;
-        challenge.User.UpdatedUtc = now;
+        if (purpose == IdentityChallengePurposes.MfaLogin)
+        {
+            challenge.User.LastLoginUtc = now;
+            challenge.User.UpdatedUtc = now;
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
         return ServiceResult<User>.Ok(challenge.User);
     }

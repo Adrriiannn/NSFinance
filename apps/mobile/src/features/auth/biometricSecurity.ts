@@ -1,5 +1,9 @@
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
+import {
+  parseBiometricPreferenceStore,
+  setBiometricPreference
+} from "./biometricPreferencePolicy";
 
 const BIOMETRIC_PREFERENCE_KEY = "nsfinance.auth.biometric.preference";
 
@@ -39,23 +43,16 @@ export async function readBiometricPreference(
 ): Promise<BiometricPreference | null> {
   try {
     const raw = await SecureStore.getItemAsync(BIOMETRIC_PREFERENCE_KEY);
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as BiometricPreference;
-    if (parsed.userId !== userId || !["enabled", "declined"].includes(parsed.decision)) {
-      return null;
-    }
-
-    return parsed;
+    return parseBiometricPreferenceStore(raw).preferences[userId] ?? null;
   } catch {
     return null;
   }
 }
 
 export async function writeBiometricPreference(preference: BiometricPreference) {
-  await SecureStore.setItemAsync(BIOMETRIC_PREFERENCE_KEY, JSON.stringify(preference));
+  const raw = await SecureStore.getItemAsync(BIOMETRIC_PREFERENCE_KEY);
+  const store = setBiometricPreference(parseBiometricPreferenceStore(raw), preference);
+  await SecureStore.setItemAsync(BIOMETRIC_PREFERENCE_KEY, JSON.stringify(store));
 }
 
 export async function authenticateWithBiometrics({

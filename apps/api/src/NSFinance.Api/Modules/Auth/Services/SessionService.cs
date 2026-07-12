@@ -111,43 +111,67 @@ public sealed class SessionService(
             MapUserProfile(user));
     }
 
-    public async Task<ServiceResult<AuthTokenResponse>> RefreshAsync(
+    public Task<ServiceResult<AuthTokenResponse>> RefreshAsync(
         string refreshToken,
         DeviceContextDto? deviceContext,
         CancellationToken cancellationToken)
     {
+        return RefreshCoreAsync(refreshToken, deviceContext, expectedUserId: null, cancellationToken);
+    }
+
+    public Task<ServiceResult<AuthTokenResponse>> RefreshRememberedSessionAsync(
+        string refreshToken,
+        Guid expectedUserId,
+        DeviceContextDto? deviceContext,
+        CancellationToken cancellationToken)
+    {
+        return RefreshCoreAsync(refreshToken, deviceContext, expectedUserId, cancellationToken);
+    }
+
+    public async Task<ServiceResult<User>> ValidateRememberedSessionAsync(
+        string refreshToken,
+        CancellationToken cancellationToken)
+    {
+        var tokenResult = await ResolveActiveRefreshTokenAsync(
+            refreshToken,
+            DateTime.UtcNow,
+            cancellationToken);
+        if (!tokenResult.Succeeded)
+        {
+            return ServiceResult<User>.Fail(
+                tokenResult.Error!.Message,
+                tokenResult.Error.Code,
+                tokenResult.Error.StatusCode);
+        }
+
+        return ServiceResult<User>.Ok(tokenResult.Value!.Session!.User!);
+    }
+
+    private async Task<ServiceResult<AuthTokenResponse>> RefreshCoreAsync(
+        string refreshToken,
+        DeviceContextDto? deviceContext,
+        Guid? expectedUserId,
+        CancellationToken cancellationToken)
+    {
         var now = DateTime.UtcNow;
-        var tokenHash = tokenSecretService.HashToken(refreshToken);
-
-        var storedToken = await dbContext.SessionRefreshTokens
-            .Include(x => x.Session)
-            .ThenInclude(x => x!.User)
-            .SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
-
-        if (storedToken is null || storedToken.Session?.User is null)
+        var tokenResult = await ResolveActiveRefreshTokenAsync(refreshToken, now, cancellationToken);
+        if (!tokenResult.Succeeded)
         {
-            return ServiceResult<AuthTokenResponse>.Fail("Invalid session token.", "invalid_refresh_token", StatusCodes.Status401Unauthorized);
+            return ServiceResult<AuthTokenResponse>.Fail(
+                tokenResult.Error!.Message,
+                tokenResult.Error.Code,
+                tokenResult.Error.StatusCode);
         }
 
-        if (storedToken.UsedUtc is not null || storedToken.RevokedUtc is not null)
-        {
-            await RevokeFamilyAsync(storedToken.FamilyId, "refresh_token_reuse", cancellationToken);
-            return ServiceResult<AuthTokenResponse>.Fail("Session token is no longer valid.", "refresh_token_reused", StatusCodes.Status401Unauthorized);
-        }
-
-        if (storedToken.ExpiresUtc <= now)
-        {
-            storedToken.RevokedUtc = now;
-            storedToken.RevocationReason = "expired";
-            await dbContext.SaveChangesAsync(cancellationToken);
-            return ServiceResult<AuthTokenResponse>.Fail("Session token expired.", "refresh_token_expired", StatusCodes.Status401Unauthorized);
-        }
-
-        var session = storedToken.Session;
+        var storedToken = tokenResult.Value!;
+        var session = storedToken.Session!;
         var user = session.User!;
-        if (session.RevokedUtc is not null || session.ExpiresUtc <= now || user.IsDisabled || user.IsSuspended)
+        if (expectedUserId.HasValue && user.Id != expectedUserId.Value)
         {
-            return ServiceResult<AuthTokenResponse>.Fail("Session is no longer valid.", "session_revoked", StatusCodes.Status401Unauthorized);
+            return ServiceResult<AuthTokenResponse>.Fail(
+                "Session token does not match this security check.",
+                "remembered_session_mismatch",
+                StatusCodes.Status401Unauthorized);
         }
 
         var device = await ResolveDeviceAsync(user.Id, deviceContext, now, cancellationToken);
@@ -188,6 +212,61 @@ public sealed class SessionService(
             replacementToken.ExpiresUtc,
             session.Id,
             MapUserProfile(user)));
+    }
+
+    private async Task<ServiceResult<SessionRefreshToken>> ResolveActiveRefreshTokenAsync(
+        string refreshToken,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var tokenHash = tokenSecretService.HashToken(refreshToken);
+        var storedToken = await dbContext.SessionRefreshTokens
+            .Include(x => x.Session)
+            .ThenInclude(x => x!.User)
+            .SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
+
+        if (storedToken is null || storedToken.Session?.User is null)
+        {
+            return ServiceResult<SessionRefreshToken>.Fail(
+                "Invalid session token.",
+                "invalid_refresh_token",
+                StatusCodes.Status401Unauthorized);
+        }
+
+        if (storedToken.UsedUtc is not null || storedToken.RevokedUtc is not null)
+        {
+            await RevokeFamilyAsync(storedToken.FamilyId, "refresh_token_reuse", cancellationToken);
+            return ServiceResult<SessionRefreshToken>.Fail(
+                "Session token is no longer valid.",
+                "refresh_token_reused",
+                StatusCodes.Status401Unauthorized);
+        }
+
+        if (storedToken.ExpiresUtc <= now)
+        {
+            storedToken.RevokedUtc = now;
+            storedToken.RevocationReason = "expired";
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return ServiceResult<SessionRefreshToken>.Fail(
+                "Session token expired.",
+                "refresh_token_expired",
+                StatusCodes.Status401Unauthorized);
+        }
+
+        var session = storedToken.Session;
+        var user = session.User!;
+        if (session.RevokedUtc is not null
+            || session.ExpiresUtc <= now
+            || user.IsDisabled
+            || user.IsSuspended)
+        {
+            return ServiceResult<SessionRefreshToken>.Fail(
+                "Session is no longer valid.",
+                "session_revoked",
+                StatusCodes.Status401Unauthorized);
+        }
+
+        return ServiceResult<SessionRefreshToken>.Ok(storedToken);
     }
 
     public async Task<IReadOnlyList<SessionDto>> ListSessionsAsync(

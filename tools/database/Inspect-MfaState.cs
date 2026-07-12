@@ -89,6 +89,31 @@ try
                   AND "ConsumedUtc" IS NULL
                   AND "SupersededUtc" IS NULL
                   AND "ExpiresUtc" > timezone('utc', now())
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "IdentityChallenges"
+                WHERE "Purpose" = 'mfa_session_resume'
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "IdentityChallenges"
+                WHERE "Purpose" = 'mfa_session_resume'
+                  AND "CreatedUtc" >= timezone('utc', now()) - interval '24 hours'
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "IdentityChallenges"
+                WHERE "Purpose" = 'mfa_session_resume'
+                  AND "ConsumedUtc" IS NOT NULL
+            ),
+            (
+                SELECT COUNT(*)::bigint
+                FROM "IdentityChallenges"
+                WHERE "Purpose" = 'mfa_session_resume'
+                  AND "ConsumedUtc" IS NULL
+                  AND "SupersededUtc" IS NULL
+                  AND "ExpiresUtc" > timezone('utc', now())
             )
         """;
 
@@ -105,6 +130,10 @@ try
     Console.WriteLine($"mfaLoginChallengesLast24Hours={reader.GetInt64(5)}");
     Console.WriteLine($"mfaLoginChallengesConsumed={reader.GetInt64(6)}");
     Console.WriteLine($"mfaLoginChallengesOpen={reader.GetInt64(7)}");
+    Console.WriteLine($"mfaSessionResumeChallengesTotal={reader.GetInt64(8)}");
+    Console.WriteLine($"mfaSessionResumeChallengesLast24Hours={reader.GetInt64(9)}");
+    Console.WriteLine($"mfaSessionResumeChallengesConsumed={reader.GetInt64(10)}");
+    Console.WriteLine($"mfaSessionResumeChallengesOpen={reader.GetInt64(11)}");
 
     await reader.DisposeAsync();
     await transaction.CommitAsync(timeout.Token);

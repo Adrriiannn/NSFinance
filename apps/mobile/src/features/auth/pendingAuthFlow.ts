@@ -2,9 +2,13 @@ import type { CodeDeliveryResponse, MfaLoginChallengeResponse } from "../../type
 
 export type PendingEmailVerification = CodeDeliveryResponse & {
   email?: string;
+  rememberSession: boolean;
 };
 
-export type PendingMfaLogin = MfaLoginChallengeResponse;
+export type PendingMfaLogin = MfaLoginChallengeResponse & {
+  context: "fresh_login" | "remembered_session";
+  rememberSession: boolean;
+};
 
 let pendingEmailVerification: PendingEmailVerification | null = null;
 let pendingMfaLogin: PendingMfaLogin | null = null;

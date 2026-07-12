@@ -72,7 +72,7 @@ export default function VerifyEmailScreen() {
         code,
         deviceContext: buildDeviceContext()
       });
-      await applyAuthTokenResponse(session);
+      await applyAuthTokenResponse(session, pending.rememberSession);
       clearPendingEmailVerification();
       playSuccess();
       router.replace("/(tabs)");
@@ -121,7 +121,11 @@ export default function VerifyEmailScreen() {
     setCanRetry(false);
     try {
       const delivery = await resendMutation.mutateAsync({ email: pending.email });
-      const nextPending = { ...delivery, email: pending.email };
+      const nextPending = {
+        ...delivery,
+        email: pending.email,
+        rememberSession: pending.rememberSession
+      };
       stageEmailVerification(nextPending);
       setPending(nextPending);
       setCode("");

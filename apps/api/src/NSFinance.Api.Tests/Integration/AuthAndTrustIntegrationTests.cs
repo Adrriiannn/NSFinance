@@ -719,6 +719,99 @@ public class AuthAndTrustIntegrationTests
     }
 
     [Fact]
+    public async Task RememberedSessionMfa_RequiresEnrollmentAndRotatesTheSameSession()
+    {
+        await using var harness = new TestHarness();
+        var withoutMfa = await harness.RegisterAsync(
+            "remembered.no-mfa@test.local",
+            "ValidPassword123");
+
+        var unavailable = await harness.AuthService.BeginRememberedSessionMfaAsync(
+            new RefreshTokenRequest(withoutMfa.RefreshToken, null),
+            CancellationToken.None);
+        Assert.False(unavailable.Succeeded);
+        Assert.Equal("mfa_not_enabled", unavailable.Error?.Code);
+
+        var registered = await harness.RegisterAsync(
+            "remembered.mfa@test.local",
+            "ValidPassword123");
+        var totp = await EnableTotpAsync(harness, registered.Value);
+        var sessionCountBeforeResume = await harness.DbContext.Sessions.CountAsync();
+
+        var challenge = await harness.AuthService.BeginRememberedSessionMfaAsync(
+            new RefreshTokenRequest(registered.RefreshToken, null),
+            CancellationToken.None);
+        Assert.True(challenge.Succeeded);
+        var mfaChallenge = challenge.Value!;
+        Assert.Equal(
+            IdentityChallengePurposes.MfaSessionResume,
+            (await harness.DbContext.IdentityChallenges.SingleAsync(
+                x => x.Id == mfaChallenge.ChallengeId)).Purpose);
+
+        var nextCode = totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30));
+        var wrongEndpoint = await harness.AuthService.VerifyMfaLoginAsync(
+            new VerifyMfaLoginRequest(
+                mfaChallenge.ChallengeId,
+                mfaChallenge.ChallengeToken,
+                nextCode,
+                "totp",
+                null),
+            CancellationToken.None);
+        Assert.False(wrongEndpoint.Succeeded);
+        Assert.Equal("mfa_challenge_invalid", wrongEndpoint.Error?.Code);
+
+        var resumed = await harness.AuthService.VerifyRememberedSessionMfaAsync(
+            new VerifyRememberedSessionMfaRequest(
+                mfaChallenge.ChallengeId,
+                mfaChallenge.ChallengeToken,
+                nextCode,
+                "totp",
+                registered.RefreshToken,
+                null),
+            CancellationToken.None);
+
+        Assert.True(resumed.Succeeded);
+        Assert.Equal(registered.SessionId, resumed.Value!.SessionId);
+        Assert.NotEqual(registered.RefreshToken, resumed.Value.RefreshToken);
+        Assert.Equal(sessionCountBeforeResume, await harness.DbContext.Sessions.CountAsync());
+        Assert.NotNull((await harness.DbContext.SessionRefreshTokens.SingleAsync(
+            x => x.TokenHash == harness.TokenSecretService.HashToken(registered.RefreshToken))).UsedUtc);
+    }
+
+    [Fact]
+    public async Task RememberedSessionMfa_CannotRotateAnotherUsersRefreshToken()
+    {
+        await using var harness = new TestHarness();
+        var protectedAccount = await harness.RegisterAsync(
+            "remembered.protected@test.local",
+            "ValidPassword123");
+        var totp = await EnableTotpAsync(harness, protectedAccount.Value);
+        var otherAccount = await harness.RegisterAsync(
+            "remembered.other@test.local",
+            "ValidPassword123");
+
+        var challenge = await harness.AuthService.BeginRememberedSessionMfaAsync(
+            new RefreshTokenRequest(protectedAccount.RefreshToken, null),
+            CancellationToken.None);
+        Assert.True(challenge.Succeeded);
+
+        var result = await harness.AuthService.VerifyRememberedSessionMfaAsync(
+            new VerifyRememberedSessionMfaRequest(
+                challenge.Value!.ChallengeId,
+                challenge.Value.ChallengeToken,
+                totp.ComputeTotp(DateTime.UtcNow.AddSeconds(30)),
+                "totp",
+                otherAccount.RefreshToken,
+                null),
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("remembered_session_mismatch", result.Error?.Code);
+        Assert.Null((await harness.DbContext.SessionRefreshTokens.SingleAsync(
+            x => x.TokenHash == harness.TokenSecretService.HashToken(otherAccount.RefreshToken))).UsedUtc);
+    }
+
+    [Fact]
     public async Task GoogleLogin_EnabledTotp_BlocksFreshProviderLoginBeforeSessionIssuance()
     {
         await using var harness = new TestHarness();
@@ -1006,7 +1099,7 @@ public class AuthAndTrustIntegrationTests
         return new ClaimsPrincipal(identity);
     }
 
-    private static async Task EnableTotpAsync(TestHarness harness, AuthTokenResponse session)
+    private static async Task<Totp> EnableTotpAsync(TestHarness harness, AuthTokenResponse session)
     {
         harness.CurrentUserProvider.Set(session.User.Id, session.SessionId);
         var enrollment = await harness.MfaService.BeginEnrollmentAsync(CancellationToken.None);
@@ -1018,6 +1111,7 @@ public class AuthAndTrustIntegrationTests
             CancellationToken.None);
         Assert.True(confirmed.Succeeded);
         harness.CurrentUserProvider.Clear();
+        return totp;
     }
 
     private sealed class TestHarness : IAsyncDisposable

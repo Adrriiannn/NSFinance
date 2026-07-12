@@ -428,7 +428,8 @@ export default function RegisterScreen() {
 
     stageEmailVerification({
       ...delivery,
-      email: email.trim().toLowerCase()
+      email: email.trim().toLowerCase(),
+      rememberSession: false
     });
     router.push("/(auth)/verify-email" as never);
   };
@@ -462,13 +463,17 @@ export default function RegisterScreen() {
     }
 
     if (flow?.status === "email_verification_required" && flow.emailVerification) {
-      stageEmailVerification(flow.emailVerification);
+      stageEmailVerification({ ...flow.emailVerification, rememberSession: false });
       router.push("/(auth)/verify-email" as never);
       return;
     }
 
     if (flow?.status === "mfa_required" && flow.mfaChallenge) {
-      stageMfaLogin(flow.mfaChallenge);
+      stageMfaLogin({
+        ...flow.mfaChallenge,
+        context: "fresh_login",
+        rememberSession: false
+      });
       router.push("/(auth)/mfa" as never);
       return;
     }
@@ -505,13 +510,17 @@ export default function RegisterScreen() {
     }
 
     if (flow?.status === "email_verification_required" && flow.emailVerification) {
-      stageEmailVerification(flow.emailVerification);
+      stageEmailVerification({ ...flow.emailVerification, rememberSession: false });
       router.push("/(auth)/verify-email" as never);
       return;
     }
 
     if (flow?.status === "mfa_required" && flow.mfaChallenge) {
-      stageMfaLogin(flow.mfaChallenge);
+      stageMfaLogin({
+        ...flow.mfaChallenge,
+        context: "fresh_login",
+        rememberSession: false
+      });
       router.push("/(auth)/mfa" as never);
       return;
     }

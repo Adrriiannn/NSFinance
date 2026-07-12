@@ -1,27 +1,37 @@
 import type { BiometricPreference } from "./biometricSecurity";
 
-export function shouldRememberSession({
-  explicitDecision,
-  biometricPreference
-}: {
-  explicitDecision?: boolean;
-  biometricPreference: BiometricPreference | null;
-}): boolean {
-  return explicitDecision ?? biometricPreference?.decision === "enabled";
-}
+export type RememberedSessionUnlockMethod = "biometric" | "mfa" | "sign_in";
 
-export function shouldOfferSessionProtection({
-  explicitDecision,
+export function resolveSessionProtection({
+  rememberRequested,
   biometricAvailable,
-  biometricPreference
+  biometricPreference,
+  mfaEnabled
 }: {
-  explicitDecision?: boolean;
+  rememberRequested: boolean;
   biometricAvailable: boolean;
   biometricPreference: BiometricPreference | null;
-}): boolean {
-  return explicitDecision === undefined
-    && biometricAvailable
-    && biometricPreference === null;
+  mfaEnabled: boolean;
+}) {
+  const biometricEnabled = biometricAvailable && biometricPreference?.decision === "enabled";
+  const unlockMethod: RememberedSessionUnlockMethod = biometricEnabled
+    ? "biometric"
+    : mfaEnabled
+      ? "mfa"
+      : "sign_in";
+
+  return {
+    persistSession: rememberRequested && unlockMethod !== "sign_in",
+    offerBiometricSetup:
+      rememberRequested
+      && biometricAvailable
+      && biometricPreference?.decision !== "enabled",
+    requiresProtectionSetup:
+      rememberRequested
+      && !biometricAvailable
+      && !mfaEnabled,
+    unlockMethod
+  };
 }
 
 export function shouldReviewBiometricFallback({
@@ -52,6 +62,23 @@ export function shouldAutoPromptBiometric({
   return isLocked && biometricAvailable && isForeground && !alreadyAttempted;
 }
 
+export function shouldAutoStartRememberedMfa({
+  isLocked,
+  unlockMethod,
+  isForeground,
+  alreadyAttempted
+}: {
+  isLocked: boolean;
+  unlockMethod: RememberedSessionUnlockMethod;
+  isForeground: boolean;
+  alreadyAttempted: boolean;
+}): boolean {
+  return isLocked
+    && unlockMethod === "mfa"
+    && isForeground
+    && !alreadyAttempted;
+}
+
 export function canRenderProtectedRoutes({
   isBootstrapping,
   isLocked,
@@ -66,10 +93,12 @@ export function canRenderProtectedRoutes({
 
 export function shouldLockSessionForAppExit({
   rememberedSession,
-  biometricEnabled
+  biometricEnabled,
+  mfaEnabled
 }: {
   rememberedSession: boolean;
   biometricEnabled: boolean;
+  mfaEnabled: boolean;
 }): boolean {
-  return rememberedSession && biometricEnabled;
+  return rememberedSession && (biometricEnabled || mfaEnabled);
 }

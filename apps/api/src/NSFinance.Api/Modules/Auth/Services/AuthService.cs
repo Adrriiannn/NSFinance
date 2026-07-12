@@ -343,6 +343,93 @@ public sealed class AuthService(
         return ServiceResult<AuthTokenResponse>.Ok(tokenResponse);
     }
 
+    public async Task<ServiceResult<MfaLoginChallengeResponse>> BeginRememberedSessionMfaAsync(
+        RefreshTokenRequest request,
+        CancellationToken cancellationToken)
+    {
+        var rememberedSession = await sessionService.ValidateRememberedSessionAsync(
+            request.RefreshToken,
+            cancellationToken);
+        if (!rememberedSession.Succeeded)
+        {
+            return ServiceResult<MfaLoginChallengeResponse>.Fail(
+                rememberedSession.Error!.Message,
+                rememberedSession.Error.Code,
+                rememberedSession.Error.StatusCode);
+        }
+
+        var user = rememberedSession.Value!;
+        if (!await totpMfaService.IsEnabledAsync(user.Id, cancellationToken))
+        {
+            return ServiceResult<MfaLoginChallengeResponse>.Fail(
+                "Authenticator is not enabled for this account.",
+                "mfa_not_enabled",
+                StatusCodes.Status409Conflict);
+        }
+
+        var challenge = await totpMfaService.CreateSessionResumeChallengeAsync(user, cancellationToken);
+        if (!challenge.Succeeded)
+        {
+            return challenge;
+        }
+
+        await auditService.WriteEventAsync(
+            category: "auth",
+            eventName: "remembered_session_mfa_started",
+            targetEntityType: "user",
+            targetEntityId: user.Id.ToString(),
+            actorId: user.Id,
+            actorType: "user",
+            metadata: null,
+            cancellationToken);
+
+        return challenge;
+    }
+
+    public async Task<ServiceResult<AuthTokenResponse>> VerifyRememberedSessionMfaAsync(
+        VerifyRememberedSessionMfaRequest request,
+        CancellationToken cancellationToken)
+    {
+        var verification = await totpMfaService.VerifySessionResumeChallengeAsync(
+            new VerifyMfaLoginRequest(
+                request.ChallengeId,
+                request.ChallengeToken,
+                request.Code,
+                request.Method,
+                request.DeviceContext),
+            cancellationToken);
+        if (!verification.Succeeded)
+        {
+            return ServiceResult<AuthTokenResponse>.Fail(
+                verification.Error!.Message,
+                verification.Error.Code,
+                verification.Error.StatusCode);
+        }
+
+        var user = verification.Value!;
+        var refreshed = await sessionService.RefreshRememberedSessionAsync(
+            request.RefreshToken,
+            user.Id,
+            request.DeviceContext,
+            cancellationToken);
+        if (!refreshed.Succeeded)
+        {
+            return refreshed;
+        }
+
+        await auditService.WriteEventAsync(
+            category: "auth",
+            eventName: "remembered_session_mfa_succeeded",
+            targetEntityType: "session",
+            targetEntityId: refreshed.Value!.SessionId.ToString(),
+            actorId: user.Id,
+            actorType: "user",
+            metadata: new { method = request.Method },
+            cancellationToken);
+
+        return refreshed;
+    }
+
     public async Task<ServiceResult<AuthFlowResponse>> LoginWithGoogleAsync(
         GoogleLoginRequest request,
         CancellationToken cancellationToken)

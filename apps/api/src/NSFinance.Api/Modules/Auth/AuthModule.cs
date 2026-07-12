@@ -69,6 +69,14 @@ public static class AuthModule
             .WithName("VerifyMfaLogin")
             .RequireRateLimiting("auth-write");
 
+        group.MapPost("/mfa/remembered-session", BeginRememberedSessionMfaEndpoint.HandleAsync)
+            .WithName("BeginRememberedSessionMfa")
+            .RequireRateLimiting("auth-refresh");
+
+        group.MapPost("/mfa/remembered-session/verify", VerifyRememberedSessionMfaEndpoint.HandleAsync)
+            .WithName("VerifyRememberedSessionMfa")
+            .RequireRateLimiting("auth-write");
+
         group.MapGet("/mfa/status", GetMfaStatusEndpoint.HandleAsync)
             .WithName("GetMfaStatus")
             .RequireAuthorization();

@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, StyleSheet, Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import {
   OtpCodeField,
@@ -44,10 +44,15 @@ export default function MfaScreen() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [canRetry, setCanRetry] = useState(false);
+  const [isRememberedSessionPending, setIsRememberedSessionPending] = useState(false);
   const codeFieldRef = useRef<OtpCodeFieldHandle | null>(null);
   const lastAttemptKeyRef = useRef<string | null>(null);
   const verifyMutation = useVerifyMfaLoginMutation();
-  const { applyAuthTokenResponse } = useAuthSession();
+  const {
+    applyAuthTokenResponse,
+    completeRememberedSessionMfa,
+    signInAnotherWay
+  } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
 
   const markChallengeUnavailable = useCallback((reason: ChallengeUnavailableReason) => {
@@ -58,15 +63,32 @@ export default function MfaScreen() {
     setChallengeUnavailable(reason);
   }, []);
 
-  const returnToSignIn = useCallback(() => {
+  const returnToSignIn = useCallback(async () => {
     clearPendingMfaLogin();
+    if (pending?.context === "remembered_session") {
+      await signInAnotherWay();
+    }
     router.replace({
       pathname: "/(auth)/login",
       params: challengeUnavailable === "expired"
         ? { mfaExpired: "1" }
         : { mfaUnavailable: "1" }
     } as never);
-  }, [challengeUnavailable]);
+  }, [challengeUnavailable, pending?.context, signInAnotherWay]);
+
+  const isVerifying = verifyMutation.isPending || isRememberedSessionPending;
+
+  useEffect(() => {
+    if (pending?.context !== "remembered_session") {
+      return;
+    }
+
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      void returnToSignIn();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [pending?.context, returnToSignIn]);
 
   const handleVerify = useCallback(async (force = false) => {
     if (!pending || challengeUnavailable) {
@@ -94,14 +116,20 @@ export default function MfaScreen() {
     setError(null);
     setCanRetry(false);
     try {
-      const session = await verifyMutation.mutateAsync({
+      const request = {
         challengeId: pending.challengeId,
         challengeToken: pending.challengeToken,
         code: code.trim(),
         method,
         deviceContext: buildDeviceContext()
-      });
-      await applyAuthTokenResponse(session);
+      };
+      if (pending.context === "remembered_session") {
+        setIsRememberedSessionPending(true);
+        await completeRememberedSessionMfa(request);
+      } else {
+        const session = await verifyMutation.mutateAsync(request);
+        await applyAuthTokenResponse(session, pending.rememberSession);
+      }
       clearPendingMfaLogin();
       playSuccess();
       router.replace("/(tabs)");
@@ -121,11 +149,14 @@ export default function MfaScreen() {
       setError(message);
       setCanRetry(!isInvalidCode);
       showFlashMessage(message, { tone: "error", durationMs: 3200 });
+    } finally {
+      setIsRememberedSessionPending(false);
     }
   }, [
     applyAuthTokenResponse,
     challengeUnavailable,
     code,
+    completeRememberedSessionMfa,
     markChallengeUnavailable,
     method,
     pending,
@@ -167,7 +198,7 @@ export default function MfaScreen() {
       || !shouldAutoSubmitOtp({
         challengeId: pending.challengeId,
         code,
-        isPending: verifyMutation.isPending,
+        isPending: isVerifying,
         lastAttemptKey: lastAttemptKeyRef.current
       })
     ) {
@@ -175,16 +206,16 @@ export default function MfaScreen() {
     }
 
     void handleVerify();
-  }, [challengeUnavailable, code, handleVerify, method, pending, verifyMutation.isPending]);
+  }, [challengeUnavailable, code, handleVerify, isVerifying, method, pending]);
 
   useEffect(() => {
-    if (challengeUnavailable || method !== "totp" || !error || verifyMutation.isPending) {
+    if (challengeUnavailable || method !== "totp" || !error || isVerifying) {
       return;
     }
 
     const focusTimer = setTimeout(() => codeFieldRef.current?.focus(), 50);
     return () => clearTimeout(focusTimer);
-  }, [challengeUnavailable, error, method, verifyMutation.isPending]);
+  }, [challengeUnavailable, error, isVerifying, method]);
 
   if (!pending || challengeUnavailable) {
     const expired = challengeUnavailable === "expired";
@@ -197,7 +228,7 @@ export default function MfaScreen() {
               ? "Sign in again to request a new Authenticator check."
               : "This security check is no longer available. Sign in again to request a new one."}
           </Text>
-          <Button label="Return to sign in" onPress={returnToSignIn} />
+          <Button label="Return to sign in" onPress={() => void returnToSignIn()} />
         </View>
       </AuthScreen>
     );
@@ -233,7 +264,7 @@ export default function MfaScreen() {
               setError(null);
               setCanRetry(false);
             }}
-            disabled={verifyMutation.isPending}
+            disabled={isVerifying}
             error={error}
             accessibilityLabel="Authenticator code"
             autoFocus
@@ -256,7 +287,7 @@ export default function MfaScreen() {
         <View style={styles.actions}>
           {method === "totp" ? (
             <View style={styles.verificationStatus} accessibilityLiveRegion="polite">
-              {verifyMutation.isPending ? (
+              {isVerifying ? (
                 <View style={styles.checkingRow}>
                   <ActivityIndicator color={palette.primary} size="small" />
                   <Text style={styles.checkingText}>Checking code...</Text>
@@ -270,7 +301,7 @@ export default function MfaScreen() {
               label={canRetry ? "Try again" : "Continue"}
               onPress={() => void handleVerify(canRetry)}
               disabled={!code.trim()}
-              isLoading={verifyMutation.isPending}
+              isLoading={isVerifying}
             />
           )}
           {alternativeMethod ? (

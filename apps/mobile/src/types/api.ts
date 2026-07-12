@@ -445,6 +445,10 @@ export type VerifyMfaLoginRequest = {
   deviceContext?: DeviceContextDto | null;
 };
 
+export type VerifyRememberedSessionMfaRequest = VerifyMfaLoginRequest & {
+  refreshToken: string;
+};
+
 export type DisableMfaRequest = {
   code: string;
   method: "totp" | "recovery_code";

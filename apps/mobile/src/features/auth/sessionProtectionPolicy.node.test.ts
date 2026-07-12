@@ -2,46 +2,89 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canRenderProtectedRoutes,
+  resolveSessionProtection,
   shouldAutoPromptBiometric,
-  shouldOfferSessionProtection,
-  shouldRememberSession,
+  shouldAutoStartRememberedMfa,
   shouldReviewBiometricFallback,
   shouldLockSessionForAppExit
 } from "./sessionProtectionPolicy";
 
-test("an existing fingerprint preference remembers the session without another prompt", () => {
-  assert.equal(shouldRememberSession({
-    biometricPreference: { userId: "user-1", decision: "enabled" }
-  }), true);
-  assert.equal(shouldOfferSessionProtection({
+test("Remember me persists through an existing fingerprint preference", () => {
+  assert.deepEqual(resolveSessionProtection({
+    rememberRequested: true,
     biometricAvailable: true,
-    biometricPreference: { userId: "user-1", decision: "enabled" }
-  }), false);
+    biometricPreference: { userId: "user-1", decision: "enabled" },
+    mfaEnabled: false
+  }), {
+    persistSession: true,
+    offerBiometricSetup: false,
+    requiresProtectionSetup: false,
+    unlockMethod: "biometric"
+  });
 });
 
-test("a declined device decision keeps the session in memory only", () => {
-  assert.equal(shouldRememberSession({
-    biometricPreference: { userId: "user-1", decision: "declined" }
-  }), false);
-  assert.equal(shouldOfferSessionProtection({
+test("an explicit Remember me choice can revisit a prior fingerprint decline", () => {
+  const resolution = resolveSessionProtection({
+    rememberRequested: true,
     biometricAvailable: true,
-    biometricPreference: { userId: "user-1", decision: "declined" }
-  }), false);
+    biometricPreference: { userId: "user-1", decision: "declined" },
+    mfaEnabled: false
+  });
+
+  assert.equal(resolution.persistSession, false);
+  assert.equal(resolution.offerBiometricSetup, true);
+  assert.equal(resolution.unlockMethod, "sign_in");
 });
 
-test("a first device login offers protection without persisting first", () => {
-  assert.equal(shouldRememberSession({ biometricPreference: null }), false);
-  assert.equal(shouldOfferSessionProtection({
+test("a first protected-device login offers fingerprint without persisting first", () => {
+  const resolution = resolveSessionProtection({
+    rememberRequested: true,
     biometricAvailable: true,
-    biometricPreference: null
-  }), true);
+    biometricPreference: null,
+    mfaEnabled: false
+  });
+
+  assert.equal(resolution.persistSession, false);
+  assert.equal(resolution.offerBiometricSetup, true);
 });
 
-test("a device without enrolled biometrics never receives a fingerprint offer", () => {
-  assert.equal(shouldOfferSessionProtection({
+test("MFA protects a remembered session when fingerprint is unavailable or disabled", () => {
+  assert.deepEqual(resolveSessionProtection({
+    rememberRequested: true,
     biometricAvailable: false,
-    biometricPreference: null
-  }), false);
+    biometricPreference: null,
+    mfaEnabled: true
+  }), {
+    persistSession: true,
+    offerBiometricSetup: false,
+    requiresProtectionSetup: false,
+    unlockMethod: "mfa"
+  });
+});
+
+test("Remember me is not persisted without fingerprint or MFA protection", () => {
+  const resolution = resolveSessionProtection({
+    rememberRequested: true,
+    biometricAvailable: false,
+    biometricPreference: null,
+    mfaEnabled: false
+  });
+
+  assert.equal(resolution.persistSession, false);
+  assert.equal(resolution.requiresProtectionSetup, true);
+});
+
+test("an unchecked Remember me never persists or prompts for setup", () => {
+  const resolution = resolveSessionProtection({
+    rememberRequested: false,
+    biometricAvailable: true,
+    biometricPreference: { userId: "user-1", decision: "enabled" },
+    mfaEnabled: true
+  });
+
+  assert.equal(resolution.persistSession, false);
+  assert.equal(resolution.offerBiometricSetup, false);
+  assert.equal(resolution.requiresProtectionSetup, false);
 });
 
 test("automatic biometric prompt requires a foreground cold-launch lock", () => {
@@ -62,6 +105,27 @@ test("automatic biometric prompt requires a foreground cold-launch lock", () => 
     biometricAvailable: true,
     isForeground: true,
     alreadyAttempted: true
+  }), false);
+});
+
+test("remembered-session MFA starts only for an active MFA lock", () => {
+  assert.equal(shouldAutoStartRememberedMfa({
+    isLocked: true,
+    unlockMethod: "mfa",
+    isForeground: true,
+    alreadyAttempted: false
+  }), true);
+  assert.equal(shouldAutoStartRememberedMfa({
+    isLocked: true,
+    unlockMethod: "biometric",
+    isForeground: true,
+    alreadyAttempted: false
+  }), false);
+  assert.equal(shouldAutoStartRememberedMfa({
+    isLocked: true,
+    unlockMethod: "mfa",
+    isForeground: false,
+    alreadyAttempted: false
   }), false);
 });
 
@@ -105,17 +169,25 @@ test("fallback review is one-time and scoped to the same account", () => {
   }), false);
 });
 
-test("Android Back locks only remembered sessions protected by biometrics", () => {
+test("Android Back locks remembered sessions protected by fingerprint or MFA", () => {
   assert.equal(shouldLockSessionForAppExit({
     rememberedSession: true,
-    biometricEnabled: true
+    biometricEnabled: true,
+    mfaEnabled: false
   }), true);
   assert.equal(shouldLockSessionForAppExit({
     rememberedSession: false,
-    biometricEnabled: true
+    biometricEnabled: true,
+    mfaEnabled: true
   }), false);
   assert.equal(shouldLockSessionForAppExit({
     rememberedSession: true,
-    biometricEnabled: false
+    biometricEnabled: false,
+    mfaEnabled: true
+  }), true);
+  assert.equal(shouldLockSessionForAppExit({
+    rememberedSession: true,
+    biometricEnabled: false,
+    mfaEnabled: false
   }), false);
 });

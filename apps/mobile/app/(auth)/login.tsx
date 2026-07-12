@@ -269,7 +269,12 @@ export default function LoginScreen() {
   const loginMutation = useLoginMutation();
   const googleSignIn = useGoogleSignIn();
   const microsoftSignIn = useMicrosoftSignIn();
-  const { applyAuthTokenResponse, isAuthTransitioning } = useAuthSession();
+  const {
+    applyAuthTokenResponse,
+    isAuthTransitioning,
+    sessionMessage,
+    clearSessionMessage
+  } = useAuthSession();
   const { playSuccess } = useFeedbackSound();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -278,6 +283,7 @@ export default function LoginScreen() {
   const [failedLoginAttempts, setFailedLoginAttempts] = useState(0);
   const [focusedField, setFocusedField] = useState<FocusField>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [loginErrorBanner, setLoginErrorBanner] = useState<LoginErrorBannerState | null>(null);
   const [countdownNowMs, setCountdownNowMs] = useState(Date.now());
@@ -489,9 +495,13 @@ export default function LoginScreen() {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const completeAuthFlow = async (flow: AuthFlowResponse, verificationEmail?: string) => {
+  const completeAuthFlow = async (
+    flow: AuthFlowResponse,
+    verificationEmail: string | undefined,
+    rememberSession: boolean
+  ) => {
     if (flow.status === "authenticated" && flow.session) {
-      await applyAuthTokenResponse(flow.session);
+      await applyAuthTokenResponse(flow.session, rememberSession);
       playSuccess();
       router.replace("/(tabs)");
       return;
@@ -500,14 +510,19 @@ export default function LoginScreen() {
     if (flow.status === "email_verification_required" && flow.emailVerification) {
       stageEmailVerification({
         ...flow.emailVerification,
-        email: verificationEmail
+        email: verificationEmail,
+        rememberSession
       });
       router.push("/(auth)/verify-email" as never);
       return;
     }
 
     if (flow.status === "mfa_required" && flow.mfaChallenge) {
-      stageMfaLogin(flow.mfaChallenge);
+      stageMfaLogin({
+        ...flow.mfaChallenge,
+        context: "fresh_login",
+        rememberSession
+      });
       router.push("/(auth)/mfa" as never);
       return;
     }
@@ -534,6 +549,7 @@ export default function LoginScreen() {
 
     const normalizedEmail = email.trim().toLowerCase();
 
+    clearSessionMessage();
     setGoogleError(null);
     try {
       const flow = await loginMutation.mutateAsync({
@@ -546,7 +562,7 @@ export default function LoginScreen() {
       void clearPersistedLockoutUntil();
       setLoginErrorBanner(null);
       setFailedLoginAttempts(0);
-      await completeAuthFlow(flow, normalizedEmail);
+      await completeAuthFlow(flow, normalizedEmail, rememberMe);
     } catch (error) {
       if (error instanceof ApiClientError) {
         const lockoutRetryAfterMs = tryParseLockoutRetryAfterMs(error);
@@ -598,6 +614,7 @@ export default function LoginScreen() {
     }
 
     setGoogleError(null);
+    clearSessionMessage();
     const result = await googleSignIn.signInWithGoogle();
     if (!result.succeeded) {
       if (!result.cancelled) {
@@ -608,7 +625,7 @@ export default function LoginScreen() {
 
     if (result.flow) {
       try {
-        await completeAuthFlow(result.flow);
+        await completeAuthFlow(result.flow, undefined, rememberMe);
       } catch (error) {
         setGoogleError(formatUnknownError(error));
       }
@@ -622,6 +639,7 @@ export default function LoginScreen() {
     }
 
     setGoogleError(null);
+    clearSessionMessage();
     const result = await microsoftSignIn.signInWithMicrosoft();
     if (!result.succeeded) {
       if (!result.cancelled) {
@@ -632,7 +650,7 @@ export default function LoginScreen() {
 
     if (result.flow) {
       try {
-        await completeAuthFlow(result.flow);
+        await completeAuthFlow(result.flow, undefined, rememberMe);
       } catch (error) {
         setGoogleError(formatUnknownError(error));
       }
@@ -670,6 +688,12 @@ export default function LoginScreen() {
                     title={isMfaExpired ? "Security check expired" : "Security check unavailable"}
                     message="Sign in again to request a new Authenticator check."
                   />
+                </View>
+              </View>
+            ) : sessionMessage ? (
+              <View pointerEvents="none" style={styles.errorBannerAboveForm}>
+                <View style={styles.narrowBlock}>
+                  <Banner title="Sign in again" message={sessionMessage} />
                 </View>
               </View>
             ) : isSecurityFallback ? (
@@ -730,6 +754,26 @@ export default function LoginScreen() {
 
                 <View style={styles.narrowBlock}>
                   <View style={styles.accountHelpRow}>
+                    <Pressable
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: rememberMe }}
+                      accessibilityLabel="Remember me"
+                      onPress={() => setRememberMe((current) => !current)}
+                      style={({ pressed }) => [
+                        styles.rememberMeControl,
+                        pressed ? styles.linkPressed : null
+                      ]}
+                    >
+                      <View style={[
+                        styles.rememberMeCheckbox,
+                        rememberMe ? styles.rememberMeCheckboxChecked : null
+                      ]}>
+                        {rememberMe ? (
+                          <Ionicons name="checkmark" size={14} color={palette.appBackground} />
+                        ) : null}
+                      </View>
+                      <Text style={styles.rememberMeLabel}>Remember me</Text>
+                    </Pressable>
                     <Pressable
                       onPress={() => router.push("/forgot-password" as never)}
                       style={({ pressed }) => [pressed ? styles.linkPressed : null]}
@@ -889,7 +933,32 @@ const styles = createRuntimeStyleSheet(() => ({
     minHeight: 28,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end"
+    justifyContent: "space-between",
+    gap: spacing[12]
+  },
+  rememberMeControl: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[8]
+  },
+  rememberMeCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: palette.borderStrong,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent"
+  },
+  rememberMeCheckboxChecked: {
+    borderColor: palette.primaryGlow,
+    backgroundColor: palette.primaryGlow
+  },
+  rememberMeLabel: {
+    color: palette.textSecondary,
+    ...typography.body2
   },
   ctaGroup: {
     marginTop: spacing[16],
