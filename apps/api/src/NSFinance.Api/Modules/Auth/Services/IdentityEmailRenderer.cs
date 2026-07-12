@@ -11,31 +11,42 @@ public sealed class IdentityEmailRenderer
     public const string AccountDeletionTemplate = "identity.account-deletion";
     public const string AccountCreatedTemplate = "identity.account-created";
     public const string PhoneChangedTemplate = "identity.phone-changed";
-    public const int CurrentTemplateVersion = 1;
+    public const int CurrentTemplateVersion = 2;
 
-    public RenderedIdentityEmail Render(string templateKey, string payloadJson)
+    public RenderedIdentityEmail Render(string templateKey, int templateVersion, string payloadJson)
     {
+        if (templateVersion is not 1 and not CurrentTemplateVersion)
+        {
+            throw new InvalidOperationException(
+                $"Unsupported identity email template version '{templateVersion}'.");
+        }
+
         var payload = JsonSerializer.Deserialize<IdentityEmailPayload>(payloadJson)
             ?? throw new InvalidOperationException("Transactional identity payload is invalid.");
+        var includeSecurityCodePreview = templateVersion >= 2;
 
         return templateKey switch
         {
             EmailVerificationTemplate => RenderCodeEmail(
                 "Confirm your NSFinance email",
                 "Use this code to finish creating your NSFinance account.",
-                payload),
+                payload,
+                includeSecurityCodePreview),
             PasswordResetTemplate => RenderCodeEmail(
                 "Reset your NSFinance password",
                 "Use this code in the NSFinance app to reset your password.",
-                payload),
+                payload,
+                includeSecurityCodePreview),
             PasswordChangeTemplate => RenderCodeEmail(
                 "Confirm your NSFinance password change",
                 "Use this code in the NSFinance app to confirm your password change.",
-                payload),
+                payload,
+                includeSecurityCodePreview),
             AccountDeletionTemplate => RenderCodeEmail(
                 "Confirm your NSFinance account deletion request",
                 "Use this code in the NSFinance app to confirm the account deletion request.",
-                payload),
+                payload,
+                includeSecurityCodePreview),
             AccountCreatedTemplate => RenderNoticeEmail(
                 "Your NSFinance account is ready",
                 "Your NSFinance account was created successfully.",
@@ -53,7 +64,8 @@ public sealed class IdentityEmailRenderer
     private static RenderedIdentityEmail RenderCodeEmail(
         string subject,
         string intro,
-        IdentityEmailPayload payload)
+        IdentityEmailPayload payload,
+        bool includeSecurityCodePreview)
     {
         if (string.IsNullOrWhiteSpace(payload.Code) || payload.ExpiresInMinutes is null)
         {
@@ -62,7 +74,11 @@ public sealed class IdentityEmailRenderer
 
         var safeName = WebUtility.HtmlEncode(NormalizeDisplayName(payload.DisplayName));
         var safeCode = WebUtility.HtmlEncode(payload.Code);
-        var plainText =
+        var preview = $"{payload.Code} is your NSFinance security code.";
+        var plainText = includeSecurityCodePreview
+            ? $"{preview}\n\n"
+            : string.Empty;
+        plainText +=
             $"Hi {NormalizeDisplayName(payload.DisplayName)},\n\n{intro}\n\n" +
             $"{payload.Code}\n\nThis code expires in {payload.ExpiresInMinutes} minutes. " +
             "Never share it. NSFinance support will never ask for this code.\n\n" +
@@ -75,7 +91,10 @@ public sealed class IdentityEmailRenderer
             $"<p style=\"margin:0 0 12px;color:#52645E\">This code expires in {payload.ExpiresInMinutes} minutes.</p>" +
             "<p style=\"margin:0;color:#52645E\">Never share it. NSFinance support will never ask for this code.</p>";
 
-        return new RenderedIdentityEmail(subject, plainText, WrapHtml(subject, body));
+        return new RenderedIdentityEmail(
+            subject,
+            plainText,
+            WrapHtml(subject, body, includeSecurityCodePreview ? preview : null));
     }
 
     private static RenderedIdentityEmail RenderNoticeEmail(
@@ -104,9 +123,14 @@ public sealed class IdentityEmailRenderer
         return new RenderedIdentityEmail(subject, plainText, WrapHtml(subject, body));
     }
 
-    private static string WrapHtml(string heading, string body)
+    private static string WrapHtml(string heading, string body, string? preview = null)
     {
+        var preheader = string.IsNullOrWhiteSpace(preview)
+            ? string.Empty
+            : $"<div aria-hidden=\"true\" style=\"display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;mso-hide:all\">{WebUtility.HtmlEncode(preview)}</div>";
+
         return "<!doctype html><html><body style=\"margin:0;background:#F7FAF8;color:#19342C;font-family:Arial,sans-serif\">" +
+            preheader +
             "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background:#F7FAF8;padding:28px 14px\"><tr><td align=\"center\">" +
             "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:560px;background:#FFFFFF;border:1px solid #E1E9E5;border-radius:8px\">" +
             "<tr><td style=\"padding:30px 30px 12px;font-size:18px;font-weight:700;color:#153F34\">NSFinance</td></tr>" +

@@ -1,29 +1,44 @@
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
-import { OtpCodeField } from "../../src/components/ui/OtpCodeField";
+import {
+  OtpCodeField,
+  type OtpCodeFieldHandle
+} from "../../src/components/ui/OtpCodeField";
 import { Button } from "../../src/components/ui/buttons/Button";
 import {
   useConfirmEmailVerificationMutation,
   useRequestEmailVerificationMutation
 } from "../../src/features/auth/useAuthMutations";
 import {
+  buildOtpAttemptKey,
+  normalizeOtpCode,
+  shouldAutoSubmitOtp
+} from "../../src/features/auth/otpAutoSubmitPolicy";
+import {
   clearPendingEmailVerification,
   getPendingEmailVerification,
   stageEmailVerification
 } from "../../src/features/auth/pendingAuthFlow";
-import { formatUnknownError } from "../../src/lib/api/errors";
+import { ApiClientError, formatUnknownError } from "../../src/lib/api/errors";
 import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
+import { showFlashMessage } from "../../src/lib/flashMessage";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { palette, spacing, typography } from "../../src/theme/tokens";
+
+const INVALID_CODE_MESSAGE =
+  "That code is incorrect or no longer active. Check your latest email and try again.";
 
 export default function VerifyEmailScreen() {
   const [pending, setPending] = useState(getPendingEmailVerification);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const codeFieldRef = useRef<OtpCodeFieldHandle | null>(null);
+  const lastAttemptKeyRef = useRef<string | null>(null);
   const confirmMutation = useConfirmEmailVerificationMutation();
   const resendMutation = useRequestEmailVerificationMutation();
   const { applyAuthTokenResponse } = useAuthSession();
@@ -42,13 +57,15 @@ export default function VerifyEmailScreen() {
   }, [pending]);
   const resendWaitSeconds = Math.max(0, Math.ceil((resendAvailableAt - now) / 1000));
 
-  const handleConfirm = async () => {
-    if (!pending || code.length !== 6) {
-      setError("Enter the six-digit code.");
+  const handleConfirm = useCallback(async (force = false) => {
+    const attemptKey = pending ? buildOtpAttemptKey(pending.challengeId, code) : null;
+    if (!pending || !attemptKey || (!force && attemptKey === lastAttemptKeyRef.current)) {
       return;
     }
 
+    lastAttemptKeyRef.current = attemptKey;
     setError(null);
+    setCanRetry(false);
     try {
       const session = await confirmMutation.mutateAsync({
         challengeId: pending.challengeId,
@@ -60,10 +77,40 @@ export default function VerifyEmailScreen() {
       playSuccess();
       router.replace("/(tabs)");
     } catch (nextError) {
-      setCode("");
-      setError(formatUnknownError(nextError));
+      const isInvalidCode =
+        nextError instanceof ApiClientError && nextError.code === "identity_code_invalid";
+      const message = isInvalidCode ? INVALID_CODE_MESSAGE : formatUnknownError(nextError);
+
+      setError(message);
+      setCanRetry(!isInvalidCode);
+      showFlashMessage(message, { tone: "error", durationMs: 3200 });
     }
-  };
+  }, [applyAuthTokenResponse, code, confirmMutation, pending, playSuccess]);
+
+  useEffect(() => {
+    if (
+      !pending ||
+      !shouldAutoSubmitOtp({
+        challengeId: pending.challengeId,
+        code,
+        isPending: confirmMutation.isPending,
+        lastAttemptKey: lastAttemptKeyRef.current
+      })
+    ) {
+      return;
+    }
+
+    void handleConfirm();
+  }, [code, confirmMutation.isPending, handleConfirm, pending]);
+
+  useEffect(() => {
+    if (!error || confirmMutation.isPending) {
+      return;
+    }
+
+    const focusTimer = setTimeout(() => codeFieldRef.current?.focus(), 50);
+    return () => clearTimeout(focusTimer);
+  }, [confirmMutation.isPending, error]);
 
   const handleResend = async () => {
     if (!pending?.email || resendWaitSeconds > 0) {
@@ -71,15 +118,19 @@ export default function VerifyEmailScreen() {
     }
 
     setError(null);
+    setCanRetry(false);
     try {
       const delivery = await resendMutation.mutateAsync({ email: pending.email });
       const nextPending = { ...delivery, email: pending.email, rememberMe: pending.rememberMe };
       stageEmailVerification(nextPending);
       setPending(nextPending);
       setCode("");
+      lastAttemptKeyRef.current = null;
       setNow(Date.now());
     } catch (nextError) {
-      setError(formatUnknownError(nextError));
+      const message = formatUnknownError(nextError);
+      setError(message);
+      showFlashMessage(message, { tone: "error", durationMs: 3200 });
     }
   };
 
@@ -105,22 +156,29 @@ export default function VerifyEmailScreen() {
         </View>
 
         <OtpCodeField
+          ref={codeFieldRef}
           value={code}
           onChange={(value) => {
-            setCode(value);
+            setCode(normalizeOtpCode(value));
             setError(null);
+            setCanRetry(false);
           }}
           disabled={confirmMutation.isPending}
           error={error}
+          autoFocus
         />
 
         <View style={styles.actions}>
-          <Button
-            label="Confirm email"
-            onPress={() => void handleConfirm()}
-            disabled={code.length !== 6}
-            isLoading={confirmMutation.isPending}
-          />
+          <View style={styles.confirmationStatus} accessibilityLiveRegion="polite">
+            {confirmMutation.isPending ? (
+              <View style={styles.checkingRow}>
+                <ActivityIndicator color={palette.primary} size="small" />
+                <Text style={styles.checkingText}>Checking code...</Text>
+              </View>
+            ) : canRetry ? (
+              <Button label="Try again" onPress={() => void handleConfirm(true)} />
+            ) : null}
+          </View>
           {pending.email ? (
             <Button
               label={resendWaitSeconds > 0 ? `Resend in ${resendWaitSeconds}s` : "Resend code"}
@@ -177,5 +235,22 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: spacing[12]
+  },
+  confirmationStatus: {
+    minHeight: 48,
+    justifyContent: "center"
+  },
+  checkingRow: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing[8]
+  },
+  checkingText: {
+    color: palette.textMuted,
+    fontSize: typography.body.fontSize,
+    lineHeight: typography.body.lineHeight,
+    fontFamily: typography.body.fontFamily
   }
 });

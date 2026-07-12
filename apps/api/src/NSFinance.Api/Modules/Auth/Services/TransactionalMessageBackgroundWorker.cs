@@ -112,7 +112,7 @@ public sealed class TransactionalMessageBackgroundWorker(
         try
         {
             var payloadJson = payloadProtector.Unprotect(message.EncryptedPayload);
-            var rendered = renderer.Render(message.TemplateKey, payloadJson);
+            var rendered = renderer.Render(message.TemplateKey, message.TemplateVersion, payloadJson);
             result = await emailSender.SendAsync(message.Recipient, rendered, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

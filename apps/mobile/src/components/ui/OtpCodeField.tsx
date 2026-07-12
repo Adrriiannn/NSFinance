@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { forwardRef, useImperativeHandle, useRef } from "react";
+import { Platform, StyleSheet, Text, TextInput, View } from "react-native";
 import { controls, palette, spacing, surfaces, typography } from "../../theme/tokens";
 
 type OtpCodeFieldProps = {
@@ -8,62 +8,83 @@ type OtpCodeFieldProps = {
   disabled?: boolean;
   error?: string | null;
   accessibilityLabel?: string;
+  autoFocus?: boolean;
 };
 
-export function OtpCodeField({
-  value,
-  onChange,
-  disabled = false,
-  error,
-  accessibilityLabel = "Six-digit verification code"
-}: OtpCodeFieldProps) {
+export type OtpCodeFieldHandle = {
+  focus: () => void;
+};
+
+export const OtpCodeField = forwardRef<OtpCodeFieldHandle, OtpCodeFieldProps>(function OtpCodeField(
+  {
+    value,
+    onChange,
+    disabled = false,
+    error,
+    accessibilityLabel = "Six-digit verification code",
+    autoFocus = false
+  },
+  forwardedRef
+) {
   const inputRef = useRef<TextInput | null>(null);
   const normalizedValue = value.replace(/\D/g, "").slice(0, 6);
 
+  useImperativeHandle(forwardedRef, () => ({
+    focus: () => inputRef.current?.focus()
+  }));
+
   return (
     <View style={styles.wrap}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
-        accessibilityHint="Opens the numeric keyboard"
-        disabled={disabled}
-        onPress={() => inputRef.current?.focus()}
-        style={styles.codeRow}
-      >
-        {Array.from({ length: 6 }, (_, index) => {
-          const character = normalizedValue[index] ?? "";
-          const isActive = index === normalizedValue.length && normalizedValue.length < 6;
-          return (
-            <View
-              key={index}
-              style={[
-                styles.cell,
-                isActive ? styles.cellActive : null,
-                error ? styles.cellError : null,
-                disabled ? styles.cellDisabled : null
-              ]}
-            >
-              <Text style={styles.character}>{character}</Text>
-            </View>
-          );
-        })}
+      <View style={styles.codeRow}>
+        <View
+          pointerEvents="none"
+          importantForAccessibility="no-hide-descendants"
+          style={styles.visualRow}
+        >
+          {Array.from({ length: 6 }, (_, index) => {
+            const character = normalizedValue[index] ?? "";
+            const isActive = index === normalizedValue.length && normalizedValue.length < 6;
+            return (
+              <View
+                key={index}
+                style={[
+                  styles.cell,
+                  isActive ? styles.cellActive : null,
+                  error ? styles.cellError : null,
+                  disabled ? styles.cellDisabled : null
+                ]}
+              >
+                <Text style={styles.character}>{character}</Text>
+              </View>
+            );
+          })}
+        </View>
         <TextInput
           ref={inputRef}
           value={normalizedValue}
           editable={!disabled}
           onChangeText={(nextValue) => onChange(nextValue.replace(/\D/g, "").slice(0, 6))}
-          keyboardType="number-pad"
+          accessibilityLabel={accessibilityLabel}
+          accessibilityHint="Enter the six-digit code"
+          autoFocus={autoFocus}
+          autoCorrect={false}
+          spellCheck={false}
+          autoComplete={Platform.OS === "android" ? "sms-otp" : "one-time-code"}
           textContentType="oneTimeCode"
-          autoComplete="sms-otp"
-          maxLength={6}
+          importantForAutofill={Platform.OS === "android" ? "yes" : undefined}
+          inputMode="numeric"
+          keyboardType="number-pad"
+          maxLength={12}
           caretHidden
+          selectionColor="transparent"
+          underlineColorAndroid="transparent"
           style={styles.hiddenInput}
         />
-      </Pressable>
+      </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: {
@@ -73,9 +94,12 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 360,
     alignSelf: "center",
-    flexDirection: "row",
-    gap: spacing[8],
     position: "relative"
+  },
+  visualRow: {
+    width: "100%",
+    flexDirection: "row",
+    gap: spacing[8]
   },
   cell: {
     flex: 1,
@@ -106,9 +130,14 @@ const styles = StyleSheet.create({
   },
   hiddenInput: {
     position: "absolute",
-    width: 1,
-    height: 1,
-    opacity: 0
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    color: "transparent",
+    backgroundColor: "transparent",
+    fontSize: 1,
+    opacity: 0.02
   },
   error: {
     color: palette.negative,
