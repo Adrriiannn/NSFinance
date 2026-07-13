@@ -8,9 +8,14 @@ import { AppBackgroundLayer } from "../ui/surfaces/AppBackgroundLayer";
 type AuthScreenProps = {
   children: ReactNode;
   focusedInputExtraClearance?: number;
+  resetScrollOnKeyboardHide?: boolean;
 };
 
-export function AuthScreen({ children, focusedInputExtraClearance = 0 }: AuthScreenProps) {
+export function AuthScreen({
+  children,
+  focusedInputExtraClearance = 0,
+  resetScrollOnKeyboardHide = false
+}: AuthScreenProps) {
   const normalizedFocusedExtraClearance = Math.max(focusedInputExtraClearance, 0);
   const { height: windowHeight } = useWindowDimensions();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -107,7 +112,9 @@ export function AuthScreen({ children, focusedInputExtraClearance = 0 }: AuthScr
   useEffect(() => {
     const showSubscription = Keyboard.addListener(showEvent, (event) => {
       if (!keyboardSessionActiveRef.current) {
-        keyboardSessionBaseOffsetRef.current = scrollOffsetYRef.current;
+        keyboardSessionBaseOffsetRef.current = resetScrollOnKeyboardHide
+          ? 0
+          : scrollOffsetYRef.current;
         keyboardSessionActiveRef.current = true;
       }
 
@@ -148,6 +155,11 @@ export function AuthScreen({ children, focusedInputExtraClearance = 0 }: AuthScr
 
       clearSpacerTimeoutRef.current = setTimeout(() => {
         setExtraBottomSpacer(0);
+        if (resetScrollOnKeyboardHide) {
+          requestAnimationFrame(() => {
+            scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+          });
+        }
         clearSpacerTimeoutRef.current = null;
       }, 180);
     });
@@ -156,7 +168,7 @@ export function AuthScreen({ children, focusedInputExtraClearance = 0 }: AuthScr
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [hideEvent, scrollFocusedInputIntoView, showEvent]);
+  }, [hideEvent, resetScrollOnKeyboardHide, scrollFocusedInputIntoView, showEvent]);
 
   useEffect(() => {
     if (keyboardHeight <= 0) {

@@ -60,6 +60,7 @@ export default function MfaScreen() {
   const [isRememberedSessionPending, setIsRememberedSessionPending] = useState(false);
   const [isBiometricUnlockPending, setIsBiometricUnlockPending] = useState(false);
   const [methodMenuVisible, setMethodMenuVisible] = useState(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const codeFieldRef = useRef<OtpCodeFieldHandle | null>(null);
   const lastAttemptKeyRef = useRef<string | null>(null);
   const verifyMutation = useVerifyMfaLoginMutation();
@@ -106,6 +107,20 @@ export default function MfaScreen() {
   const isVerifying = verifyMutation.isPending
     || isRememberedSessionPending
     || isBiometricUnlockPending;
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
+      setIsKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
+      setIsKeyboardVisible(false);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (pending?.context !== "remembered_session") {
@@ -316,7 +331,10 @@ export default function MfaScreen() {
 
   return (
     <>
-      <AuthScreen focusedInputExtraClearance={method === "totp" ? 64 : 0}>
+      <AuthScreen
+        focusedInputExtraClearance={method === "totp" ? 64 : 0}
+        resetScrollOnKeyboardHide
+      >
         <View style={styles.content}>
           <View style={styles.formContent}>
             <View style={styles.copy}>
@@ -404,7 +422,7 @@ export default function MfaScreen() {
             )}
           </View>
 
-          <View style={styles.actions}>
+          <View style={[styles.actions, isKeyboardVisible ? styles.actionsKeyboardVisible : null]}>
             <Button
               label="Use another method"
               variant="ghost"
@@ -564,6 +582,10 @@ const styles = StyleSheet.create({
   actions: {
     marginTop: "auto",
     paddingTop: spacing[20]
+  },
+  actionsKeyboardVisible: {
+    marginTop: spacing[8],
+    paddingTop: 0
   },
   verificationStatus: {
     minHeight: 48,
