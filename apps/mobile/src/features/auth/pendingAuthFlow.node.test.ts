@@ -15,6 +15,7 @@ test("Remember me survives a fresh-login MFA continuation", () => {
     challengeToken: "token-1",
     expiresUtc: "2026-07-12T22:00:00.000Z",
     methods: ["totp", "recovery_code"],
+    accountHint: "tes****@test.local",
     context: "fresh_login",
     rememberSession: true
   });
@@ -30,6 +31,7 @@ test("remembered-session MFA stays distinct from fresh-login MFA", () => {
     challengeToken: "token-2",
     expiresUtc: "2026-07-12T22:00:00.000Z",
     methods: ["totp"],
+    accountHint: "tes****@test.local",
     context: "remembered_session",
     rememberSession: true
   });

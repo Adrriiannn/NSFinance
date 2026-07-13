@@ -20,4 +20,5 @@ public sealed record MfaLoginChallengeResponse(
     Guid ChallengeId,
     string ChallengeToken,
     DateTime ExpiresUtc,
-    string[] Methods);
+    string[] Methods,
+    string AccountHint);

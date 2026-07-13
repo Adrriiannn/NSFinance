@@ -286,6 +286,7 @@ export type MfaLoginChallengeResponse = {
   challengeToken: string;
   expiresUtc: string;
   methods: Array<"totp" | "recovery_code">;
+  accountHint: string;
 };
 
 export type AuthFlowResponse = {

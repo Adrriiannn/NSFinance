@@ -17,6 +17,7 @@ import {
   readBiometricPreference,
   writeBiometricPreference
 } from "../features/auth/biometricSecurity";
+import { maskAccountEmail } from "../features/auth/accountHint";
 import { clearPendingAuthFlows } from "../features/auth/pendingAuthFlow";
 import {
   clearMfaTrustedDeviceCredential,
@@ -68,6 +69,7 @@ type AuthContextValue = {
   allowAutomaticBiometricPrompt: boolean;
   rememberedUnlockMethod: RememberedSessionUnlockMethod;
   canUseRememberedSessionMfa: boolean;
+  rememberedAccountHint: string | null;
   session: StoredSession | null;
   sessionMessage: string | null;
   applyAuthTokenResponse: (
@@ -789,6 +791,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     void bootstrap();
   }, [applyAuthTokenResponse, clearSessionStorage, persistSession, refreshAccessToken]);
 
+  const rememberedAccountHint = isAppLocked
+    ? maskAccountEmail(lockedSessionRef.current?.user.primaryEmail)
+    : null;
+
   const value = useMemo<AuthContextValue>(
     () => ({
       isBootstrapping,
@@ -804,6 +810,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       allowAutomaticBiometricPrompt,
       rememberedUnlockMethod,
       canUseRememberedSessionMfa,
+      rememberedAccountHint,
       session,
       sessionMessage,
       applyAuthTokenResponse,
@@ -845,6 +852,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       notifyUserInteraction,
       openRememberProtectionSetup,
       prepareForAppExit,
+      rememberedAccountHint,
       rememberedUnlockMethod,
       requiresRememberProtectionSetup,
       session,

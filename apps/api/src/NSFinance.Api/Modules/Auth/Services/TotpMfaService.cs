@@ -248,7 +248,23 @@ public sealed class TotpMfaService(
             challengeId,
             challengeToken,
             expiresUtc,
-            [TotpMethod, RecoveryCodeMethod]));
+            [TotpMethod, RecoveryCodeMethod],
+            MaskAccountEmail(user.PrimaryEmail)));
+    }
+
+    private static string MaskAccountEmail(string email)
+    {
+        var normalized = email.Trim();
+        var separatorIndex = normalized.LastIndexOf('@');
+        if (separatorIndex <= 0 || separatorIndex == normalized.Length - 1)
+        {
+            return "****";
+        }
+
+        var localPart = normalized[..separatorIndex];
+        var domain = normalized[(separatorIndex + 1)..];
+        var visibleLocalLength = Math.Min(3, localPart.Length);
+        return $"{localPart[..visibleLocalLength]}****@{domain}";
     }
 
     public async Task<ServiceResult<User>> VerifyLoginChallengeAsync(

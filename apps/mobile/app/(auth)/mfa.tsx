@@ -1,7 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, BackHandler, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  AppState,
+  BackHandler,
+  Keyboard,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import {
   OtpCodeField,
@@ -28,7 +39,7 @@ import { buildDeviceContext } from "../../src/lib/device/deviceIdentity";
 import { showFlashMessage } from "../../src/lib/flashMessage";
 import { useFeedbackSound } from "../../src/lib/sound/useFeedbackSound";
 import { useAuthSession } from "../../src/providers/AuthProvider";
-import { palette, spacing, typography } from "../../src/theme/tokens";
+import { palette, spacing, surfaces, typography } from "../../src/theme/tokens";
 
 const INVALID_TOTP_MESSAGE =
   "That code is incorrect or no longer active. Check your authenticator and try again.";
@@ -47,14 +58,20 @@ export default function MfaScreen() {
   const [canRetry, setCanRetry] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
   const [isRememberedSessionPending, setIsRememberedSessionPending] = useState(false);
+  const [isBiometricUnlockPending, setIsBiometricUnlockPending] = useState(false);
+  const [methodMenuVisible, setMethodMenuVisible] = useState(false);
   const codeFieldRef = useRef<OtpCodeFieldHandle | null>(null);
   const lastAttemptKeyRef = useRef<string | null>(null);
   const verifyMutation = useVerifyMfaLoginMutation();
   const {
     applyAuthTokenResponse,
+    biometricAvailable,
+    biometricEnabled,
     completeRememberedSessionMfa,
-    signInAnotherWay
+    signInAnotherWay,
+    unlockWithBiometrics
   } = useAuthSession();
+  const insets = useSafeAreaInsets();
   const { playSuccess } = useFeedbackSound();
 
   const markChallengeUnavailable = useCallback((reason: ChallengeUnavailableReason) => {
@@ -78,7 +95,17 @@ export default function MfaScreen() {
     } as never);
   }, [challengeUnavailable, pending?.context, signInAnotherWay]);
 
-  const isVerifying = verifyMutation.isPending || isRememberedSessionPending;
+  const chooseDifferentAccount = useCallback(async () => {
+    clearPendingMfaLogin();
+    if (pending?.context === "remembered_session") {
+      await signInAnotherWay();
+    }
+    router.replace("/(auth)/login" as never);
+  }, [pending?.context, signInAnotherWay]);
+
+  const isVerifying = verifyMutation.isPending
+    || isRememberedSessionPending
+    || isBiometricUnlockPending;
 
   useEffect(() => {
     if (pending?.context !== "remembered_session") {
@@ -224,6 +251,33 @@ export default function MfaScreen() {
     return () => clearTimeout(focusTimer);
   }, [challengeUnavailable, error, isVerifying, method]);
 
+  const handleBiometricUnlock = useCallback(async () => {
+    if (isVerifying) {
+      return;
+    }
+
+    setMethodMenuVisible(false);
+    Keyboard.dismiss();
+    setError(null);
+    setIsBiometricUnlockPending(true);
+    try {
+      const result = await unlockWithBiometrics();
+      if (!result.succeeded) {
+        if (result.message) {
+          setError(result.message);
+          showFlashMessage(result.message, { tone: "error", durationMs: 3200 });
+        }
+        return;
+      }
+
+      clearPendingMfaLogin();
+      playSuccess();
+      router.replace("/(tabs)");
+    } finally {
+      setIsBiometricUnlockPending(false);
+    }
+  }, [isVerifying, playSuccess, unlockWithBiometrics]);
+
   if (!pending || challengeUnavailable) {
     const expired = challengeUnavailable === "expired";
     return (
@@ -246,108 +300,195 @@ export default function MfaScreen() {
       availableMethod !== method
       && (availableMethod === "totp" || availableMethod === "recovery_code")
   );
+  const canUnlockWithFingerprint = pending.context === "remembered_session"
+    && biometricAvailable
+    && biometricEnabled;
+
+  const selectMethod = (nextMethod: "totp" | "recovery_code") => {
+    setMethodMenuVisible(false);
+    setMethod(nextMethod);
+    setCode("");
+    setError(null);
+    setCanRetry(false);
+    setRememberDevice(false);
+    lastAttemptKeyRef.current = null;
+  };
 
   return (
-    <AuthScreen>
-      <View style={styles.content}>
-        <View style={styles.copy}>
-          <Text style={styles.eyebrow}>SECURITY CHECK</Text>
-          <Text style={styles.title}>
-            {method === "totp" ? "Open your authenticator" : "Use a recovery code"}
-          </Text>
-          <Text style={styles.body}>
-            {method === "totp"
-              ? "Enter the current six-digit code for NSFinance."
-              : "Each recovery code works once."}
-          </Text>
-        </View>
-
-        {method === "totp" ? (
-          <Pressable
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: rememberDevice }}
-            accessibilityLabel="Remember this device for 30 days"
-            onPress={() => setRememberDevice((current) => !current)}
-            style={({ pressed }) => [styles.rememberDevice, pressed ? styles.pressed : null]}
-          >
-            <View style={[
-              styles.checkbox,
-              rememberDevice ? styles.checkboxChecked : null
-            ]}>
-              {rememberDevice ? (
-                <Ionicons name="checkmark" size={14} color={palette.appBackground} />
-              ) : null}
+    <>
+      <AuthScreen focusedInputExtraClearance={method === "totp" ? 64 : 0}>
+        <View style={styles.content}>
+          <View style={styles.formContent}>
+            <View style={styles.copy}>
+              <Text style={styles.eyebrow}>SECURITY CHECK</Text>
+              <Text style={styles.title}>
+                {method === "totp" ? "Open your authenticator" : "Use a recovery code"}
+              </Text>
+              <Text style={styles.body}>
+                {method === "totp"
+                  ? "Enter the current six-digit code for NSFinance."
+                  : "Each recovery code works once."}
+              </Text>
+              <Text style={styles.accountHint}>{pending.accountHint}</Text>
             </View>
-            <Text style={styles.rememberDeviceLabel}>Remember this device for 30 days</Text>
-          </Pressable>
-        ) : null}
 
-        {method === "totp" ? (
-          <OtpCodeField
-            ref={codeFieldRef}
-            value={code}
-            onChange={(value) => {
-              setCode(normalizeOtpCode(value));
-              setError(null);
-              setCanRetry(false);
-            }}
-            disabled={isVerifying}
-            error={error}
-            accessibilityLabel="Authenticator code"
-            autoFocus
-          />
-        ) : (
-          <TextField
-            label="Recovery code"
-            value={code}
-            onChangeText={(value) => {
-              setCode(value.toUpperCase());
-              setError(null);
-              setCanRetry(false);
-            }}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            error={error ?? undefined}
-          />
-        )}
+            {method === "totp" ? (
+              <OtpCodeField
+                ref={codeFieldRef}
+                value={code}
+                onChange={(value) => {
+                  setCode(normalizeOtpCode(value));
+                  setError(null);
+                  setCanRetry(false);
+                }}
+                disabled={isVerifying}
+                error={error}
+                accessibilityLabel="Authenticator code"
+                autoFocus
+              />
+            ) : (
+              <TextField
+                label="Recovery code"
+                value={code}
+                onChangeText={(value) => {
+                  setCode(value.toUpperCase());
+                  setError(null);
+                  setCanRetry(false);
+                }}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                error={error ?? undefined}
+              />
+            )}
 
-        <View style={styles.actions}>
-          {method === "totp" ? (
-            <View style={styles.verificationStatus} accessibilityLiveRegion="polite">
-              {isVerifying ? (
-                <View style={styles.checkingRow}>
-                  <ActivityIndicator color={palette.primary} size="small" />
-                  <Text style={styles.checkingText}>Checking code...</Text>
+            {method === "totp" ? (
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: rememberDevice }}
+                accessibilityLabel="Remember this device for 30 days"
+                onPress={() => setRememberDevice((current) => !current)}
+                style={({ pressed }) => [styles.rememberDevice, pressed ? styles.pressed : null]}
+              >
+                <View style={[
+                  styles.checkbox,
+                  rememberDevice ? styles.checkboxChecked : null
+                ]}>
+                  {rememberDevice ? (
+                    <Ionicons name="checkmark" size={14} color={palette.appBackground} />
+                  ) : null}
                 </View>
-              ) : canRetry ? (
-                <Button label="Try again" onPress={() => void handleVerify(true)} />
-              ) : null}
-            </View>
-          ) : (
-            <Button
-              label={canRetry ? "Try again" : "Continue"}
-              onPress={() => void handleVerify(canRetry)}
-              disabled={!code.trim()}
-              isLoading={isVerifying}
-            />
-          )}
-          {alternativeMethod ? (
+                <Text style={styles.rememberDeviceLabel}>Remember this device for 30 days</Text>
+              </Pressable>
+            ) : null}
+
+            {method === "totp" ? (
+              <View style={styles.verificationStatus} accessibilityLiveRegion="polite">
+                {isVerifying ? (
+                  <View style={styles.checkingRow}>
+                    <ActivityIndicator color={palette.primary} size="small" />
+                    <Text style={styles.checkingText}>
+                      {isBiometricUnlockPending ? "Checking fingerprint..." : "Checking code..."}
+                    </Text>
+                  </View>
+                ) : canRetry ? (
+                  <Button label="Try again" onPress={() => void handleVerify(true)} />
+                ) : null}
+              </View>
+            ) : (
+              <Button
+                label={canRetry ? "Try again" : "Continue"}
+                onPress={() => void handleVerify(canRetry)}
+                disabled={!code.trim()}
+                isLoading={isVerifying}
+              />
+            )}
+          </View>
+
+          <View style={styles.actions}>
             <Button
               label="Use another method"
               variant="ghost"
               onPress={() => {
-                setMethod(alternativeMethod);
-                setCode("");
-                setError(null);
-                setCanRetry(false);
-                setRememberDevice(false);
-                lastAttemptKeyRef.current = null;
+                Keyboard.dismiss();
+                setMethodMenuVisible(true);
               }}
+              disabled={isVerifying}
             />
-          ) : null}
+          </View>
         </View>
+      </AuthScreen>
+
+      <Modal
+        visible={methodMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMethodMenuVisible(false)}
+      >
+        <Pressable style={styles.methodOverlay} onPress={() => setMethodMenuVisible(false)}>
+          <Pressable
+            style={[styles.methodSheet, { paddingBottom: insets.bottom + spacing[20] }]}
+            onPress={() => undefined}
+          >
+            <View style={styles.methodHeader}>
+              <Text style={styles.methodTitle}>Use another method</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close authentication methods"
+                hitSlop={12}
+                onPress={() => setMethodMenuVisible(false)}
+                style={({ pressed }) => [styles.closeButton, pressed ? styles.pressed : null]}
+              >
+                <Ionicons name="close" size={24} color={palette.textPrimary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.methodOptions}>
+              {canUnlockWithFingerprint ? (
+                <MethodOption
+                  icon="finger-print"
+                  label="Unlock with fingerprint"
+                  onPress={() => void handleBiometricUnlock()}
+                />
+              ) : null}
+              {alternativeMethod ? (
+                <MethodOption
+                  icon={alternativeMethod === "totp" ? "keypad-outline" : "key-outline"}
+                  label={alternativeMethod === "totp" ? "Use Authenticator" : "Use a recovery code"}
+                  onPress={() => selectMethod(alternativeMethod)}
+                />
+              ) : null}
+              <MethodOption
+                icon="person-outline"
+                label="Use a different account"
+                onPress={() => void chooseDifferentAccount()}
+              />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
+type MethodOptionProps = {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+};
+
+function MethodOption({ icon, label, onPress }: MethodOptionProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.methodOption, pressed ? styles.methodOptionPressed : null]}
+    >
+      <View style={styles.methodIcon}>
+        <Ionicons name={icon} size={22} color={palette.primary} />
       </View>
-    </AuthScreen>
+      <Text style={styles.methodLabel}>{label}</Text>
+      <Ionicons name="chevron-forward" size={20} color={palette.textMuted} />
+    </Pressable>
   );
 }
 
@@ -357,10 +498,12 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 440,
     alignSelf: "center",
-    justifyContent: "center",
-    gap: spacing[32],
     paddingHorizontal: spacing[20],
-    paddingVertical: spacing[32]
+    paddingTop: spacing[8],
+    paddingBottom: spacing[8]
+  },
+  formContent: {
+    gap: spacing[20]
   },
   copy: {
     gap: spacing[8]
@@ -382,12 +525,19 @@ const styles = StyleSheet.create({
     lineHeight: typography.body.lineHeight,
     fontFamily: typography.body.fontFamily
   },
+  accountHint: {
+    color: palette.textSecondary,
+    fontSize: typography.helper.fontSize,
+    lineHeight: typography.helper.lineHeight,
+    fontFamily: typography.label.fontFamily,
+    marginTop: spacing[4]
+  },
   rememberDevice: {
     minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing[12],
-    alignSelf: "flex-start"
+    alignSelf: "center"
   },
   checkbox: {
     width: 24,
@@ -412,7 +562,8 @@ const styles = StyleSheet.create({
     opacity: 0.7
   },
   actions: {
-    gap: spacing[12]
+    marginTop: "auto",
+    paddingTop: spacing[20]
   },
   verificationStatus: {
     minHeight: 48,
@@ -430,5 +581,65 @@ const styles = StyleSheet.create({
     fontSize: typography.body.fontSize,
     lineHeight: typography.body.lineHeight,
     fontFamily: typography.body.fontFamily
+  },
+  methodOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: palette.overlay
+  },
+  methodSheet: {
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: surfaces.sheet,
+    paddingHorizontal: spacing[20],
+    paddingTop: spacing[20]
+  },
+  methodHeader: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing[12]
+  },
+  methodTitle: {
+    color: palette.textPrimary,
+    fontSize: typography.title2.fontSize,
+    lineHeight: typography.title2.lineHeight,
+    fontFamily: typography.title2.fontFamily
+  },
+  closeButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  methodOptions: {
+    paddingTop: spacing[8]
+  },
+  methodOption: {
+    minHeight: 60,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[12],
+    borderTopWidth: 1,
+    borderTopColor: palette.border
+  },
+  methodOptionPressed: {
+    opacity: 0.7
+  },
+  methodIcon: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  methodLabel: {
+    flex: 1,
+    color: palette.textPrimary,
+    fontSize: typography.body.fontSize,
+    lineHeight: typography.body.lineHeight,
+    fontFamily: typography.label.fontFamily
   }
 });

@@ -631,6 +631,7 @@ public class AuthAndTrustIntegrationTests
         Assert.True(firstFactor.Succeeded);
         Assert.Equal("mfa_required", firstFactor.Value!.Status);
         Assert.Null(firstFactor.Value.Session);
+        Assert.Equal("mfa****@test.local", firstFactor.Value.MfaChallenge!.AccountHint);
         Assert.Equal(sessionCountBeforeFirstFactor, await harness.DbContext.Sessions.CountAsync());
 
         var invalidCode = await harness.AuthService.VerifyMfaLoginAsync(

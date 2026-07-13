@@ -265,7 +265,6 @@ export default function LoginScreen() {
     googleError?: string | string[];
     mfaExpired?: string | string[];
     mfaUnavailable?: string | string[];
-    securityFallback?: string | string[];
   }>();
   const loginMutation = useLoginMutation();
   const googleSignIn = useGoogleSignIn();
@@ -293,11 +292,6 @@ export default function LoginScreen() {
   const emailShakeX = useRef(new Animated.Value(0)).current;
   const passwordShakeX = useRef(new Animated.Value(0)).current;
   const loginBannerOpacity = useRef(new Animated.Value(1)).current;
-  const rawSecurityFallback = searchParams.securityFallback;
-  const securityFallback = Array.isArray(rawSecurityFallback)
-    ? rawSecurityFallback[0]
-    : rawSecurityFallback;
-  const isSecurityFallback = securityFallback === "1";
   const rawMfaExpired = searchParams.mfaExpired;
   const mfaExpired = Array.isArray(rawMfaExpired) ? rawMfaExpired[0] : rawMfaExpired;
   const isMfaExpired = mfaExpired === "1";
@@ -700,15 +694,6 @@ export default function LoginScreen() {
               <View pointerEvents="none" style={styles.errorBannerAboveForm}>
                 <View style={styles.narrowBlock}>
                   <Banner title="Sign in again" message={sessionMessage} />
-                </View>
-              </View>
-            ) : isSecurityFallback ? (
-              <View pointerEvents="none" style={styles.errorBannerAboveForm}>
-                <View style={styles.narrowBlock}>
-                  <Banner
-                    title="Sign in to continue"
-                    message="Use your password, Google, or Microsoft. If Authenticator is enabled, you'll verify it next."
-                  />
                 </View>
               </View>
             ) : null}

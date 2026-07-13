@@ -23,6 +23,7 @@ export function BiometricGate() {
     allowAutomaticBiometricPrompt,
     rememberedUnlockMethod,
     canUseRememberedSessionMfa,
+    rememberedAccountHint,
     unlockWithBiometrics,
     beginRememberedSessionMfa,
     enableBiometrics,
@@ -138,18 +139,12 @@ export function BiometricGate() {
     }
 
     await signInAnotherWay();
-    router.replace({
-      pathname: "/(auth)/login",
-      params: { securityFallback: "1" }
-    } as never);
+    router.replace("/(auth)/login" as never);
   };
 
-  const signInDirectly = async () => {
+  const chooseDifferentAccount = async () => {
     await signInAnotherWay();
-    router.replace({
-      pathname: "/(auth)/login",
-      params: { securityFallback: "1" }
-    } as never);
+    router.replace("/(auth)/login" as never);
   };
 
   const enable = async () => {
@@ -274,13 +269,24 @@ export function BiometricGate() {
 
           <View style={styles.copy}>
             <Text style={styles.title}>{isOffer ? "Set up fingerprint unlock" : "Welcome back!"}</Text>
-            <Text style={styles.body}>
-              {isOffer
-                ? `You selected Remember me. Use your ${friendlyLabel} to protect this account on this device. Your password is never stored.`
-                : isMfaUnlock
-                  ? "Use Authenticator to unlock this remembered account."
+            {isOffer ? (
+              <View style={styles.bodyStack}>
+                <Text style={styles.body}>You selected to remember this account.</Text>
+                <Text style={styles.body}>
+                  Use your {friendlyLabel} to protect this account on this device.
+                </Text>
+                <Text style={styles.body}>Your password is never stored.</Text>
+              </View>
+            ) : (
+              <Text style={styles.body}>
+                {isMfaUnlock
+                  ? "Use Authenticator to log back into your account."
                   : `Use your ${friendlyLabel} to log back into your account.`}
-            </Text>
+              </Text>
+            )}
+            {!isOffer && rememberedAccountHint ? (
+              <Text style={styles.accountHint}>{rememberedAccountHint}</Text>
+            ) : null}
             {message ? <Text style={styles.error}>{message}</Text> : null}
           </View>
         </View>
@@ -291,7 +297,7 @@ export function BiometricGate() {
               isOffer
                 ? `Set up ${friendlyLabel}`
                 : isMfaUnlock
-                  ? "Continue with Authenticator"
+                  ? "Use Authenticator"
                   : `Unlock with ${friendlyLabel}`
             }
             onPress={() => void (isOffer ? enable() : isMfaUnlock ? runAuthenticator() : runUnlock())}
@@ -322,7 +328,11 @@ export function BiometricGate() {
                   onPress={() => void returnToSignIn()}
                 />
               ) : null}
-              <Button label="Sign in instead" variant="ghost" onPress={() => void signInDirectly()} />
+              <Button
+                label="Use a different account"
+                variant="ghost"
+                onPress={() => void chooseDifferentAccount()}
+              />
             </>
           )}
         </View>
@@ -375,6 +385,17 @@ const styles = StyleSheet.create({
     fontSize: typography.body.fontSize,
     lineHeight: typography.body.lineHeight,
     fontFamily: typography.body.fontFamily,
+    textAlign: "center"
+  },
+  bodyStack: {
+    alignItems: "center",
+    gap: spacing[4]
+  },
+  accountHint: {
+    color: palette.textMuted,
+    fontSize: typography.helper.fontSize,
+    lineHeight: typography.helper.lineHeight,
+    fontFamily: typography.helper.fontFamily,
     textAlign: "center"
   },
   error: {
