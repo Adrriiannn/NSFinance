@@ -43,6 +43,9 @@ public sealed class UserFinancialCommitmentServiceTests
         Assert.Equal(480m, item.NextAmount);
         Assert.Equal("EUR", item.Currency);
         Assert.Equal("user", item.Source);
+        Assert.NotNull(item.UserDecision);
+        Assert.Equal(1, item.UserDecision.Revision);
+        Assert.Equal("manual", item.UserDecision.DecisionMode);
         var audit = Assert.Single(dbContext.AuditEvents);
         Assert.Equal("manual_created", audit.EventName);
         Assert.DoesNotContain("Car insurance", audit.MetadataJson ?? string.Empty, StringComparison.Ordinal);
@@ -71,6 +74,8 @@ public sealed class UserFinancialCommitmentServiceTests
         Assert.DoesNotContain("requires_user_confirmation", item.Exclusions);
         Assert.Contains(item.Evidence, evidence => evidence.Type == "transaction_pattern");
         Assert.Contains(item.Evidence, evidence => evidence.Type == "user_confirmation");
+        Assert.Equal(1, item.UserDecision!.Revision);
+        Assert.Equal("confirm", item.UserDecision.LastAction);
     }
 
     [Fact]
@@ -92,6 +97,7 @@ public sealed class UserFinancialCommitmentServiceTests
         Assert.Empty(await service.ApplyAsync([inferred], false, CancellationToken.None));
         var includedDismissed = Assert.Single(await service.ApplyAsync([inferred], true, CancellationToken.None));
         Assert.Equal("dismissed", includedDismissed.Lifecycle);
+        Assert.Equal(2, includedDismissed.UserDecision!.Revision);
 
         var reactivated = await service.DecideAsync(
             inferred.Id,
@@ -102,6 +108,7 @@ public sealed class UserFinancialCommitmentServiceTests
         Assert.Equal(3, reactivated.Value!.Revision);
         var active = Assert.Single(await service.ApplyAsync([inferred], false, CancellationToken.None));
         Assert.Equal("active", active.Lifecycle);
+        Assert.Equal(3, active.UserDecision!.Revision);
         Assert.Contains(active.Evidence, evidence => evidence.ReasonCodes.Contains("reactivated_by_user"));
     }
 
@@ -130,6 +137,8 @@ public sealed class UserFinancialCommitmentServiceTests
         Assert.Equal("Corrected label", effective.Label);
         Assert.Equal(35m, effective.NextAmount);
         Assert.Equal("user_override", effective.Source);
+        Assert.Equal(1, effective.UserDecision!.Revision);
+        Assert.Equal("corrected", effective.UserDecision.DecisionMode);
         Assert.Contains(effective.Evidence, evidence => evidence.Type == "provider_direct_debit");
         Assert.Contains(effective.Evidence, evidence => evidence.Type == "user_correction");
 

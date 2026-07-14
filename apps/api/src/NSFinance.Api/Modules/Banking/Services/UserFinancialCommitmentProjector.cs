@@ -135,7 +135,13 @@ internal static class UserFinancialCommitmentProjector
         projected = effective with
         {
             Lifecycle = decision.State == "dismissed" ? "dismissed" : effective.Lifecycle,
-            Evidence = evidence
+            Evidence = evidence,
+            UserDecision = new FinancialCommitmentUserDecisionDto(
+                decision.State,
+                decision.DecisionMode,
+                decision.LastAction,
+                decision.Revision,
+                FinancialCommitmentContractPolicy.EnsureUtc(decision.UpdatedUtc))
         };
         return true;
     }

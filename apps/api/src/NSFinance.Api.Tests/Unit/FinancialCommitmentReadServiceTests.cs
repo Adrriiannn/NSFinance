@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSFinance.Api.Infrastructure.RequestContext;
+using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Services;
 using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Modules.Users.Services;
@@ -106,6 +107,120 @@ public sealed class FinancialCommitmentReadServiceTests
         var item = Assert.Single(result.Value!.Items);
         Assert.Equal("Owner bill", item.Label);
         Assert.Equal(owner.FinancialAccountId, item.AccountId);
+    }
+
+    [Fact]
+    public async Task FindAsync_ReturnsEffectiveProviderResourceWithDecisionRevision()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedLinkedAccountAsync(dbContext, "EUR");
+        dbContext.BankDirectDebits.Add(CreateDirectDebit(
+            seeded.LinkedBankAccountId,
+            "Broadband",
+            UtcNow.UtcDateTime.AddDays(4)));
+        await dbContext.SaveChangesAsync();
+        var readService = CreateService(dbContext, seeded.UserId);
+        var baseItem = Assert.Single((await readService.ListAsync(10, CancellationToken.None)).Value!.Items);
+        var userService = CreateUserCommitmentService(dbContext, seeded.UserId);
+        var mutation = await userService.DecideAsync(
+            baseItem.Id,
+            baseItem,
+            Correction("Home broadband"),
+            CancellationToken.None);
+
+        var found = await readService.FindAsync(baseItem.Id, false, CancellationToken.None);
+
+        Assert.True(mutation.Succeeded);
+        Assert.NotNull(found);
+        Assert.Equal("Home broadband", found.Label);
+        Assert.Equal("user_override", found.Source);
+        Assert.Equal(1, found.UserDecision!.Revision);
+        Assert.Equal("corrected", found.UserDecision.DecisionMode);
+        Assert.Equal("correct", found.UserDecision.LastAction);
+    }
+
+    [Fact]
+    public async Task FindAsync_ReturnsManualResourceAddressedByCreateLocation()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedLinkedAccountAsync(dbContext, "EUR");
+        var userService = CreateUserCommitmentService(dbContext, seeded.UserId);
+        var created = await userService.CreateManualAsync(
+            new CreateManualFinancialCommitmentRequest(
+                null,
+                "Annual insurance",
+                "yearly",
+                null,
+                null,
+                UtcNow.AddDays(20),
+                420m,
+                "EUR",
+                false),
+            CancellationToken.None);
+
+        var found = await CreateService(dbContext, seeded.UserId)
+            .FindAsync(created.Value!.Id, false, CancellationToken.None);
+
+        Assert.True(created.Succeeded);
+        Assert.NotNull(found);
+        Assert.Equal(created.Value.Id, found.Id);
+        Assert.Equal("Annual insurance", found.Label);
+        Assert.Equal(1, found.UserDecision!.Revision);
+        Assert.Equal("manual", found.UserDecision.DecisionMode);
+    }
+
+    [Fact]
+    public async Task FindAsync_HidesDismissedResourceUnlessExplicitlyIncluded()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedLinkedAccountAsync(dbContext, "EUR");
+        dbContext.BankDirectDebits.Add(CreateDirectDebit(
+            seeded.LinkedBankAccountId,
+            "Cancelled membership",
+            UtcNow.UtcDateTime.AddDays(4)));
+        await dbContext.SaveChangesAsync();
+        var readService = CreateService(dbContext, seeded.UserId);
+        var baseItem = Assert.Single((await readService.ListAsync(10, CancellationToken.None)).Value!.Items);
+        var mutation = await CreateUserCommitmentService(dbContext, seeded.UserId).DecideAsync(
+            baseItem.Id,
+            baseItem,
+            Decision("dismiss"),
+            CancellationToken.None);
+
+        var hidden = await readService.FindAsync(baseItem.Id, false, CancellationToken.None);
+        var included = await readService.FindAsync(baseItem.Id, true, CancellationToken.None);
+
+        Assert.True(mutation.Succeeded);
+        Assert.Null(hidden);
+        Assert.NotNull(included);
+        Assert.Equal("dismissed", included.Lifecycle);
+        Assert.Equal(1, included.UserDecision!.Revision);
+    }
+
+    [Fact]
+    public async Task FindAsync_DoesNotReturnAnotherUsersManualResource()
+    {
+        await using var dbContext = CreateDbContext();
+        var owner = await SeedLinkedAccountAsync(dbContext, "EUR");
+        var other = await SeedLinkedAccountAsync(dbContext, "EUR");
+        var created = await CreateUserCommitmentService(dbContext, other.UserId).CreateManualAsync(
+            new CreateManualFinancialCommitmentRequest(
+                null,
+                "Private commitment",
+                "monthly",
+                null,
+                null,
+                UtcNow.AddDays(8),
+                25m,
+                "EUR",
+                false),
+            CancellationToken.None);
+
+        var found = await CreateService(dbContext, owner.UserId)
+            .FindAsync(created.Value!.Id, true, CancellationToken.None);
+
+        Assert.True(created.Succeeded);
+        Assert.Null(found);
     }
 
     [Fact]
@@ -374,12 +489,7 @@ public sealed class FinancialCommitmentReadServiceTests
                 normalizationService,
                 NullLogger<RecurringPatternService>.Instance),
             normalizationService);
-        var userCommitmentService = new UserFinancialCommitmentService(
-            dbContext,
-            currentUser,
-            timeProvider,
-            new TestRequestContextAccessor(),
-            NullLogger<UserFinancialCommitmentService>.Instance);
+        var userCommitmentService = CreateUserCommitmentService(dbContext, userId);
         return new FinancialCommitmentReadService(
             dbContext,
             currentUser,
@@ -387,6 +497,60 @@ public sealed class FinancialCommitmentReadServiceTests
             inferredService,
             new FinancialCommitmentMergePolicy(normalizationService),
             userCommitmentService);
+    }
+
+    private static UserFinancialCommitmentService CreateUserCommitmentService(
+        AppDbContext dbContext,
+        Guid userId)
+    {
+        return new UserFinancialCommitmentService(
+            dbContext,
+            new TestCurrentUserProvider(userId),
+            new TestTimeProvider(UtcNow),
+            new TestRequestContextAccessor(),
+            NullLogger<UserFinancialCommitmentService>.Instance);
+    }
+
+    private static FinancialCommitmentDecisionRequest Correction(string label)
+    {
+        return new FinancialCommitmentDecisionRequest(
+            "correct",
+            null,
+            null,
+            false,
+            label,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    }
+
+    private static FinancialCommitmentDecisionRequest Decision(string action, int? expectedRevision = null)
+    {
+        return new FinancialCommitmentDecisionRequest(
+            action,
+            expectedRevision,
+            null,
+            false,
+            null,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
     }
 
     private static AppDbContext CreateDbContext()

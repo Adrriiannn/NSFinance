@@ -85,6 +85,27 @@ public sealed class FinancialCommitmentReadService(
         return items.FirstOrDefault(item => string.Equals(item.Id, commitmentId, StringComparison.Ordinal));
     }
 
+    public async Task<FinancialCommitmentDto?> FindAsync(
+        string commitmentId,
+        bool includeDismissed,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(commitmentId) || commitmentId.Length > 200)
+        {
+            return null;
+        }
+
+        var baseItem = commitmentId.StartsWith("user_manual:", StringComparison.Ordinal)
+            ? null
+            : await FindBaseAsync(commitmentId, cancellationToken);
+        var effectiveItems = await userCommitmentService.ApplyAsync(
+            baseItem is null ? [] : [baseItem],
+            includeDismissed,
+            cancellationToken);
+        return effectiveItems.FirstOrDefault(item =>
+            string.Equals(item.Id, commitmentId, StringComparison.Ordinal));
+    }
+
     private async Task<IReadOnlyList<FinancialCommitmentDto>> BuildBaseItemsAsync(
         Guid userId,
         int providerLimit,

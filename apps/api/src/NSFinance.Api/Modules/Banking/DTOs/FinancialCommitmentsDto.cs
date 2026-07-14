@@ -35,7 +35,8 @@ public sealed record FinancialCommitmentDto(
     bool AnalyticsNeutral,
     string? ProviderStatus,
     IReadOnlyList<string> Exclusions,
-    IReadOnlyList<FinancialCommitmentEvidenceDto> Evidence);
+    IReadOnlyList<FinancialCommitmentEvidenceDto> Evidence,
+    FinancialCommitmentUserDecisionDto? UserDecision = null);
 
 public sealed record FinancialCommitmentEvidenceDto(
     string Type,
@@ -43,3 +44,10 @@ public sealed record FinancialCommitmentEvidenceDto(
     DateTime ObservedUtc,
     string Authority,
     IReadOnlyList<string> ReasonCodes);
+
+public sealed record FinancialCommitmentUserDecisionDto(
+    string State,
+    string DecisionMode,
+    string LastAction,
+    int Revision,
+    DateTime UpdatedUtc);
