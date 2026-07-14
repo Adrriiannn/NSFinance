@@ -51,6 +51,12 @@ public static class BankingModule
         protectedGroup.MapGet("/commitments", GetFinancialCommitmentsEndpoint.HandleAsync)
             .WithName("GetFinancialCommitments");
 
+        protectedGroup.MapPost("/commitments/manual", CreateManualFinancialCommitmentEndpoint.HandleAsync)
+            .WithName("CreateManualFinancialCommitment");
+
+        protectedGroup.MapPut("/commitments/{commitmentId}/decision", UpdateFinancialCommitmentDecisionEndpoint.HandleAsync)
+            .WithName("UpdateFinancialCommitmentDecision");
+
         protectedGroup.MapPost("/connections/{connectionId:guid}/sync", SyncBankConnectionEndpoint.HandleAsync)
             .WithName("SyncBankConnection");
 

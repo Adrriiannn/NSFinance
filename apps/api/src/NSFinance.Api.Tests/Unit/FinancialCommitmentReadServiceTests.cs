@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSFinance.Api.Infrastructure.RequestContext;
 using NSFinance.Api.Modules.Banking.Services;
 using NSFinance.Api.Modules.Banking.Services.Deterministic;
 using NSFinance.Api.Modules.Users.Services;
@@ -366,17 +367,26 @@ public sealed class FinancialCommitmentReadServiceTests
     private static FinancialCommitmentReadService CreateService(AppDbContext dbContext, Guid userId)
     {
         var normalizationService = new TransactionNormalizationService();
+        var currentUser = new TestCurrentUserProvider(userId);
+        var timeProvider = new TestTimeProvider(UtcNow);
         var inferredService = new InferredFinancialCommitmentService(
             new RecurringPatternService(
                 normalizationService,
                 NullLogger<RecurringPatternService>.Instance),
             normalizationService);
+        var userCommitmentService = new UserFinancialCommitmentService(
+            dbContext,
+            currentUser,
+            timeProvider,
+            new TestRequestContextAccessor(),
+            NullLogger<UserFinancialCommitmentService>.Instance);
         return new FinancialCommitmentReadService(
             dbContext,
-            new TestCurrentUserProvider(userId),
-            new TestTimeProvider(UtcNow),
+            currentUser,
+            timeProvider,
             inferredService,
-            new FinancialCommitmentMergePolicy(normalizationService));
+            new FinancialCommitmentMergePolicy(normalizationService),
+            userCommitmentService);
     }
 
     private static AppDbContext CreateDbContext()
@@ -517,5 +527,15 @@ public sealed class FinancialCommitmentReadServiceTests
     private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private sealed class TestRequestContextAccessor : IRequestContextAccessor
+    {
+        public string CorrelationId => "commitment-test";
+        public string SourceChannel => "test";
+        public string? IpAddress => null;
+        public string? UserAgent => null;
+        public string? Platform => "test";
+        public string? AppVersion => "test";
     }
 }

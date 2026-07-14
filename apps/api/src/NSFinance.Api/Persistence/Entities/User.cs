@@ -54,6 +54,7 @@ public class User
     public ICollection<TotpAuthenticator> TotpAuthenticators { get; set; } = [];
     public ICollection<MfaTrustedDevice> MfaTrustedDevices { get; set; } = [];
     public ICollection<OpenBankingConnection> OpenBankingConnections { get; set; } = [];
+    public ICollection<UserFinancialCommitment> FinancialCommitments { get; set; } = [];
     public ICollection<ExpenseTrackerEntry> ExpenseTrackerEntries { get; set; } = [];
     public ICollection<ExpensePlan> ExpensePlans { get; set; } = [];
     public ICollection<ExpensePlanPublication> ExpensePlanPublications { get; set; } = [];

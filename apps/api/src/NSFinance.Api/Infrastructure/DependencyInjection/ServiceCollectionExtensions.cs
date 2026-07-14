@@ -507,6 +507,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<BankConnectionService>();
         services.AddScoped<InferredFinancialCommitmentService>();
         services.AddScoped<FinancialCommitmentMergePolicy>();
+        services.AddScoped<UserFinancialCommitmentService>();
         services.AddScoped<FinancialCommitmentReadService>();
         services.AddSingleton<DeterministicCategorizationMetrics>();
         services.AddScoped<ProviderCapabilityRegistry>();

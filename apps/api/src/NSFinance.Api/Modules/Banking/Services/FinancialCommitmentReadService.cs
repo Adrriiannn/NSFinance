@@ -12,7 +12,8 @@ public sealed class FinancialCommitmentReadService(
     ICurrentUserProvider currentUserProvider,
     TimeProvider timeProvider,
     InferredFinancialCommitmentService inferredCommitmentService,
-    FinancialCommitmentMergePolicy mergePolicy)
+    FinancialCommitmentMergePolicy mergePolicy,
+    UserFinancialCommitmentService userCommitmentService)
 {
     internal const int DefaultLimit = 100;
     internal const int MaximumLimit = 200;
@@ -24,6 +25,14 @@ public sealed class FinancialCommitmentReadService(
         int? requestedLimit,
         CancellationToken cancellationToken)
     {
+        return await ListAsync(requestedLimit, false, cancellationToken);
+    }
+
+    public async Task<ServiceResult<FinancialCommitmentsDto>> ListAsync(
+        int? requestedLimit,
+        bool includeDismissed,
+        CancellationToken cancellationToken)
+    {
         var limit = requestedLimit ?? DefaultLimit;
         if (limit is < 1 or > MaximumLimit)
         {
@@ -33,25 +42,14 @@ public sealed class FinancialCommitmentReadService(
                 StatusCodes.Status400BadRequest);
         }
 
-        var queryLimit = limit + 1;
         var userId = currentUserProvider.UserId;
-        var directDebits = await BuildDirectDebitQuery(userId, queryLimit)
-            .ToListAsync(cancellationToken);
-        var standingOrders = await BuildStandingOrderQuery(userId, queryLimit)
-            .ToListAsync(cancellationToken);
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
-        var inferredRows = await BuildInferredTransactionQuery(userId, utcNow, InferredTransactionLimit)
-            .ToListAsync(cancellationToken);
-        var inferredCommitments = await inferredCommitmentService.BuildAsync(
-            inferredRows,
-            utcNow,
+        var baseItems = await BuildBaseItemsAsync(userId, limit + 1, utcNow, cancellationToken);
+        var effectiveItems = await userCommitmentService.ApplyAsync(
+            baseItems,
+            includeDismissed,
             cancellationToken);
-
-        var providerCommitments = directDebits
-            .Select(row => FinancialCommitmentProviderMapper.MapDirectDebit(row, utcNow))
-            .Concat(standingOrders.Select(row => FinancialCommitmentProviderMapper.MapStandingOrder(row, utcNow)))
-            .ToList();
-        var items = mergePolicy.Merge(providerCommitments, inferredCommitments)
+        var items = effectiveItems
             .OrderBy(item => item.NextDateUtc is null)
             .ThenBy(item => item.NextDateUtc)
             .ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
@@ -67,6 +65,47 @@ public sealed class FinancialCommitmentReadService(
 
         return ServiceResult<FinancialCommitmentsDto>.Ok(
             new FinancialCommitmentsDto(utcNow, limit, isTruncated, items));
+    }
+
+    public async Task<FinancialCommitmentDto?> FindBaseAsync(
+        string commitmentId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(commitmentId) || commitmentId.Length > 200)
+        {
+            return null;
+        }
+
+        var utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        var items = await BuildBaseItemsAsync(
+            currentUserProvider.UserId,
+            MaximumLimit + 1,
+            utcNow,
+            cancellationToken);
+        return items.FirstOrDefault(item => string.Equals(item.Id, commitmentId, StringComparison.Ordinal));
+    }
+
+    private async Task<IReadOnlyList<FinancialCommitmentDto>> BuildBaseItemsAsync(
+        Guid userId,
+        int providerLimit,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        var directDebits = await BuildDirectDebitQuery(userId, providerLimit)
+            .ToListAsync(cancellationToken);
+        var standingOrders = await BuildStandingOrderQuery(userId, providerLimit)
+            .ToListAsync(cancellationToken);
+        var inferredRows = await BuildInferredTransactionQuery(userId, utcNow, InferredTransactionLimit)
+            .ToListAsync(cancellationToken);
+        var inferredCommitments = await inferredCommitmentService.BuildAsync(
+            inferredRows,
+            utcNow,
+            cancellationToken);
+        var providerCommitments = directDebits
+            .Select(row => FinancialCommitmentProviderMapper.MapDirectDebit(row, utcNow))
+            .Concat(standingOrders.Select(row => FinancialCommitmentProviderMapper.MapStandingOrder(row, utcNow)))
+            .ToList();
+        return mergePolicy.Merge(providerCommitments, inferredCommitments);
     }
 
     internal IQueryable<ProviderDirectDebitCommitmentRow> BuildDirectDebitQuery(Guid userId, int limit)
