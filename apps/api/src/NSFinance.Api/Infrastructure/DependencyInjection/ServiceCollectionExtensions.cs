@@ -142,6 +142,16 @@ public static class ServiceCollectionExtensions
             {
                 options.SyncExecutionLeaseSeconds = 120;
             }
+
+            if (options.UnattendedSyncIntervalMinutes <= 0)
+            {
+                options.UnattendedSyncIntervalMinutes = 720;
+            }
+
+            if (options.UnattendedSyncSweepMinutes <= 0)
+            {
+                options.UnattendedSyncSweepMinutes = 15;
+            }
         });
         services.Configure<BankConnectionAttemptOptions>(options =>
         {

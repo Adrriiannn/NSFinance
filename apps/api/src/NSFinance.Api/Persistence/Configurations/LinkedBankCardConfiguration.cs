@@ -21,6 +21,7 @@ public class LinkedBankCardConfiguration : IEntityTypeConfiguration<LinkedBankCa
         builder.Property(x => x.NameOnCard).HasMaxLength(180);
         builder.Property(x => x.CurrentConnectionHealth).HasMaxLength(40).IsRequired();
         builder.Property(x => x.RawPayloadJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.TransactionSyncCoverageUtc);
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
         builder.Property(x => x.UpdatedUtc).HasDefaultValueSql("timezone('utc', now())");
 

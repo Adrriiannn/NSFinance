@@ -48,6 +48,8 @@ public sealed class BankSyncService(
     private const int DeferredCounterpartyExpiryHours = 48;
     private const int DeferredMoreContextExpiryHours = 24;
     private const int ProjectionBackfillReconcileMaxRowsPerSync = 500;
+    private const int UnattendedTransactionLookbackDays = 7;
+    private const int UnattendedTransactionOverlapDays = 1;
     private const string DeterministicEnqueueReasonIngestionInsert = DeterministicReclassificationTriggerReasons.ProjectedRowRemapOrDedupeCorrection;
     private static readonly HashSet<string> InternalTransferAccountHintStopTokens =
     [
@@ -250,6 +252,8 @@ public sealed class BankSyncService(
                 StatusCodes.Status409Conflict);
         }
 
+        await bankConnectionService.MarkSyncAttemptStartedAsync(connection, cancellationToken);
+
         var configResult = configurationService.Resolve();
         if (!configResult.Succeeded)
         {
@@ -352,7 +356,7 @@ public sealed class BankSyncService(
 
             await auditService.WriteEventAsync(
                 category: "banking",
-                eventName: "manual_sync_failed",
+                eventName: BuildSyncAuditEventName(trigger, succeeded: false),
                 targetEntityType: "open_banking_connection",
                 targetEntityId: connection.Id.ToString(),
                 actorId: userId,
@@ -576,7 +580,15 @@ public sealed class BankSyncService(
     {
         var now = DateTime.UtcNow;
         var isInitialBackfill = await IsInitialBackfillPendingAsync(connection, now, cancellationToken);
-        var transactionSyncMode = isInitialBackfill ? "initial_backfill" : "incremental_sync";
+        var isUnattendedSync = string.Equals(
+            trigger,
+            BankingOperationTypes.ScheduledSync,
+            StringComparison.Ordinal);
+        var transactionSyncMode = isInitialBackfill
+            ? "initial_backfill"
+            : isUnattendedSync
+                ? "unattended_incremental_sync"
+                : "incremental_sync";
         var linkedAccountCountBeforeSync = await dbContext.LinkedBankAccounts
             .AsNoTracking()
             .Where(x =>
@@ -860,9 +872,11 @@ public sealed class BankSyncService(
             var providerPolicy = ResolveProviderTransactionSyncPolicy(providerAccount);
             var transactionWindow = BuildTransactionWindow(
                 connection,
+                linkedAccount.TransactionSyncCoverageUtc,
                 providerPolicy,
                 now,
-                isInitialBackfill);
+                isInitialBackfill,
+                isUnattendedSync);
 
             logger.LogInformation(
                 "Fetching transactions accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} fromUtc={FromUtc} toUtc={ToUtc} policy={PolicyName} policyKey={PolicyKey} policyFamily={PolicyFamily} pendingSupport={PendingSupport} timestampPrecision={TimestampPrecision}",
@@ -887,6 +901,7 @@ public sealed class BankSyncService(
                 providerPolicy,
                 transactionWindow,
                 isInitialBackfill,
+                isUnattendedSync,
                 cancellationToken);
 
             if (!transactionsFetchResult.Succeeded)
@@ -1128,6 +1143,9 @@ public sealed class BankSyncService(
                 }
             }
 
+            linkedAccount.TransactionSyncCoverageUtc = MaxUtc(
+                linkedAccount.TransactionSyncCoverageUtc,
+                transactionWindow.ToUtc);
             await PersistSyncStageChangesAsync(
                 connection.Id,
                 providerAccount.AccountId,
@@ -1251,7 +1269,13 @@ public sealed class BankSyncService(
 
                     if (ShouldRequestScope(connection.GrantedScopesCsv, "transactions"))
                     {
-                        var cardTransactionWindow = BuildCardTransactionWindow(connection, cardProviderPolicy, now, isInitialBackfill);
+                        var cardTransactionWindow = BuildCardTransactionWindow(
+                            connection,
+                            linkedCard.TransactionSyncCoverageUtc,
+                            cardProviderPolicy,
+                            now,
+                            isInitialBackfill,
+                            isUnattendedSync);
                         var cardTransactionsResult = await dataService.GetCardTransactionsAsync(
                             configuration,
                             accessToken,
@@ -1330,6 +1354,9 @@ public sealed class BankSyncService(
                                 deterministicKickoffFinancialAccountIds.Add(
                                     cardTransactionUpsert.ProjectedFinancialAccountId.Value);
                             }
+                            linkedCard.TransactionSyncCoverageUtc = MaxUtc(
+                                linkedCard.TransactionSyncCoverageUtc,
+                                cardTransactionWindow.ToUtc);
                         }
                         else if (!IsOptionalDatasetUnsupported(cardTransactionsResult.Error))
                         {
@@ -1639,7 +1666,7 @@ public sealed class BankSyncService(
 
         await auditService.WriteEventAsync(
             category: "banking",
-            eventName: trigger == "initial_sync" ? "initial_sync_success" : "manual_sync_success",
+            eventName: BuildSyncAuditEventName(trigger, succeeded: true),
             targetEntityType: "open_banking_connection",
             targetEntityId: connection.Id.ToString(),
             actorId: connection.UserId,
@@ -7841,7 +7868,7 @@ public sealed class BankSyncService(
 
         await auditService.WriteEventAsync(
             category: "banking",
-            eventName: trigger == "initial_sync" ? "initial_sync_failed" : "manual_sync_failed",
+            eventName: BuildSyncAuditEventName(trigger, succeeded: false),
             targetEntityType: "open_banking_connection",
             targetEntityId: connection.Id.ToString(),
             actorId: connection.UserId,
@@ -7862,6 +7889,18 @@ public sealed class BankSyncService(
             persistedErrorCode);
 
         return ServiceResult<BankSyncResult>.Fail(error.Message, persistedErrorCode, error.StatusCode);
+    }
+
+    internal static string BuildSyncAuditEventName(string trigger, bool succeeded)
+    {
+        var prefix = trigger switch
+        {
+            BankingOperationTypes.InitialSync => "initial_sync",
+            BankingOperationTypes.ScheduledSync => "scheduled_sync",
+            "auto_sync" => "auto_sync",
+            _ => "manual_sync"
+        };
+        return $"{prefix}_{(succeeded ? "success" : "failed")}";
     }
 
     private static string MapAccountType(string? providerAccountType)
@@ -8298,10 +8337,17 @@ public sealed class BankSyncService(
         ProviderTransactionSyncPolicy policy,
         TrueLayerTransactionQueryWindow baseWindow,
         bool isInitialBackfill,
+        bool isUnattendedSync,
         CancellationToken cancellationToken)
     {
-        var requestWindows = BuildTransactionRequestWindows(baseWindow, policy, isInitialBackfill);
-        var adaptiveSplitEnabled = !isInitialBackfill && policy.SettledResponseCap.HasValue;
+        var requestWindows = BuildTransactionRequestWindows(
+            baseWindow,
+            policy,
+            isInitialBackfill,
+            isUnattendedSync);
+        var adaptiveSplitEnabled = !isInitialBackfill
+            && !isUnattendedSync
+            && policy.SettledResponseCap.HasValue;
 
         logger.LogInformation(
             "Transaction sync strategy accountId={AccountId} providerId={ProviderId} providerDisplayName={ProviderDisplayName} mode={Mode} policy={PolicyName} policyKey={PolicyKey} policyFamily={PolicyFamily} pendingSupport={PendingSupport} timestampPrecision={TimestampPrecision} requestWindows={RequestWindows} adaptiveSplitEnabled={AdaptiveSplitEnabled} settledResponseCap={SettledResponseCap}",
@@ -8602,9 +8648,11 @@ public sealed class BankSyncService(
     private static IReadOnlyList<TrueLayerTransactionQueryWindow> BuildTransactionRequestWindows(
         TrueLayerTransactionQueryWindow baseWindow,
         ProviderTransactionSyncPolicy policy,
-        bool isInitialBackfill)
+        bool isInitialBackfill,
+        bool isUnattendedSync)
     {
         if (isInitialBackfill
+            || isUnattendedSync
             || !policy.SettledResponseCap.HasValue
             || !baseWindow.FromUtc.HasValue
             || !baseWindow.ToUtc.HasValue)
@@ -8853,9 +8901,11 @@ public sealed class BankSyncService(
 
     private static TrueLayerTransactionQueryWindow BuildTransactionWindow(
         OpenBankingConnection connection,
+        DateTime? transactionSyncCoverageUtc,
         ProviderTransactionSyncPolicy providerPolicy,
         DateTime now,
-        bool isInitialBackfill)
+        bool isInitialBackfill,
+        bool isUnattendedSync)
     {
         if (isInitialBackfill)
         {
@@ -8867,7 +8917,28 @@ public sealed class BankSyncService(
                 PolicyName: providerPolicy.InitialBackfillPolicyName);
         }
 
-        var checkpointUtc = connection.LatestImportedTransactionUtc ?? connection.LastSuccessfulSyncUtc;
+        if (isUnattendedSync)
+        {
+            return BuildUnattendedTransactionWindow(
+                transactionSyncCoverageUtc
+                    ?? now.AddDays(-providerPolicy.InitialBackfillHistoryDays),
+                now,
+                providerPolicy.ProviderKey,
+                isCard: false);
+        }
+
+        if (!transactionSyncCoverageUtc.HasValue)
+        {
+            return new TrueLayerTransactionQueryWindow(
+                now.AddDays(-providerPolicy.InitialBackfillHistoryDays),
+                now,
+                Mode: "source_backfill",
+                PolicyName: $"source_backfill_{providerPolicy.ProviderKey}");
+        }
+
+        var checkpointUtc = transactionSyncCoverageUtc
+            ?? connection.LatestImportedTransactionUtc
+            ?? connection.LastSuccessfulSyncUtc;
         var fromUtc = checkpointUtc.HasValue
             ? checkpointUtc.Value.AddDays(-providerPolicy.IncrementalLookbackDays)
             : now.AddDays(-providerPolicy.IncrementalFallbackDays);
@@ -8892,9 +8963,11 @@ public sealed class BankSyncService(
 
     private static TrueLayerTransactionQueryWindow BuildCardTransactionWindow(
         OpenBankingConnection connection,
+        DateTime? transactionSyncCoverageUtc,
         ProviderTransactionSyncPolicy providerPolicy,
         DateTime now,
-        bool isInitialBackfill)
+        bool isInitialBackfill,
+        bool isUnattendedSync)
     {
         if (isInitialBackfill)
         {
@@ -8905,7 +8978,28 @@ public sealed class BankSyncService(
                 PolicyName: $"{providerPolicy.InitialBackfillPolicyName}|card");
         }
 
-        var checkpointUtc = connection.LatestImportedTransactionUtc ?? connection.LastSuccessfulSyncUtc;
+        if (isUnattendedSync)
+        {
+            return BuildUnattendedTransactionWindow(
+                transactionSyncCoverageUtc
+                    ?? now.AddDays(-providerPolicy.CardInitialBackfillHistoryDays),
+                now,
+                providerPolicy.ProviderKey,
+                isCard: true);
+        }
+
+        if (!transactionSyncCoverageUtc.HasValue)
+        {
+            return new TrueLayerTransactionQueryWindow(
+                now.AddDays(-providerPolicy.CardInitialBackfillHistoryDays),
+                now,
+                Mode: "source_backfill",
+                PolicyName: $"card_source_backfill_{providerPolicy.ProviderKey}");
+        }
+
+        var checkpointUtc = transactionSyncCoverageUtc
+            ?? connection.LatestImportedTransactionUtc
+            ?? connection.LastSuccessfulSyncUtc;
         var fromUtc = checkpointUtc.HasValue
             ? checkpointUtc.Value.AddDays(-providerPolicy.IncrementalLookbackDays)
             : now.AddDays(-providerPolicy.IncrementalFallbackDays);
@@ -8922,6 +9016,30 @@ public sealed class BankSyncService(
             PolicyName: checkpointUtc.HasValue
                 ? $"card_latest_imported_checkpoint_{providerPolicy.ProviderKey}"
                 : $"card_incremental_fallback_{providerPolicy.ProviderKey}");
+    }
+
+    private static TrueLayerTransactionQueryWindow BuildUnattendedTransactionWindow(
+        DateTime? coverageUtc,
+        DateTime now,
+        string providerKey,
+        bool isCard)
+    {
+        var normalizedCoverageUtc = coverageUtc.HasValue && coverageUtc.Value < now
+            ? coverageUtc.Value
+            : now;
+        var fromUtc = normalizedCoverageUtc.AddDays(-UnattendedTransactionOverlapDays);
+        var toUtc = normalizedCoverageUtc
+            .AddDays(UnattendedTransactionLookbackDays - UnattendedTransactionOverlapDays);
+        if (toUtc > now)
+        {
+            toUtc = now;
+        }
+
+        return new TrueLayerTransactionQueryWindow(
+            fromUtc,
+            toUtc,
+            Mode: "unattended_incremental_sync",
+            PolicyName: $"{(isCard ? "card_" : string.Empty)}unattended_checkpointed_{UnattendedTransactionLookbackDays}d_{providerKey}");
     }
 
     private static (DateTime? EarliestBookedAtUtc, DateTime? LatestBookedAtUtc) ExtractObservedTransactionBounds(

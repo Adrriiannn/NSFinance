@@ -122,6 +122,208 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
         Assert.Contains("LIMIT", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task RecoverScheduledSyncsAsync_QueuesOnlyDueTokenizedActiveConnections()
+    {
+        await using var serviceProvider = BuildServiceProvider();
+        var userId = Guid.NewGuid();
+        var dueSyncedId = Guid.NewGuid();
+        var dueNeverSyncedId = Guid.NewGuid();
+        var dueFailedId = Guid.NewGuid();
+        var recentId = Guid.NewGuid();
+        var revokedTokenId = Guid.NewGuid();
+        var missingTokenId = Guid.NewGuid();
+        var missingInitialBackfillId = Guid.NewGuid();
+        var reauthRequiredId = Guid.NewGuid();
+        var initialSyncId = Guid.NewGuid();
+        var otherProviderId = Guid.NewGuid();
+        await using (var scope = serviceProvider.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.OpenBankingConnections.AddRange(
+                ConnectionWithToken(
+                    userId,
+                    dueSyncedId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.Synced,
+                    UtcNow.AddHours(-13),
+                    lastSuccessfulSyncUtc: UtcNow.AddHours(-13)),
+                ConnectionWithToken(
+                    userId,
+                    dueNeverSyncedId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.Connected,
+                    UtcNow.AddHours(-13)),
+                ConnectionWithToken(
+                    userId,
+                    dueFailedId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.Failed,
+                    UtcNow.AddHours(-13),
+                    lastSyncAttemptedUtc: UtcNow.AddHours(-13)),
+                ConnectionWithToken(
+                    userId,
+                    recentId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.Synced,
+                    UtcNow.AddHours(-2),
+                    lastSuccessfulSyncUtc: UtcNow.AddHours(-2)),
+                ConnectionWithToken(
+                    userId,
+                    revokedTokenId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.Synced,
+                    UtcNow.AddHours(-13),
+                    tokenRevoked: true),
+                Connection(
+                    userId,
+                    missingTokenId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.Synced,
+                    UtcNow.AddHours(-13)),
+                ConnectionWithToken(
+                    userId,
+                    missingInitialBackfillId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.Synced,
+                    UtcNow.AddHours(-13),
+                    initialBackfillCompleted: false),
+                ConnectionWithToken(
+                    userId,
+                    reauthRequiredId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.ReauthRequired,
+                    UtcNow.AddHours(-13)),
+                ConnectionWithToken(
+                    userId,
+                    initialSyncId,
+                    BankingProviders.TrueLayer,
+                    BankConnectionStatuses.ConnectedPendingSync,
+                    UtcNow.AddHours(-13)),
+                ConnectionWithToken(
+                    userId,
+                    otherProviderId,
+                    "other",
+                    BankConnectionStatuses.Synced,
+                    UtcNow.AddHours(-13)));
+            await dbContext.SaveChangesAsync();
+        }
+        var worker = CreateWorker(serviceProvider);
+
+        await worker.RecoverScheduledSyncsAsync(CancellationToken.None);
+        await worker.RecoverScheduledSyncsAsync(CancellationToken.None);
+
+        var jobs = await LoadJobsAsync(serviceProvider);
+        Assert.Equal(3, jobs.Count);
+        Assert.All(jobs, job => Assert.Equal(BankingOperationTypes.ScheduledSync, job.OperationType));
+        Assert.Contains(jobs, job => job.ConnectionId == dueSyncedId);
+        Assert.Contains(jobs, job => job.ConnectionId == dueNeverSyncedId);
+        Assert.Contains(jobs, job => job.ConnectionId == dueFailedId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == recentId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == revokedTokenId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == missingTokenId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == missingInitialBackfillId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == reauthRequiredId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == initialSyncId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == otherProviderId);
+    }
+
+    [Fact]
+    public async Task RecoverScheduledSyncsAsync_WhenDisabled_DoesNotQueueWork()
+    {
+        await using var serviceProvider = BuildServiceProvider(new BankingSyncOptions
+        {
+            UnattendedSyncEnabled = false,
+            UnattendedSyncIntervalMinutes = 720,
+            UnattendedSyncSweepMinutes = 15
+        });
+        var userId = Guid.NewGuid();
+        await using (var scope = serviceProvider.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.OpenBankingConnections.Add(ConnectionWithToken(
+                userId,
+                Guid.NewGuid(),
+                BankingProviders.TrueLayer,
+                BankConnectionStatuses.Synced,
+                UtcNow.AddHours(-13)));
+            await dbContext.SaveChangesAsync();
+        }
+        var worker = CreateWorker(serviceProvider);
+
+        await worker.RecoverScheduledSyncsAsync(CancellationToken.None);
+
+        Assert.Empty(await LoadJobsAsync(serviceProvider));
+    }
+
+    [Fact]
+    public void ScheduledSyncQuery_TranslatesTokenStatusDueTimeOrderingAndBound()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=localhost;Database=translation_only;Username=translation_only;Password=translation_only")
+            .Options;
+        using var dbContext = new AppDbContext(options);
+
+        var sql = TrueLayerSyncBackgroundWorker.BuildScheduledSyncQuery(
+            dbContext,
+            UtcNow.UtcDateTime.AddHours(-12)).ToQueryString();
+
+        Assert.Contains("OpenBankingConnections", sql, StringComparison.Ordinal);
+        Assert.Contains("BankConnectionTokens", sql, StringComparison.Ordinal);
+        Assert.Contains("EncryptedRefreshToken", sql, StringComparison.Ordinal);
+        Assert.Contains("IsRevoked", sql, StringComparison.Ordinal);
+        Assert.Contains("LastSyncAttemptedUtc", sql, StringComparison.Ordinal);
+        Assert.Contains("LastSuccessfulSyncUtc", sql, StringComparison.Ordinal);
+        Assert.Contains("InitialBackfillCompletedUtc", sql, StringComparison.Ordinal);
+        Assert.Contains("synced", sql, StringComparison.Ordinal);
+        Assert.Contains("failed", sql, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIMIT", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ScheduledSyncRetryPolicy_RetriesOnlyLeaseContention()
+    {
+        var providerUnavailable = new ServiceError(
+            "Provider unavailable.",
+            "truelayer_accounts_fetch_failed",
+            StatusCodes.Status503ServiceUnavailable);
+        var rateLimited = new ServiceError(
+            "Provider rate limit reached.",
+            "provider_too_many_requests",
+            StatusCodes.Status429TooManyRequests);
+        var leaseContention = new ServiceError(
+            "Another sync owns the lease.",
+            "bank_sync_in_progress",
+            StatusCodes.Status409Conflict);
+
+        Assert.False(TrueLayerSyncBackgroundWorker.ShouldRetryJob(
+            BankingOperationTypes.ScheduledSync,
+            providerUnavailable));
+        Assert.False(TrueLayerSyncBackgroundWorker.ShouldRetryJob(
+            BankingOperationTypes.ScheduledSync,
+            rateLimited));
+        Assert.True(TrueLayerSyncBackgroundWorker.ShouldRetryJob(
+            BankingOperationTypes.ScheduledSync,
+            leaseContention));
+        Assert.True(TrueLayerSyncBackgroundWorker.ShouldRetryJob(
+            BankingOperationTypes.InitialSync,
+            providerUnavailable));
+    }
+
+    [Theory]
+    [InlineData("initial_sync", true, "initial_sync_success")]
+    [InlineData("scheduled_sync", false, "scheduled_sync_failed")]
+    [InlineData("auto_sync", true, "auto_sync_success")]
+    [InlineData("manual_sync", false, "manual_sync_failed")]
+    public void SyncAuditEventName_PreservesTriggerProvenance(
+        string trigger,
+        bool succeeded,
+        string expected)
+    {
+        Assert.Equal(expected, BankSyncService.BuildSyncAuditEventName(trigger, succeeded));
+    }
+
     [Theory]
     [InlineData("bank_sync_in_progress")]
     [InlineData("bank_sync_lease_lost")]
@@ -132,7 +334,7 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
         Assert.True(TrueLayerSyncBackgroundWorker.IsRetryable(error));
     }
 
-    private static ServiceProvider BuildServiceProvider()
+    private static ServiceProvider BuildServiceProvider(BankingSyncOptions? configuredOptions = null)
     {
         var services = new ServiceCollection();
         var databaseName = $"true-layer-sync-worker-{Guid.NewGuid():N}";
@@ -140,12 +342,15 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
             options.UseInMemoryDatabase(databaseName));
         services.AddLogging();
         services.AddSingleton<TimeProvider>(new TestTimeProvider(UtcNow));
-        services.AddSingleton<IOptions<BankingSyncOptions>>(Options.Create(new BankingSyncOptions
+        services.AddSingleton<IOptions<BankingSyncOptions>>(Options.Create(configuredOptions ?? new BankingSyncOptions
         {
             StaleSyncPendingRecoveryMinutes = 10,
             DurableJobMaxAttempts = 5,
             DurableJobLeaseSeconds = 120,
-            DurableJobPollMilliseconds = 500
+            DurableJobPollMilliseconds = 500,
+            UnattendedSyncEnabled = true,
+            UnattendedSyncIntervalMinutes = 720,
+            UnattendedSyncSweepMinutes = 15
         }));
         services.AddScoped<BankingOperationJobStore>();
         return services.BuildServiceProvider();
@@ -188,6 +393,36 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
             CreatedUtc = updatedUtc.UtcDateTime.AddDays(-1),
             UpdatedUtc = updatedUtc.UtcDateTime
         };
+    }
+
+    private static OpenBankingConnection ConnectionWithToken(
+        Guid userId,
+        Guid connectionId,
+        string provider,
+        string status,
+        DateTimeOffset updatedUtc,
+        DateTimeOffset? lastSuccessfulSyncUtc = null,
+        DateTimeOffset? lastSyncAttemptedUtc = null,
+        bool tokenRevoked = false,
+        bool initialBackfillCompleted = true)
+    {
+        var connection = Connection(userId, connectionId, provider, status, updatedUtc);
+        connection.LastSuccessfulSyncUtc = lastSuccessfulSyncUtc?.UtcDateTime;
+        connection.LastSyncAttemptedUtc = lastSyncAttemptedUtc?.UtcDateTime;
+        connection.InitialBackfillCompletedUtc = initialBackfillCompleted
+            ? updatedUtc.UtcDateTime.AddHours(-1)
+            : null;
+        connection.Token = new BankConnectionToken
+        {
+            Id = Guid.NewGuid(),
+            ConnectionId = connectionId,
+            EncryptedRefreshToken = "protected-refresh-token",
+            AccessTokenExpiresUtc = updatedUtc.UtcDateTime.AddHours(1),
+            TokenObtainedUtc = updatedUtc.UtcDateTime,
+            IsRevoked = tokenRevoked,
+            RevokedUtc = tokenRevoked ? updatedUtc.UtcDateTime : null
+        };
+        return connection;
     }
 
     private sealed class TestTimeProvider(DateTimeOffset utcNow) : TimeProvider

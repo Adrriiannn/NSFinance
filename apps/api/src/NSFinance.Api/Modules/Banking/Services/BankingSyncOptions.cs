@@ -12,4 +12,7 @@ public sealed class BankingSyncOptions
     public int DurableJobLeaseSeconds { get; set; } = 120;
     public int DurableJobPollMilliseconds { get; set; } = 500;
     public int SyncExecutionLeaseSeconds { get; set; } = 120;
+    public bool UnattendedSyncEnabled { get; set; } = true;
+    public int UnattendedSyncIntervalMinutes { get; set; } = 720;
+    public int UnattendedSyncSweepMinutes { get; set; } = 15;
 }

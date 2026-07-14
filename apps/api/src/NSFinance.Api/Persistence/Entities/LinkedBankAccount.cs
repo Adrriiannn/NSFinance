@@ -13,6 +13,7 @@ public class LinkedBankAccount
     public string CurrentConnectionHealth { get; set; } = "healthy";
     public string RawPayloadJson { get; set; } = "{}";
     public Guid? FinancialAccountId { get; set; }
+    public DateTime? TransactionSyncCoverageUtc { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 

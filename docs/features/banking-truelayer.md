@@ -56,8 +56,13 @@ Timing is config-driven under `Banking:Sync`:
 
 - `ManualCooldownMinutes`
 - `AutoSyncIntervalMinutes`
+- `UnattendedSyncEnabled`
+- `UnattendedSyncIntervalMinutes`
+- `UnattendedSyncSweepMinutes`
 
-Current defaults are 10 minutes and remain environment-configurable via `Banking:Sync`.
+The manual cooldown defaults to 10 minutes. Unattended discovery defaults to a
+15-minute sweep and considers an eligible connection due every 12 hours. The
+runtime clamps the unattended interval to at least six hours.
 
 ### Manual sync
 
@@ -79,6 +84,19 @@ Current defaults are 10 minutes and remain environment-configurable via `Banking
   - fresh `sync_pending` connections are skipped as `skipped_sync_in_progress`
   - stale `sync_pending` connections (older than recovery threshold) are reconciled back to a syncable state and retried in the same global run
   - logs include current status, last sync-attempt timestamp, stale/fresh decision, and whether stale recovery was applied
+
+### Unattended scheduled sync
+
+- The TrueLayer worker discovers stale connections from persisted database state; it does not depend on the mobile app being open.
+- A connection is eligible only after initial backfill has completed, while it has an active non-revoked protected refresh token and a syncable `connected`, `synced`, or `failed` status.
+- Discovery enqueues one coalesced `scheduled_sync` job per connection in `BankingOperationJobs`. The normal job lease and per-connection execution lease protect restart and multi-instance execution.
+- Scheduled jobs are polled every 30 seconds. Discovery runs every 15 minutes by default, while the connection itself is due every 12 hours.
+- Each linked account and card carries its own successful transaction-scan coverage checkpoint. An unattended run advances each source through one seven-day window with a one-day overlap, including when the provider returns zero rows; a long outage is therefore caught up in bounded chunks instead of silently skipping to the newest week.
+- Adaptive historical splitting is disabled for unattended work so a capped provider such as AIB cannot turn one scheduled cycle into a burst of transaction requests. Newly discovered sources start from their provider-policy backfill horizon rather than inheriting another account's checkpoint.
+- Provider failures are not rapidly retried. Only lease-contention outcomes, where no provider request was made, use the durable retry path; a terminal scheduled failure records the attempt time and waits for the next due interval.
+- User-initiated manual/foreground sync keeps the wider provider-aware path. When request context exists, the TrueLayer client supplies the user IP header used to distinguish attended requests.
+- Every actual attempt records `LastSyncAttemptedUtc` before configuration or token refresh work, while `LastSuccessfulSyncUtc` advances only after a completed sync.
+- The API host must remain running for this hosted scheduler. The production App Service has Always On enabled, but this scheduler still requires exact-candidate deployment and controlled production evidence.
 
 ### Last synced semantics
 
@@ -203,6 +221,9 @@ NSFinance now treats imported banking data as a long-term ledger:
   - card stage is persisted separately
 - If a later stage fails, successfully persisted earlier stages (for example balance snapshots) are retained and logs include the failed stage name.
 - Known unsupported optional endpoints (for example pending for providers where pending is explicitly unsupported) are policy-skipped up front to reduce noisy failures and unnecessary calls.
+- Initial sync, disconnect cleanup, and scheduled sync are persisted operation types. Jobs coalesce per connection/type, use renewable atomic claims, and remain recoverable after host restart.
+- A separate renewable lease on each bank connection prevents manual, foreground-auto, initial, scheduled, and disconnect-adjacent sync work from overlapping across API instances.
+- Audit event names preserve `initial_sync`, `scheduled_sync`, `auto_sync`, and `manual_sync` provenance.
 
 Provider limits still apply. NSFinance requests the widest practical range, but provider/API caps may return less.
 
@@ -321,8 +342,8 @@ This ensures live bank chooser flows open with Ireland providers instead of UK d
 
 - provider-side token revocation is limited in current implementation
 - advanced enrichment/categorization pipeline is deferred
-- initial sync queue is still in-memory (`Channel`) and not durable across host crashes/redeploys; automatic queue failures now mark the connection status truthfully and require manual sync/reconnect follow-up
-- disconnect cleanup queue is also in-memory (`Channel`) and not fully durable; startup requeue recovers `disconnect_pending` connections, and manual retry is idempotent if a pending cleanup did not finish
+- the durable job ledger, connection execution lease, readiness aggregation, per-source transaction checkpoints, and unattended scheduler are verified locally but are not yet deployed or proven against a controlled production QA connection
+- provider reachability, scheduled-sync lag, terminal-job alert routing, and operator recovery still need production observability and a runbook
 - provider-side max history remains provider-dependent; requesting a wider window cannot exceed what the institution exposes through TrueLayer
 - card transactions can only be projected into the shared activity ledger when they can be linked to a clear projected account (`provider_account_id` match or single-account connection fallback)
 - pending transactions are currently a freshness layer in raw banking ingest and are not yet rendered as first-class pending rows in the main booked activity feed

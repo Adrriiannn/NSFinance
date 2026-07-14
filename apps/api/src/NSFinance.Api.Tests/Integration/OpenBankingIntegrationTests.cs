@@ -5051,6 +5051,59 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task ScheduledSync_AibCappedFeed_AdvancesOneBoundedCheckpointWindow()
+    {
+        (DateTime FromUtc, DateTime ToUtc)? observedWindow = null;
+        var handler = AibCappedOldestSliceFlowHandler(
+            out var getTransactionsCallCount,
+            out var referenceNowUtc,
+            (fromUtc, toUtc) => observedWindow = (fromUtc, toUtc));
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidLiveOptions(),
+            httpHandler: handler);
+        var user = await harness.CreateUserAsync("bank.aib-scheduled-window@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-aib-scheduled-window", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+        var linkedAccount = await harness.DbContext.LinkedBankAccounts
+            .SingleAsync(x => x.ConnectionId == start.Value.ConnectionId);
+        var staleCoverageUtc = referenceNowUtc.AddDays(-20);
+        linkedAccount.TransactionSyncCoverageUtc = staleCoverageUtc;
+        await harness.DbContext.SaveChangesAsync();
+        var transactionCallsBeforeScheduledSync = getTransactionsCallCount();
+        observedWindow = null;
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
+
+        var result = await syncService.SyncConnectionAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None,
+            trigger: BankingOperationTypes.ScheduledSync);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, getTransactionsCallCount() - transactionCallsBeforeScheduledSync);
+        Assert.NotNull(observedWindow);
+        Assert.InRange(
+            Math.Abs((observedWindow.Value.FromUtc - staleCoverageUtc.AddDays(-1)).TotalSeconds),
+            0,
+            1);
+        Assert.InRange(
+            Math.Abs((observedWindow.Value.ToUtc - staleCoverageUtc.AddDays(6)).TotalSeconds),
+            0,
+            1);
+        Assert.InRange(
+            (observedWindow.Value.ToUtc - observedWindow.Value.FromUtc).TotalDays,
+            6.99,
+            7.01);
+        await harness.DbContext.Entry(linkedAccount).ReloadAsync();
+        Assert.Equal(staleCoverageUtc.AddDays(6), linkedAccount.TransactionSyncCoverageUtc);
+    }
+
+    [Fact]
     public async Task SyncConnection_DeterministicQueueDelay_DoesNotBlockImportOrCompletion()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -5085,6 +5138,50 @@ public class OpenBankingIntegrationTests
         Assert.Equal(BankConnectionStatuses.Synced, syncResult.Value!.Status);
         Assert.True(await harness.DbContext.LinkedBankAccounts.AnyAsync(x => x.ConnectionId == connection.Id));
         Assert.True(await harness.DbContext.Transactions.AnyAsync(x => Math.Abs(x.Amount) == 1.00m));
+    }
+
+    [Fact]
+    public async Task SyncConnection_RefreshFailure_RecordsAttemptBeforeReauthenticationState()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidLiveOptions(),
+            httpHandler: InvalidCodeHandler());
+        var user = await harness.CreateUserAsync("bank.sync-attempt-refresh-failure@test.local");
+        var now = DateTime.UtcNow;
+        var connection = new OpenBankingConnection
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "live",
+            Status = BankConnectionStatuses.Synced,
+            CreatedUtc = now.AddDays(-1),
+            UpdatedUtc = now.AddHours(-13),
+            LastSuccessfulSyncUtc = now.AddHours(-13),
+            Token = new BankConnectionToken
+            {
+                Id = Guid.NewGuid(),
+                EncryptedRefreshToken = Convert.ToBase64String(Encoding.UTF8.GetBytes("refresh-token")),
+                AccessTokenExpiresUtc = now.AddMinutes(-5),
+                TokenObtainedUtc = now.AddDays(-1)
+            }
+        };
+        harness.DbContext.OpenBankingConnections.Add(connection);
+        await harness.DbContext.SaveChangesAsync();
+        var attemptStartedAfterUtc = DateTime.UtcNow;
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
+
+        var result = await syncService.SyncConnectionAsync(
+            user.Id,
+            connection.Id,
+            CancellationToken.None,
+            trigger: BankingOperationTypes.ScheduledSync);
+
+        Assert.False(result.Succeeded);
+        await harness.DbContext.Entry(connection).ReloadAsync();
+        Assert.Equal(BankConnectionStatuses.ReauthRequired, connection.Status);
+        Assert.NotNull(connection.LastSyncAttemptedUtc);
+        Assert.True(connection.LastSyncAttemptedUtc >= attemptStartedAfterUtc);
     }
 
     [Fact]
@@ -9044,7 +9141,8 @@ public class OpenBankingIntegrationTests
 
     private static HttpMessageHandler AibCappedOldestSliceFlowHandler(
         out Func<int> getTransactionsCallCount,
-        out DateTime referenceNowUtc)
+        out DateTime referenceNowUtc,
+        Action<DateTime, DateTime>? requestWindowObserved = null)
     {
         var transactionCallCount = 0;
         referenceNowUtc = DateTime.UtcNow;
@@ -9110,6 +9208,7 @@ public class OpenBankingIntegrationTests
             {
                 Interlocked.Increment(ref transactionCallCount);
                 var (fromUtc, toUtc) = ParseRequestedWindow(request.RequestUri, referenceNow);
+                requestWindowObserved?.Invoke(fromUtc, toUtc);
 
                 var cappedSlice = catalog
                     .Where(x => x.BookedAtUtc >= fromUtc && x.BookedAtUtc <= toUtc)

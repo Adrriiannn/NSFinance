@@ -18,11 +18,17 @@ public sealed class TrueLayerSyncBackgroundWorker(
     ILogger<TrueLayerSyncBackgroundWorker> logger) : BackgroundService, ITrueLayerSyncQueue
 {
     private static readonly TimeSpan RecoverySweepInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ScheduledJobPollInterval = TimeSpan.FromSeconds(30);
     private const int BatchSize = 16;
     private readonly TimeSpan _pollDelay = TimeSpan.FromMilliseconds(
         Math.Clamp(options.Value.DurableJobPollMilliseconds, 100, 30_000));
     private readonly TimeSpan _syncPendingStaleAfter = TimeSpan.FromMinutes(
         Math.Clamp(options.Value.StaleSyncPendingRecoveryMinutes, 1, 24 * 60));
+    private readonly bool _unattendedSyncEnabled = options.Value.UnattendedSyncEnabled;
+    private readonly TimeSpan _unattendedSyncInterval = TimeSpan.FromMinutes(
+        Math.Clamp(options.Value.UnattendedSyncIntervalMinutes, 6 * 60, 24 * 60));
+    private readonly TimeSpan _unattendedSyncSweepInterval = TimeSpan.FromMinutes(
+        Math.Clamp(options.Value.UnattendedSyncSweepMinutes, 1, 60));
 
     public async ValueTask QueueInitialSyncAsync(
         Guid userId,
@@ -50,6 +56,8 @@ public sealed class TrueLayerSyncBackgroundWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var nextRecoverySweepUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var nextUnattendedSyncSweepUtc = nextRecoverySweepUtc;
+        var nextScheduledJobPollUtc = nextRecoverySweepUtc;
         while (!stoppingToken.IsCancellationRequested)
         {
             var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
@@ -73,10 +81,36 @@ public sealed class TrueLayerSyncBackgroundWorker(
                 nextRecoverySweepUtc = nowUtc.Add(RecoverySweepInterval);
             }
 
+            if (_unattendedSyncEnabled && nowUtc >= nextUnattendedSyncSweepUtc)
+            {
+                try
+                {
+                    await RecoverScheduledSyncsAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(
+                        exception,
+                        "Scheduled bank sync discovery sweep failed; worker will continue.");
+                }
+
+                nextUnattendedSyncSweepUtc = nowUtc.Add(_unattendedSyncSweepInterval);
+            }
+
             var processedAny = false;
             try
             {
-                processedAny = await ProcessDueJobsAsync(stoppingToken);
+                processedAny = await ProcessDueJobsAsync(BankingOperationTypes.InitialSync, stoppingToken);
+                if (_unattendedSyncEnabled && nowUtc >= nextScheduledJobPollUtc)
+                {
+                    processedAny = await ProcessDueJobsAsync(BankingOperationTypes.ScheduledSync, stoppingToken)
+                        || processedAny;
+                    nextScheduledJobPollUtc = nowUtc.Add(ScheduledJobPollInterval);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -96,25 +130,35 @@ public sealed class TrueLayerSyncBackgroundWorker(
 
     internal async Task<bool> ProcessDueJobsAsync(CancellationToken cancellationToken)
     {
+        return await ProcessDueJobsAsync(BankingOperationTypes.InitialSync, cancellationToken);
+    }
+
+    private async Task<bool> ProcessDueJobsAsync(
+        string operationType,
+        CancellationToken cancellationToken)
+    {
         IReadOnlyList<Guid> jobIds;
         await using (var scanScope = scopeFactory.CreateAsyncScope())
         {
             var jobStore = scanScope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
             jobIds = await jobStore.ListDueJobIdsAsync(
-                BankingOperationTypes.InitialSync,
+                operationType,
                 BatchSize,
                 cancellationToken);
         }
 
         foreach (var jobId in jobIds)
         {
-            await ProcessJobAsync(jobId, cancellationToken);
+            await ProcessJobAsync(jobId, operationType, cancellationToken);
         }
 
         return jobIds.Count > 0;
     }
 
-    private async Task ProcessJobAsync(Guid jobId, CancellationToken stoppingToken)
+    private async Task ProcessJobAsync(
+        Guid jobId,
+        string operationType,
+        CancellationToken stoppingToken)
     {
         BankingOperationJobLease? lease;
         TimeSpan leaseDuration;
@@ -123,7 +167,7 @@ public sealed class TrueLayerSyncBackgroundWorker(
             var jobStore = claimScope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
             lease = await jobStore.TryClaimAsync(
                 jobId,
-                BankingOperationTypes.InitialSync,
+                operationType,
                 stoppingToken);
             leaseDuration = jobStore.LeaseDuration;
         }
@@ -134,7 +178,8 @@ public sealed class TrueLayerSyncBackgroundWorker(
         }
 
         logger.LogInformation(
-            "Claimed durable initial bank sync attempt={Attempt} maxAttempts={MaxAttempts}",
+            "Claimed durable bank sync operation={Operation} attempt={Attempt} maxAttempts={MaxAttempts}",
+            operationType,
             lease.AttemptCount,
             lease.MaxAttempts);
 
@@ -145,7 +190,9 @@ public sealed class TrueLayerSyncBackgroundWorker(
             leaseDuration,
             workCancellation,
             logger,
-            "Initial bank sync",
+            operationType == BankingOperationTypes.InitialSync
+                ? "Initial bank sync"
+                : "Scheduled bank sync",
             stoppingToken);
         ServiceResult<BankSyncResult>? result = null;
         Exception? crash = null;
@@ -157,7 +204,7 @@ public sealed class TrueLayerSyncBackgroundWorker(
                 lease.UserId,
                 lease.ConnectionId,
                 workCancellation.Token,
-                trigger: BankingOperationTypes.InitialSync);
+                trigger: lease.OperationType);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -175,12 +222,15 @@ public sealed class TrueLayerSyncBackgroundWorker(
 
         if (crash is not null)
         {
-            logger.LogError(crash, "Durable initial bank sync attempt crashed.");
+            logger.LogError(
+                crash,
+                "Durable bank sync attempt crashed operation={Operation}.",
+                lease.OperationType);
             await RecordFailureAsync(
                 lease,
-                "initial_sync_worker_crashed",
-                true,
-                "Initial sync worker crashed.",
+                $"{lease.OperationType}_worker_crashed",
+                lease.OperationType == BankingOperationTypes.InitialSync,
+                "Bank sync worker crashed.",
                 stoppingToken);
             return;
         }
@@ -196,7 +246,8 @@ public sealed class TrueLayerSyncBackgroundWorker(
             if (completed)
             {
                 logger.LogInformation(
-                    "Durable initial bank sync completed attempt={Attempt} status={Status}",
+                    "Durable bank sync completed operation={Operation} attempt={Attempt} status={Status}",
+                    lease.OperationType,
                     lease.AttemptCount,
                     result.Value?.Status);
             }
@@ -219,9 +270,9 @@ public sealed class TrueLayerSyncBackgroundWorker(
 
         await RecordFailureAsync(
             lease,
-            error?.Code ?? "initial_sync_failed",
-            IsRetryable(error),
-            error?.Message ?? "Initial sync failed.",
+            error?.Code ?? $"{lease.OperationType}_failed",
+            ShouldRetryJob(lease.OperationType, error),
+            error?.Message ?? "Bank sync failed.",
             stoppingToken);
     }
 
@@ -246,7 +297,9 @@ public sealed class TrueLayerSyncBackgroundWorker(
 
         if (!outcome.Found)
         {
-            logger.LogWarning("Initial bank sync result was not persisted because its lease was no longer current.");
+            logger.LogWarning(
+                "Bank sync result was not persisted because its lease was no longer current operation={Operation}.",
+                lease.OperationType);
             return;
         }
 
@@ -261,12 +314,18 @@ public sealed class TrueLayerSyncBackgroundWorker(
             return;
         }
 
+        if (lease.OperationType == BankingOperationTypes.ScheduledSync && !outcome.WillRetry)
+        {
+            await connectionService.MarkSyncAttemptStartedAsync(connection, cancellationToken);
+        }
+
         if (outcome.WillRetry)
         {
             if (errorCode is "bank_sync_in_progress" or "bank_sync_lease_lost")
             {
                 logger.LogInformation(
-                    "Initial bank sync deferred without changing connection state attempt={Attempt} nextAttemptUtc={NextAttemptUtc} code={Code}",
+                    "Bank sync deferred without changing connection state operation={Operation} attempt={Attempt} nextAttemptUtc={NextAttemptUtc} code={Code}",
+                    lease.OperationType,
                     outcome.AttemptCount,
                     outcome.NextAttemptUtc,
                     errorCode);
@@ -289,7 +348,8 @@ public sealed class TrueLayerSyncBackgroundWorker(
                 "Initial sync will retry automatically.",
                 cancellationToken);
             logger.LogWarning(
-                "Initial bank sync scheduled for retry attempt={Attempt} nextAttemptUtc={NextAttemptUtc} code={Code}",
+                "Bank sync scheduled for retry operation={Operation} attempt={Attempt} nextAttemptUtc={NextAttemptUtc} code={Code}",
+                lease.OperationType,
                 outcome.AttemptCount,
                 outcome.NextAttemptUtc,
                 errorCode);
@@ -307,7 +367,8 @@ public sealed class TrueLayerSyncBackgroundWorker(
         }
 
         logger.LogWarning(
-            "Initial bank sync reached terminal failure attempt={Attempt} code={Code}",
+            "Bank sync reached terminal failure operation={Operation} attempt={Attempt} code={Code}",
+            lease.OperationType,
             outcome.AttemptCount,
             errorCode);
     }
@@ -337,6 +398,36 @@ public sealed class TrueLayerSyncBackgroundWorker(
         }
     }
 
+    internal async Task RecoverScheduledSyncsAsync(CancellationToken cancellationToken)
+    {
+        if (!_unattendedSyncEnabled)
+        {
+            return;
+        }
+
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var jobStore = scope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+        var dueBeforeUtc = timeProvider.GetUtcNow().UtcDateTime - _unattendedSyncInterval;
+        var dueConnections = await BuildScheduledSyncQuery(dbContext, dueBeforeUtc)
+            .ToListAsync(cancellationToken);
+        foreach (var connection in dueConnections)
+        {
+            await jobStore.EnqueueAsync(
+                connection.UserId,
+                connection.ConnectionId,
+                BankingOperationTypes.ScheduledSync,
+                cancellationToken);
+        }
+
+        if (dueConnections.Count > 0)
+        {
+            logger.LogInformation(
+                "Discovered {Count} connection(s) due for a bounded unattended bank sync.",
+                dueConnections.Count);
+        }
+    }
+
     internal static IQueryable<PendingTrueLayerSyncRow> BuildRecoveryQuery(
         AppDbContext dbContext,
         DateTime staleSyncPendingThresholdUtc)
@@ -355,6 +446,47 @@ public sealed class TrueLayerSyncBackgroundWorker(
                 connection.Id,
                 connection.Status))
             .Take(64);
+    }
+
+    internal static IQueryable<PendingTrueLayerSyncRow> BuildScheduledSyncQuery(
+        AppDbContext dbContext,
+        DateTime dueBeforeUtc)
+    {
+        return dbContext.OpenBankingConnections
+            .AsNoTracking()
+            .Where(connection =>
+                connection.ProviderName == BankingProviders.TrueLayer
+                && (connection.Status == BankConnectionStatuses.Connected
+                    || connection.Status == BankConnectionStatuses.Synced
+                    || connection.Status == BankConnectionStatuses.Failed)
+                && connection.InitialBackfillCompletedUtc != null
+                && connection.Token != null
+                && !connection.Token.IsRevoked
+                && connection.Token.EncryptedRefreshToken != null
+                && connection.Token.EncryptedRefreshToken != string.Empty
+                && (connection.LastSyncAttemptedUtc
+                    ?? connection.LastSuccessfulSyncUtc
+                    ?? connection.UpdatedUtc) <= dueBeforeUtc)
+            .OrderBy(connection => connection.LastSyncAttemptedUtc
+                ?? connection.LastSuccessfulSyncUtc
+                ?? connection.UpdatedUtc)
+            .ThenBy(connection => connection.Id)
+            .Select(connection => new PendingTrueLayerSyncRow(
+                connection.UserId,
+                connection.Id,
+                connection.Status))
+            .Take(64);
+    }
+
+    internal static bool ShouldRetryJob(string operationType, ServiceError? error)
+    {
+        if (operationType == BankingOperationTypes.InitialSync)
+        {
+            return IsRetryable(error);
+        }
+
+        return operationType == BankingOperationTypes.ScheduledSync
+            && error?.Code is "bank_sync_in_progress" or "bank_sync_lease_lost";
     }
 
     internal static bool IsRetryable(ServiceError? error)

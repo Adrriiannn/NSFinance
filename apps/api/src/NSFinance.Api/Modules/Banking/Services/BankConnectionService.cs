@@ -1381,6 +1381,16 @@ public sealed class BankConnectionService(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task MarkSyncAttemptStartedAsync(
+        OpenBankingConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        connection.LastSyncAttemptedUtc = now;
+        connection.UpdatedUtc = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<ServiceResult> DisconnectAsync(
         Guid userId,
         Guid connectionId,

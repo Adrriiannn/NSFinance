@@ -9,6 +9,7 @@ namespace NSFinance.Api.Modules.Banking.Services;
 public static class BankingOperationTypes
 {
     public const string InitialSync = "initial_sync";
+    public const string ScheduledSync = "scheduled_sync";
     public const string DisconnectCleanup = "disconnect_cleanup";
 }
 
