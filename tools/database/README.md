@@ -29,3 +29,28 @@ establish a clean result:
 Never paste an actual connection value into a command transcript, committed
 file, Obsidian note, or CI log. Production audit evidence should record only the
 redacted key/value output and the identified source revision.
+
+## Restored-server audit
+
+The same audit can validate a temporary Azure point-in-time restore without
+copying or printing credentials. Keep the approved source connection string in
+memory and override only its host:
+
+```powershell
+$env:NSFINANCE_DB_CONNECTION_STRING = '<approved source connection>'
+$env:NSFINANCE_DB_HOST_OVERRIDE = '<restore-name>.postgres.database.azure.com'
+$env:NSFINANCE_EXPECTED_LATEST_MIGRATION = '<expected migration id>'
+dotnet run .\tools\database\Inspect-BankingIntegrity.cs
+Remove-Item Env:NSFINANCE_DB_CONNECTION_STRING -ErrorAction SilentlyContinue
+Remove-Item Env:NSFINANCE_DB_HOST_OVERRIDE -ErrorAction SilentlyContinue
+Remove-Item Env:NSFINANCE_EXPECTED_LATEST_MIGRATION -ErrorAction SilentlyContinue
+```
+
+The override accepts only a distinct
+`psql-nsfinance-restore-*.postgres.database.azure.com` host. Set the expected
+migration to the migration deployed at the restore point, not an unapplied
+source migration. The audit does not alter the source connection, App Service
+settings, DNS, or Azure resources, and remains aggregate-only and
+transaction-read-only. Follow
+[`docs/deployment/postgres-restore-rehearsal.md`](../../docs/deployment/postgres-restore-rehearsal.md)
+for the governed restore lifecycle.

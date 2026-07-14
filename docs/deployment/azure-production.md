@@ -90,7 +90,8 @@ TrueLayer market targeting is backend-generated:
 - Redirect URI must be an HTTPS absolute URI ending in `/api/banking/truelayer/callback`.
 - TrueLayer auth/API base URLs must be the live hosts.
 - DataProtection keys must persist across restarts and deployments.
-- Initial TrueLayer sync queue is currently in-memory; if the app restarts before the queue drains, users can trigger manual sync from the app.
+- TrueLayer initial sync, disconnect cleanup, and scheduled refresh use the persisted banking-operation job ledger and cross-instance connection leases.
+- PostgreSQL restore planning and temporary-server cleanup use the guarded workflow in [`postgres-restore-rehearsal.md`](postgres-restore-rehearsal.md). The workflow never changes the production App Service connection, DNS, or API artifact.
 
 ## Manual Azure Portal Steps
 

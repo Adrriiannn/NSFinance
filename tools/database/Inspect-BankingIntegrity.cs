@@ -3,10 +3,12 @@
 using System.Data;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Text.RegularExpressions;
 using Npgsql;
 
 const string connectionVariable = "NSFINANCE_DB_CONNECTION_STRING";
 const string expectedMigrationVariable = "NSFINANCE_EXPECTED_LATEST_MIGRATION";
+const string hostOverrideVariable = "NSFINANCE_DB_HOST_OVERRIDE";
 
 var connectionString = Environment.GetEnvironmentVariable(connectionVariable);
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -16,6 +18,7 @@ if (string.IsNullOrWhiteSpace(connectionString))
 }
 
 var expectedLatestMigration = Environment.GetEnvironmentVariable(expectedMigrationVariable);
+var hostOverride = Environment.GetEnvironmentVariable(hostOverrideVariable);
 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
 NpgsqlConnectionStringBuilder? builder = null;
 
@@ -28,6 +31,25 @@ try
         CommandTimeout = 15,
         Pooling = false
     };
+
+    if (!string.IsNullOrWhiteSpace(hostOverride))
+    {
+        var normalizedHostOverride = hostOverride.Trim().ToLowerInvariant();
+        if (!Regex.IsMatch(
+                normalizedHostOverride,
+                "^psql-nsfinance-restore-[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\\.postgres\\.database\\.azure\\.com$",
+                RegexOptions.CultureInvariant)
+            || string.Equals(builder.Host, normalizedHostOverride, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine(
+                $"{hostOverrideVariable} must name a distinct NSFinance restore host.");
+            return 2;
+        }
+
+        builder.Host = normalizedHostOverride;
+        builder.ApplicationName = "NSFinance.RestoreIntegrityAudit";
+        Console.WriteLine("hostOverrideApplied=true");
+    }
 
     await using var connection = new NpgsqlConnection(builder.ConnectionString);
     await connection.OpenAsync(timeout.Token);

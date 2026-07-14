@@ -76,5 +76,23 @@ Repository variables:
 5. Push the fix and rerun CI/CD before deploying API changes that depend on the schema.
 
 Never bypass a failing backend test merely to reach the migration step. The
-current repeated same-amount transfer test is a tracked release blocker, not an
-allowed warning.
+candidate must be repaired or withdrawn before the release continues.
+
+## Recovery And Rollback
+
+Database recovery is not an automatic EF downgrade. Prefer additive
+expand-and-contract migrations and a forward corrective migration so the prior
+API artifact can remain compatible with the resulting schema.
+
+Before an incompatible, destructive, or data-rewriting migration:
+
+1. Capture the intended deployment revision and current production migration.
+2. Confirm the Azure point-in-time restore window with the read-only plan.
+3. Rehearse a restore when the change risk requires it.
+4. Define how writes will be quiesced and how post-restore write loss will be
+   measured before approving any emergency cutover.
+
+The governed workflow, exact confirmation boundaries, aggregate integrity
+audit, cleanup requirements, and incident decision tree are documented in
+[`postgres-restore-rehearsal.md`](postgres-restore-rehearsal.md). It never
+changes the production connection or deploys an API automatically.
