@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { buildAccountStorageKey } from "../../lib/storage/accountScope";
 
 export type EnrichmentDialState = {
   left: number;
@@ -8,13 +9,17 @@ export type EnrichmentDialState = {
 
 const ENRICHMENT_DIAL_STORAGE_PREFIX = "nsfinance.enrichmentDial";
 
-function buildEnrichmentDialStorageKey(userId?: string | null) {
-  return `${ENRICHMENT_DIAL_STORAGE_PREFIX}.${userId ?? "guest"}`;
+function buildEnrichmentDialStorageKey(userId: string) {
+  return buildAccountStorageKey(ENRICHMENT_DIAL_STORAGE_PREFIX, userId);
 }
 
 export async function getEnrichmentDialState(
   userId?: string | null
 ): Promise<EnrichmentDialState | null> {
+  if (!userId) {
+    return null;
+  }
+
   try {
     const raw = await SecureStore.getItemAsync(buildEnrichmentDialStorageKey(userId));
     if (!raw) {
@@ -48,6 +53,10 @@ export async function setEnrichmentDialState(
   state: EnrichmentDialState,
   userId?: string | null
 ): Promise<void> {
+  if (!userId) {
+    return;
+  }
+
   try {
     await SecureStore.setItemAsync(buildEnrichmentDialStorageKey(userId), JSON.stringify(state));
   } catch {

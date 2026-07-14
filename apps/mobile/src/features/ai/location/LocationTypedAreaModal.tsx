@@ -1,4 +1,5 @@
-import { Modal, Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
+import { SystemModal } from "../../../components/ui/surfaces/SystemModal";
 import {
   createRuntimeStyleSheet,
   palette,
@@ -24,7 +25,7 @@ export function LocationTypedAreaModal({
   onConfirm
 }: LocationTypedAreaModalProps) {
   return (
-    <Modal
+    <SystemModal
       visible={visible}
       transparent
       animationType="fade"
@@ -75,7 +76,7 @@ export function LocationTypedAreaModal({
           </View>
         </Pressable>
       </Pressable>
-    </Modal>
+    </SystemModal>
   );
 }
 

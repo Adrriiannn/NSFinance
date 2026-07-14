@@ -117,6 +117,11 @@ this direction explicitly.
 - Keep the mobile default API target on `https://api.finance.nsireland.ie`.
 - Use named, bounded QA identities and identifiable test data for controlled
   validation against live services.
+- For agent-controlled authenticated testing, use only the user-designated QA
+  identity governed in `NSFinance/Developer Habitat/Access And Tool Connections.md`.
+  Do not create or use another account unless the user explicitly changes this
+  direction; credentials remain machine-local and never enter the repository or
+  vault.
 - Begin Azure, database, provider, and deployment investigations read-only.
 - Prefer least-privilege access, especially for DBeaver and cloud inspection.
 - Back up and document a restore path before destructive schema, reconciliation,

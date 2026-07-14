@@ -53,11 +53,6 @@ export function useAdaptiveLayoutMetrics(): AdaptiveLayoutMetrics {
     ADAPTIVE_TOKENS.maxContentWidth[widthClass],
     Math.max(usableWidth, 320)
   );
-  const planningHubButtonSize = ADAPTIVE_TOKENS.planningHub.size[widthClass];
-  const planningHubOverlap = Math.round(
-    planningHubButtonSize * ADAPTIVE_TOKENS.planningHub.overlapRatio
-  );
-  const planningHubLift = planningHubButtonSize - planningHubOverlap;
   const tabBarHeight = ADAPTIVE_TOKENS.tabBar.baseHeight;
   const tabBarMargins = {
     horizontal: ADAPTIVE_TOKENS.tabBar.outerMarginX[widthClass],
@@ -90,9 +85,6 @@ export function useAdaptiveLayoutMetrics(): AdaptiveLayoutMetrics {
     tabBarHeight,
     tabBarRadius: ADAPTIVE_TOKENS.tabBar.radius,
     tabBarMargins,
-    planningHubButtonSize,
-    planningHubOverlap,
-    planningHubLift,
     floatingAssistantSize: ADAPTIVE_TOKENS.fab.size,
     floatingAssistantRightMargin,
     floatingAssistantGapAboveTabBar,

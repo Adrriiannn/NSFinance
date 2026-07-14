@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert, Animated, Easing, Modal, Pressable, ScrollView, Text, View } from "react-native";
+  Alert, Animated, Easing, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendingsCard";
@@ -18,6 +18,7 @@ import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
 import { TextField } from "../../../src/components/ui/TextField";
+import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
 import { HeaderActionButton, HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
 import {
@@ -29,6 +30,7 @@ import {
   useDeleteAccountMutation,
   useUpdateAccountMutation
 } from "../../../src/features/accounts/useAccounts";
+import { resolveAccountBalancePresentation } from "../../../src/features/accounts/accountBalancePresentation";
 import { buildConnectBankRoute } from "../../../src/features/banking/bankingLinking";
 import { getGlobalSyncFeedbackMessage } from "../../../src/features/banking/bankingSyncFeedback";
 import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBankCta";
@@ -41,7 +43,6 @@ import { useTransactionsQuery } from "../../../src/features/transactions/useTran
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import { formatCurrency } from "../../../src/lib/format";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
-import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { AccountType } from "../../../src/types/api";
 
@@ -58,7 +59,6 @@ export default function AccountsTabScreen() {
   useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/accounts");
   const params = useLocalSearchParams<{ selectedAccountId?: string; focusNonce?: string }>();
   const accountsQuery = useAccountsQuery();
@@ -86,6 +86,9 @@ export default function AccountsTabScreen() {
     : "";
   const selectedAccount =
     accounts.find((item) => item.id === selectedAccountId) ?? accounts[0] ?? null;
+  const selectedBalance = selectedAccount
+    ? resolveAccountBalancePresentation(selectedAccount)
+    : null;
 
   const accountTransactionsQuery = useTransactionsQuery(selectedAccount?.id);
   const isInitialLoading = accountsQuery.isLoading && !accountsQuery.data;
@@ -341,21 +344,23 @@ export default function AccountsTabScreen() {
               <Text style={styles.heroType}>{selectedAccount.type} account</Text>
               <AccountProviderBadge account={selectedAccount} />
             </View>
-            <AnimatedCurrencyText
-              value={selectedAccount.currentBalance}
-              currency={selectedAccount.currency}
-              style={styles.heroBalance}
-              baseColor={palette.textPrimary}
-            />
-            <Text style={styles.heroMeta}>{selectedAccount.currency}</Text>
+            {selectedBalance?.current === null ? (
+              <Text style={styles.heroBalance}>Balance unavailable</Text>
+            ) : selectedBalance ? (
+              <AnimatedCurrencyText
+                value={selectedBalance.current}
+                currency={selectedBalance.currency}
+                style={styles.heroBalance}
+                baseColor={palette.textPrimary}
+              />
+            ) : null}
+            <Text style={styles.heroMeta}>
+              {selectedBalance?.currency ?? selectedAccount.currency}
+              {selectedBalance?.freshness === "stale" ? " | Balance may be out of date" : ""}
+            </Text>
           </GlassCard>
 
           <View style={styles.actionGrid}>
-            <ActionItem
-              label="Transfer money"
-              icon="swap-horizontal-outline"
-              onPress={() => router.push("/(tabs)/accounts/transfer?mode=external")}
-            />
             <ActionItem
               label={connectBankCta.compactLabel}
               icon="link-outline"
@@ -419,33 +424,26 @@ export default function AccountsTabScreen() {
         </ScrollView>
       )}
 
-      <Modal
+      <SystemModal
         visible={selectorVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setSelectorVisible(false)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setSelectorVisible(false)}>
-          <Pressable
-            style={[
-              styles.modalSheet,
-              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
-            ]}
-            onPress={() => undefined}
-          >
+          <Pressable style={styles.modalSheet} onPress={() => undefined}>
             <Text style={styles.modalTitle}>Select account</Text>
             <ScrollView
-              contentContainerStyle={[
-                styles.modalList,
-                { paddingBottom: spacing[4] + bottomInsetPolicy.bottomScrollableInset }
-              ]}
+              contentContainerStyle={styles.modalList}
               showsVerticalScrollIndicator={false}
             >
-              {accounts.map((account) => (
-                <View
-                  key={account.id}
-                  style={styles.modalItemRow}
-                >
+              {accounts.map((account) => {
+                const balance = resolveAccountBalancePresentation(account);
+                return (
+                  <View
+                    key={account.id}
+                    style={styles.modalItemRow}
+                  >
                   <Pressable
                     style={({ pressed }) => [
                       styles.modalItem,
@@ -459,7 +457,9 @@ export default function AccountsTabScreen() {
                   >
                     <Text style={styles.modalItemTitle}>{account.name}</Text>
                     <Text style={styles.modalItemMeta}>
-                      {account.type} | {formatCurrency(account.currentBalance, account.currency)}
+                      {account.type} | {balance.current === null
+                        ? "Balance unavailable"
+                        : formatCurrency(balance.current, balance.currency)}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -471,8 +471,9 @@ export default function AccountsTabScreen() {
                   >
                     <Text style={styles.modalItemEditText}>Edit</Text>
                   </Pressable>
-                </View>
-              ))}
+                  </View>
+                );
+              })}
 
               <View style={styles.modalDivider} />
               <Pressable
@@ -493,22 +494,16 @@ export default function AccountsTabScreen() {
             </ScrollView>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
 
-      <Modal
+      <SystemModal
         visible={editModalVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setEditModalVisible(false)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setEditModalVisible(false)}>
-          <Pressable
-            style={[
-              styles.modalSheet,
-              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
-            ]}
-            onPress={() => undefined}
-          >
+          <Pressable style={styles.modalSheet} onPress={() => undefined}>
             <Text style={styles.modalTitle}>Edit account</Text>
 
             <TextField
@@ -546,7 +541,7 @@ export default function AccountsTabScreen() {
             </Text>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
 
       </Animated.View>
     </AdaptiveScreen>

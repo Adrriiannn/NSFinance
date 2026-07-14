@@ -1,4 +1,5 @@
-import { Modal, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { SystemModal } from "../../../components/ui/surfaces/SystemModal";
 import {
   createRuntimeStyleSheet,
   palette,
@@ -31,7 +32,7 @@ export function LocationPermissionPromptModal({
   onRequestClose
 }: LocationPermissionPromptModalProps) {
   return (
-    <Modal
+    <SystemModal
       visible={visible}
       transparent
       animationType="fade"
@@ -70,7 +71,7 @@ export function LocationPermissionPromptModal({
           </View>
         </Pressable>
       </Pressable>
-    </Modal>
+    </SystemModal>
   );
 }
 

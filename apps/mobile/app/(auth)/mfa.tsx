@@ -6,13 +6,11 @@ import {
   AppState,
   BackHandler,
   Keyboard,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
   View
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import {
   OtpCodeField,
@@ -20,6 +18,7 @@ import {
 } from "../../src/components/ui/OtpCodeField";
 import { TextField } from "../../src/components/ui/TextField";
 import { Button } from "../../src/components/ui/buttons/Button";
+import { SystemModal } from "../../src/components/ui/surfaces/SystemModal";
 import { useVerifyMfaLoginMutation } from "../../src/features/auth/useAuthMutations";
 import {
   clearPendingMfaLogin,
@@ -72,7 +71,6 @@ export default function MfaScreen() {
     signInAnotherWay,
     unlockWithBiometrics
   } = useAuthSession();
-  const insets = useSafeAreaInsets();
   const { playSuccess } = useFeedbackSound();
 
   const markChallengeUnavailable = useCallback((reason: ChallengeUnavailableReason) => {
@@ -436,17 +434,14 @@ export default function MfaScreen() {
         </View>
       </AuthScreen>
 
-      <Modal
+      <SystemModal
         visible={methodMenuVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setMethodMenuVisible(false)}
       >
         <Pressable style={styles.methodOverlay} onPress={() => setMethodMenuVisible(false)}>
-          <Pressable
-            style={[styles.methodSheet, { paddingBottom: insets.bottom + spacing[20] }]}
-            onPress={() => undefined}
-          >
+          <Pressable style={styles.methodSheet} onPress={() => undefined}>
             <View style={styles.methodHeader}>
               <Text style={styles.methodTitle}>Use another method</Text>
               <Pressable
@@ -483,7 +478,7 @@ export default function MfaScreen() {
             </View>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
     </>
   );
 }
@@ -616,7 +611,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: surfaces.sheet,
     paddingHorizontal: spacing[20],
-    paddingTop: spacing[20]
+    paddingTop: spacing[20],
+    paddingBottom: spacing[20]
   },
   methodHeader: {
     minHeight: 48,

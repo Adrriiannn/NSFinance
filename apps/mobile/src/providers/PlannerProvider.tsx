@@ -1,9 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import * as SecureStore from "expo-secure-store";
-import {
-  readJsonFileStorage,
-  writeJsonFileStorage
-} from "../lib/storage/jsonFileStore";
+import { buildAccountStorageKey } from "../lib/storage/accountScope";
+import { readSecureJson, writeSecureJson } from "../lib/storage/secureAccountJsonStore";
+import { useAuthSession } from "./AuthProvider";
 
 export type PlannerCategory = string;
 export type CategoryDirection = "Expense" | "Income";
@@ -139,7 +137,7 @@ type PlannerContextValue = PlannerState & {
   setPlannerNotes: (value: string) => void;
 };
 
-const STORAGE_KEY = "nsfinance.planner.state";
+const ACCOUNT_STORAGE_NAMESPACE = "nsfinance.planner.state.account.v1";
 const createId = () => `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 
 const defaultState: PlannerState = {
@@ -156,61 +154,79 @@ type PlannerProviderProps = {
 };
 
 export function PlannerProvider({ children }: PlannerProviderProps) {
+  const { session } = useAuthSession();
+  const userId = session?.user.id ?? null;
   const [state, setState] = useState<PlannerState>(defaultState);
   const [isReady, setIsReady] = useState(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPersistedSnapshotRef = useRef<string>("");
+  const activeStorageKeyRef = useRef<string | null>(null);
+  const loadedStorageKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const storageKey = userId
+      ? buildAccountStorageKey(ACCOUNT_STORAGE_NAMESPACE, userId)
+      : null;
+
+    activeStorageKeyRef.current = storageKey;
+    loadedStorageKeyRef.current = null;
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    lastPersistedSnapshotRef.current = "";
+    setState(defaultState);
+    setIsReady(false);
+
     const load = async () => {
+      if (!storageKey) {
+        if (!cancelled) {
+          loadedStorageKeyRef.current = null;
+          setIsReady(true);
+        }
+        return;
+      }
+
       try {
-        const stored = await readJsonFileStorage<PlannerState>(STORAGE_KEY);
-        if (stored) {
-          lastPersistedSnapshotRef.current = JSON.stringify(stored);
-          setState({
-            necessities: stored.necessities ?? [],
-            annotations: stored.annotations ?? {},
-            plannerNotes: stored.plannerNotes ?? "",
-            customCategories: {
-              Expense: stored.customCategories?.Expense ?? [],
-              Income: stored.customCategories?.Income ?? []
-            }
-          });
-          setIsReady(true);
+        const stored = await readSecureJson<PlannerState>(storageKey);
+        if (!stored || cancelled || activeStorageKeyRef.current !== storageKey) {
           return;
         }
 
-        const secureStoreRaw = await SecureStore.getItemAsync(STORAGE_KEY);
-        if (!secureStoreRaw) {
-          setIsReady(true);
-          return;
-        }
-
-        const parsed = JSON.parse(secureStoreRaw) as PlannerState;
-        lastPersistedSnapshotRef.current = JSON.stringify(parsed);
-        setState({
-          necessities: parsed.necessities ?? [],
-          annotations: parsed.annotations ?? {},
-          plannerNotes: parsed.plannerNotes ?? "",
+        const normalized: PlannerState = {
+          necessities: stored.necessities ?? [],
+          annotations: stored.annotations ?? {},
+          plannerNotes: stored.plannerNotes ?? "",
           customCategories: {
-            Expense: parsed.customCategories?.Expense ?? [],
-            Income: parsed.customCategories?.Income ?? []
+            Expense: stored.customCategories?.Expense ?? [],
+            Income: stored.customCategories?.Income ?? []
           }
-        });
-        await writeJsonFileStorage(STORAGE_KEY, parsed);
-        await SecureStore.deleteItemAsync(STORAGE_KEY);
+        };
+        lastPersistedSnapshotRef.current = JSON.stringify(normalized);
+        setState(normalized);
       } catch {
-        setState(defaultState);
+        if (!cancelled && activeStorageKeyRef.current === storageKey) {
+          setState(defaultState);
+        }
       } finally {
-        setIsReady(true);
+        if (!cancelled && activeStorageKeyRef.current === storageKey) {
+          loadedStorageKeyRef.current = storageKey;
+          setIsReady(true);
+        }
       }
     };
 
     void load();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   useEffect(() => {
-    if (!isReady) {
+    const storageKey = activeStorageKeyRef.current;
+    if (!isReady || !storageKey || loadedStorageKeyRef.current !== storageKey) {
       return;
     }
 
@@ -225,9 +241,23 @@ export function PlannerProvider({ children }: PlannerProviderProps) {
 
     persistTimerRef.current = setTimeout(() => {
       persistTimerRef.current = null;
-      lastPersistedSnapshotRef.current = snapshot;
-      void writeJsonFileStorage(STORAGE_KEY, state);
+      if (activeStorageKeyRef.current !== storageKey) {
+        return;
+      }
+
+      void writeSecureJson(storageKey, state).then(() => {
+        if (activeStorageKeyRef.current === storageKey) {
+          lastPersistedSnapshotRef.current = snapshot;
+        }
+      }).catch(() => undefined);
     }, 280);
+
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+    };
   }, [isReady, state]);
 
   useEffect(

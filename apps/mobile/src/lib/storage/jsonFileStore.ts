@@ -8,13 +8,6 @@ function getStoragePath(key: string) {
   return `${STORAGE_DIRECTORY}${normalizedKey}.json`;
 }
 
-async function ensureStorageDirectory() {
-  const info = await FileSystem.getInfoAsync(STORAGE_DIRECTORY);
-  if (!info.exists) {
-    await FileSystem.makeDirectoryAsync(STORAGE_DIRECTORY, { intermediates: true });
-  }
-}
-
 export async function readJsonFileStorage<T>(key: string): Promise<T | null> {
   const path = getStoragePath(key);
   const info = await FileSystem.getInfoAsync(path);
@@ -24,11 +17,6 @@ export async function readJsonFileStorage<T>(key: string): Promise<T | null> {
 
   const raw = await FileSystem.readAsStringAsync(path);
   return JSON.parse(raw) as T;
-}
-
-export async function writeJsonFileStorage(key: string, value: unknown): Promise<void> {
-  await ensureStorageDirectory();
-  await FileSystem.writeAsStringAsync(getStoragePath(key), JSON.stringify(value));
 }
 
 export async function deleteJsonFileStorage(key: string): Promise<void> {

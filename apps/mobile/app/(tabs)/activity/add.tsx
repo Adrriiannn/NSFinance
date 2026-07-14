@@ -240,7 +240,7 @@ export default function AddTransactionScreen() {
               ]}
               onPress={() =>
                 router.push({
-                  pathname: "/(tabs)/planning/categories",
+                  pathname: "/(tabs)/activity/categories" as never,
                   params: {
                     selectionMode: "true",
                     selectionTarget: "activityAddTransaction"

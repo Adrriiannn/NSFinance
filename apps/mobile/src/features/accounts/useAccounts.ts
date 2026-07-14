@@ -4,7 +4,6 @@ import { queryKeys } from "../../lib/api/queryKeys";
 import type {
   AccountDto,
   CreateAccountRequest,
-  DashboardSummaryDto,
   UpdateAccountRequest
 } from "../../types/api";
 import { createAccount, deleteAccount, getAccountById, getAccounts, updateAccount } from "./accountsApi";
@@ -46,19 +45,6 @@ export function useCreateAccountMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
         queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all })
       ]);
-
-      queryClient.setQueryData<DashboardSummaryDto | undefined>(
-        queryKeys.dashboard.summary,
-        (current) =>
-          current
-            ? {
-                ...current,
-                totalBalance: Number((current.totalBalance + account.currentBalance).toFixed(2)),
-                accountCount: current.accountCount + 1,
-                accountPreview: [...current.accountPreview, account].slice(-3)
-              }
-            : current
-      );
 
       queryClient.setQueryData(queryKeys.accounts.detail(account.id), account);
     }

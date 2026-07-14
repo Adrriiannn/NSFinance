@@ -1,19 +1,12 @@
 import * as SecureStore from "expo-secure-store";
-import {
-  readJsonFileStorage,
-  writeJsonFileStorage
-} from "../../lib/storage/jsonFileStore";
-import type { CompanionStructuredResults } from "../../types/api";
+import { getAIChatThread, getAIChatThreads } from "../ai/aiChatApi";
+import { buildAccountStorageKey } from "../../lib/storage/accountScope";
+import { readSecureJson, writeSecureJson } from "../../lib/storage/secureAccountJsonStore";
+import type { AIChatMessage, CompanionStructuredResults } from "../../types/api";
 
-const CHAT_HISTORY_KEY = "nsfinance.planner.companion.chat_history";
+const CHAT_PRESENTATION_NAMESPACE = "nsfinance.companion.presentation.account.v1";
 const COMPANION_TOOLTIP_SEEN_KEY = "nsfinance.planner.companion.tooltip_seen";
-const CHAT_SUMMARY_PREFIX = "nsfinance.companion.chat.summary.";
-const CHAT_MEMORY_PREFIX = "nsfinance.companion.chat.memory.";
-const CHAT_RETRIEVAL_PREFIX = "nsfinance.companion.chat.retrieval.";
-const CHAT_INDEX_PREFIX = "nsfinance.companion.chat.index.";
 const DEFAULT_CHAT_COLOR: CompanionChatColor = "orange";
-let companionChatsCache: CompanionChat[] | null = null;
-let companionChatsLoadPromise: Promise<CompanionChat[]> | null = null;
 
 export type CompanionMessage = {
   id: string;
@@ -40,6 +33,7 @@ export type CompanionChat = {
   createdUtc: string;
   updatedUtc: string;
   messages: CompanionMessage[];
+  messagesLoaded: boolean;
   conversationThreadId: string | null;
   activeResultSetId: string | null;
   selectedEntityId: string | null;
@@ -49,6 +43,19 @@ export type CompanionChat = {
   isPinned: boolean;
   pinnedUtc: string | null;
 };
+
+type CompanionChatPresentation = {
+  title: string;
+  color: CompanionChatColor;
+  isPinned: boolean;
+  pinnedUtc: string | null;
+  activeResultSetId: string | null;
+  selectedEntityId: string | null;
+  pendingClarificationSlot: string | null;
+  pendingClarificationPromptIntent: string | null;
+};
+
+type CompanionPresentationStore = Record<string, CompanionChatPresentation>;
 
 function isValidChatColor(value: string): value is CompanionChatColor {
   return (
@@ -78,6 +85,7 @@ function normalizeChat(raw: Partial<CompanionChat>): CompanionChat {
     messages: Array.isArray(raw.messages)
       ? raw.messages.map(normalizeMessage)
       : [],
+    messagesLoaded: raw.messagesLoaded !== false,
     conversationThreadId:
       typeof raw.conversationThreadId === "string" && raw.conversationThreadId.trim()
         ? raw.conversationThreadId
@@ -130,92 +138,105 @@ function normalizeStructuredResults(value: CompanionStructuredResults | null | u
     : null;
 }
 
-function cloneChats(chats: CompanionChat[]): CompanionChat[] {
-  return chats.map((chat) => ({
-    ...chat,
-    messages: chat.messages.map((message) => ({
-      ...message,
-      structuredResults: message.structuredResults
-        ? {
-            ...message.structuredResults,
-            items: [...message.structuredResults.items]
-          }
-        : null
-    }))
-  }));
+export async function getCompanionChats(userId: string): Promise<CompanionChat[]> {
+  const storageKey = buildAccountStorageKey(CHAT_PRESENTATION_NAMESPACE, userId);
+  const [threads, storedPresentation] = await Promise.all([
+    getAIChatThreads(30),
+    readSecureJson<CompanionPresentationStore>(storageKey).catch(() => null)
+  ]);
+  const presentation = storedPresentation ?? {};
+
+  return threads
+    .filter((thread) => thread.status.trim().toLowerCase() !== "archived")
+    .map((thread) => {
+      const local = presentation[thread.threadId];
+      return normalizeChat({
+        id: thread.threadId,
+        title: local?.title || thread.title || "Cashflow conversation",
+        createdUtc: thread.startedUtc,
+        updatedUtc: thread.lastMessageUtc,
+        messages: [],
+        messagesLoaded: false,
+        conversationThreadId: thread.threadId,
+        activeResultSetId: local?.activeResultSetId ?? null,
+        selectedEntityId: local?.selectedEntityId ?? null,
+        pendingClarificationSlot: local?.pendingClarificationSlot ?? null,
+        pendingClarificationPromptIntent: local?.pendingClarificationPromptIntent ?? null,
+        color: local?.color ?? DEFAULT_CHAT_COLOR,
+        isPinned: local?.isPinned ?? false,
+        pinnedUtc: local?.pinnedUtc ?? null
+      });
+    });
 }
 
-export async function getCompanionChats(): Promise<CompanionChat[]> {
-  if (companionChatsCache) {
-    return cloneChats(companionChatsCache);
-  }
-
-  if (companionChatsLoadPromise) {
-    return cloneChats(await companionChatsLoadPromise);
-  }
-
-  companionChatsLoadPromise = (async () => {
-    try {
-      const stored = await readJsonFileStorage<Partial<CompanionChat>[]>(CHAT_HISTORY_KEY);
-      if (stored) {
-        const normalizedStored = stored.map(normalizeChat);
-        companionChatsCache = normalizedStored;
-        return cloneChats(normalizedStored);
-      }
-
-      const secureStoreRaw = await SecureStore.getItemAsync(CHAT_HISTORY_KEY);
-      if (!secureStoreRaw) {
-        companionChatsCache = [];
-        return [];
-      }
-
-      const parsed = JSON.parse(secureStoreRaw) as Partial<CompanionChat>[];
-      if (!Array.isArray(parsed)) {
-        companionChatsCache = [];
-        return [];
-      }
-
-      const normalized = parsed.map(normalizeChat);
-      await writeJsonFileStorage(CHAT_HISTORY_KEY, normalized);
-      await SecureStore.deleteItemAsync(CHAT_HISTORY_KEY);
-      companionChatsCache = normalized;
-      return cloneChats(normalized);
-    } catch {
-      companionChatsCache = [];
-      return [];
+export async function setCompanionChats(
+  userId: string,
+  chats: CompanionChat[]
+): Promise<void> {
+  const storageKey = buildAccountStorageKey(CHAT_PRESENTATION_NAMESPACE, userId);
+  const presentation = chats.reduce<CompanionPresentationStore>((current, chat) => {
+    if (!chat.conversationThreadId) {
+      return current;
     }
-  })();
 
-  try {
-    return cloneChats(await companionChatsLoadPromise);
-  } finally {
-    companionChatsLoadPromise = null;
+    current[chat.conversationThreadId] = {
+      title: chat.title,
+      color: chat.color,
+      isPinned: chat.isPinned,
+      pinnedUtc: chat.pinnedUtc,
+      activeResultSetId: chat.activeResultSetId,
+      selectedEntityId: chat.selectedEntityId,
+      pendingClarificationSlot: chat.pendingClarificationSlot,
+      pendingClarificationPromptIntent: chat.pendingClarificationPromptIntent
+    };
+    return current;
+  }, {});
+  await writeSecureJson(storageKey, presentation);
+}
+
+export async function loadCompanionChatMessages(chat: CompanionChat): Promise<CompanionChat> {
+  if (!chat.conversationThreadId) {
+    return { ...chat, messagesLoaded: true };
   }
+
+  const detail = await getAIChatThread(chat.conversationThreadId, 120);
+  const messages = detail.messages
+    .slice()
+    .sort((left, right) => left.messageOrder - right.messageOrder)
+    .map(mapServerMessage)
+    .filter((message): message is CompanionMessage => message !== null);
+
+  return {
+    ...chat,
+    createdUtc: detail.thread.startedUtc,
+    updatedUtc: detail.thread.lastMessageUtc,
+    messages,
+    messagesLoaded: true
+  };
 }
 
-export async function setCompanionChats(chats: CompanionChat[]): Promise<void> {
-  const normalized = chats.map(normalizeChat);
-  companionChatsCache = normalized;
-  await writeJsonFileStorage(CHAT_HISTORY_KEY, normalized);
+function mapServerMessage(message: AIChatMessage): CompanionMessage | null {
+  const role = message.role.trim().toLowerCase();
+  if (role !== "user" && role !== "assistant") {
+    return null;
+  }
+
+  return {
+    id: message.messageId,
+    role,
+    text: message.content,
+    createdUtc: message.createdUtc,
+    structuredResults: null
+  };
 }
 
-export async function deleteCompanionChatArtifacts(chatId: string): Promise<void> {
-  const keys = [
-    `${CHAT_SUMMARY_PREFIX}${chatId}`,
-    `${CHAT_MEMORY_PREFIX}${chatId}`,
-    `${CHAT_RETRIEVAL_PREFIX}${chatId}`,
-    `${CHAT_INDEX_PREFIX}${chatId}`
-  ];
-
-  await Promise.all(keys.map((key) => SecureStore.deleteItemAsync(key)));
-}
-
-export async function deleteCompanionChat(chatId: string): Promise<CompanionChat[]> {
-  const chats = await getCompanionChats();
-  const nextChats = chats.filter((chat) => chat.id !== chatId);
-  companionChatsCache = nextChats;
-  await setCompanionChats(nextChats);
-  await deleteCompanionChatArtifacts(chatId);
+export async function deleteCompanionChat(
+  userId: string,
+  chatId: string,
+  currentChats: CompanionChat[]
+): Promise<CompanionChat[]> {
+  const nextChats = currentChats.filter((chat) => chat.id !== chatId);
+  await setCompanionChats(userId, nextChats);
   return nextChats;
 }
 

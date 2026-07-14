@@ -5,6 +5,7 @@ import { palette, spacing, typography, createRuntimeStyleSheet } from "../../the
 import { AmountText } from "../ui/AmountText";
 import { GlassCard } from "../ui/GlassCard";
 import { AccountProviderBadge } from "./AccountProviderBadge";
+import { resolveAccountBalancePresentation } from "../../features/accounts/accountBalancePresentation";
 
 type AccountCardProps = {
   account: AccountDto;
@@ -13,6 +14,8 @@ type AccountCardProps = {
 };
 
 export function AccountCard({ account, onPress, compact = false }: AccountCardProps) {
+  const balance = resolveAccountBalancePresentation(account);
+
   return (
     <GlassCard onPress={onPress} style={compact ? styles.compactCard : undefined}>
       <View style={styles.topRow}>
@@ -25,13 +28,20 @@ export function AccountCard({ account, onPress, compact = false }: AccountCardPr
         <AccountProviderBadge account={account} compact />
       </View>
 
-      <AmountText
-        amount={account.currentBalance}
-        currency={account.currency}
-        style={styles.amount}
-      />
+      {balance.current === null ? (
+        <Text style={styles.amount}>Balance unavailable</Text>
+      ) : (
+        <AmountText
+          amount={balance.current}
+          currency={balance.currency}
+          style={styles.amount}
+        />
+      )}
 
-      <Text style={styles.footer}>Opened {formatShortDate(account.createdUtc)}</Text>
+      <Text style={styles.footer}>
+        {balance.freshness === "stale" ? "Balance may be out of date | " : ""}
+        Opened {formatShortDate(account.createdUtc)}
+      </Text>
     </GlassCard>
   );
 }

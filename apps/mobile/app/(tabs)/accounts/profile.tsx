@@ -8,7 +8,6 @@ import {
   AppState,
   Alert,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +19,7 @@ import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
+import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { TextField } from "../../../src/components/ui/TextField";
 import { HeaderActionButton, HeaderShell } from "../../../src/layout/appHeader";
 import {
@@ -39,6 +39,8 @@ import {
   resolveCountryMetadataByName
 } from "../../../src/lib/reference/countryMetadata";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
+import { normalizeAccountStorageScope } from "../../../src/lib/storage/accountScope";
+import { useAuthSession } from "../../../src/providers/AuthProvider";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import {
   useUpdateUserProfileMutation,
@@ -465,8 +467,13 @@ function isAtLeastAge(dob: Date, minimumAgeYears: number) {
   return age >= minimumAgeYears;
 }
 
-async function persistAvatarLocally(uri: string) {
-  const root = `${FileSystem.documentDirectory ?? ""}profile`;
+async function persistAvatarLocally(uri: string, userId: string) {
+  if (!FileSystem.documentDirectory) {
+    throw new Error("Profile picture storage is unavailable on this device.");
+  }
+
+  const accountScope = normalizeAccountStorageScope(userId);
+  const root = `${FileSystem.documentDirectory}nsfinance-account-profile/${accountScope}`;
   const info = await FileSystem.getInfoAsync(root);
   if (!info.exists) {
     await FileSystem.makeDirectoryAsync(root, { intermediates: true });
@@ -480,6 +487,8 @@ async function persistAvatarLocally(uri: string) {
 export default function ProfileSettingsScreen() {
   const router = useRouter();
   const navigation = useNavigation();
+  const { session } = useAuthSession();
+  const userId = session?.user.id ?? null;
   const profileQuery = useUserProfileQuery();
   const updateMutation = useUpdateUserProfileMutation();
   const [deviceLocaleProfile, setDeviceLocaleProfile] = useState<DeviceLocationProfile>(() =>
@@ -882,6 +891,10 @@ export default function ProfileSettingsScreen() {
 
   const handlePickAvatar = async () => {
     try {
+      if (!userId) {
+        throw new Error("Sign in again before changing your profile picture.");
+      }
+
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         Alert.alert("Permission needed", "Allow gallery access to change your profile picture.");
@@ -899,7 +912,7 @@ export default function ProfileSettingsScreen() {
         return;
       }
 
-      const localUri = await persistAvatarLocally(result.assets[0].uri);
+      const localUri = await persistAvatarLocally(result.assets[0].uri, userId);
       setProfileImageUri(localUri);
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : "Could not update profile picture.");
@@ -1210,7 +1223,7 @@ export default function ProfileSettingsScreen() {
         </ScrollView>
       )}
 
-      <Modal visible={confirmLeaveVisible} transparent animationType="fade" onRequestClose={() => setConfirmLeaveVisible(false)}>
+      <SystemModal visible={confirmLeaveVisible} transparent animationType="fade" onRequestClose={() => setConfirmLeaveVisible(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => setConfirmLeaveVisible(false)}>
           <Pressable style={styles.modalCard} onPress={() => undefined}>
             <Text style={styles.modalTitle}>You have unsaved changes</Text>
@@ -1237,9 +1250,9 @@ export default function ProfileSettingsScreen() {
             </Pressable>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
 
-      <Modal visible={dobDialVisible} transparent animationType="fade" onRequestClose={() => setDobDialVisible(false)}>
+      <SystemModal visible={dobDialVisible} transparent animationType="fade" onRequestClose={() => setDobDialVisible(false)}>
         <View style={styles.modalOverlay}>
           <Pressable style={styles.modalBackdrop} onPress={() => setDobDialVisible(false)} />
           <View style={styles.modalCard}>
@@ -1324,7 +1337,7 @@ export default function ProfileSettingsScreen() {
             <PrimaryButton label="Done" onPress={() => setDobDialVisible(false)} />
           </View>
         </View>
-      </Modal>
+      </SystemModal>
     </ScreenContainer>
   );
 }

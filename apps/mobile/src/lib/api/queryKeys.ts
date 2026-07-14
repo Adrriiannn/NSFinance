@@ -1,3 +1,5 @@
+import type { TransactionPageRequest } from "../../types/api";
+
 export const queryKeys = {
   auth: {
     me: ["auth", "me"] as const
@@ -30,7 +32,20 @@ export const queryKeys = {
     all: ["transactions"] as const,
     detail: (id: string) => ["transactions", "detail", id] as const,
     list: (accountId?: string) =>
-      accountId ? (["transactions", "list", accountId] as const) : (["transactions", "list"] as const)
+      accountId ? (["transactions", "list", accountId] as const) : (["transactions", "list"] as const),
+    page: (request: TransactionPageRequest = {}) =>
+      [
+        "transactions",
+        "page",
+        {
+          pageSize: request.pageSize ?? null,
+          cursor: request.cursor ?? null,
+          accountId: request.accountId ?? null,
+          fromUtc: request.fromUtc ?? null,
+          toUtc: request.toUtc ?? null,
+          direction: request.direction ?? null
+        }
+      ] as const
   },
   categories: {
     all: ["categories"] as const

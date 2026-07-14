@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated, Modal, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+  Animated, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { SpendTrendGraph } from "../../../src/components/planner/SpendTrendGraph";
@@ -11,6 +11,7 @@ import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
+import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
@@ -29,7 +30,6 @@ import { buildPlannerSuggestions } from "../../../src/features/planner/plannerIn
 import { useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
-import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { BankRecurringPaymentsDto } from "../../../src/types/api";
 
@@ -132,7 +132,6 @@ export default function CashflowScreen() {
   useThemeRuntime();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const { gestureHandlers, animatedStyle } = useMainTabSwipeNavigation("/(tabs)/cashflow");
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
@@ -532,20 +531,14 @@ export default function CashflowScreen() {
         )}
       </ScrollView>
 
-      <Modal
+      <SystemModal
         visible={pickerOpen}
         transparent
         animationType="fade"
         onRequestClose={closePicker}
       >
         <Pressable style={styles.pickerOverlay} onPress={closePicker}>
-          <Pressable
-            style={[
-              styles.pickerSheet,
-              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
-            ]}
-            onPress={() => undefined}
-          >
+          <Pressable style={styles.pickerSheet} onPress={() => undefined}>
             <Text style={styles.pickerTitle}>Select month</Text>
             <Text style={styles.pickerSubtitle}>
               {pickerTarget === "current" ? "Current period" : "Comparison period"}
@@ -671,7 +664,7 @@ export default function CashflowScreen() {
             </View>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
       </Animated.View>
     </AdaptiveScreen>
   );

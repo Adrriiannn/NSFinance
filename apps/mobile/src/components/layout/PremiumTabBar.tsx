@@ -1,5 +1,5 @@
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { appBottomNavItems } from "./bottomNavConfigs";
 import { FloatingBottomNav } from "./FloatingBottomNav";
 import { navigateWithProbe } from "../../lib/perf/navigationTiming";
@@ -8,25 +8,14 @@ const appBottomNavHrefMap: Record<string, string> = {
   index: "/(tabs)",
   accounts: "/(tabs)/accounts",
   activity: "/(tabs)/activity",
-  cashflow: "/(tabs)/cashflow",
-  // Intentionally force a clean route without planning-context params.
-  calendar: "/(tabs)/calendar"
+  cashflow: "/(tabs)/cashflow"
 };
 
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const pathname = usePathname();
-  const params = useGlobalSearchParams<{ source?: string }>();
   const router = useRouter();
-  const hidden =
-    pathname?.startsWith("/planning") ||
-    pathname?.startsWith("/companion") ||
-    (pathname === "/calendar" && (params.source === "planningHub" || params.source === "expense"));
+  const hidden = pathname?.startsWith("/companion");
   const activeKey = state.routes[state.index]?.name.split("/")[0] ?? "index";
-  const autoPeekEligiblePath =
-    pathname === "/" ||
-    pathname === "/accounts" ||
-    pathname === "/activity" ||
-    pathname === "/cashflow";
 
   if (hidden) {
     return null;
@@ -36,26 +25,6 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
     <FloatingBottomNav
       items={appBottomNavItems}
       activeKey={activeKey}
-      switcherAction={{
-        label: "Planning Hub",
-        icon: "notebook-outline",
-        iconFamily: "material",
-        accessibilityLabel: "Open planning hub",
-        behavior: "peek",
-        autoPeekEnabled: autoPeekEligiblePath,
-        sharedRevealKey: "hub-switcher",
-        onPress: () => {
-          navigateWithProbe(
-            router as unknown as {
-              push: (href: string) => void;
-              replace: (href: string) => void;
-              navigate?: (href: string) => void;
-            },
-            "/(tabs)/planning",
-            "premium-tab-switcher-planning"
-          );
-        }
-      }}
       onPressItem={(item) => {
         const routeIndex = state.routes.findIndex((route) => route.name.split("/")[0] === item.key);
         if (routeIndex === -1) {

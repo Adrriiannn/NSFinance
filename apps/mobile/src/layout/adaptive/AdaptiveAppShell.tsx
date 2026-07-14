@@ -1,11 +1,10 @@
-import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { GlobalAppMenu } from "../../components/layout/GlobalAppMenu";
 import { getAccounts } from "../../features/accounts/accountsApi";
 import { getDashboardSummary } from "../../features/dashboard/dashboardApi";
 import { getExpenseTrackerEntries, getExpenseTrackerTaxonomy } from "../../features/expenseTracker/expenseTrackerApi";
-import { getTransactions } from "../../features/transactions/transactionsApi";
 import { queryKeys } from "../../lib/api/queryKeys";
 import { navigateWithProbe } from "../../lib/perf/navigationTiming";
 import { useAuthSession } from "../../providers/AuthProvider";
@@ -17,9 +16,9 @@ import { FloatingAssistantDock } from "./FloatingAssistantDock";
 import { AdaptiveLayoutContext, useAdaptiveLayoutMetrics } from "./adaptive.hooks";
 import type { AdaptiveAppShellProps, AdaptiveShellFrame } from "./adaptive.types";
 
-const ROOT_TAB_PATHS = new Set(["/", "/accounts", "/activity", "/cashflow", "/calendar"]);
+const ROOT_TAB_PATHS = new Set(["/", "/accounts", "/activity", "/cashflow"]);
 
-function resolveSourceTab(pathname: string | null): "index" | "accounts" | "activity" | "cashflow" | "calendar" {
+function resolveSourceTab(pathname: string | null): "index" | "accounts" | "activity" | "cashflow" {
   if (pathname?.startsWith("/accounts")) {
     return "accounts";
   }
@@ -32,48 +31,7 @@ function resolveSourceTab(pathname: string | null): "index" | "accounts" | "acti
     return "cashflow";
   }
 
-  if (pathname?.startsWith("/calendar")) {
-    return "calendar";
-  }
-
   return "index";
-}
-
-function resolvePlanningHubSourceTab(
-  pathname: string | null,
-  sourcePlanningHubTab?: string
-): "overview" | "graphs" | "add" | "calendar" | "discover" {
-  if (pathname?.startsWith("/planning/browse")) {
-    return "discover";
-  }
-
-  if (pathname?.startsWith("/planning/analytics")) {
-    return "graphs";
-  }
-
-  if (pathname?.startsWith("/planning/categories")) {
-    return "add";
-  }
-
-  if (pathname?.startsWith("/planning")) {
-    return "overview";
-  }
-
-  if (pathname?.startsWith("/calendar")) {
-    return "calendar";
-  }
-
-  if (
-    sourcePlanningHubTab === "overview" ||
-    sourcePlanningHubTab === "graphs" ||
-    sourcePlanningHubTab === "add" ||
-    sourcePlanningHubTab === "calendar" ||
-    sourcePlanningHubTab === "discover"
-  ) {
-    return sourcePlanningHubTab;
-  }
-
-  return "overview";
 }
 
 export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
@@ -81,7 +39,6 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
   const metrics = useAdaptiveLayoutMetrics();
   const effectiveBottomSystemInset = getEffectiveBottomSystemInset(metrics.safeAreaInsets.bottom);
   const pathname = usePathname();
-  const params = useGlobalSearchParams<{ source?: string; sourcePlanningHubTab?: string }>();
   const router = useRouter();
   const { isAuthenticated } = useAuthSession();
   const [shellFrame, setShellFrame] = useState<AdaptiveShellFrame | null>(null);
@@ -105,13 +62,8 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
     [getLastInteractionAt, markInteraction, metrics, shellFrame]
   );
 
-  const isPlanningHubCalendar =
-    pathname === "/calendar" &&
-    (params.source === "planningHub" || params.source === "expense");
-  const isPlanningHubPath = (pathname?.startsWith("/planning") ?? false) || isPlanningHubCalendar;
-  const showAssistantDock = ROOT_TAB_PATHS.has(pathname ?? "") || isPlanningHubPath;
+  const showAssistantDock = ROOT_TAB_PATHS.has(pathname ?? "");
   const sourceTab = resolveSourceTab(pathname);
-  const sourcePlanningHubTab = resolvePlanningHubSourceTab(pathname, params.sourcePlanningHubTab);
 
   useEffect(() => {
     if (!isAuthenticated || hasWarmedCachesRef.current) {
@@ -122,7 +74,6 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
     const routerWithPrefetch = router as unknown as { prefetch?: (href: string) => void };
 
     const warmupTimer = setTimeout(() => {
-      routerWithPrefetch.prefetch?.("/(tabs)/planning");
       routerWithPrefetch.prefetch?.("/(tabs)/companion?source=app&sourceTab=cashflow");
 
       void Promise.allSettled([
@@ -134,11 +85,6 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
         queryClient.prefetchQuery({
           queryKey: queryKeys.accounts.all,
           queryFn: getAccounts,
-          staleTime: 30_000
-        }),
-        queryClient.prefetchQuery({
-          queryKey: queryKeys.transactions.list(),
-          queryFn: () => getTransactions(),
           staleTime: 30_000
         }),
         queryClient.prefetchQuery({
@@ -180,20 +126,6 @@ export function AdaptiveAppShell({ children }: AdaptiveAppShellProps) {
           hidden={!showAssistantDock}
           accessibilityLabel="Open NS Companion"
           onPress={() => {
-            if (isPlanningHubPath) {
-              navigateWithProbe(
-                router as unknown as {
-                  push: (href: string) => void;
-                  replace: (href: string) => void;
-                  navigate?: (href: string) => void;
-                },
-                `/(tabs)/companion?source=planningHub&sourcePlanningHubTab=${sourcePlanningHubTab}`,
-                "adaptive-dock",
-                "push"
-              );
-              return;
-            }
-
             navigateWithProbe(
               router as unknown as {
                 push: (href: string) => void;

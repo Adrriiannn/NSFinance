@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import * as Sharing from "expo-sharing";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
@@ -8,6 +8,7 @@ import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
+import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   useConnectedBanksQuery
@@ -19,7 +20,6 @@ import {
 import { downloadExportRequestFile } from "../../../src/features/support/supportApi";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
-import { useRuntimeBottomInsetPolicy } from "../../../src/theme/insets";
 import { palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 type DatePoint = {
@@ -158,7 +158,6 @@ function formatFileSize(bytes?: number | null) {
 }
 
 export default function StatementsScreen() {
-  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const connectedBanksQuery = useConnectedBanksQuery();
   const exportRequestsQuery = useMyExportRequestsQuery();
   const createExportMutation = useCreateExportRequestMutation();
@@ -390,20 +389,14 @@ export default function StatementsScreen() {
         </GlassCard>
       </ScrollView>
 
-      <Modal
+      <SystemModal
         visible={pickerVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setPickerVisible(false)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setPickerVisible(false)}>
-          <Pressable
-            style={[
-              styles.modalSheet,
-              { paddingBottom: spacing[12] + bottomInsetPolicy.bottomActionInsetTight }
-            ]}
-            onPress={() => undefined}
-          >
+          <Pressable style={styles.modalSheet} onPress={() => undefined}>
             <Text style={styles.modalTitle}>Select a date</Text>
             <Text style={styles.modalLiveLabel}>Current selection</Text>
             <Text style={styles.modalLiveValue}>{formatDatePointLabel(pickerDraft)}</Text>
@@ -463,7 +456,7 @@ export default function StatementsScreen() {
             </View>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
     </ScreenContainer>
   );
 }

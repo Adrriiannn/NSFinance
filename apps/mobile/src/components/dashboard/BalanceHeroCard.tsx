@@ -6,7 +6,7 @@ import type { AccountDto } from "../../types/api";
 import { palette, radius, shadows, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type BalanceHeroCardProps = {
-  totalBalance: number;
+  totalBalance: number | null;
   currency: string;
   accountCount?: number;
   transactionCount?: number;
@@ -49,12 +49,16 @@ export function BalanceHeroCard({
         ) : null}
       </View>
 
-      <AnimatedCurrencyText
-        value={totalBalance}
-        currency={currency}
-        style={styles.balance}
-        baseColor={palette.textPrimary}
-      />
+      {totalBalance === null ? (
+        <Text style={styles.balance}>Balance unavailable</Text>
+      ) : (
+        <AnimatedCurrencyText
+          value={totalBalance}
+          currency={currency}
+          style={styles.balance}
+          baseColor={palette.textPrimary}
+        />
+      )}
       <Text style={styles.subtitle}>{subtitle}</Text>
       {currencyNote ? <Text style={styles.currencyNote}>{currencyNote}</Text> : null}
     </View>

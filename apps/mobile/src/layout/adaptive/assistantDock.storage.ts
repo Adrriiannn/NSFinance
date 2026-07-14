@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { buildAccountStorageKey } from "../../lib/storage/accountScope";
 
 export type AssistantDockMode = "docked" | "expanded";
 export type AssistantDockSide = "left" | "right";
@@ -10,13 +11,17 @@ export type AssistantDockState = {
 
 const ASSISTANT_DOCK_STORAGE_PREFIX = "nsfinance.assistantDock";
 
-function buildAssistantDockStorageKey(userId?: string | null) {
-  return `${ASSISTANT_DOCK_STORAGE_PREFIX}.${userId ?? "guest"}`;
+function buildAssistantDockStorageKey(userId: string) {
+  return buildAccountStorageKey(ASSISTANT_DOCK_STORAGE_PREFIX, userId);
 }
 
 export async function getAssistantDockState(
   userId?: string | null
 ): Promise<AssistantDockState | null> {
+  if (!userId) {
+    return null;
+  }
+
   try {
     const raw = await SecureStore.getItemAsync(buildAssistantDockStorageKey(userId));
     if (!raw) {
@@ -56,6 +61,10 @@ export async function setAssistantDockState(
   state: AssistantDockState,
   userId?: string | null
 ): Promise<void> {
+  if (!userId) {
+    return;
+  }
+
   try {
     await SecureStore.setItemAsync(buildAssistantDockStorageKey(userId), JSON.stringify(state));
   } catch {

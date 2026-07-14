@@ -13,13 +13,9 @@ export default function AboutScreen() {
       <GlassCard style={styles.card}>
         <Text style={styles.title}>NSFinance</Text>
         <Text style={styles.body}>
-          NSFinance is a bank-linked personal finance app focused on account clarity, spending analysis, and planning insights.
+          NSFinance is a bank-linked personal finance app focused on account clarity, spending analysis, and cash-flow awareness.
         </Text>
         <Text style={styles.meta}>Version: {appMetadata.version}</Text>
-        <Text style={styles.meta}>Operator details will be published here before public launch.</Text>
-        <Text style={styles.meta}>Legal entity name: pending publication</Text>
-        <Text style={styles.meta}>Registered address: pending publication</Text>
-        <Text style={styles.meta}>Support/privacy contact: pending publication</Text>
       </GlassCard>
 
       <GlassCard style={styles.card}>

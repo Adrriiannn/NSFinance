@@ -1,5 +1,11 @@
 import { apiRequest } from "../../lib/api/client";
-import type { SendAIChatMessageRequest, SendAIChatMessageResponse } from "../../types/api";
+import type {
+  AIChatThreadDetail,
+  AIChatThreadSummary,
+  ArchiveAIChatThreadResponse,
+  SendAIChatMessageRequest,
+  SendAIChatMessageResponse
+} from "../../types/api";
 
 const CHAT_TURN_TIMEOUT_MS = 45_000;
 
@@ -19,6 +25,29 @@ export async function sendAIChatMessage(
     ...response,
     message: sanitizeAssistantMessage(response.message, response.succeeded)
   };
+}
+
+export async function archiveAIChatThread(
+  threadId: string
+): Promise<ArchiveAIChatThreadResponse> {
+  return apiRequest<ArchiveAIChatThreadResponse>(`/api/ai/chat/threads/${threadId}/archive`, {
+    method: "POST"
+  });
+}
+
+export async function getAIChatThreads(limit = 20): Promise<AIChatThreadSummary[]> {
+  const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 100));
+  return apiRequest<AIChatThreadSummary[]>(`/api/ai/chat/threads?limit=${safeLimit}`);
+}
+
+export async function getAIChatThread(
+  threadId: string,
+  take = 80
+): Promise<AIChatThreadDetail> {
+  const safeTake = Math.max(1, Math.min(Math.trunc(take), 200));
+  return apiRequest<AIChatThreadDetail>(
+    `/api/ai/chat/threads/${threadId}?take=${safeTake}`
+  );
 }
 
 function sanitizeAssistantMessage(message: string, succeeded: boolean): string {

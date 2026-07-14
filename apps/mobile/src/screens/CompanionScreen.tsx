@@ -1,29 +1,31 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated, Alert, Dimensions, Easing, FlatList, Keyboard, KeyboardAvoidingView, type KeyboardEvent, Modal, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+  ActivityIndicator, Animated, Alert, Dimensions, Easing, FlatList, Keyboard, KeyboardAvoidingView, type KeyboardEvent, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { FloatingBottomNav } from "../components/layout/FloatingBottomNav";
-import { appBottomNavItems, planningHubBottomNavItems } from "../components/layout/bottomNavConfigs";
+import { appBottomNavItems } from "../components/layout/bottomNavConfigs";
 import { GlassCard } from "../components/ui/GlassCard";
 import { HeaderActionButton, HeaderShell } from "../layout/appHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconButton } from "../components/ui/IconButton";
 import { PrimaryButton } from "../components/ui/PrimaryButton";
 import { ScreenContainer } from "../components/ui/ScreenContainer";
+import { SystemModal } from "../components/ui/surfaces/SystemModal";
 import {
   type CompanionChat,
   type CompanionChatColor,
   type CompanionMessage,
   deleteCompanionChat,
   getCompanionChats,
+  loadCompanionChatMessages,
   setCompanionChats
 } from "../features/planner/chatHistory";
 import { navigateWithProbe } from "../lib/perf/navigationTiming";
 import { getDockAwareContentBottomInset } from "../layout/contentFrame";
 import { getEffectiveBottomSystemInset } from "../theme/insets";
 import { controls, layout, navigation, palette, radius, sizing, spacing, surfaces, typography, createRuntimeStyleSheet, useThemeTokens } from "../theme/tokens";
-import { sendAIChatMessage } from "../features/ai/aiChatApi";
+import { archiveAIChatThread, sendAIChatMessage } from "../features/ai/aiChatApi";
 import { PlaceCardCarousel } from "../features/ai/components/PlaceCardCarousel";
 import {
   buildNearbyGroundingDiagnosticsMetadata,
@@ -42,6 +44,7 @@ import {
   requestForegroundLocationAccess
 } from "../features/ai/location/locationPermissionService";
 import { formatUnknownError } from "../lib/api/errors";
+import { useAuthSession } from "../providers/AuthProvider";
 
 type PromptSeed = {
   text: string;
@@ -255,6 +258,7 @@ const createChat = (): CompanionChat => {
     createdUtc: now,
     updatedUtc: now,
     messages: [],
+    messagesLoaded: true,
     conversationThreadId: null,
     activeResultSetId: null,
     selectedEntityId: null,
@@ -392,10 +396,6 @@ function rankPrompts(input: string) {
   return sorted.slice(0, 10).map((item) => item.prompt.text);
 }
 
-type CompanionScreenProps = {
-  sourceOverride?: "app" | "planningHub";
-};
-
 type PendingNearbyRequest = {
   chatId: string;
   prompt: string;
@@ -405,13 +405,12 @@ type PendingNearbyRequest = {
 const NEARBY_GROUNDING_FAIL_LOUD_MESSAGE =
   "We couldn’t access your location. Please enable location or type an area.";
 
-export default function CashflowCompanionScreen({ sourceOverride }: CompanionScreenProps = {}) {
+export default function CashflowCompanionScreen() {
   const tokens = useThemeTokens();
-  const params = useLocalSearchParams<{ source?: string; sourceTab?: string; sourcePlanningHubTab?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const source = sourceOverride ?? (params.source === "planningHub" || params.source === "expense" ? "planningHub" : "app");
-  const bottomNavItems = source === "planningHub" ? planningHubBottomNavItems : appBottomNavItems;
+  const { session } = useAuthSession();
+  const userId = session?.user.id ?? null;
   const activeBottomKey = "__none__";
   const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
   const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
@@ -420,6 +419,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
   const [activeChatId, setActiveChatId] = useState<string>("");
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isConversationLoading, setIsConversationLoading] = useState(false);
   const [sendingChatId, setSendingChatId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendInfo, setSendInfo] = useState<string | null>(null);
@@ -464,34 +464,72 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     message: string;
     clientRequestId: string;
   } | null>(null);
+  const loadedHistoryUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    loadedHistoryUserIdRef.current = null;
+    setIsReady(false);
+    setChats([]);
+    setActiveChatId("");
+    setIsConversationLoading(false);
+
     const load = async () => {
-      const stored = await getCompanionChats();
-      if (stored.length === 0) {
-        const initial = createChat();
-        setChats([initial]);
-        setActiveChatId(initial.id);
-        setIsReady(true);
+      if (!userId) {
+        if (!cancelled) {
+          setIsReady(true);
+        }
         return;
       }
 
-      const ordered = sortChatsByPinAndRecency(stored);
-      setChats(ordered);
-      setActiveChatId(ordered[0].id);
-      setIsReady(true);
+      try {
+        const stored = await getCompanionChats(userId);
+        if (cancelled) {
+          return;
+        }
+
+        if (stored.length === 0) {
+          const initial = createChat();
+          setChats([initial]);
+          setActiveChatId(initial.id);
+          loadedHistoryUserIdRef.current = userId;
+          setIsReady(true);
+          return;
+        }
+
+        const ordered = sortChatsByPinAndRecency(stored);
+        setChats(ordered);
+        setActiveChatId(ordered[0].id);
+        loadedHistoryUserIdRef.current = userId;
+        setIsReady(true);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const initial = createChat();
+        setChats([initial]);
+        setActiveChatId(initial.id);
+        setSendError(formatUnknownError(error));
+        loadedHistoryUserIdRef.current = userId;
+        setIsReady(true);
+      }
     };
 
     void load();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   useEffect(() => {
-    if (!isReady) {
+    if (!isReady || !userId || loadedHistoryUserIdRef.current !== userId) {
       return;
     }
 
-    void setCompanionChats(chats);
-  }, [chats, isReady]);
+    void setCompanionChats(userId, chats).catch(() => undefined);
+  }, [chats, isReady, userId]);
 
   useEffect(() => {
     const nextPair = pickPromptPair(lastIntroRef.current);
@@ -565,6 +603,48 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     () => chats.find((item) => item.id === activeChatId) ?? chats[0],
     [activeChatId, chats]
   );
+
+  useEffect(() => {
+    if (
+      !isReady
+      || !userId
+      || loadedHistoryUserIdRef.current !== userId
+      || !activeChat
+      || activeChat.messagesLoaded
+      || !activeChat.conversationThreadId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsConversationLoading(true);
+    setSendError(null);
+
+    void loadCompanionChatMessages(activeChat)
+      .then((loadedChat) => {
+        if (cancelled || loadedHistoryUserIdRef.current !== userId) {
+          return;
+        }
+
+        setChats((current) =>
+          current.map((chat) => chat.id === loadedChat.id ? loadedChat : chat)
+        );
+      })
+      .catch((error) => {
+        if (!cancelled && loadedHistoryUserIdRef.current === userId) {
+          setSendError(formatUnknownError(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled && loadedHistoryUserIdRef.current === userId) {
+          setIsConversationLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeChat, isReady, userId]);
 
   const clearChatScrollTimers = useCallback(() => {
     chatScrollTimersRef.current.forEach((timer) => clearTimeout(timer));
@@ -713,7 +793,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
     diagnosticsMetadata?: Record<string, string> | null
   ) => {
     const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt || !activeChat) {
+    if (!trimmedPrompt || !activeChat || !activeChat.messagesLoaded || isConversationLoading) {
       return;
     }
 
@@ -842,7 +922,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       setIsSending(false);
       setSendingChatId(null);
     }
-  }, [activeChat, appendMessageToChat, applySuggestedStateUpdatesToChat, isSending, setChatThreadId]);
+  }, [activeChat, appendMessageToChat, applySuggestedStateUpdatesToChat, isConversationLoading, isSending, setChatThreadId]);
 
   const queueNearbyGroundingPrompt = useCallback((
     prompt: string,
@@ -1115,17 +1195,35 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
   };
 
   const removeChat = async (chatId: string) => {
-    const updated = sortChatsByPinAndRecency(await deleteCompanionChat(chatId));
-    if (updated.length === 0) {
-      const next = createChat();
-      setChats([next]);
-      setActiveChatId(next.id);
+    if (!userId) {
       return;
     }
 
-    setChats(updated);
-    if (activeChatId === chatId) {
-      setActiveChatId(updated[0].id);
+    const chat = chats.find((candidate) => candidate.id === chatId);
+    try {
+      if (chat?.conversationThreadId) {
+        await archiveAIChatThread(chat.conversationThreadId);
+      }
+
+      const updated = sortChatsByPinAndRecency(
+        await deleteCompanionChat(userId, chatId, chats)
+      );
+      if (updated.length === 0) {
+        const next = createChat();
+        setChats([next]);
+        setActiveChatId(next.id);
+        return;
+      }
+
+      setChats(updated);
+      if (activeChatId === chatId) {
+        setActiveChatId(updated[0].id);
+      }
+    } catch (error) {
+      Alert.alert(
+        "Conversation not removed",
+        formatUnknownError(error)
+      );
     }
   };
 
@@ -1372,7 +1470,12 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
         />
 
         <View style={[styles.chatWrap, { marginBottom: chatViewportInset }]}>
-          {activeChat?.messages.length ? (
+          {isConversationLoading || activeChat?.messagesLoaded === false ? (
+            <View style={styles.emptyWrap}>
+              <ActivityIndicator color={palette.accent} />
+              <Text style={styles.emptyIntro}>Opening conversation...</Text>
+            </View>
+          ) : activeChat?.messages.length ? (
             <FlatList
               ref={messageListRef}
               data={activeChat.messages}
@@ -1501,14 +1604,17 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
               selectionColor={palette.accent}
               cursorColor={palette.accent}
               style={styles.input}
+              editable={!isConversationLoading && activeChat?.messagesLoaded !== false}
               multiline
               maxLength={280}
             />
             <Pressable
-              disabled={isSending || !input.trim()}
+              disabled={isSending || isConversationLoading || activeChat?.messagesLoaded === false || !input.trim()}
               style={({ pressed }) => [
                 styles.sendButton,
-                isSending || !input.trim() ? styles.sendButtonDisabled : null,
+                isSending || isConversationLoading || activeChat?.messagesLoaded === false || !input.trim()
+                  ? styles.sendButtonDisabled
+                  : null,
                 pressed ? styles.sendPressed : null
               ]}
               onPress={() => {
@@ -1526,70 +1632,19 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
       </KeyboardAvoidingView>
 
       <FloatingBottomNav
-        items={bottomNavItems}
+        items={appBottomNavItems}
         activeKey={activeBottomKey}
-        switcherAction={
-          source === "planningHub"
-            ? {
-                label: "Finance Hub",
-                icon: "wallet-outline",
-                accessibilityLabel: "Return to finance hub",
-                behavior: "peek",
-                autoPeekEnabled: true,
-                sharedRevealKey: "hub-switcher",
-                onPress: () => {
-                  navigateWithProbe(
-                    router as unknown as {
-                      push: (href: string) => void;
-                      replace: (href: string) => void;
-                      navigate?: (href: string) => void;
-                    },
-                    "/(tabs)",
-                    "companion-switcher-finance"
-                  );
-                }
-              }
-            : {
-                label: "Planning Hub",
-                icon: "notebook-outline",
-                iconFamily: "material",
-                accessibilityLabel: "Open planning hub",
-                behavior: "peek",
-                autoPeekEnabled: true,
-                sharedRevealKey: "hub-switcher",
-                onPress: () => {
-                  navigateWithProbe(
-                    router as unknown as {
-                      push: (href: string) => void;
-                      replace: (href: string) => void;
-                      navigate?: (href: string) => void;
-                    },
-                    "/(tabs)/planning",
-                    "companion-switcher-planning"
-                  );
-                }
-              }
-        }
         onPressItem={(item) => {
           if (item.key === activeBottomKey) {
             return;
           }
 
-          const href = source === "planningHub"
-            ? {
-                overview: "/(tabs)/planning",
-                graphs: "/(tabs)/planning/analytics",
-                add: "/(tabs)/planning/categories",
-                calendar: "/(tabs)/calendar?source=planningHub&sourcePlanningHubTab=calendar",
-                discover: "/(tabs)/planning/browse"
-              }[item.key]
-            : {
-                index: "/(tabs)",
-                accounts: "/(tabs)/accounts",
-                activity: "/(tabs)/activity",
-                cashflow: "/(tabs)/cashflow",
-                calendar: "/(tabs)/calendar"
-              }[item.key];
+          const href = {
+            index: "/(tabs)",
+            accounts: "/(tabs)/accounts",
+            activity: "/(tabs)/activity",
+            cashflow: "/(tabs)/cashflow"
+          }[item.key];
 
           if (!href) {
             return;
@@ -1678,7 +1733,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
         }}
       />
 
-      <Modal visible={historyVisible} transparent animationType="fade" onRequestClose={() => setHistoryVisible(false)}>
+      <SystemModal visible={historyVisible} transparent animationType="fade" onRequestClose={() => setHistoryVisible(false)}>
         <Pressable style={styles.historyOverlay} onPress={() => setHistoryVisible(false)}>
           <Pressable style={styles.historySheet} onPress={() => undefined}>
             <View style={styles.historyHeader}>
@@ -1841,9 +1896,9 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
             </ScrollView>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
 
-      <Modal
+      <SystemModal
         visible={editChatVisible}
         transparent
         animationType="fade"
@@ -1902,7 +1957,7 @@ export default function CashflowCompanionScreen({ sourceOverride }: CompanionScr
             </View>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
     </ScreenContainer>
   );
 }

@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type {
-  AccountDto,
   CreateTransactionRequest,
   DashboardSummaryDto,
   TransactionDto,
@@ -15,7 +14,6 @@ import {
   getTransactionsForAccount,
   updateTransactionMetadata
 } from "./transactionsApi";
-import { isReportableExpenseTransaction } from "./transferClassification";
 
 export function useTransactionsQuery(accountId?: string) {
   return useQuery({
@@ -109,47 +107,6 @@ export function useCreateTransactionMutation() {
       queryClient.setQueryData<TransactionDto[]>(
         queryKeys.transactions.list(transaction.accountId),
         (current) => prependTransaction(current, transaction)
-      );
-
-      queryClient.setQueryData<AccountDto | undefined>(
-        queryKeys.accounts.detail(transaction.accountId),
-        (current) =>
-          current
-            ? {
-                ...current,
-                currentBalance: Number((current.currentBalance + transaction.amount).toFixed(2)),
-                transactionCount: current.transactionCount + 1
-              }
-            : current
-      );
-
-      queryClient.setQueryData<AccountDto[] | undefined>(queryKeys.accounts.all, (current) =>
-        (current ?? []).map((account) =>
-          account.id === transaction.accountId
-            ? {
-                ...account,
-                currentBalance: Number((account.currentBalance + transaction.amount).toFixed(2)),
-                transactionCount: account.transactionCount + 1
-              }
-            : account
-        )
-      );
-
-      queryClient.setQueryData<DashboardSummaryDto | undefined>(
-        queryKeys.dashboard.summary,
-        (current) =>
-          current
-            ? {
-                ...current,
-                totalBalance: Number((current.totalBalance + transaction.amount).toFixed(2)),
-                transactionCount: current.transactionCount + 1,
-                recentOutflow:
-                  isReportableExpenseTransaction(transaction)
-                    ? Number((current.recentOutflow + Math.abs(transaction.amount)).toFixed(2))
-                    : current.recentOutflow,
-                recentTransactions: prependTransaction(current.recentTransactions, transaction).slice(0, 5)
-              }
-            : current
       );
 
       await Promise.all([

@@ -13,6 +13,10 @@ import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
 import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
 import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
 import { useAccountsQuery } from "../../src/features/accounts/useAccounts";
+import {
+  resolveAccountBalancePresentation,
+  resolvePortfolioBalancePresentation
+} from "../../src/features/accounts/accountBalancePresentation";
 import { useConnectBankCtaLabels } from "../../src/features/banking/connectBankCta";
 import { buildConnectBankRoute } from "../../src/features/banking/bankingLinking";
 import { useDashboardSummaryQuery } from "../../src/features/dashboard/useDashboardSummaryQuery";
@@ -44,7 +48,7 @@ type HeroCardItem = {
   accountId: string | null;
   title: string;
   badgeLabel: string | null;
-  balance: number;
+  balance: number | null;
   currency: string;
   subtitle: string;
   currencyNote?: string | null;
@@ -59,15 +63,6 @@ type HeroCarouselItem = HeroCardItem & {
   logicalIndex: number;
 };
 
-const HOME_RECURRING_LOG_EVENTS = new Set([
-  "home_mount",
-  "home_focus",
-  "home_accounts_query_state",
-  "home_summary_query_state",
-  "home_connected_account_data_visible"
-]);
-const HOME_RECURRING_LOG_THROTTLE_MS = 5 * 60 * 1000;
-const homeRecurringLogLastAt = new Map<string, number>();
 const HERO_PAGER_DOT_SIZE = 6;
 const HERO_PAGER_DOT_ACTIVE_WIDTH = 16;
 const HERO_PAGER_DOT_GAP = 8;
@@ -96,24 +91,6 @@ export default function DashboardTabScreen() {
   const heroAnimation = useEntranceAnimation(30);
   const sectionAnimation = useEntranceAnimation(150);
 
-  const logHomeEvent = useCallback((event: string, metadata?: Record<string, unknown>) => {
-    if (HOME_RECURRING_LOG_EVENTS.has(event)) {
-      const now = Date.now();
-      const lastLoggedAt = homeRecurringLogLastAt.get(event) ?? 0;
-      if (now - lastLoggedAt < HOME_RECURRING_LOG_THROTTLE_MS) {
-        return;
-      }
-
-      homeRecurringLogLastAt.set(event, now);
-    }
-
-    console.info("[Home Banking Timeline]", {
-      event,
-      timestampUtc: new Date().toISOString(),
-      ...metadata
-    });
-  }, []);
-
   const isInitialLoading =
     (summaryQuery.isLoading && !summaryQuery.data) ||
     (accountsQuery.isLoading && !accountsQuery.data) ||
@@ -135,6 +112,43 @@ export default function DashboardTabScreen() {
   const heroTotals = useMemo(() => {
     if (accounts.length === 0) {
       return null;
+    }
+
+    const hasStructuredPortfolio = Boolean(
+      summaryData && Object.prototype.hasOwnProperty.call(summaryData, "portfolioBalance")
+    );
+    if (hasStructuredPortfolio) {
+      const portfolio = resolvePortfolioBalancePresentation(summaryData?.portfolioBalance);
+      if (!portfolio || portfolio.currencyGroups.length === 0) {
+        return {
+          totalBalance: null,
+          currency: accounts[0]?.currency ?? "EUR",
+          currencyNote: "No current account balance is available."
+        };
+      }
+
+      const sortedGroups = [...portfolio.currencyGroups].sort((left, right) => {
+        if (right.accountCount !== left.accountCount) {
+          return right.accountCount - left.accountCount;
+        }
+
+        return Math.abs(right.amount) - Math.abs(left.amount);
+      });
+      const primaryGroup = sortedGroups[0];
+      const exclusionNote = portfolio.excludedAccountCount > 0
+        ? `${portfolio.excludedAccountCount} account${portfolio.excludedAccountCount === 1 ? " is" : "s are"} unavailable.`
+        : null;
+      const currencyNote = portfolio.hasMultipleCurrencies
+        ? `Balances stay separate by currency. Showing ${primaryGroup.currency}.`
+        : exclusionNote;
+
+      return {
+        totalBalance: Number(primaryGroup.amount.toFixed(2)),
+        currency: primaryGroup.currency,
+        currencyNote: [currencyNote, exclusionNote]
+          .filter((value, index, values) => value && values.indexOf(value) === index)
+          .join(" ") || null
+      };
     }
 
     const grouped = new Map<string, { total: number; accountCount: number }>();
@@ -167,7 +181,7 @@ export default function DashboardTabScreen() {
       currency: primaryCurrency,
       currencyNote: `Mixed currencies detected. Showing ${primaryGroup.accountCount} ${primaryCurrency} account${primaryGroup.accountCount === 1 ? "" : "s"} only.`
     };
-  }, [accounts]);
+  }, [accounts, summaryData]);
   const heroItems = useMemo<HeroCardItem[]>(() => {
     if (!heroTotals) {
       return [];
@@ -185,22 +199,25 @@ export default function DashboardTabScreen() {
       providerBranding: null
     };
 
-    const accountItems = accounts.map((account) => ({
-      key: account.id,
-      accountId: account.id,
-      title: "Account balance",
-      badgeLabel: null,
-      balance: account.currentBalance,
-      currency: account.currency,
-      subtitle: `${account.name} | ${account.transactionCount} transactions`,
-      currencyNote: null,
-      providerBranding: {
-        providerId: account.providerId,
-        providerDisplayName: account.providerDisplayName,
-        providerIconUrl: account.providerIconUrl,
-        providerLogoUrl: account.providerLogoUrl
-      }
-    }));
+    const accountItems = accounts.map((account) => {
+      const balance = resolveAccountBalancePresentation(account);
+      return {
+        key: account.id,
+        accountId: account.id,
+        title: "Account balance",
+        badgeLabel: null,
+        balance: balance.current,
+        currency: balance.currency,
+        subtitle: `${account.name} | ${account.transactionCount} transactions`,
+        currencyNote: balance.freshness === "stale" ? "Balance may be out of date." : null,
+        providerBranding: {
+          providerId: account.providerId,
+          providerDisplayName: account.providerDisplayName,
+          providerIconUrl: account.providerIconUrl,
+          providerLogoUrl: account.providerLogoUrl
+        }
+      };
+    });
 
     return [totalItem, ...accountItems];
   }, [accounts, heroTotals, transactions.length]);
@@ -237,25 +254,14 @@ export default function DashboardTabScreen() {
   }).slice(0, 2);
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
-    logHomeEvent("home_refresh_start", {
-      summaryStale: summaryQuery.isStale,
-      accountsStale: accountsQuery.isStale,
-      transactionsStale: transactionsQuery.isStale
-    });
 
     try {
       await Promise.all([summaryQuery.refetch(), accountsQuery.refetch(), transactionsQuery.refetch()]);
-      logHomeEvent("home_refresh_complete", {
-        accountCount: accountsQuery.data?.length ?? 0,
-        transactionCount: transactionsQuery.data?.length ?? 0,
-        previewCount: summaryQuery.data?.accountCount ?? 0
-      });
     } finally {
       setIsManualRefreshing(false);
     }
   }, [
     accountsQuery,
-    logHomeEvent,
     summaryQuery,
     transactionsQuery
   ]);
@@ -275,43 +281,8 @@ export default function DashboardTabScreen() {
     });
   };
 
-  useEffect(() => {
-    logHomeEvent("home_mount");
-  }, [logHomeEvent]);
-
-  useEffect(() => {
-    logHomeEvent("home_accounts_query_state", {
-      status: accountsQuery.status,
-      fetchStatus: accountsQuery.fetchStatus,
-      isRefetching: accountsQuery.isRefetching,
-      accountCount: accounts.length
-    });
-  }, [accounts.length, accountsQuery.fetchStatus, accountsQuery.isRefetching, accountsQuery.status, logHomeEvent]);
-
-  useEffect(() => {
-    logHomeEvent("home_summary_query_state", {
-      status: summaryQuery.status,
-      fetchStatus: summaryQuery.fetchStatus,
-      isRefetching: summaryQuery.isRefetching,
-      accountPreviewCount: summaryData?.accountCount ?? 0
-    });
-  }, [logHomeEvent, summaryData?.accountCount, summaryQuery.fetchStatus, summaryQuery.isRefetching, summaryQuery.status]);
-
-  useEffect(() => {
-    if (accounts.length === 0) {
-      return;
-    }
-
-    logHomeEvent("home_connected_account_data_visible", {
-      accountCount: accounts.length,
-      firstAccountName: accounts[0]?.name ?? null,
-      firstAccountBalance: accounts[0]?.currentBalance ?? null
-    });
-  }, [accounts, logHomeEvent]);
-
   useFocusEffect(
     useCallback(() => {
-      logHomeEvent("home_focus");
       setHeroIndex(0);
       const initialPhysicalIndex = getInitialPhysicalIndex();
       heroPhysicalIndexRef.current = initialPhysicalIndex;
@@ -323,7 +294,7 @@ export default function DashboardTabScreen() {
         });
       });
       return undefined;
-    }, [getInitialPhysicalIndex, heroWidth, logHomeEvent])
+    }, [getInitialPhysicalIndex, heroWidth])
   );
 
 

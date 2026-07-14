@@ -143,7 +143,7 @@ export default function ActivityTabScreen() {
     onRequestCategoryPicker: (snapshot) => {
       setActivitySearchSnapshot(snapshot);
       router.push({
-        pathname: "/(tabs)/planning/categories",
+        pathname: "/(tabs)/activity/categories" as never,
         params: {
           selectionMode: "true",
           selectionTarget: "activitySearchCategoryFilter"
@@ -484,7 +484,7 @@ export default function ActivityTabScreen() {
                 const snapshot = search.getSnapshot();
                 setActivitySearchSnapshot(snapshot);
                 router.push({
-                  pathname: "/(tabs)/planning/categories",
+                  pathname: "/(tabs)/activity/categories" as never,
                   params: {
                     selectionMode: "true",
                     selectionTarget: "activitySearchCategoryFilter"

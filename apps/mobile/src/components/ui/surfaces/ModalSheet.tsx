@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import { Modal, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
-import { useRuntimeBottomInsetPolicy } from "../../../theme/insets";
+import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { AppText } from "../text/AppText";
 import { useSurfacePresets } from "./surface.presets";
+import { SystemModal } from "./SystemModal";
 
 type ModalSheetProps = {
   visible: boolean;
@@ -24,20 +24,15 @@ export function ModalSheet({
   maxHeightRatio = 0.78
 }: ModalSheetProps) {
   const surfacePresets = useSurfacePresets();
-  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const { height } = useWindowDimensions();
   const clampedRatio = Math.min(0.95, Math.max(0.25, maxHeightRatio));
   const resolvedMaxHeight = Math.round(height * clampedRatio);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <SystemModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={[surfacePresets.overlay, { justifyContent: "flex-end" }]} onPress={onClose}>
         <Pressable
-          style={[
-            surfacePresets.modalSheet,
-            { maxHeight: resolvedMaxHeight },
-            { paddingBottom: 20 + bottomInsetPolicy.bottomActionInsetTight }
-          ]}
+          style={[surfacePresets.modalSheet, { maxHeight: resolvedMaxHeight }]}
           onPress={() => undefined}
         >
           <View style={surfacePresets.modalHandle} />
@@ -49,13 +44,13 @@ export function ModalSheet({
           ) : null}
           <ScrollView
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ gap: 12, paddingBottom: bottomInsetPolicy.bottomScrollableInset }}
+            contentContainerStyle={{ gap: 12 }}
           >
             {children}
           </ScrollView>
           {footer}
         </Pressable>
       </Pressable>
-    </Modal>
+    </SystemModal>
   );
 }

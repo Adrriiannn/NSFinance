@@ -1,29 +1,11 @@
-import {
-  dehydrate,
-  hydrate,
-  QueryClient,
-  QueryClientProvider,
-  focusManager
-} from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
-import {
-  readJsonFileStorage,
-  writeJsonFileStorage
-} from "../lib/storage/jsonFileStore";
+import { deleteAmbiguousLegacyMobileStorage } from "../lib/storage/mobileStorageLifecycle";
 
 type QueryProviderProps = {
   children: React.ReactNode;
 };
-
-type PersistedQueryCache = {
-  savedAtMs: number;
-  dehydratedState: ReturnType<typeof dehydrate>;
-};
-
-const QUERY_CACHE_STORAGE_KEY = "nsfinance.react-query.cache.v1";
-const QUERY_CACHE_MAX_AGE_MS = 15 * 60_000;
-const QUERY_CACHE_PERSIST_DEBOUNCE_MS = 1_000;
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,74 +23,29 @@ const queryClient = new QueryClient({
 });
 
 export function QueryProvider({ children }: QueryProviderProps) {
-  const [isCacheHydrated, setIsCacheHydrated] = useState(false);
-  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isStoragePrepared, setIsStoragePrepared] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
-    const hydrateCache = async () => {
+    const prepareStorage = async () => {
       try {
-        const persisted = await readJsonFileStorage<PersistedQueryCache>(QUERY_CACHE_STORAGE_KEY);
-        if (!persisted || cancelled) {
-          return;
-        }
-
-        const cacheAgeMs = Date.now() - persisted.savedAtMs;
-        if (cacheAgeMs > QUERY_CACHE_MAX_AGE_MS) {
-          return;
-        }
-
-        hydrate(queryClient, persisted.dehydratedState);
+        await clearAccountQueryState();
       } catch {
-        // Ignore cache hydration issues and continue boot.
+        // Storage cleanup is best effort; no legacy cache is ever hydrated.
       } finally {
         if (!cancelled) {
-          setIsCacheHydrated(true);
+          setIsStoragePrepared(true);
         }
       }
     };
 
-    void hydrateCache();
+    void prepareStorage();
 
     return () => {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!isCacheHydrated) {
-      return;
-    }
-
-    const schedulePersist = () => {
-      if (persistTimerRef.current) {
-        clearTimeout(persistTimerRef.current);
-      }
-
-      persistTimerRef.current = setTimeout(() => {
-        persistTimerRef.current = null;
-        const dehydratedState = dehydrate(queryClient, {
-          shouldDehydrateQuery: (query) => query.state.status === "success"
-        });
-        void writeJsonFileStorage(QUERY_CACHE_STORAGE_KEY, {
-          savedAtMs: Date.now(),
-          dehydratedState
-        } satisfies PersistedQueryCache);
-      }, QUERY_CACHE_PERSIST_DEBOUNCE_MS);
-    };
-
-    const unsubscribeQueryCache = queryClient.getQueryCache().subscribe(schedulePersist);
-    const unsubscribeMutationCache = queryClient.getMutationCache().subscribe(schedulePersist);
-
-    return () => {
-      unsubscribeQueryCache();
-      unsubscribeMutationCache();
-      if (persistTimerRef.current) {
-        clearTimeout(persistTimerRef.current);
-      }
-    };
-  }, [isCacheHydrated]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener(
@@ -123,9 +60,16 @@ export function QueryProvider({ children }: QueryProviderProps) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {isCacheHydrated ? children : null}
+      {isStoragePrepared ? children : null}
     </QueryClientProvider>
   );
+}
+
+export async function clearAccountQueryState(): Promise<void> {
+  const cancellation = queryClient.cancelQueries();
+  queryClient.clear();
+  await cancellation;
+  await deleteAmbiguousLegacyMobileStorage();
 }
 
 export { queryClient };

@@ -14,6 +14,7 @@ import { SectionHeader } from "../../../src/components/ui/SectionHeader";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
+import { resolveAccountBalancePresentation } from "../../../src/features/accounts/accountBalancePresentation";
 import {
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
@@ -21,7 +22,7 @@ import {
 } from "../../../src/features/banking/useBanking";
 import { useCreateExportRequestMutation } from "../../../src/features/support/useSupport";
 import { downloadExportRequestFile } from "../../../src/features/support/supportApi";
-import { useAccountTransactionsQuery } from "../../../src/features/transactions/useTransactions";
+import { useTransactionPageQuery } from "../../../src/features/transactions/useTransactionPageQuery";
 import { formatCurrency } from "../../../src/lib/format";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
@@ -181,7 +182,7 @@ export default function AccountDetailsScreen() {
   const accountId = params.id ?? "";
 
   const accountQuery = useAccountDetailQuery(accountId);
-  const transactionsQuery = useAccountTransactionsQuery(accountId);
+  const transactionsQuery = useTransactionPageQuery({ accountId, pageSize: 12 });
   const connectionsQuery = useBankConnectionsQuery();
   const linkedAccountsQuery = useLinkedBankAccountsQuery();
   const linkedCardsQuery = useLinkedBankCardsQuery();
@@ -223,6 +224,7 @@ export default function AccountDetailsScreen() {
     linkedAccountsQuery.error ??
     linkedCardsQuery.error;
   const account = accountQuery.data;
+  const balance = account ? resolveAccountBalancePresentation(account) : null;
   const linkedAccount = findLinkedAccountForFinancialAccount(linkedAccountsQuery.data, account?.id);
   const accountConnection = linkedAccount
     ? (connectionsQuery.data ?? []).find((item) => item.id === linkedAccount.connectionId) ?? latestConnection
@@ -246,7 +248,7 @@ export default function AccountDetailsScreen() {
     account?.name,
     accountConnection?.connectedFullName
   );
-  const transactions = transactionsQuery.data ?? [];
+  const transactions = transactionsQuery.data?.items ?? [];
   const listBottomInset = Math.max(
     spacing[12],
     getFloatingTabBarContentInset(insets.bottom, spacing[12])
@@ -320,15 +322,39 @@ export default function AccountDetailsScreen() {
             <GlassCard style={styles.accountCard}>
               <Text style={styles.accountName}>{accountTitle}</Text>
               <Text style={styles.accountBalance}>
-                {formatCurrency(account.currentBalance, account.currency)}
+                {balance?.current === null
+                  ? "Balance unavailable"
+                  : formatCurrency(balance?.current ?? account.currentBalance, balance?.currency ?? account.currency)}
               </Text>
               <View style={styles.accountMetaWrap}>
                 <Text style={styles.sectionTitle}>Account info</Text>
-                <Text style={styles.accountMeta} numberOfLines={1} ellipsizeMode="middle">
-                  NS ID: {account.id}
-                </Text>
                 <Text style={styles.accountMeta}>Type: {account.type}</Text>
                 <Text style={styles.accountMeta}>Currency: {account.currency}</Text>
+                {balance?.available !== null && balance?.available !== undefined ? (
+                  <Text style={styles.accountMeta}>
+                    Available: {formatCurrency(balance.available, balance.currency)}
+                  </Text>
+                ) : null}
+                {balance?.overdraft !== null && balance?.overdraft !== undefined ? (
+                  <Text style={styles.accountMeta}>
+                    Overdraft: {formatCurrency(balance.overdraft, balance.currency)}
+                  </Text>
+                ) : null}
+                <Text style={styles.accountMeta}>
+                  Balance source: {balance?.source === "provider_snapshot"
+                    ? "Bank snapshot"
+                    : balance?.source === "manual_ledger"
+                      ? "Account activity"
+                      : balance?.source === "legacy_current_balance"
+                        ? "Previous API response"
+                        : "Unavailable"}
+                </Text>
+                {balance?.asOf ? (
+                  <Text style={styles.accountMeta}>Balance updated: {formatDateTime(balance.asOf)}</Text>
+                ) : null}
+                {balance?.freshness === "stale" ? (
+                  <Text style={styles.accountMeta}>Balance may be out of date</Text>
+                ) : null}
                 {accountNumberLines.map((line) => (
                   <Text key={line.label} style={styles.accountMeta}>
                     {line.label}: {line.value}
@@ -386,7 +412,7 @@ export default function AccountDetailsScreen() {
             <SectionHeader title="Recent transactions" />
             <View style={styles.transactionsWrap}>
               {transactions.length > 0 ? (
-                transactions.slice(0, 12).map((transaction, index) => (
+                transactions.map((transaction, index) => (
                   <TransactionRow
                     key={transaction.id}
                     transaction={transaction}

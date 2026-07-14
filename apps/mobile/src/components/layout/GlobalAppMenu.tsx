@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useGlobalSearchParams, usePathname, useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AccessibilityInfo,
@@ -8,13 +8,12 @@ import {
   Easing,
   Image,
   Linking,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
   View
 } from "react-native";
-import { useRuntimeBottomInsetPolicy } from "../../theme/insets";
+import { SystemModal } from "../ui/surfaces/SystemModal";
 import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
@@ -87,27 +86,11 @@ function formatNsTag(rawValue?: string | null) {
   return normalized ? `@${normalized}` : "@member";
 }
 
-function resolveHubContext(pathname: string, source?: string | null): "finance" | "planning" {
-  if (pathname.startsWith("/planning")) {
-    return "planning";
-  }
-
-  if (pathname.startsWith("/calendar") || pathname.startsWith("/companion")) {
-    if (source === "planningHub" || source === "expense") {
-      return "planning";
-    }
-  }
-
-  return "finance";
-}
-
 export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMenuProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const params = useGlobalSearchParams<{ source?: string }>();
   const { isAuthenticated, session, logout } = useAuthSession();
   const { mode, resolvedThemeName, setThemeMode, isTransitioning } = useThemeRuntime();
-  const bottomInsetPolicy = useRuntimeBottomInsetPolicy();
   const profileQuery = useUserProfileQuery();
   const [isOpen, setIsOpen] = useState(false);
   const [reducedMotionEnabled, setReducedMotionEnabled] = useState(false);
@@ -162,15 +145,6 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   }, []);
 
   const activePath = useMemo(() => pathname || "", [pathname]);
-  const sourceContext = typeof params.source === "string" ? params.source : null;
-  const hubContext = useMemo(
-    () => resolveHubContext(activePath, sourceContext),
-    [activePath, sourceContext]
-  );
-  const highlightFinanceHub = hubContext === "planning";
-  const highlightPlanningHub = hubContext === "finance";
-  const canSwitchToFinanceHub = highlightFinanceHub;
-  const canSwitchToPlanningHub = highlightPlanningHub;
 
   const profile = profileQuery.data;
   const fullName = profile?.fullName || session?.user.fullName || session?.user.displayName || "NSFinance user";
@@ -275,11 +249,12 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
         ) : null}
       </View>
 
-      <Modal
+      <SystemModal
         visible={isOpen}
         transparent
         animationType="none"
         statusBarTranslucent
+        safeAreaEdges={["bottom", "left", "right"]}
         onRequestClose={() => setIsOpen(false)}
       >
         <View style={styles.modalRoot}>
@@ -290,9 +265,6 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
           <Animated.View
             style={[
               styles.drawer,
-              {
-                paddingBottom: spacing[16] + bottomInsetPolicy.bottomDrawerInset
-              },
               {
                 transform: [{ translateX: panelTranslateX }]
               }
@@ -452,40 +424,6 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
             </View>
 
             <View style={styles.bottomCluster}>
-              <View style={styles.hubSwitcherRow}>
-                <Pressable
-                  disabled={!canSwitchToFinanceHub}
-                  onPress={() => {
-                    setIsOpen(false);
-                    router.push("/(tabs)" as never);
-                  }}
-                  style={({ pressed }) => [
-                    styles.hubButton,
-                    styles.financeHubButton,
-                    highlightFinanceHub ? styles.hubButtonHighlighted : styles.hubButtonDimmed,
-                    pressed && canSwitchToFinanceHub ? styles.menuItemPressed : null
-                  ]}
-                >
-                  <Text style={styles.hubButtonText}>Finance Hub</Text>
-                </Pressable>
-
-                <Pressable
-                  disabled={!canSwitchToPlanningHub}
-                  onPress={() => {
-                    setIsOpen(false);
-                    router.push("/(tabs)/planning" as never);
-                  }}
-                  style={({ pressed }) => [
-                    styles.hubButton,
-                    styles.planningHubButton,
-                    highlightPlanningHub ? styles.hubButtonHighlighted : styles.hubButtonDimmed,
-                    pressed && canSwitchToPlanningHub ? styles.menuItemPressed : null
-                  ]}
-                >
-                  <Text style={styles.hubButtonText}>Planning Hub</Text>
-                </Pressable>
-              </View>
-
               <View style={styles.footer}>
                 <Pressable
                   onPress={() => {
@@ -534,7 +472,7 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
             </View>
           </Animated.View>
         </View>
-      </Modal>
+      </SystemModal>
     </>
   );
 }
@@ -767,40 +705,6 @@ const styles = createRuntimeStyleSheet(() => ({
   bottomCluster: {
     marginTop: "auto",
     gap: spacing[8]
-  },
-  hubSwitcherRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[8]
-  },
-  hubButton: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: 6,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing[10]
-  },
-  financeHubButton: {
-    borderColor: palette.border,
-    backgroundColor: surfaces.field
-  },
-  planningHubButton: {
-    borderColor: palette.border,
-    backgroundColor: surfaces.field
-  },
-  hubButtonHighlighted: {
-    opacity: 1,
-    borderColor: palette.borderStrong,
-    backgroundColor: "rgba(242,140,40,0.12)"
-  },
-  hubButtonDimmed: {
-    opacity: 0.38
-  },
-  hubButtonText: {
-    color: palette.textPrimary,
-    ...typography.body2
   },
   footer: {
     paddingTop: spacing[12],

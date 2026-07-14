@@ -1,6 +1,34 @@
 export type AccountType = "Current" | "Savings" | "Credit" | "Cash" | "Other";
 export type TransactionDirection = "Income" | "Expense";
 
+export type AccountBalanceSource = "provider_snapshot" | "manual_ledger" | "unavailable";
+export type AccountBalanceFreshness = "fresh" | "stale" | "current" | "unknown";
+
+export type AccountBalanceDto = {
+  current: number | null;
+  available: number | null;
+  overdraft: number | null;
+  currency: string;
+  source: AccountBalanceSource;
+  asOfUtc: string | null;
+  freshness: AccountBalanceFreshness;
+  exclusions: string[];
+};
+
+export type CurrencyBalanceTotalDto = {
+  currency: string;
+  amount: number;
+  accountCount: number;
+  basis: "current";
+};
+
+export type PortfolioBalanceDto = {
+  byCurrency: CurrencyBalanceTotalDto[];
+  includedAccountCount: number;
+  excludedAccountCount: number;
+  hasMultipleCurrencies: boolean;
+};
+
 export type AccountDto = {
   id: string;
   name: string;
@@ -15,6 +43,7 @@ export type AccountDto = {
   providerLogoUrl: string | null;
   providerBrandBgColor: string | null;
   hasProviderBranding: boolean;
+  balance?: AccountBalanceDto | null;
 };
 
 export type CreateAccountRequest = {
@@ -95,6 +124,32 @@ export type TransactionDto = {
   createdUtc: string;
   metadataUpdatedUtc: string | null;
   direction: TransactionDirection;
+};
+
+export type TransactionPageDirection = "income" | "expense";
+
+export type TransactionPageRequest = {
+  pageSize?: number | null;
+  cursor?: string | null;
+  accountId?: string | null;
+  fromUtc?: string | null;
+  toUtc?: string | null;
+  direction?: TransactionPageDirection | null;
+};
+
+export type TransactionPageFiltersDto = {
+  accountId: string | null;
+  fromUtc: string | null;
+  toUtc: string | null;
+  direction: TransactionPageDirection | null;
+};
+
+export type TransactionPageDto = {
+  items: TransactionDto[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  pageSize: number;
+  filters: TransactionPageFiltersDto;
 };
 
 export type CreateTransactionRequest = {
@@ -225,6 +280,7 @@ export type DashboardSummaryDto = {
   recentOutflow: number;
   accountPreview: AccountDto[];
   recentTransactions: TransactionDto[];
+  portfolioBalance?: PortfolioBalanceDto | null;
 };
 
 export type ValidationProblem = {
@@ -1048,6 +1104,39 @@ export type SendAIChatMessageResponse = {
   followUpIntentHints: string[];
   contextSummary: string | null;
   structuredResults?: CompanionStructuredResults | null;
+};
+
+export type ArchiveAIChatThreadResponse = {
+  threadId: string;
+  status: string;
+};
+
+export type AIChatThreadSummary = {
+  threadId: string;
+  title: string | null;
+  status: string;
+  startedUtc: string;
+  lastMessageUtc: string;
+  lastContextRefreshUtc: string | null;
+  activeSummaryVersion: number;
+};
+
+export type AIChatMessage = {
+  messageId: string;
+  turnId: string | null;
+  role: string;
+  content: string;
+  messageOrder: number;
+  topic: string | null;
+  modelUsed: string | null;
+  taskType: string | null;
+  isResolved: boolean;
+  createdUtc: string;
+};
+
+export type AIChatThreadDetail = {
+  thread: AIChatThreadSummary;
+  messages: AIChatMessage[];
 };
 
 export type CompanionStructuredResults = {

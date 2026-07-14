@@ -1,4 +1,3 @@
-import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import type { ReactElement, ReactNode } from "react";
 import type {
   GestureResponderHandlers,
@@ -11,13 +10,6 @@ import type { EdgeInsets } from "react-native-safe-area-context";
 
 export type AdaptiveWidthClass = "compact" | "regular" | "expanded";
 export type AdaptiveHeightClass = "compact" | "regular" | "tall";
-
-export type AdaptiveTabBarItem = {
-  key: string;
-  label: string;
-  icon: string;
-  iconFamily?: "ionicons" | "material";
-};
 
 export type AdaptiveTabBarMargins = {
   horizontal: number;
@@ -42,9 +34,6 @@ export type AdaptiveLayoutMetrics = {
   tabBarHeight: number;
   tabBarRadius: number;
   tabBarMargins: AdaptiveTabBarMargins;
-  planningHubButtonSize: number;
-  planningHubOverlap: number;
-  planningHubLift: number;
   floatingAssistantSize: number;
   floatingAssistantRightMargin: number;
   floatingAssistantGapAboveTabBar: number;
@@ -88,31 +77,12 @@ export type AdaptiveHeaderProps = {
   style?: StyleProp<ViewStyle>;
 };
 
-export type PlanningHubDockButtonProps = {
-  size: number;
-  onPress: () => void;
-  accessibilityLabel?: string;
-};
-
 export type FloatingAssistantDockProps = {
   onPress: () => void;
   accessibilityLabel?: string;
   hidden?: boolean;
 };
 
-export type AdaptiveTabBarShellProps = {
-  items: readonly AdaptiveTabBarItem[];
-  activeKey: string;
-  onPressItem: (item: AdaptiveTabBarItem) => void;
-  hidden?: boolean;
-  planningHubAction: {
-    onPress: () => void;
-    accessibilityLabel?: string;
-  };
-};
-
 export type AdaptiveAppShellProps = {
   children: ReactNode;
 };
-
-export type AdaptiveBottomTabBarProps = BottomTabBarProps;

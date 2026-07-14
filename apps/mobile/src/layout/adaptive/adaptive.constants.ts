@@ -62,14 +62,6 @@ export const ADAPTIVE_TOKENS = {
     innerPaddingTop: spacing[10],
     labelGap: spacing[4]
   },
-  planningHub: {
-    size: {
-      compact: 58,
-      regular: 60,
-      expanded: 64
-    } as Record<AdaptiveWidthClass, number>,
-    overlapRatio: 0.34
-  },
   fab: {
     size: sizing.fab.size,
     rightMargin: {

@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { AppState, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   shouldAutoPromptBiometric,
@@ -10,6 +10,7 @@ import {
 import { stageMfaLogin } from "../../features/auth/pendingAuthFlow";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { Button } from "../ui/buttons/Button";
+import { SystemModal } from "../ui/surfaces/SystemModal";
 import { palette, spacing, surfaces, typography, zIndex } from "../../theme/tokens";
 
 export function BiometricGate() {
@@ -172,7 +173,7 @@ export function BiometricGate() {
 
   if (!isAppLocked && !shouldOfferBiometrics && shouldReviewBiometricAfterFallback) {
     return (
-      <Modal
+      <SystemModal
         visible
         transparent
         animationType="fade"
@@ -200,7 +201,7 @@ export function BiometricGate() {
             </View>
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
     );
   }
 

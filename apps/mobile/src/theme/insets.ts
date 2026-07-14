@@ -1,9 +1,8 @@
-import { Platform } from "react-native";
 import { useMemo } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { navigation } from "./tokens";
+import { normalizeSystemInset } from "./systemInsets";
 
-const ANDROID_NAV_BUTTONS_MIN_INSET = 24;
 const BOTTOM_SCROLL_EXTRA_GAP = 6;
 const BOTTOM_ACTION_STANDARD_EXTRA_GAP = 6;
 const BOTTOM_ACTION_TIGHT_EXTRA_GAP = 2;
@@ -22,11 +21,7 @@ export type RuntimeBottomInsetPolicy = {
 };
 
 export function getEffectiveBottomSystemInset(bottomSafeArea: number) {
-  if (Platform.OS !== "android") {
-    return bottomSafeArea;
-  }
-
-  return bottomSafeArea >= ANDROID_NAV_BUTTONS_MIN_INSET ? bottomSafeArea : 0;
+  return normalizeSystemInset(bottomSafeArea);
 }
 
 export function resolveRuntimeBottomInsetPolicy(bottomSafeArea: number): RuntimeBottomInsetPolicy {

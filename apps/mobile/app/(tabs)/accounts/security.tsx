@@ -4,7 +4,17 @@ import { useNavigation } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, View } from "react-native";
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Switch,
+  Text,
+  View
+} from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { AccountProviderBadge } from "../../../src/components/accounts/AccountProviderBadge";
@@ -13,6 +23,7 @@ import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { TextField } from "../../../src/components/ui/TextField";
+import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   getSessions,
@@ -940,109 +951,124 @@ export default function SecuritySettingsScreen() {
         ) : null}
       </ScrollView>
 
-      <Modal
+      <SystemModal
         visible={mfaModalVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setMfaModalVisible(false)}
       >
         <Pressable style={styles.modalOverlay} onPress={() => setMfaModalVisible(false)}>
-          <Pressable style={styles.modalCard} onPress={() => undefined}>
-            {mfaRecoveryCodes.length > 0 ? (
-              <>
-                <Text style={styles.modalTitle}>Save your recovery codes</Text>
-                <Text style={styles.metaLine}>
-                  Keep these somewhere private. Each code works once if you lose your authenticator.
-                </Text>
-                <View style={styles.recoveryCodes}>
-                  {mfaRecoveryCodes.map((recoveryCode) => (
-                    <Text key={recoveryCode} selectable style={styles.recoveryCode}>
-                      {recoveryCode}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.modalKeyboardAvoider}
+          >
+            <Pressable style={styles.modalCard} onPress={() => undefined}>
+              <ScrollView
+                contentContainerStyle={styles.modalCardContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {mfaRecoveryCodes.length > 0 ? (
+                  <>
+                    <Text style={styles.modalTitle}>Save your recovery codes</Text>
+                    <Text style={styles.metaLine}>
+                      Keep these somewhere private. Each code works once if you lose your authenticator.
                     </Text>
-                  ))}
-                </View>
-                <SecondaryButton label="Share securely" onPress={() => void shareRecoveryCodes()} />
-                <PrimaryButton
-                  label="I've saved them"
-                  onPress={() => {
-                    setMfaModalVisible(false);
-                    setMfaRecoveryCodes([]);
-                    setMfaEnrollment(null);
-                  }}
-                />
-              </>
-            ) : mfaDisableMode ? (
-              <>
-                <Text style={styles.modalTitle}>Turn off authenticator?</Text>
-                <Text style={styles.metaLine}>
-                  Confirm with your authenticator or one unused recovery code.
-                </Text>
-                <TextField
-                  label={mfaMethod === "totp" ? "Authenticator code" : "Recovery code"}
-                  value={mfaCode}
-                  onChangeText={(value) => {
-                    setMfaCode(mfaMethod === "totp" ? value.replace(/\D/g, "").slice(0, 6) : value.toUpperCase());
-                    setMfaError(null);
-                  }}
-                  keyboardType={mfaMethod === "totp" ? "number-pad" : "default"}
-                  autoCapitalize={mfaMethod === "totp" ? "none" : "characters"}
-                  error={mfaError ?? undefined}
-                />
-                <SecondaryButton
-                  label={mfaMethod === "totp" ? "Use a recovery code" : "Use authenticator code"}
-                  onPress={() => {
-                    setMfaMethod((current) => (current === "totp" ? "recovery_code" : "totp"));
-                    setMfaCode("");
-                    setMfaError(null);
-                  }}
-                />
-                <PrimaryButton
-                  label="Turn off authenticator"
-                  onPress={() => void submitMfaCode()}
-                  disabled={!mfaCode.trim()}
-                  isLoading={disableMfaMutation.isPending}
-                />
-              </>
-            ) : mfaEnrollment ? (
-              <>
-                <Text style={styles.modalTitle}>Set up authenticator</Text>
-                <Text style={styles.metaLine}>
-                  Scan this QR code in Microsoft Authenticator, Google Authenticator, or another TOTP app.
-                </Text>
-                <View style={styles.qrWrap}>
-                  <QRCode
-                    value={mfaEnrollment.otpAuthUri}
-                    size={190}
-                    color="#111111"
-                    backgroundColor="#FFFFFF"
-                  />
-                </View>
-                <Text style={styles.metaLine}>Manual setup key</Text>
-                <Text selectable style={styles.manualSecret}>{mfaEnrollment.secret}</Text>
-                <TextField
-                  label="Six-digit code"
-                  value={mfaCode}
-                  onChangeText={(value) => {
-                    setMfaCode(value.replace(/\D/g, "").slice(0, 6));
-                    setMfaError(null);
-                  }}
-                  keyboardType="number-pad"
-                  autoComplete="one-time-code"
-                  error={mfaError ?? undefined}
-                />
-                <PrimaryButton
-                  label="Confirm authenticator"
-                  onPress={() => void submitMfaCode()}
-                  disabled={mfaCode.length !== 6}
-                  isLoading={confirmMfaMutation.isPending}
-                />
-              </>
-            ) : null}
-          </Pressable>
+                    <View style={styles.recoveryCodes}>
+                      {mfaRecoveryCodes.map((recoveryCode) => (
+                        <Text key={recoveryCode} selectable style={styles.recoveryCode}>
+                          {recoveryCode}
+                        </Text>
+                      ))}
+                    </View>
+                    <SecondaryButton label="Share securely" onPress={() => void shareRecoveryCodes()} />
+                    <PrimaryButton
+                      label="I've saved them"
+                      onPress={() => {
+                        setMfaModalVisible(false);
+                        setMfaRecoveryCodes([]);
+                        setMfaEnrollment(null);
+                      }}
+                    />
+                  </>
+                ) : mfaDisableMode ? (
+                  <>
+                    <Text style={styles.modalTitle}>Turn off authenticator?</Text>
+                    <Text style={styles.metaLine}>
+                      Confirm with your authenticator or one unused recovery code.
+                    </Text>
+                    <TextField
+                      label={mfaMethod === "totp" ? "Authenticator code" : "Recovery code"}
+                      value={mfaCode}
+                      onChangeText={(value) => {
+                        setMfaCode(
+                          mfaMethod === "totp"
+                            ? value.replace(/\D/g, "").slice(0, 6)
+                            : value.toUpperCase()
+                        );
+                        setMfaError(null);
+                      }}
+                      keyboardType={mfaMethod === "totp" ? "number-pad" : "default"}
+                      autoCapitalize={mfaMethod === "totp" ? "none" : "characters"}
+                      error={mfaError ?? undefined}
+                    />
+                    <SecondaryButton
+                      label={mfaMethod === "totp" ? "Use a recovery code" : "Use authenticator code"}
+                      onPress={() => {
+                        setMfaMethod((current) => (current === "totp" ? "recovery_code" : "totp"));
+                        setMfaCode("");
+                        setMfaError(null);
+                      }}
+                    />
+                    <PrimaryButton
+                      label="Turn off authenticator"
+                      onPress={() => void submitMfaCode()}
+                      disabled={!mfaCode.trim()}
+                      isLoading={disableMfaMutation.isPending}
+                    />
+                  </>
+                ) : mfaEnrollment ? (
+                  <>
+                    <Text style={styles.modalTitle}>Set up authenticator</Text>
+                    <Text style={styles.metaLine}>
+                      Scan this QR code in Microsoft Authenticator, Google Authenticator, or another TOTP app.
+                    </Text>
+                    <View style={styles.qrWrap}>
+                      <QRCode
+                        value={mfaEnrollment.otpAuthUri}
+                        size={190}
+                        color="#111111"
+                        backgroundColor="#FFFFFF"
+                      />
+                    </View>
+                    <Text style={styles.metaLine}>Manual setup key</Text>
+                    <Text selectable style={styles.manualSecret}>{mfaEnrollment.secret}</Text>
+                    <TextField
+                      label="Six-digit code"
+                      value={mfaCode}
+                      onChangeText={(value) => {
+                        setMfaCode(value.replace(/\D/g, "").slice(0, 6));
+                        setMfaError(null);
+                      }}
+                      keyboardType="number-pad"
+                      autoComplete="one-time-code"
+                      error={mfaError ?? undefined}
+                    />
+                    <PrimaryButton
+                      label="Confirm authenticator"
+                      onPress={() => void submitMfaCode()}
+                      disabled={mfaCode.length !== 6}
+                      isLoading={confirmMfaMutation.isPending}
+                    />
+                  </>
+                ) : null}
+              </ScrollView>
+            </Pressable>
+          </KeyboardAvoidingView>
         </Pressable>
-      </Modal>
+      </SystemModal>
 
-      <Modal
+      <SystemModal
         visible={passwordCodeModalVisible}
         transparent
         animationType="fade"
@@ -1068,9 +1094,9 @@ export default function SecuritySettingsScreen() {
             />
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
 
-      <Modal
+      <SystemModal
         visible={passwordResetModalVisible}
         transparent
         animationType="fade"
@@ -1130,9 +1156,9 @@ export default function SecuritySettingsScreen() {
             />
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
 
-      <Modal
+      <SystemModal
         visible={deletionCodeModalVisible}
         transparent
         animationType="fade"
@@ -1159,7 +1185,7 @@ export default function SecuritySettingsScreen() {
             />
           </Pressable>
         </Pressable>
-      </Modal>
+      </SystemModal>
     </ScreenContainer>
   );
 }
@@ -1343,10 +1369,19 @@ const styles = createRuntimeStyleSheet(() => ({
   modalCard: {
     width: "100%",
     maxWidth: 440,
+    maxHeight: "100%",
     borderRadius: 6,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: surfaces.sheet,
+    backgroundColor: surfaces.sheet
+  },
+  modalKeyboardAvoider: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 440,
+    justifyContent: "center"
+  },
+  modalCardContent: {
     padding: spacing[16],
     gap: spacing[12]
   },

@@ -1,6 +1,7 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Image, Modal, PanResponder, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Animated, Image, PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import { SystemModal } from "../../../components/ui/surfaces/SystemModal";
 import { resolveApiRequestUrl } from "../../../lib/api/diagnostics";
 import { radius, spacing, typography, useThemeTokens } from "../../../theme/tokens";
 import {
@@ -321,7 +322,6 @@ function PlacePhotoViewer({
   onClose: () => void;
 }) {
   const tokens = useThemeTokens();
-  const { width, height } = useWindowDimensions();
   const [index, setIndex] = useState(initialIndex);
   const scale = useRef(new Animated.Value(1)).current;
   const translateX = useRef(new Animated.Value(0)).current;
@@ -395,9 +395,15 @@ function PlacePhotoViewer({
   }
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+    <SystemModal
+      visible
+      transparent
+      animationType="fade"
+      safeAreaBackgroundColor="rgba(0,0,0,0.92)"
+      onRequestClose={onClose}
+    >
       <Pressable style={styles.viewerBackdrop} onPress={onClose}>
-        <Pressable style={[styles.viewerContent, { width, height }]} onPress={resetZoom} {...viewerPanResponder.panHandlers}>
+        <Pressable style={styles.viewerContent} onPress={resetZoom} {...viewerPanResponder.panHandlers}>
           <Animated.Image
             source={{ uri: photos[index] }}
             resizeMode="contain"
@@ -441,7 +447,7 @@ function PlacePhotoViewer({
           </Pressable>
         </Pressable>
       </Pressable>
-    </Modal>
+    </SystemModal>
   );
 }
 
@@ -658,6 +664,8 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   viewerContent: {
+    flex: 1,
+    alignSelf: "stretch",
     alignItems: "center",
     justifyContent: "center"
   },

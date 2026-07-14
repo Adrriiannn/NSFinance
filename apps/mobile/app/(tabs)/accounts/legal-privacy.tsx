@@ -42,8 +42,10 @@ const defaultFlags: PrivacyFlags = {
   aiSuggestionsEnabled: true,
   personalizedInsightsEnabled: true,
   personalizedNotificationsEnabled: true,
-  analyticsEnabled: true
+  analyticsEnabled: false
 };
+
+const PRODUCT_ANALYTICS_CONSENT_TYPE = "product_analytics";
 
 function parseJson<T>(value: string, fallback: T): T {
   try {
@@ -72,6 +74,14 @@ export default function LegalPrivacyScreen() {
   const deletionRequestsQuery = useMyDeletionRequestsQuery();
   const [flags, setFlags] = useState<PrivacyFlags>(defaultFlags);
 
+  const productAnalyticsConsent = useMemo(
+    () =>
+      consentsQuery.data?.find(
+        (item) => item.consentType === PRODUCT_ANALYTICS_CONSENT_TYPE
+      )?.status ?? "denied",
+    [consentsQuery.data]
+  );
+
   useEffect(() => {
     if (!preferencesQuery.data) {
       return;
@@ -92,16 +102,9 @@ export default function LegalPrivacyScreen() {
       aiSuggestionsEnabled: privacyJson.aiSuggestionsEnabled ?? true,
       personalizedInsightsEnabled: privacyJson.personalizedInsightsEnabled ?? true,
       personalizedNotificationsEnabled: notificationJson.personalizedNotificationsEnabled ?? true,
-      analyticsEnabled: privacyJson.analyticsEnabled ?? true
+      analyticsEnabled: productAnalyticsConsent === "granted"
     });
-  }, [preferencesQuery.data]);
-
-  const marketingConsent = useMemo(
-    () =>
-      consentsQuery.data?.find((item) => item.consentType === "marketing_communications")?.status ??
-      "denied",
-    [consentsQuery.data]
-  );
+  }, [preferencesQuery.data, productAnalyticsConsent]);
 
   const items = [
     {
@@ -154,8 +157,7 @@ export default function LegalPrivacyScreen() {
           aiAnalysisEnabled: flags.aiAnalysisEnabled,
           aiSummariesEnabled: flags.aiSummariesEnabled,
           aiSuggestionsEnabled: flags.aiSuggestionsEnabled,
-          personalizedInsightsEnabled: flags.personalizedInsightsEnabled,
-          analyticsEnabled: flags.analyticsEnabled
+          personalizedInsightsEnabled: flags.personalizedInsightsEnabled
         }),
         essentialCategoryPreferencesJson:
           preferencesQuery.data?.essentialCategoryPreferencesJson ?? "{}",
@@ -163,10 +165,10 @@ export default function LegalPrivacyScreen() {
       });
 
       await updateConsentMutation.mutateAsync({
-        consentType: "marketing_communications",
+        consentType: PRODUCT_ANALYTICS_CONSENT_TYPE,
         status: flags.analyticsEnabled ? "granted" : "denied",
         source: "legal_privacy",
-        metadataJson: JSON.stringify({ analyticsEnabled: flags.analyticsEnabled })
+        metadataJson: JSON.stringify({ productAnalyticsEnabled: flags.analyticsEnabled })
       });
 
       showFlashMessage("Legal & privacy settings updated.", { tone: "success" });
@@ -223,12 +225,14 @@ export default function LegalPrivacyScreen() {
             }
           />
           <ToggleRow
-            label="Anonymous analytics"
+            label="Optional product analytics"
             value={flags.analyticsEnabled}
             onValueChange={(value) => setFlags((current) => ({ ...current, analyticsEnabled: value }))}
           />
 
-          <Text style={styles.itemMeta}>Current communications consent: {marketingConsent}</Text>
+          <Text style={styles.itemMeta}>
+            Current product analytics consent: {productAnalyticsConsent}
+          </Text>
 
           <SecondaryButton
             label="Save privacy controls"

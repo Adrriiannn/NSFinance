@@ -36,13 +36,14 @@ import {
 } from "../lib/api/client";
 import { ApiClientError } from "../lib/api/errors";
 import { buildDeviceContext } from "../lib/device/deviceIdentity";
+import { isSameAccountStorageScope } from "../lib/storage/accountScope";
 import type {
   AuthTokenResponse,
   MfaLoginChallengeResponse,
   UserProfileDto,
   VerifyMfaLoginRequest
 } from "../types/api";
-import { queryClient } from "./QueryProvider";
+import { clearAccountQueryState } from "./QueryProvider";
 
 const SESSION_KEY = "nsfinance.auth.session";
 
@@ -166,6 +167,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         const tokenBeforeClear = accessTokenRef.current ?? lockedSessionRef.current?.accessToken ?? null;
         const hadSession = Boolean(tokenBeforeClear);
+        await clearAccountQueryState();
         accessTokenRef.current = null;
         sessionRef.current = null;
         lockedSessionRef.current = null;
@@ -186,8 +188,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         await clearSessionStorage();
         await clearNativeGoogleSignInState();
         clearPendingAuthFlows();
-        await queryClient.cancelQueries();
-        queryClient.clear();
 
         if (reason) {
           setSessionMessage(reason);
@@ -238,6 +238,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         sessionId: response.sessionId,
         user: response.user
       };
+
+      const previousUserId =
+        sessionRef.current?.user.id
+        ?? lockedSessionRef.current?.user.id
+        ?? null;
+      if (!isSameAccountStorageScope(previousUserId, response.user.id)) {
+        await clearAccountQueryState();
+      }
 
       const [availability, preference] = await Promise.all([
         getBiometricAvailability(),
@@ -623,8 +631,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return;
     }
 
-    void queryClient.cancelQueries();
-    queryClient.clear();
+    void clearAccountQueryState();
 
     const biometricReady = biometricEnabledRef.current && biometricAvailable;
     if (shouldLockSessionForAppExit({

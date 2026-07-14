@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { Modal, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { AppText } from "../text/AppText";
 import { useSurfacePresets } from "./surface.presets";
+import { SystemModal } from "./SystemModal";
 
 type DialogProps = {
   visible: boolean;
@@ -15,7 +16,7 @@ export function Dialog({ visible, onClose, title, children, footer }: DialogProp
   const surfacePresets = useSurfacePresets();
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <SystemModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable
         style={[surfacePresets.overlay, { alignItems: "center", justifyContent: "center", padding: 20 }]}
         onPress={onClose}
@@ -26,6 +27,6 @@ export function Dialog({ visible, onClose, title, children, footer }: DialogProp
           {footer}
         </Pressable>
       </Pressable>
-    </Modal>
+    </SystemModal>
   );
 }
