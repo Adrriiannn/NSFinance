@@ -505,6 +505,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TrueLayerTokenService>();
         services.AddScoped<TrueLayerDataService>();
         services.AddScoped<BankConnectionService>();
+        services.AddScoped<FinancialCommitmentReadService>();
         services.AddSingleton<DeterministicCategorizationMetrics>();
         services.AddScoped<ProviderCapabilityRegistry>();
         services.AddScoped<NarrativeSignalExtractor>();

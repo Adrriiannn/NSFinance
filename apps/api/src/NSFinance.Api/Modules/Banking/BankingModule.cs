@@ -48,6 +48,9 @@ public static class BankingModule
         protectedGroup.MapGet("/recurring-payments", GetRecurringPaymentsEndpoint.HandleAsync)
             .WithName("GetRecurringPayments");
 
+        protectedGroup.MapGet("/commitments", GetFinancialCommitmentsEndpoint.HandleAsync)
+            .WithName("GetFinancialCommitments");
+
         protectedGroup.MapPost("/connections/{connectionId:guid}/sync", SyncBankConnectionEndpoint.HandleAsync)
             .WithName("SyncBankConnection");
 
