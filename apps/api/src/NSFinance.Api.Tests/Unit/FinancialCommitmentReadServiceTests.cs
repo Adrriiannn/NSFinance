@@ -365,14 +365,18 @@ public sealed class FinancialCommitmentReadServiceTests
 
     private static FinancialCommitmentReadService CreateService(AppDbContext dbContext, Guid userId)
     {
+        var normalizationService = new TransactionNormalizationService();
+        var inferredService = new InferredFinancialCommitmentService(
+            new RecurringPatternService(
+                normalizationService,
+                NullLogger<RecurringPatternService>.Instance),
+            normalizationService);
         return new FinancialCommitmentReadService(
             dbContext,
             new TestCurrentUserProvider(userId),
             new TestTimeProvider(UtcNow),
-            new RecurringPatternService(
-                new TransactionNormalizationService(),
-                NullLogger<RecurringPatternService>.Instance),
-            new TransactionNormalizationService());
+            inferredService,
+            new FinancialCommitmentMergePolicy(normalizationService));
     }
 
     private static AppDbContext CreateDbContext()
