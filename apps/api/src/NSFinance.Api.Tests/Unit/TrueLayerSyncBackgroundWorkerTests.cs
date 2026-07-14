@@ -1,7 +1,9 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Banking.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
@@ -19,12 +21,25 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
         var worker = CreateWorker(serviceProvider);
         var userId = Guid.NewGuid();
         var connectionId = Guid.NewGuid();
+        await using (var scope = serviceProvider.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.OpenBankingConnections.Add(Connection(
+                userId,
+                connectionId,
+                BankingProviders.TrueLayer,
+                BankConnectionStatuses.ConnectedPendingSync,
+                UtcNow.AddMinutes(-1)));
+            await dbContext.SaveChangesAsync();
+        }
 
         await worker.QueueInitialSyncAsync(userId, connectionId);
         await worker.QueueInitialSyncAsync(userId, connectionId);
 
-        Assert.Equal(1, worker.PendingQueueCount);
-        Assert.True(worker.IsQueued(userId, connectionId));
+        var jobs = await LoadJobsAsync(serviceProvider);
+        var job = Assert.Single(jobs);
+        Assert.Equal(connectionId, job.ConnectionId);
+        Assert.Equal(BankingOperationJobStatuses.Pending, job.Status);
     }
 
     [Fact]
@@ -51,11 +66,12 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
 
         await worker.RecoverPendingSyncsAsync(CancellationToken.None);
 
-        Assert.Equal(2, worker.PendingQueueCount);
-        Assert.True(worker.IsQueued(userId, pendingId));
-        Assert.True(worker.IsQueued(userId, staleId));
-        Assert.False(worker.IsQueued(userId, freshId));
-        Assert.False(worker.IsQueued(userId, wrongProviderId));
+        var jobs = await LoadJobsAsync(serviceProvider);
+        Assert.Equal(2, jobs.Count);
+        Assert.Contains(jobs, job => job.ConnectionId == pendingId);
+        Assert.Contains(jobs, job => job.ConnectionId == staleId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == freshId);
+        Assert.DoesNotContain(jobs, job => job.ConnectionId == wrongProviderId);
     }
 
     [Fact]
@@ -80,8 +96,9 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
         await worker.RecoverPendingSyncsAsync(CancellationToken.None);
         await worker.RecoverPendingSyncsAsync(CancellationToken.None);
 
-        Assert.Equal(1, worker.PendingQueueCount);
-        Assert.True(worker.IsQueued(userId, connectionId));
+        var job = Assert.Single(await LoadJobsAsync(serviceProvider));
+        Assert.Equal(connectionId, job.ConnectionId);
+        Assert.Equal(BankingOperationJobStatuses.Pending, job.Status);
     }
 
     [Fact]
@@ -105,12 +122,32 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
         Assert.Contains("LIMIT", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("bank_sync_in_progress")]
+    [InlineData("bank_sync_lease_lost")]
+    public void LeaseContention_IsRetryable(string code)
+    {
+        var error = new ServiceError("Retry safely.", code, StatusCodes.Status409Conflict);
+
+        Assert.True(TrueLayerSyncBackgroundWorker.IsRetryable(error));
+    }
+
     private static ServiceProvider BuildServiceProvider()
     {
         var services = new ServiceCollection();
         var databaseName = $"true-layer-sync-worker-{Guid.NewGuid():N}";
         services.AddDbContext<AppDbContext>(options =>
             options.UseInMemoryDatabase(databaseName));
+        services.AddLogging();
+        services.AddSingleton<TimeProvider>(new TestTimeProvider(UtcNow));
+        services.AddSingleton<IOptions<BankingSyncOptions>>(Options.Create(new BankingSyncOptions
+        {
+            StaleSyncPendingRecoveryMinutes = 10,
+            DurableJobMaxAttempts = 5,
+            DurableJobLeaseSeconds = 120,
+            DurableJobPollMilliseconds = 500
+        }));
+        services.AddScoped<BankingOperationJobStore>();
         return services.BuildServiceProvider();
     }
 
@@ -118,9 +155,20 @@ public sealed class TrueLayerSyncBackgroundWorkerTests
     {
         return new TrueLayerSyncBackgroundWorker(
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-            Options.Create(new BankingSyncOptions { StaleSyncPendingRecoveryMinutes = 10 }),
-            new TestTimeProvider(UtcNow),
+            serviceProvider.GetRequiredService<IOptions<BankingSyncOptions>>(),
+            serviceProvider.GetRequiredService<TimeProvider>(),
             NullLogger<TrueLayerSyncBackgroundWorker>.Instance);
+    }
+
+    private static async Task<IReadOnlyList<BankingOperationJob>> LoadJobsAsync(
+        ServiceProvider serviceProvider)
+    {
+        await using var scope = serviceProvider.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>()
+            .BankingOperationJobs
+            .AsNoTracking()
+            .OrderBy(job => job.ConnectionId)
+            .ToListAsync();
     }
 
     private static OpenBankingConnection Connection(

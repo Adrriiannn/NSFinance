@@ -1532,13 +1532,23 @@ public sealed class BankConnectionService(
                 return;
             }
 
-            if (connection.Status != BankConnectionStatuses.DisconnectPending)
+            if (connection.Status is not (BankConnectionStatuses.DisconnectPending
+                or BankConnectionStatuses.DisconnectFailed))
             {
                 logger.LogInformation(
-                    "Disconnect cleanup skipped because connection status was {Status} instead of disconnect_pending connectionId={ConnectionId}",
+                    "Disconnect cleanup skipped because connection status was {Status} instead of a retryable disconnect state connectionId={ConnectionId}",
                     connection.Status,
                     connectionId);
                 return;
+            }
+
+            if (connection.Status == BankConnectionStatuses.DisconnectFailed)
+            {
+                connection.Status = BankConnectionStatuses.DisconnectPending;
+                connection.LastErrorCode = null;
+                connection.LastErrorReason = null;
+                connection.UpdatedUtc = DateTime.UtcNow;
+                await dbContext.SaveChangesAsync(cancellationToken);
             }
 
             var linkedAccountIdsQuery = dbContext.LinkedBankAccounts

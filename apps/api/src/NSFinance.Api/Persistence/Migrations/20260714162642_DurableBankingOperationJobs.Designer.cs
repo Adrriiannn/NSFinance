@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NSFinance.Api.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NSFinance.Api.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260714162642_DurableBankingOperationJobs")]
+    partial class DurableBankingOperationJobs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3120,13 +3123,6 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Property<bool?>("SupportsStandingOrders")
                         .HasColumnType("boolean");
 
-                    b.Property<DateTime?>("SyncLeaseExpiresUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SyncLeaseId")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<DateTime>("UpdatedUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
@@ -3140,8 +3136,6 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.HasIndex("AuthStateNonce")
                         .IsUnique()
                         .HasFilter("\"AuthStateNonce\" IS NOT NULL");
-
-                    b.HasIndex("SyncLeaseExpiresUtc");
 
                     b.HasIndex("UserId");
 

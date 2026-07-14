@@ -25,6 +25,8 @@ public sealed class BankSyncService(
     DeterministicTransactionCategorizationService deterministicCategorizationService,
     DeterministicCategorizationMetrics deterministicMetrics,
     IMerchantResolutionService merchantResolutionService,
+    BankSyncExecutionLeaseStore syncExecutionLeaseStore,
+    IServiceScopeFactory? scopeFactory,
     ILogger<BankSyncService> logger)
 {
     private const int InternalTransferMatchLookbackDays = 21;
@@ -147,6 +149,24 @@ public sealed class BankSyncService(
         TrueLayerTokenExchangeResult tokenResult,
         CancellationToken cancellationToken)
     {
+        return await ExecuteWithSyncLeaseAsync(
+            connection.UserId,
+            connection.Id,
+            "initial_sync",
+            operationCancellation => RunInitialSyncCoreAsync(
+                connection,
+                configuration,
+                tokenResult,
+                operationCancellation),
+            cancellationToken);
+    }
+
+    private async Task<ServiceResult<BankSyncResult>> RunInitialSyncCoreAsync(
+        OpenBankingConnection connection,
+        TrueLayerResolvedConfiguration configuration,
+        TrueLayerTokenExchangeResult tokenResult,
+        CancellationToken cancellationToken)
+    {
         var stored = await StoreRefreshedTokenAsync(connection, tokenResult, cancellationToken);
         if (!stored.Succeeded)
         {
@@ -187,7 +207,24 @@ public sealed class BankSyncService(
                 connectionResult.Error.StatusCode);
         }
 
-        var connection = connectionResult.Value!;
+        return await ExecuteWithSyncLeaseAsync(
+            userId,
+            connectionId,
+            trigger,
+            operationCancellation => SyncConnectionCoreAsync(
+                userId,
+                connectionResult.Value!,
+                trigger,
+                operationCancellation),
+            cancellationToken);
+    }
+
+    private async Task<ServiceResult<BankSyncResult>> SyncConnectionCoreAsync(
+        Guid userId,
+        OpenBankingConnection connection,
+        string trigger,
+        CancellationToken cancellationToken)
+    {
         if (connection.Status == BankConnectionStatuses.DisconnectPending)
         {
             logger.LogInformation(
@@ -348,6 +385,77 @@ public sealed class BankSyncService(
             tokenResult.Value!.AccessToken,
             trigger,
             cancellationToken);
+    }
+
+    private async Task<ServiceResult<BankSyncResult>> ExecuteWithSyncLeaseAsync(
+        Guid userId,
+        Guid connectionId,
+        string trigger,
+        Func<CancellationToken, Task<ServiceResult<BankSyncResult>>> operation,
+        CancellationToken cancellationToken)
+    {
+        var lease = await syncExecutionLeaseStore.TryAcquireAsync(
+            userId,
+            connectionId,
+            cancellationToken);
+        if (lease is null)
+        {
+            logger.LogInformation(
+                "Skipped overlapping bank sync trigger={Trigger} connectionId={ConnectionId}",
+                trigger,
+                connectionId);
+            return ServiceResult<BankSyncResult>.Fail(
+                "A bank sync is already in progress for this connection.",
+                "bank_sync_in_progress",
+                StatusCodes.Status409Conflict);
+        }
+
+        using var workCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task? heartbeat = null;
+        if (scopeFactory is not null)
+        {
+            heartbeat = BankSyncExecutionLeaseHeartbeat.MaintainAsync(
+                scopeFactory,
+                lease,
+                syncExecutionLeaseStore.LeaseDuration,
+                workCancellation,
+                logger,
+                cancellationToken);
+        }
+
+        try
+        {
+            return await operation(workCancellation.Token);
+        }
+        catch (OperationCanceledException) when (
+            !cancellationToken.IsCancellationRequested && workCancellation.IsCancellationRequested)
+        {
+            return ServiceResult<BankSyncResult>.Fail(
+                "The bank sync could not retain its execution lease. Please try again.",
+                "bank_sync_lease_lost",
+                StatusCodes.Status409Conflict);
+        }
+        finally
+        {
+            workCancellation.Cancel();
+            if (heartbeat is not null)
+            {
+                await BankSyncExecutionLeaseHeartbeat.AwaitShutdownAsync(heartbeat);
+            }
+
+            try
+            {
+                await syncExecutionLeaseStore.ReleaseAsync(lease, CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(
+                    exception,
+                    "Failed to release bank sync execution lease trigger={Trigger} connectionId={ConnectionId}",
+                    trigger,
+                    connectionId);
+            }
+        }
     }
 
     public async Task<ServiceResult<DeterministicEnrichmentRunResult>> RunDeterministicEnrichmentAsync(

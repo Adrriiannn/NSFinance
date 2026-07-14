@@ -8,4 +8,8 @@ public sealed class BankingSyncOptions
     public int AutoSyncIntervalMinutes { get; set; } = 60;
     public int StaleSyncPendingRecoveryMinutes { get; set; } = 10;
     public int ProviderRateLimitBackoffMinutes { get; set; } = 30;
+    public int DurableJobMaxAttempts { get; set; } = 5;
+    public int DurableJobLeaseSeconds { get; set; } = 120;
+    public int DurableJobPollMilliseconds { get; set; } = 500;
+    public int SyncExecutionLeaseSeconds { get; set; } = 120;
 }

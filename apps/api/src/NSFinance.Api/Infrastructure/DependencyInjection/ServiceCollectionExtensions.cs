@@ -40,7 +40,10 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddHealthChecks();
+        services.AddHealthChecks()
+            .AddCheck<BankingOperationJobHealthCheck>(
+                "banking_operation_jobs",
+                tags: ["ready"]);
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen(options =>
         {
@@ -118,6 +121,26 @@ public static class ServiceCollectionExtensions
             if (options.ProviderRateLimitBackoffMinutes <= 0)
             {
                 options.ProviderRateLimitBackoffMinutes = 10;
+            }
+
+            if (options.DurableJobMaxAttempts <= 0)
+            {
+                options.DurableJobMaxAttempts = 5;
+            }
+
+            if (options.DurableJobLeaseSeconds <= 0)
+            {
+                options.DurableJobLeaseSeconds = 120;
+            }
+
+            if (options.DurableJobPollMilliseconds <= 0)
+            {
+                options.DurableJobPollMilliseconds = 500;
+            }
+
+            if (options.SyncExecutionLeaseSeconds <= 0)
+            {
+                options.SyncExecutionLeaseSeconds = 120;
             }
         });
         services.Configure<BankConnectionAttemptOptions>(options =>
@@ -529,8 +552,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DeterministicClassificationPersistenceService>();
         services.AddScoped<DeterministicTransactionCategorizationService>();
         services.AddScoped<DeterministicReclassificationTriggerService>();
+        services.AddScoped<BankSyncExecutionLeaseStore>();
         services.AddScoped<BankSyncService>();
         services.AddScoped<BankGlobalSyncService>();
+        services.AddScoped<BankingOperationJobStore>();
         services.AddSingleton<BankConnectionAttemptLifecycleBackgroundWorker>();
         services.AddHostedService(sp => sp.GetRequiredService<BankConnectionAttemptLifecycleBackgroundWorker>());
         services.AddSingleton<BankDeterministicEnrichmentBackgroundWorker>();
@@ -549,7 +574,7 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-        private static string GetConnectionString(IConfiguration configuration)
+    private static string GetConnectionString(IConfiguration configuration)
     {
         var connectionString =
             ResolveEnvironmentValue(

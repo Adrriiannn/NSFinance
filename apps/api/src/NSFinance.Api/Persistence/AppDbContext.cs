@@ -33,6 +33,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<OpenBankingConnection> OpenBankingConnections => Set<OpenBankingConnection>();
+    public DbSet<BankingOperationJob> BankingOperationJobs => Set<BankingOperationJob>();
     public DbSet<BankConnectionAttempt> BankConnectionAttempts => Set<BankConnectionAttempt>();
     public DbSet<BankConnectionToken> BankConnectionTokens => Set<BankConnectionToken>();
     public DbSet<BankConnectionIdentityInfo> BankConnectionIdentityInfos => Set<BankConnectionIdentityInfo>();

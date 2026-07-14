@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Reflection;
 using System.Collections.Concurrent;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -150,6 +151,39 @@ public class OpenBankingIntegrationTests
         Assert.True(rerun.Succeeded);
 
         Assert.Equal(1, merchantResolution.InvocationCount);
+    }
+
+    [Fact]
+    public async Task SyncConnection_ReturnsConflictWhileAnotherExecutionLeaseIsActive()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidLiveOptions(),
+            httpHandler: SuccessfulFlowHandler());
+        var user = await harness.CreateUserAsync("bank.sync-lease-conflict@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-sync-lease-conflict", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var leaseStore = harness.CreateSyncExecutionLeaseStore();
+        var lease = await leaseStore.TryAcquireAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None);
+        Assert.NotNull(lease);
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
+        var result = await syncService.SyncConnectionAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("bank_sync_in_progress", result.Error?.Code);
+        Assert.Equal(StatusCodes.Status409Conflict, result.Error?.StatusCode);
     }
 
     [Fact]
@@ -6228,6 +6262,41 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task DisconnectCleanup_RetriesFromDisconnectFailedState()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidLiveOptions(),
+            httpHandler: SuccessfulFlowHandler());
+        var user = await harness.CreateUserAsync("bank.disconnect-retry@test.local");
+        var connectionId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        harness.DbContext.OpenBankingConnections.Add(new OpenBankingConnection
+        {
+            Id = connectionId,
+            UserId = user.Id,
+            ProviderName = BankingProviders.TrueLayer,
+            ProviderEnvironment = "live",
+            Status = BankConnectionStatuses.DisconnectFailed,
+            LastErrorCode = "disconnect_cleanup_failed",
+            LastErrorReason = "Previous cleanup failed.",
+            CreatedUtc = now.AddMinutes(-10),
+            UpdatedUtc = now.AddMinutes(-1)
+        });
+        await harness.DbContext.SaveChangesAsync();
+        var service = harness.CreateConnectionService();
+
+        await service.RunDisconnectCleanupAsync(user.Id, connectionId, CancellationToken.None);
+
+        harness.DbContext.ChangeTracker.Clear();
+        var connection = await harness.DbContext.OpenBankingConnections
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == connectionId);
+        Assert.Equal(BankConnectionStatuses.Revoked, connection.Status);
+        Assert.Null(connection.LastErrorCode);
+        Assert.Null(connection.LastErrorReason);
+    }
+
+    [Fact]
     public async Task DisconnectAsync_MarksPendingAndRevokesTokenBeforeBackgroundCleanup()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -9284,6 +9353,14 @@ public class OpenBankingIntegrationTests
             return CreateSyncService(options, enrichmentQueueOverride);
         }
 
+        public BankSyncExecutionLeaseStore CreateSyncExecutionLeaseStore()
+        {
+            return new BankSyncExecutionLeaseStore(
+                DbContext,
+                TimeProvider.System,
+                Options.Create(new BankingSyncOptions()));
+        }
+
         private BankSyncService CreateSyncService(
             TrueLayerOptions options,
             IBankDeterministicEnrichmentQueue? enrichmentQueueOverride = null)
@@ -9337,6 +9414,11 @@ public class OpenBankingIntegrationTests
                 categorizationService,
                 metrics,
                 _merchantResolutionService,
+                new BankSyncExecutionLeaseStore(
+                    DbContext,
+                    TimeProvider.System,
+                    Options.Create(new BankingSyncOptions())),
+                scopeFactory: null,
                 NullLogger<BankSyncService>.Instance);
 
             if (enrichmentQueue is ImmediateBankDeterministicEnrichmentQueue immediateQueue)

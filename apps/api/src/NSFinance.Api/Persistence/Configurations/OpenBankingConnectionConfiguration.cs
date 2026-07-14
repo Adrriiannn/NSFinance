@@ -20,6 +20,8 @@ public class OpenBankingConnectionConfiguration : IEntityTypeConfiguration<OpenB
         builder.Property(x => x.ProviderLogoUri).HasMaxLength(1024);
         builder.Property(x => x.ProviderBrandBgColor).HasMaxLength(32);
         builder.Property(x => x.Status).HasMaxLength(40).IsRequired();
+        builder.Property(x => x.SyncLeaseId).HasMaxLength(64);
+        builder.Property(x => x.SyncLeaseExpiresUtc);
         builder.Property(x => x.LastErrorCode).HasMaxLength(80);
         builder.Property(x => x.LastErrorReason).HasMaxLength(512);
         builder.Property(x => x.AuthStateNonce).HasMaxLength(256);
@@ -44,6 +46,7 @@ public class OpenBankingConnectionConfiguration : IEntityTypeConfiguration<OpenB
         builder.HasIndex(x => x.UserId);
         builder.HasIndex(x => new { x.UserId, x.ProviderName, x.ProviderEnvironment });
         builder.HasIndex(x => new { x.UserId, x.NeedsHistoricalReclassification });
+        builder.HasIndex(x => x.SyncLeaseExpiresUtc);
         builder.HasIndex(x => x.AuthStateNonce)
             .IsUnique()
             .HasFilter("\"AuthStateNonce\" IS NOT NULL");

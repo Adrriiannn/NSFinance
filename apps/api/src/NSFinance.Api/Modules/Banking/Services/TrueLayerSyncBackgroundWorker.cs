@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
-using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using NSFinance.Api.Common.Contracts;
+using NSFinance.Api.Modules.Banking.Services.Models;
 using NSFinance.Api.Persistence;
 
 namespace NSFinance.Api.Modules.Banking.Services;
@@ -11,60 +11,40 @@ public interface ITrueLayerSyncQueue
     ValueTask QueueInitialSyncAsync(Guid userId, Guid connectionId, CancellationToken cancellationToken = default);
 }
 
-internal sealed record TrueLayerSyncWorkItem(Guid UserId, Guid ConnectionId);
-
 public sealed class TrueLayerSyncBackgroundWorker(
     IServiceScopeFactory scopeFactory,
     IOptions<BankingSyncOptions> options,
     TimeProvider timeProvider,
     ILogger<TrueLayerSyncBackgroundWorker> logger) : BackgroundService, ITrueLayerSyncQueue
 {
-    private static readonly TimeSpan IdleDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RecoverySweepInterval = TimeSpan.FromSeconds(30);
-    private readonly Channel<TrueLayerSyncWorkItem> _queue = Channel.CreateUnbounded<TrueLayerSyncWorkItem>(
-        new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = false
-        });
-    private readonly ConcurrentDictionary<string, byte> _queuedKeys = new(StringComparer.Ordinal);
+    private const int BatchSize = 16;
+    private readonly TimeSpan _pollDelay = TimeSpan.FromMilliseconds(
+        Math.Clamp(options.Value.DurableJobPollMilliseconds, 100, 30_000));
     private readonly TimeSpan _syncPendingStaleAfter = TimeSpan.FromMinutes(
         Math.Clamp(options.Value.StaleSyncPendingRecoveryMinutes, 1, 24 * 60));
-
-    internal int PendingQueueCount => _queuedKeys.Count;
 
     public async ValueTask QueueInitialSyncAsync(
         Guid userId,
         Guid connectionId,
         CancellationToken cancellationToken = default)
     {
-        var key = BuildQueueKey(userId, connectionId);
-        if (!_queuedKeys.TryAdd(key, 0))
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var jobStore = scope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+        var accepted = await jobStore.EnqueueAsync(
+            userId,
+            connectionId,
+            BankingOperationTypes.InitialSync,
+            cancellationToken);
+        if (!accepted)
         {
-            logger.LogDebug(
-                "Skipped duplicate initial bank sync queue request connectionId={ConnectionId} userId={UserId}",
-                connectionId,
-                userId);
-            return;
+            throw new InvalidOperationException("Initial bank sync connection was not found.");
         }
 
         logger.LogInformation(
-            "Queued initial bank sync for connectionId={ConnectionId} userId={UserId} queueDepth={QueueDepth}",
+            "Persisted initial bank sync request connectionId={ConnectionId} userId={UserId}",
             connectionId,
-            userId,
-            _queuedKeys.Count);
-
-        try
-        {
-            await _queue.Writer.WriteAsync(
-                new TrueLayerSyncWorkItem(userId, connectionId),
-                cancellationToken);
-        }
-        catch
-        {
-            _queuedKeys.TryRemove(key, out _);
-            throw;
-        }
+            userId);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -93,99 +73,267 @@ public sealed class TrueLayerSyncBackgroundWorker(
                 nextRecoverySweepUtc = nowUtc.Add(RecoverySweepInterval);
             }
 
-            if (!_queue.Reader.TryRead(out var workItem))
-            {
-                await Task.Delay(IdleDelay, stoppingToken);
-                continue;
-            }
-
-            var key = BuildQueueKey(workItem.UserId, workItem.ConnectionId);
-            using var scope = scopeFactory.CreateScope();
-            var bankSyncService = scope.ServiceProvider.GetRequiredService<BankSyncService>();
-            var bankConnectionService = scope.ServiceProvider.GetRequiredService<BankConnectionService>();
-
+            var processedAny = false;
             try
             {
-                logger.LogInformation(
-                    "Starting queued initial bank sync for connectionId={ConnectionId} userId={UserId} queueDepth={QueueDepth}",
-                    workItem.ConnectionId,
-                    workItem.UserId,
-                    Math.Max(_queuedKeys.Count - 1, 0));
-
-                var result = await bankSyncService.SyncConnectionAsync(
-                    workItem.UserId,
-                    workItem.ConnectionId,
-                    stoppingToken,
-                    trigger: "initial_sync");
-
-                if (!result.Succeeded)
-                {
-                    logger.LogWarning(
-                        "Queued initial bank sync failed for connectionId={ConnectionId} code={Code}",
-                        workItem.ConnectionId,
-                        result.Error?.Code);
-
-                    await MarkQueueFailureIfConnectionStillPendingAsync(
-                        bankConnectionService,
-                        workItem,
-                        result.Error?.Code ?? "initial_sync_failed",
-                        result.Error?.Message ?? "Initial sync failed.",
-                        stoppingToken);
-                    continue;
-                }
-
-                logger.LogInformation(
-                    "Queued initial bank sync completed for connectionId={ConnectionId} status={Status}",
-                    workItem.ConnectionId,
-                    result.Value?.Status);
+                processedAny = await ProcessDueJobsAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                logger.LogInformation("Stopping queued initial bank sync worker.");
                 break;
             }
             catch (Exception exception)
             {
-                logger.LogError(
-                    exception,
-                    "Queued initial bank sync crashed for connectionId={ConnectionId}",
-                    workItem.ConnectionId);
-
-                await MarkQueueFailureIfConnectionStillPendingAsync(
-                    bankConnectionService,
-                    workItem,
-                    "initial_sync_worker_crashed",
-                    "Initial sync worker crashed. Try syncing again from the app.",
-                    stoppingToken);
+                logger.LogError(exception, "Durable initial bank sync worker iteration failed.");
             }
-            finally
+
+            if (!processedAny)
             {
-                _queuedKeys.TryRemove(key, out _);
+                await Task.Delay(_pollDelay, stoppingToken);
             }
         }
     }
 
-    internal async Task RecoverPendingSyncsAsync(CancellationToken cancellationToken)
+    internal async Task<bool> ProcessDueJobsAsync(CancellationToken cancellationToken)
     {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var staleSyncPendingThresholdUtc = timeProvider.GetUtcNow().UtcDateTime - _syncPendingStaleAfter;
-        var pendingConnections = await BuildRecoveryQuery(dbContext, staleSyncPendingThresholdUtc)
-            .ToListAsync(cancellationToken);
+        IReadOnlyList<Guid> jobIds;
+        await using (var scanScope = scopeFactory.CreateAsyncScope())
+        {
+            var jobStore = scanScope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+            jobIds = await jobStore.ListDueJobIdsAsync(
+                BankingOperationTypes.InitialSync,
+                BatchSize,
+                cancellationToken);
+        }
 
-        if (pendingConnections.Count == 0)
+        foreach (var jobId in jobIds)
+        {
+            await ProcessJobAsync(jobId, cancellationToken);
+        }
+
+        return jobIds.Count > 0;
+    }
+
+    private async Task ProcessJobAsync(Guid jobId, CancellationToken stoppingToken)
+    {
+        BankingOperationJobLease? lease;
+        TimeSpan leaseDuration;
+        await using (var claimScope = scopeFactory.CreateAsyncScope())
+        {
+            var jobStore = claimScope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+            lease = await jobStore.TryClaimAsync(
+                jobId,
+                BankingOperationTypes.InitialSync,
+                stoppingToken);
+            leaseDuration = jobStore.LeaseDuration;
+        }
+
+        if (lease is null)
         {
             return;
         }
 
         logger.LogInformation(
-            "Recovering {Count} persisted initial bank sync item(s) queueDepth={QueueDepth}",
-            pendingConnections.Count,
-            _queuedKeys.Count);
+            "Claimed durable initial bank sync attempt={Attempt} maxAttempts={MaxAttempts}",
+            lease.AttemptCount,
+            lease.MaxAttempts);
 
+        using var workCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var heartbeat = BankingOperationLeaseHeartbeat.MaintainAsync(
+            scopeFactory,
+            lease,
+            leaseDuration,
+            workCancellation,
+            logger,
+            "Initial bank sync",
+            stoppingToken);
+        ServiceResult<BankSyncResult>? result = null;
+        Exception? crash = null;
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var bankSyncService = scope.ServiceProvider.GetRequiredService<BankSyncService>();
+            result = await bankSyncService.SyncConnectionAsync(
+                lease.UserId,
+                lease.ConnectionId,
+                workCancellation.Token,
+                trigger: BankingOperationTypes.InitialSync);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            crash = exception;
+        }
+        finally
+        {
+            workCancellation.Cancel();
+            await BankingOperationLeaseHeartbeat.AwaitShutdownAsync(heartbeat);
+        }
+
+        if (crash is not null)
+        {
+            logger.LogError(crash, "Durable initial bank sync attempt crashed.");
+            await RecordFailureAsync(
+                lease,
+                "initial_sync_worker_crashed",
+                true,
+                "Initial sync worker crashed.",
+                stoppingToken);
+            return;
+        }
+
+        if (result?.Succeeded == true)
+        {
+            await using var completeScope = scopeFactory.CreateAsyncScope();
+            var jobStore = completeScope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+            var completed = await jobStore.MarkSucceededAsync(
+                lease.JobId,
+                lease.LeaseId,
+                stoppingToken);
+            if (completed)
+            {
+                logger.LogInformation(
+                    "Durable initial bank sync completed attempt={Attempt} status={Status}",
+                    lease.AttemptCount,
+                    result.Value?.Status);
+            }
+
+            return;
+        }
+
+        var error = result?.Error;
+        if (ShouldCancel(error))
+        {
+            await using var cancelScope = scopeFactory.CreateAsyncScope();
+            var jobStore = cancelScope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+            await jobStore.MarkCancelledAsync(
+                lease.JobId,
+                lease.LeaseId,
+                error?.Code ?? "initial_sync_cancelled",
+                stoppingToken);
+            return;
+        }
+
+        await RecordFailureAsync(
+            lease,
+            error?.Code ?? "initial_sync_failed",
+            IsRetryable(error),
+            error?.Message ?? "Initial sync failed.",
+            stoppingToken);
+    }
+
+    private async Task RecordFailureAsync(
+        BankingOperationJobLease lease,
+        string errorCode,
+        bool retryable,
+        string errorReason,
+        CancellationToken cancellationToken)
+    {
+        BankingOperationJobFailureOutcome outcome;
+        await using (var failureScope = scopeFactory.CreateAsyncScope())
+        {
+            var jobStore = failureScope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+            outcome = await jobStore.MarkFailedAsync(
+                lease.JobId,
+                lease.LeaseId,
+                errorCode,
+                retryable,
+                cancellationToken);
+        }
+
+        if (!outcome.Found)
+        {
+            logger.LogWarning("Initial bank sync result was not persisted because its lease was no longer current.");
+            return;
+        }
+
+        await using var connectionScope = scopeFactory.CreateAsyncScope();
+        var connectionService = connectionScope.ServiceProvider.GetRequiredService<BankConnectionService>();
+        var connection = await connectionService.FindConnectionForUserAsync(
+            lease.UserId,
+            lease.ConnectionId,
+            cancellationToken);
+        if (connection is null)
+        {
+            return;
+        }
+
+        if (outcome.WillRetry)
+        {
+            if (errorCode is "bank_sync_in_progress" or "bank_sync_lease_lost")
+            {
+                logger.LogInformation(
+                    "Initial bank sync deferred without changing connection state attempt={Attempt} nextAttemptUtc={NextAttemptUtc} code={Code}",
+                    outcome.AttemptCount,
+                    outcome.NextAttemptUtc,
+                    errorCode);
+                return;
+            }
+
+            if (connection.Status is BankConnectionStatuses.ReauthRequired
+                or BankConnectionStatuses.Expired
+                or BankConnectionStatuses.DisconnectPending
+                or BankConnectionStatuses.DisconnectFailed
+                or BankConnectionStatuses.Revoked)
+            {
+                return;
+            }
+
+            await connectionService.MarkConnectionStateAsync(
+                connection,
+                BankConnectionStatuses.ConnectedPendingSync,
+                errorCode,
+                "Initial sync will retry automatically.",
+                cancellationToken);
+            logger.LogWarning(
+                "Initial bank sync scheduled for retry attempt={Attempt} nextAttemptUtc={NextAttemptUtc} code={Code}",
+                outcome.AttemptCount,
+                outcome.NextAttemptUtc,
+                errorCode);
+            return;
+        }
+
+        if (connection.Status is BankConnectionStatuses.ConnectedPendingSync or BankConnectionStatuses.SyncPending)
+        {
+            await connectionService.MarkConnectionStateAsync(
+                connection,
+                BankConnectionStatuses.Failed,
+                errorCode,
+                errorReason,
+                cancellationToken);
+        }
+
+        logger.LogWarning(
+            "Initial bank sync reached terminal failure attempt={Attempt} code={Code}",
+            outcome.AttemptCount,
+            errorCode);
+    }
+
+    internal async Task RecoverPendingSyncsAsync(CancellationToken cancellationToken)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var jobStore = scope.ServiceProvider.GetRequiredService<BankingOperationJobStore>();
+        var staleSyncPendingThresholdUtc = timeProvider.GetUtcNow().UtcDateTime - _syncPendingStaleAfter;
+        var pendingConnections = await BuildRecoveryQuery(dbContext, staleSyncPendingThresholdUtc)
+            .ToListAsync(cancellationToken);
         foreach (var connection in pendingConnections)
         {
-            await QueueInitialSyncAsync(connection.UserId, connection.ConnectionId, cancellationToken);
+            await jobStore.EnqueueAsync(
+                connection.UserId,
+                connection.ConnectionId,
+                BankingOperationTypes.InitialSync,
+                cancellationToken);
+        }
+
+        if (pendingConnections.Count > 0)
+        {
+            logger.LogInformation(
+                "Recovered {Count} persisted initial bank sync connection state(s) into the durable queue.",
+                pendingConnections.Count);
         }
     }
 
@@ -209,44 +357,33 @@ public sealed class TrueLayerSyncBackgroundWorker(
             .Take(64);
     }
 
-    private async Task MarkQueueFailureIfConnectionStillPendingAsync(
-        BankConnectionService bankConnectionService,
-        TrueLayerSyncWorkItem workItem,
-        string errorCode,
-        string errorReason,
-        CancellationToken cancellationToken)
+    internal static bool IsRetryable(ServiceError? error)
     {
-        var connection = await bankConnectionService.FindConnectionForUserAsync(
-            workItem.UserId,
-            workItem.ConnectionId,
-            cancellationToken);
-
-        if (connection is null)
+        if (error is null)
         {
-            return;
+            return true;
         }
 
-        if (connection.Status is not (BankConnectionStatuses.ConnectedPendingSync or BankConnectionStatuses.SyncPending))
+        if (error.StatusCode is StatusCodes.Status408RequestTimeout
+            or StatusCodes.Status429TooManyRequests
+            or >= StatusCodes.Status500InternalServerError)
         {
-            return;
+            return true;
         }
 
-        await bankConnectionService.MarkConnectionStateAsync(
-            connection,
-            BankConnectionStatuses.Failed,
-            errorCode,
-            errorReason,
-            cancellationToken);
+        var code = error.Code.ToLowerInvariant();
+        return code is "bank_sync_in_progress" or "bank_sync_lease_lost"
+            || code.Contains("timeout", StringComparison.Ordinal)
+            || code.Contains("temporar", StringComparison.Ordinal)
+            || code.Contains("unavailable", StringComparison.Ordinal)
+            || code.Contains("rate_limit", StringComparison.Ordinal);
     }
 
-    internal bool IsQueued(Guid userId, Guid connectionId)
+    private static bool ShouldCancel(ServiceError? error)
     {
-        return _queuedKeys.ContainsKey(BuildQueueKey(userId, connectionId));
-    }
-
-    private static string BuildQueueKey(Guid userId, Guid connectionId)
-    {
-        return $"{userId:N}:{connectionId:N}";
+        return error?.Code is "bank_connection_not_found"
+            or "bank_connection_disconnected"
+            or "bank_connection_disconnect_pending";
     }
 }
 

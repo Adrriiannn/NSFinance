@@ -18,6 +18,8 @@ public class OpenBankingConnection
     public DateTime UpdatedUtc { get; set; }
     public DateTime? LastSuccessfulSyncUtc { get; set; }
     public DateTime? LastSyncAttemptedUtc { get; set; }
+    public string? SyncLeaseId { get; set; }
+    public DateTime? SyncLeaseExpiresUtc { get; set; }
     public DateTime? InitialBackfillStartedUtc { get; set; }
     public DateTime? InitialBackfillCompletedUtc { get; set; }
     public DateTime? InitialBackfillWindowStartUtc { get; set; }
