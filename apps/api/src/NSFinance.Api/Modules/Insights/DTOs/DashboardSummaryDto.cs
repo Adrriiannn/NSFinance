@@ -9,4 +9,5 @@ public sealed record DashboardSummaryDto(
     int TransactionCount,
     decimal RecentOutflow,
     IReadOnlyList<AccountDto> AccountPreview,
-    IReadOnlyList<TransactionDto> RecentTransactions);
+    IReadOnlyList<TransactionDto> RecentTransactions,
+    PortfolioBalanceDto? PortfolioBalance = null);

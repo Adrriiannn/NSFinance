@@ -13,6 +13,9 @@ public static class TransactionsModule
         group.MapGet("/", GetTransactionsEndpoint.HandleAsync)
             .WithName("GetTransactions");
 
+        group.MapGet("/page", GetTransactionPageEndpoint.HandleAsync)
+            .WithName("GetTransactionPage");
+
         group.MapGet("/{id:guid}", GetTransactionByIdEndpoint.HandleAsync)
             .WithName("GetTransactionById");
 

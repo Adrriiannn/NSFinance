@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.DTOs;
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
@@ -14,6 +15,9 @@ public sealed class TransactionService(
     ICurrentUserProvider currentUserProvider,
     ExpenseTaxonomyService expenseTaxonomyService)
 {
+    private const int DefaultPageSize = 50;
+    private const int MaximumPageSize = 100;
+
     public async Task<IReadOnlyList<TransactionDto>> GetTransactionsAsync(Guid? accountId, CancellationToken cancellationToken)
     {
         var query = dbContext.Transactions
@@ -41,6 +45,136 @@ public sealed class TransactionService(
                     transaction,
                     relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null))
             .ToList();
+    }
+
+    public async Task<ServiceResult<TransactionPageDto>> GetTransactionsPageAsync(
+        TransactionPageRequest request,
+        CancellationToken cancellationToken)
+    {
+        var pageSize = request.PageSize ?? DefaultPageSize;
+        if (pageSize is < 1 or > MaximumPageSize)
+        {
+            return ServiceResult<TransactionPageDto>.Fail(
+                $"Page size must be between 1 and {MaximumPageSize}.",
+                "transaction_page_size_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var direction = string.IsNullOrWhiteSpace(request.Direction)
+            ? null
+            : request.Direction.Trim().ToLowerInvariant();
+        if (direction is not null and not "income" and not "expense")
+        {
+            return ServiceResult<TransactionPageDto>.Fail(
+                "Direction must be either income or expense.",
+                "transaction_direction_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var fromUtc = request.FromUtc?.UtcDateTime;
+        var toUtc = request.ToUtc?.UtcDateTime;
+        if (fromUtc.HasValue && toUtc.HasValue && fromUtc.Value >= toUtc.Value)
+        {
+            return ServiceResult<TransactionPageDto>.Fail(
+                "The fromUtc value must be earlier than toUtc.",
+                "transaction_date_range_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        TransactionPageCursor? decodedCursor = null;
+        if (request.Cursor is not null)
+        {
+            if (!TransactionPageCursorCodec.TryDecode(request.Cursor, out var cursor))
+            {
+                return ServiceResult<TransactionPageDto>.Fail(
+                    "The transaction cursor is invalid or no longer supported.",
+                    "transaction_cursor_invalid",
+                    StatusCodes.Status400BadRequest);
+            }
+
+            decodedCursor = cursor;
+        }
+
+        var query = dbContext.Transactions
+            .AsNoTracking()
+            .Where(x => x.FinancialAccount != null && x.FinancialAccount.UserId == currentUserProvider.UserId);
+
+        if (request.AccountId.HasValue)
+        {
+            query = query.Where(x => x.FinancialAccountId == request.AccountId.Value);
+        }
+
+        if (fromUtc.HasValue)
+        {
+            query = query.Where(x => x.BookedAtUtc >= fromUtc.Value);
+        }
+
+        if (toUtc.HasValue)
+        {
+            query = query.Where(x => x.BookedAtUtc < toUtc.Value);
+        }
+
+        if (direction == "income")
+        {
+            query = query.Where(x => x.Amount >= 0);
+        }
+        else if (direction == "expense")
+        {
+            query = query.Where(x => x.Amount < 0);
+        }
+
+        if (decodedCursor.HasValue)
+        {
+            query = ApplyPageCursor(query, decodedCursor.Value);
+        }
+
+        var materialized = await query
+            .OrderByDescending(x => x.BookedAtUtc)
+            .ThenByDescending(x => x.CreatedUtc)
+            .ThenByDescending(x => x.Id)
+            .Take(pageSize + 1)
+            .Select(ToReadModelProjection())
+            .ToListAsync(cancellationToken);
+
+        var hasMore = materialized.Count > pageSize;
+        var pageRows = hasMore ? materialized.Take(pageSize).ToList() : materialized;
+        var relationshipsByTransactionId = await GetRelationshipSummariesByTransactionIdAsync(
+            pageRows.Select(x => x.Id).ToArray(),
+            cancellationToken);
+        var items = pageRows
+            .Select(transaction =>
+                MapToDto(
+                    transaction,
+                    relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null))
+            .ToList();
+        var last = hasMore ? pageRows[^1] : null;
+        var nextCursor = last is null
+            ? null
+            : TransactionPageCursorCodec.Encode(last.BookedAtUtc, last.CreatedUtc, last.Id);
+
+        return ServiceResult<TransactionPageDto>.Ok(
+            new TransactionPageDto(
+                items,
+                nextCursor,
+                hasMore,
+                pageSize,
+                new TransactionPageFiltersDto(
+                    request.AccountId,
+                    fromUtc,
+                    toUtc,
+                    direction)));
+    }
+
+    internal static IQueryable<Transaction> ApplyPageCursor(
+        IQueryable<Transaction> query,
+        TransactionPageCursor cursor)
+    {
+        return query.Where(x =>
+            x.BookedAtUtc < cursor.BookedAtUtc
+            || (x.BookedAtUtc == cursor.BookedAtUtc && x.CreatedUtc < cursor.CreatedUtc)
+            || (x.BookedAtUtc == cursor.BookedAtUtc
+                && x.CreatedUtc == cursor.CreatedUtc
+                && x.Id.CompareTo(cursor.Id) < 0));
     }
 
     public async Task<TransactionDto?> GetTransactionByIdAsync(Guid transactionId, CancellationToken cancellationToken)
@@ -584,7 +718,16 @@ public sealed class TransactionService(
             .Where(x =>
                 x.RelationshipStatus != TransactionRelationshipStatus.Dismissed
                 && (transactionIds.Contains(x.SourceTransactionId)
-                    || (x.TargetTransactionId.HasValue && transactionIds.Contains(x.TargetTransactionId.Value))))
+                    || (x.TargetTransactionId.HasValue && transactionIds.Contains(x.TargetTransactionId.Value)))
+                && dbContext.Transactions.Any(transaction =>
+                    transaction.Id == x.SourceTransactionId
+                    && transaction.FinancialAccount != null
+                    && transaction.FinancialAccount.UserId == currentUserProvider.UserId)
+                && (!x.TargetTransactionId.HasValue
+                    || dbContext.Transactions.Any(transaction =>
+                        transaction.Id == x.TargetTransactionId.Value
+                        && transaction.FinancialAccount != null
+                        && transaction.FinancialAccount.UserId == currentUserProvider.UserId)))
             .OrderByDescending(x => x.ConfidenceScore)
             .ThenByDescending(x => x.UpdatedUtc)
             .ToListAsync(cancellationToken);

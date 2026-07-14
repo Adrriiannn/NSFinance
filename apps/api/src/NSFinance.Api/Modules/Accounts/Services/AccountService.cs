@@ -12,6 +12,7 @@ namespace NSFinance.Api.Modules.Accounts.Services;
 public sealed class AccountService(
     AppDbContext dbContext,
     ICurrentUserProvider currentUserProvider,
+    AccountBalanceReadService accountBalanceReadService,
     ILogger<AccountService> logger)
 {
     public async Task<IReadOnlyList<AccountDto>> GetAccountsAsync(CancellationToken cancellationToken)
@@ -21,7 +22,8 @@ public sealed class AccountService(
             var accounts = await QueryAccountsWithBranding()
                 .ToListAsync(cancellationToken);
             var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
-            return await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
+            var normalized = await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
+            return await accountBalanceReadService.AttachBalancesAsync(normalized, cancellationToken);
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedColumn)
         {
@@ -32,7 +34,8 @@ public sealed class AccountService(
             var accounts = await QueryAccountsWithoutBranding()
                 .ToListAsync(cancellationToken);
             var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync(accounts, cancellationToken);
-            return await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
+            var normalized = await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
+            return await accountBalanceReadService.AttachBalancesAsync(normalized, cancellationToken);
         }
     }
 
@@ -50,7 +53,8 @@ public sealed class AccountService(
 
             var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync([account], cancellationToken);
             var normalized = await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
-            return normalized.FirstOrDefault();
+            var withBalances = await accountBalanceReadService.AttachBalancesAsync(normalized, cancellationToken);
+            return withBalances.FirstOrDefault();
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UndefinedColumn)
         {
@@ -68,7 +72,8 @@ public sealed class AccountService(
 
             var enriched = await TryEnrichMissingBrandingFromLinkedAccountPayloadAsync([account], cancellationToken);
             var normalized = await NormalizeAccountDisplayNamesAsync(enriched, cancellationToken);
-            return normalized.FirstOrDefault();
+            var withBalances = await accountBalanceReadService.AttachBalancesAsync(normalized, cancellationToken);
+            return withBalances.FirstOrDefault();
         }
     }
 
@@ -825,7 +830,7 @@ public sealed class AccountService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return new AccountDto(
+        return await AttachBalanceAsync(new AccountDto(
             account.Id,
             account.Name,
             account.Type,
@@ -838,7 +843,7 @@ public sealed class AccountService(
             null,
             null,
             null,
-            false);
+            false), cancellationToken);
     }
 
     public async Task<AccountDto?> UpdateAccountAsync(
@@ -868,7 +873,7 @@ public sealed class AccountService(
         var transactionCount = await dbContext.Transactions
             .CountAsync(x => x.FinancialAccountId == account.Id, cancellationToken);
 
-        return new AccountDto(
+        return await AttachBalanceAsync(new AccountDto(
             account.Id,
             account.Name,
             account.Type,
@@ -881,7 +886,15 @@ public sealed class AccountService(
             null,
             null,
             null,
-            false);
+            false), cancellationToken);
+    }
+
+    private async Task<AccountDto> AttachBalanceAsync(
+        AccountDto account,
+        CancellationToken cancellationToken)
+    {
+        var accounts = await accountBalanceReadService.AttachBalancesAsync([account], cancellationToken);
+        return accounts[0];
     }
 
     public async Task<bool> DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)

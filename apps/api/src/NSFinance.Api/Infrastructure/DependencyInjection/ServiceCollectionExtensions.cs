@@ -483,9 +483,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IRequestContextAccessor, HttpRequestContextAccessor>();
         services.AddScoped<ICurrentUserProvider, HttpContextCurrentUserProvider>();
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<UserService>();
         services.AddScoped<PolicyService>();
         services.AddScoped<SupportService>();
+        services.AddScoped<AccountBalanceReadService>();
         services.AddScoped<AccountService>();
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();

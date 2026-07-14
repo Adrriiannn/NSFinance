@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Modules.Accounts.DTOs;
+using NSFinance.Api.Modules.Accounts.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Insights.DTOs;
 using NSFinance.Api.Modules.Transactions.DTOs;
@@ -14,6 +15,7 @@ namespace NSFinance.Api.Modules.Insights.Services;
 public sealed class DashboardService(
     AppDbContext dbContext,
     ICurrentUserProvider currentUserProvider,
+    AccountBalanceReadService accountBalanceReadService,
     ExpenseTaxonomyService expenseTaxonomyService)
 {
     public async Task<DashboardSummaryDto> GetSummaryAsync(CancellationToken cancellationToken)
@@ -37,6 +39,11 @@ public sealed class DashboardService(
                 null,
                 false))
             .ToListAsync(cancellationToken);
+        var accountsWithBalances = await accountBalanceReadService.AttachBalancesAsync(
+            accounts,
+            cancellationToken);
+        var portfolioBalance = AccountBalanceReadService.BuildPortfolioBalance(
+            accountsWithBalances.Select(x => x.Balance).OfType<AccountBalanceDto>());
 
         var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
 
@@ -199,8 +206,9 @@ public sealed class DashboardService(
             AccountCount: accounts.Count,
             TransactionCount: transactionCount,
             RecentOutflow: recentOutflow,
-            AccountPreview: accounts.Take(3).ToList(),
-            RecentTransactions: recentTransactionDtos);
+            AccountPreview: accountsWithBalances.Take(3).ToList(),
+            RecentTransactions: recentTransactionDtos,
+            PortfolioBalance: portfolioBalance);
     }
 
     private static string? MapTransferKind(TransactionTransferKind? transferKind)
