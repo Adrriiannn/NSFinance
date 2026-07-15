@@ -91,12 +91,15 @@ public sealed class DashboardService(
         var recentTransactions = await transactionQuery
             .OrderByDescending(x => x.BookedAtUtc)
             .ThenByDescending(x => x.CreatedUtc)
+            .ThenByDescending(x => x.Id)
             .Take(5)
             .Select(x => new
             {
                 x.Id,
                 x.FinancialAccountId,
                 AccountName = x.FinancialAccount != null ? x.FinancialAccount.Name : string.Empty,
+                AccountSource = x.FinancialAccount != null ? x.FinancialAccount.Source : string.Empty,
+                AccountCurrency = x.FinancialAccount != null ? x.FinancialAccount.Currency : string.Empty,
                 x.Description,
                 x.Amount,
                 x.Currency,
@@ -134,11 +137,29 @@ public sealed class DashboardService(
         var relationshipSummariesByTransactionId = await GetRelationshipSummariesByTransactionIdAsync(
             recentTransactionIds,
             cancellationToken);
+        var statementImportsByTransactionId = await TransactionProvenanceResolver
+            .GetStatementImportsByTransactionIdAsync(
+                dbContext,
+                currentUserProvider.UserId,
+                recentTransactions
+                    .Where(x => x.EntryKind == TransactionEntryKinds.StatementImport)
+                    .Select(x => x.Id)
+                    .ToArray(),
+                cancellationToken);
 
         var recentTransactionDtos = recentTransactions
             .Select(x =>
             {
                 var isBalanceOnly = x.AnalyticsTreatment == TransactionAnalyticsTreatments.BalanceOnly;
+                var provenance = TransactionProvenanceResolver.Resolve(
+                    x.Id,
+                    x.FinancialAccountId,
+                    x.AccountSource,
+                    x.AccountCurrency,
+                    x.Currency,
+                    x.EntryKind,
+                    x.BookedAtUtc,
+                    statementImportsByTransactionId);
                 var taxonomyDomainName = expenseTaxonomyService.GetDomainName(x.TaxonomyDomainId);
                 var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(x.TaxonomyCategoryId);
                 var taxonomySubcategoryName = expenseTaxonomyService.GetSubcategoryName(x.TaxonomySubcategoryId);
@@ -209,7 +230,11 @@ public sealed class DashboardService(
                     x.MetadataUpdatedUtc,
                     isBalanceOnly ? "Adjustment" : x.Amount < 0 ? "Expense" : "Income",
                     x.EntryKind,
-                    x.AnalyticsTreatment);
+                    x.AnalyticsTreatment,
+                    provenance.AccountSource,
+                    provenance.AccountCurrency,
+                    provenance.EffectiveTime,
+                    provenance.StatementImport);
             })
             .ToList();
 

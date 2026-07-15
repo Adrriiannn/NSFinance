@@ -48,5 +48,19 @@ public sealed record TransactionDto(
     DateTime CreatedUtc,
     DateTime? MetadataUpdatedUtc,
     string Direction,
-    string EntryKind = "ordinary",
-    string AnalyticsTreatment = "ordinary");
+    string EntryKind,
+    string AnalyticsTreatment,
+    string AccountSource,
+    string AccountCurrency,
+    TransactionEffectiveTimeDto EffectiveTime,
+    StatementImportProvenanceDto? StatementImport);
+
+public sealed record TransactionEffectiveTimeDto(
+    string Precision,
+    DateOnly? Date,
+    DateTime? InstantUtc);
+
+public sealed record StatementImportProvenanceDto(
+    Guid BatchId,
+    int RowNumber,
+    DateTime CommittedUtc);

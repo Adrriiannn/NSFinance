@@ -32,18 +32,30 @@ public sealed class TransactionService(
         var transactions = await query
             .OrderByDescending(x => x.BookedAtUtc)
             .ThenByDescending(x => x.CreatedUtc)
+            .ThenByDescending(x => x.Id)
             .Select(ToReadModelProjection())
             .ToListAsync(cancellationToken);
 
+        var transactionIds = transactions.Select(x => x.Id).ToArray();
         var relationshipsByTransactionId = await GetRelationshipSummariesByTransactionIdAsync(
-            transactions.Select(x => x.Id).ToArray(),
+            transactionIds,
             cancellationToken);
+        var statementImportsByTransactionId = await TransactionProvenanceResolver
+            .GetStatementImportsByTransactionIdAsync(
+                dbContext,
+                currentUserProvider.UserId,
+                transactions
+                    .Where(x => x.EntryKind == TransactionEntryKinds.StatementImport)
+                    .Select(x => x.Id)
+                    .ToArray(),
+                cancellationToken);
 
         return transactions
             .Select(transaction =>
                 MapToDto(
                     transaction,
-                    relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null))
+                    relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null,
+                    statementImportsByTransactionId))
             .ToList();
     }
 
@@ -142,14 +154,25 @@ public sealed class TransactionService(
 
         var hasMore = materialized.Count > pageSize;
         var pageRows = hasMore ? materialized.Take(pageSize).ToList() : materialized;
+        var pageTransactionIds = pageRows.Select(x => x.Id).ToArray();
         var relationshipsByTransactionId = await GetRelationshipSummariesByTransactionIdAsync(
-            pageRows.Select(x => x.Id).ToArray(),
+            pageTransactionIds,
             cancellationToken);
+        var statementImportsByTransactionId = await TransactionProvenanceResolver
+            .GetStatementImportsByTransactionIdAsync(
+                dbContext,
+                currentUserProvider.UserId,
+                pageRows
+                    .Where(x => x.EntryKind == TransactionEntryKinds.StatementImport)
+                    .Select(x => x.Id)
+                    .ToArray(),
+                cancellationToken);
         var items = pageRows
             .Select(transaction =>
                 MapToDto(
                     transaction,
-                    relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null))
+                    relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null,
+                    statementImportsByTransactionId))
             .ToList();
         var last = hasMore ? pageRows[^1] : null;
         var nextCursor = last is null
@@ -197,10 +220,19 @@ public sealed class TransactionService(
         var relationshipsByTransactionId = await GetRelationshipSummariesByTransactionIdAsync(
             [transaction.Id],
             cancellationToken);
+        var statementImportsByTransactionId = await TransactionProvenanceResolver
+            .GetStatementImportsByTransactionIdAsync(
+                dbContext,
+                currentUserProvider.UserId,
+                transaction.EntryKind == TransactionEntryKinds.StatementImport
+                    ? [transaction.Id]
+                    : [],
+                cancellationToken);
 
         return MapToDto(
             transaction,
-            relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null);
+            relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null,
+            statementImportsByTransactionId);
     }
 
     public async Task<(TransactionDto? Transaction, string? Error)> CreateTransactionAsync(
@@ -312,7 +344,14 @@ public sealed class TransactionService(
                 MetadataUpdatedUtc: null,
                 Direction: transaction.Amount < 0 ? "Expense" : "Income",
                 EntryKind: transaction.EntryKind,
-                AnalyticsTreatment: transaction.AnalyticsTreatment),
+                AnalyticsTreatment: transaction.AnalyticsTreatment,
+                AccountSource: account.Source,
+                AccountCurrency: account.Currency,
+                EffectiveTime: new TransactionEffectiveTimeDto(
+                    StatementImportTimestampPrecisions.Instant,
+                    Date: null,
+                    InstantUtc: transaction.BookedAtUtc),
+                StatementImport: null),
             null);
     }
 
@@ -617,9 +656,21 @@ public sealed class TransactionService(
         };
     }
 
-    private TransactionDto MapToDto(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
+    private TransactionDto MapToDto(
+        TransactionReadModel transaction,
+        RelationshipSummary? relationshipSummary,
+        IReadOnlyDictionary<Guid, StatementImportProvenanceReadModel> statementImportsByTransactionId)
     {
         var isBalanceOnly = transaction.AnalyticsTreatment == TransactionAnalyticsTreatments.BalanceOnly;
+        var provenance = TransactionProvenanceResolver.Resolve(
+            transaction.Id,
+            transaction.FinancialAccountId,
+            transaction.AccountSource,
+            transaction.AccountCurrency,
+            transaction.Currency,
+            transaction.EntryKind,
+            transaction.BookedAtUtc,
+            statementImportsByTransactionId);
         var effectiveTransferMaterialization = ResolveEffectiveTransferMaterialization(transaction);
         var taxonomyDomainName = expenseTaxonomyService.GetDomainName(effectiveTransferMaterialization.TaxonomyDomainId);
         var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(effectiveTransferMaterialization.TaxonomyCategoryId);
@@ -690,7 +741,11 @@ public sealed class TransactionService(
             transaction.MetadataUpdatedUtc,
             isBalanceOnly ? "Adjustment" : transaction.Amount < 0 ? "Expense" : "Income",
             transaction.EntryKind,
-            transaction.AnalyticsTreatment);
+            transaction.AnalyticsTreatment,
+            provenance.AccountSource,
+            provenance.AccountCurrency,
+            provenance.EffectiveTime,
+            provenance.StatementImport);
     }
 
     private static EffectiveTransferMaterialization ResolveEffectiveTransferMaterialization(TransactionReadModel transaction)
@@ -811,6 +866,8 @@ public sealed class TransactionService(
             x.Id,
             x.FinancialAccountId,
             x.FinancialAccount != null ? x.FinancialAccount.Name : string.Empty,
+            x.FinancialAccount != null ? x.FinancialAccount.Source : string.Empty,
+            x.FinancialAccount != null ? x.FinancialAccount.Currency : string.Empty,
             x.Description,
             x.Amount,
             x.Currency,
@@ -849,6 +906,8 @@ public sealed class TransactionService(
         Guid Id,
         Guid FinancialAccountId,
         string AccountName,
+        string AccountSource,
+        string AccountCurrency,
         string Description,
         decimal Amount,
         string Currency,
