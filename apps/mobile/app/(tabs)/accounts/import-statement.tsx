@@ -12,6 +12,7 @@ import { SelectField } from "../../../src/components/ui/SelectField";
 import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { TextField } from "../../../src/components/ui/TextField";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
+import { isProviderProjectedAccount } from "../../../src/features/accounts/accountProvenance";
 import {
   hasStatementImportMappingErrors,
   suggestStatementImportMapping,
@@ -165,7 +166,7 @@ export default function ImportStatementScreen() {
   const [screenError, setScreenError] = useState<string | null>(null);
 
   const account = accountQuery.data;
-  const isConnectedAccount = account?.source === "provider_projected";
+  const isConnectedAccount = isProviderProjectedAccount(account);
   const anyMutationPending =
     inspectMutation.isPending ||
     previewMutation.isPending ||
@@ -538,7 +539,7 @@ export default function ImportStatementScreen() {
           message={accountQuery.error.message}
           onRetry={() => void accountQuery.refetch()}
         />
-      ) : !isConnectedAccount ? (
+      ) : !account || !isConnectedAccount ? (
         <ErrorState
           title="Connected account required"
           message="Legacy accounts are read-only and cannot accept a statement import."

@@ -18,6 +18,8 @@ import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
 import { resolveAccountBalancePresentation } from "../../../src/features/accounts/accountBalancePresentation";
 import { resolveAccountDetailsSectionState } from "../../../src/features/accounts/accountDetailsLoadState";
+import { resolveAccountSource } from "../../../src/features/accounts/accountProvenance";
+import { maskAccountIdentifier } from "../../../src/features/accounts/accountPrivacy";
 import {
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
@@ -67,12 +69,12 @@ function extractAccountNumberLines(metadataJson?: string | null) {
 
     const iban = read("iban");
     if (iban) {
-      lines.push({ label: "IBAN", value: formatIban(iban) });
+      lines.push({ label: "IBAN", value: maskAccountIdentifier(iban) ?? "Hidden" });
     }
 
     const number = read("number");
     if (number) {
-      lines.push({ label: "Account number", value: number });
+      lines.push({ label: "Account number", value: maskAccountIdentifier(number) ?? "Hidden" });
     }
 
     const sortCode = read("sort_code");
@@ -158,16 +160,6 @@ function resolveAccountDisplayTitle(
   return buildAccountFallback(linkedAccount?.accountType, linkedAccount?.currency);
 }
 
-function formatIban(value: string) {
-  const compact = value.replace(/\s+/g, "").toUpperCase();
-  if (compact.length <= 4) {
-    return compact;
-  }
-
-  const groups = compact.match(/.{1,4}/g);
-  return groups ? groups.join(" ") : compact;
-}
-
 function findLinkedAccountForFinancialAccount(
   linkedAccounts: LinkedBankAccountDto[] | undefined,
   financialAccountId: string | undefined
@@ -206,7 +198,7 @@ export default function AccountDetailsScreen() {
       return rightStamp - leftStamp;
     })[0] ?? null;
   }, [connectionsQuery.data]);
-  const isManualAccount = accountQuery.data?.source === "manual";
+  const isManualAccount = resolveAccountSource(accountQuery.data) === "manual";
 
   if (!accountId) {
     return (

@@ -9,6 +9,10 @@ const accountDetailsPath = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../../app/(tabs)/accounts/[id].tsx"
 );
+const importStatementPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../app/(tabs)/accounts/import-statement.tsx"
+);
 const buttonPath = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../components/ui/buttons/Button.tsx"
@@ -102,4 +106,15 @@ test("canonical Button exposes loading and disabled state to assistive technolog
   assert.match(source, /accessibilityState=\{\{/);
   assert.match(source, /busy: isLoading \|\| accessibilityState\?\.busy/);
   assert.match(source, /disabled: isDisabled \|\| accessibilityState\?\.disabled/);
+});
+
+test("account routes share provenance resolution and never render full account identifiers", () => {
+  const accountDetailsSource = readFileSync(accountDetailsPath, "utf8");
+  const importStatementSource = readFileSync(importStatementPath, "utf8");
+
+  assert.match(accountDetailsSource, /resolveAccountSource\(accountQuery\.data\)/);
+  assert.match(importStatementSource, /isProviderProjectedAccount\(account\)/);
+  assert.match(accountDetailsSource, /maskAccountIdentifier\(iban\)/);
+  assert.match(accountDetailsSource, /maskAccountIdentifier\(number\)/);
+  assert.doesNotMatch(accountDetailsSource, /function formatIban/);
 });
