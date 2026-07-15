@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NSFinance.Api.Modules.Imports.DTOs;
 using NSFinance.Api.Modules.Imports.Endpoints;
 using NSFinance.Api.Modules.Imports.Services;
 
@@ -43,6 +44,13 @@ public static class ImportsModule
 
         group.MapGet("/{batchId:guid}/rows", GetStatementImportRowsEndpoint.HandleAsync)
             .WithName("GetStatementImportRows");
+
+        group.MapPatch("/{batchId:guid}/review", ReviewStatementImportRowsEndpoint.HandleAsync)
+            .WithName("ReviewStatementImportRows")
+            .Accepts<ReviewStatementImportRowsRequest>("application/json")
+            .RequireRateLimiting("statement-import-mutation")
+            .WithMetadata(new RequestSizeLimitAttribute(
+                StatementImportReviewPolicy.MaximumRequestBodyBytes));
 
         return app;
     }

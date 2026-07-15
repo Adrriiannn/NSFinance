@@ -18,6 +18,7 @@ public sealed class StatementImportRouteMetadataTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddScoped<StatementImportBatchService>();
+        builder.Services.AddScoped<StatementImportReviewService>();
         builder.Services.AddScoped<StatementImportUploadService>();
         await using var app = builder.Build();
         app.MapImportsModule();
@@ -30,11 +31,13 @@ public sealed class StatementImportRouteMetadataTests
         var preview = Find(endpoints, "/api/imports/statements/preview");
         var batch = Find(endpoints, "/api/imports/statements/{batchId:guid}");
         var rows = Find(endpoints, "/api/imports/statements/{batchId:guid}/rows");
+        var review = Find(endpoints, "/api/imports/statements/{batchId:guid}/review");
 
-        Assert.All([inspect, preview, batch, rows], endpoint =>
+        Assert.All([inspect, preview, batch, rows, review], endpoint =>
             Assert.NotEmpty(endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>()));
         AssertUploadMetadata(inspect);
         AssertUploadMetadata(preview);
+        AssertMutationMetadata(review);
     }
 
     private static RouteEndpoint Find(
@@ -63,5 +66,18 @@ public sealed class StatementImportRouteMetadataTests
         Assert.Equal(StatementImportUploadPolicy.MaximumMultipartBodyBytes, formLimit.MultipartBodyLengthLimit);
         Assert.Equal(24, formLimit.ValueCountLimit);
         Assert.Equal(16 * 1024, formLimit.ValueLengthLimit);
+    }
+
+    private static void AssertMutationMetadata(RouteEndpoint endpoint)
+    {
+        var rateLimit = Assert.Single(
+            endpoint.Metadata.GetOrderedMetadata<EnableRateLimitingAttribute>());
+        Assert.Equal("statement-import-mutation", rateLimit.PolicyName);
+
+        var requestLimit = Assert.Single(
+            endpoint.Metadata.GetOrderedMetadata<RequestSizeLimitAttribute>());
+        Assert.Equal(
+            StatementImportReviewPolicy.MaximumRequestBodyBytes,
+            ((IRequestSizeLimitMetadata)requestLimit).MaxRequestBodySize);
     }
 }

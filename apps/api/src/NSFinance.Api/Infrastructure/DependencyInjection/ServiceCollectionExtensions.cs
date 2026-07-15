@@ -528,6 +528,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStatementImportMappingEngine, StatementImportMappingEngine>();
         services.AddSingleton<IStatementCsvParser, StatementCsvParser>();
         services.AddScoped<StatementImportBatchService>();
+        services.AddScoped<StatementImportReviewService>();
         services.AddScoped<StatementImportUploadService>();
         services.AddScoped<StatementImportEvidenceCleanupService>();
         services.AddScoped<TransactionService>();
@@ -705,6 +706,17 @@ public static class ServiceCollectionExtensions
                         AutoReplenishment = true,
                         PermitLimit = 6,
                         Window = TimeSpan.FromMinutes(5),
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("statement-import-mutation", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveAuthenticatedPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 30,
+                        Window = TimeSpan.FromMinutes(1),
                         QueueLimit = 0
                     }));
 

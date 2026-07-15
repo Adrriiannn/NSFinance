@@ -36,3 +36,11 @@ public sealed record StatementImportRowsQuery(
     string? ValidationStatus = null,
     string? DuplicateClassification = null,
     string? ReviewDisposition = null);
+
+public sealed record StatementImportRowReviewDecision(
+    Guid RowId,
+    string? ReviewDisposition);
+
+public sealed record ReviewStatementImportRowsCommand(
+    int? ExpectedRevision,
+    IReadOnlyList<StatementImportRowReviewDecision>? Decisions);
