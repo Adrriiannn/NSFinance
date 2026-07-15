@@ -1480,6 +1480,142 @@ public class OpenBankingIntegrationTests
     }
 
     [Fact]
+    public async Task GlobalSync_ReconcilesUniqueDateOnlyStatementImport_WhenProviderLaterSuppliesBookedInstant()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidLiveOptions(),
+            httpHandler: DelayedIngestionAfterSyncFlowHandler(
+                new DateTime(2026, 4, 1, 23, 30, 0, DateTimeKind.Utc)));
+
+        var user = await harness.CreateUserAsync("bank.statement-date-reconcile@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-delayed-ingestion", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+        Assert.Empty(await harness.DbContext.Transactions.ToListAsync());
+
+        var accountId = await harness.DbContext.FinancialAccounts
+            .Select(account => account.Id)
+            .SingleAsync();
+        var importedTransactionId = await SeedCommittedDateOnlyStatementTransactionAsync(
+            harness.DbContext,
+            user.Id,
+            accountId,
+            description: "DELAYED-provider transfer reference 001");
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
+        var firstProviderSync = await syncService.SyncConnectionAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None);
+        Assert.True(firstProviderSync.Succeeded);
+
+        var transactions = await harness.DbContext.Transactions.ToListAsync();
+        var raw = await harness.DbContext.RawBankTransactions.SingleAsync();
+        Assert.Single(transactions);
+        Assert.Equal(importedTransactionId, transactions[0].Id);
+        Assert.Equal(TransactionEntryKinds.StatementImport, transactions[0].EntryKind);
+        Assert.Equal(importedTransactionId, raw.ProjectedTransactionId);
+
+        var replay = await syncService.SyncConnectionAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None);
+        Assert.True(replay.Succeeded);
+        Assert.Single(await harness.DbContext.Transactions.ToListAsync());
+        Assert.Single(await harness.DbContext.RawBankTransactions.ToListAsync());
+    }
+
+    [Fact]
+    public async Task GlobalSync_DoesNotGuessBetweenAmbiguousDateOnlyStatementImports()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidLiveOptions(),
+            httpHandler: DelayedIngestionAfterSyncFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.statement-date-ambiguous@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-delayed-ingestion", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var accountId = await harness.DbContext.FinancialAccounts
+            .Select(account => account.Id)
+            .SingleAsync();
+        var firstImportedId = await SeedCommittedDateOnlyStatementTransactionAsync(
+            harness.DbContext,
+            user.Id,
+            accountId,
+            description: "Delayed provider transfer reference 001");
+        var secondImportedId = await SeedCommittedDateOnlyStatementTransactionAsync(
+            harness.DbContext,
+            user.Id,
+            accountId,
+            description: "Delayed provider transfer reference 001");
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
+        var result = await syncService.SyncConnectionAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None);
+        Assert.True(result.Succeeded);
+
+        var transactions = await harness.DbContext.Transactions.ToListAsync();
+        var raw = await harness.DbContext.RawBankTransactions.SingleAsync();
+        Assert.Equal(3, transactions.Count);
+        Assert.NotEqual(firstImportedId, raw.ProjectedTransactionId);
+        Assert.NotEqual(secondImportedId, raw.ProjectedTransactionId);
+        Assert.Contains(transactions, transaction => transaction.Id == raw.ProjectedTransactionId);
+    }
+
+    [Fact]
+    public async Task GlobalSync_DoesNotReconcileDateOnlyStatementImport_WhenDescriptionDiffers()
+    {
+        await using var harness = new OpenBankingTestHarness(
+            options: ValidLiveOptions(),
+            httpHandler: DelayedIngestionAfterSyncFlowHandler());
+
+        var user = await harness.CreateUserAsync("bank.statement-date-description@test.local");
+        var start = await harness.AuthService.StartLinkAsync(user.Id, null, null, CancellationToken.None);
+        Assert.True(start.Succeeded);
+
+        var state = GetQueryValue(start.Value!.AuthorizationUrl, "state");
+        var callback = await harness.AuthService.HandleCallbackAsync(
+            new TrueLayerCallbackQuery("auth-code-delayed-ingestion", state, null, null),
+            CancellationToken.None);
+        Assert.True(callback.Succeeded);
+
+        var accountId = await harness.DbContext.FinancialAccounts
+            .Select(account => account.Id)
+            .SingleAsync();
+        var importedTransactionId = await SeedCommittedDateOnlyStatementTransactionAsync(
+            harness.DbContext,
+            user.Id,
+            accountId,
+            description: "Different statement description");
+
+        var syncService = harness.CreateSyncServiceForTesting(ValidLiveOptions());
+        var result = await syncService.SyncConnectionAsync(
+            user.Id,
+            start.Value.ConnectionId,
+            CancellationToken.None);
+        Assert.True(result.Succeeded);
+
+        var transactions = await harness.DbContext.Transactions.ToListAsync();
+        var raw = await harness.DbContext.RawBankTransactions.SingleAsync();
+        Assert.Equal(2, transactions.Count);
+        Assert.NotEqual(importedTransactionId, raw.ProjectedTransactionId);
+    }
+
+    [Fact]
     public async Task GlobalSync_DoesNotCollapseDistinctTransactions_WithSameAmountTimestampAndDescription()
     {
         await using var harness = new OpenBankingTestHarness(
@@ -6535,6 +6671,79 @@ public class OpenBankingIntegrationTests
         ApiBaseUrl = "https://api.truelayer.com"
     };
 
+    private static async Task<Guid> SeedCommittedDateOnlyStatementTransactionAsync(
+        AppDbContext dbContext,
+        Guid userId,
+        Guid accountId,
+        string description)
+    {
+        var transactionId = Guid.NewGuid();
+        var batchId = Guid.NewGuid();
+        var rowId = Guid.NewGuid();
+        var effectiveDate = new DateOnly(2026, 4, 2);
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
+        var localMidnight = new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Unspecified);
+        var bookedAtUtc = TimeZoneInfo.ConvertTimeToUtc(localMidnight, timeZone);
+        var createdUtc = new DateTime(2026, 4, 2, 8, 30, 0, DateTimeKind.Utc);
+
+        dbContext.ImportJobs.Add(new ImportJob
+        {
+            Id = batchId,
+            UserId = userId,
+            FinancialAccountId = accountId,
+            FileName = "synthetic-statement.csv",
+            Kind = ImportJobKinds.StatementCsv,
+            Status = StatementImportBatchStatuses.Committed,
+            SourceFingerprint = $"source-{batchId:N}",
+            MappingFingerprint = $"mapping-{batchId:N}",
+            ParserVersion = "statement-csv-v1",
+            MappingVersion = "statement-mapping-v1",
+            AccountCurrency = "EUR",
+            Locale = "en-IE",
+            TimeZoneId = "Europe/Dublin",
+            TotalRowCount = 1,
+            ValidRowCount = 1,
+            IncludedRowCount = 1,
+            CommittedRowCount = 1,
+            Revision = 2,
+            CreatedUtc = createdUtc,
+            UpdatedUtc = createdUtc,
+            CommittedUtc = createdUtc
+        });
+        dbContext.Transactions.Add(new Transaction
+        {
+            Id = transactionId,
+            FinancialAccountId = accountId,
+            Amount = -74.11m,
+            Currency = "EUR",
+            Description = description,
+            EntryKind = TransactionEntryKinds.StatementImport,
+            AnalyticsTreatment = TransactionAnalyticsTreatments.Ordinary,
+            BookedAtUtc = bookedAtUtc,
+            CreatedUtc = createdUtc
+        });
+        dbContext.StatementImportRows.Add(new StatementImportRow
+        {
+            Id = rowId,
+            ImportJobId = batchId,
+            RowNumber = 2,
+            RowFingerprint = $"row-{rowId:N}",
+            ValidationStatus = StatementImportValidationStatuses.Valid,
+            DuplicateClassification = StatementImportDuplicateClassifications.None,
+            ReviewDisposition = StatementImportReviewDispositions.Included,
+            EffectiveDate = effectiveDate,
+            TimestampPrecision = StatementImportTimestampPrecisions.Date,
+            Description = description,
+            Amount = -74.11m,
+            Currency = "EUR",
+            CommittedTransactionId = transactionId,
+            CreatedUtc = createdUtc,
+            UpdatedUtc = createdUtc
+        });
+        await dbContext.SaveChangesAsync();
+        return transactionId;
+    }
+
     private static HttpMessageHandler SuccessfulFlowHandler()
     {
         return new StubHttpMessageHandler(async (request, _) =>
@@ -7356,7 +7565,7 @@ public class OpenBankingIntegrationTests
         });
     }
 
-    private static HttpMessageHandler DelayedIngestionAfterSyncFlowHandler()
+    private static HttpMessageHandler DelayedIngestionAfterSyncFlowHandler(DateTime? bookedAtUtc = null)
     {
         var baseDateUtc = new DateTime(2026, 4, 2, 0, 0, 0, DateTimeKind.Utc);
         var transactionRequestCount = 0;
@@ -7430,7 +7639,7 @@ public class OpenBankingIntegrationTests
                         "norm-delayed-ingestion-001",
                         -74.11m,
                         "EUR",
-                        baseDateUtc.AddHours(9).ToString("O"),
+                        (bookedAtUtc ?? baseDateUtc.AddHours(9)).ToString("O"),
                         "Delayed provider transfer reference 001",
                         "TRANSFER")
                 };

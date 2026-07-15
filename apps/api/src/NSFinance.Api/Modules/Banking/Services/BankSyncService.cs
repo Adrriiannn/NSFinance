@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Common.Contracts;
@@ -2082,26 +2084,10 @@ public sealed class BankSyncService(
                         providerAccount,
                         linkedAccount,
                         sourceStage: "backfill_reconcile",
-                        triggerRecord: null,
                         projectionState,
                         out var collidedTransactionId))
                 {
                     projectedSkippedDuplicate++;
-                    logger.LogDebug(
-                        "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
-                        providerAccount.ProviderId ?? "<unknown>",
-                        providerAccount.ProviderDisplayName ?? "<unknown>",
-                        linkedAccount.ConnectionId,
-                        providerAccount.AccountId,
-                        linkedAccount.Id,
-                        "backfill_reconcile",
-                        collidedTransactionId,
-                        row.ProviderTransactionId ?? "<none>",
-                        row.DedupeKey,
-                        row.Amount,
-                        row.Currency,
-                        row.BookedAtUtc,
-                        row.Description);
                     MarkProjectedForDeterministicReclassification(
                         projectedTransactionIdsForDeterministicReclassification,
                         row.ProjectedTransactionId);
@@ -2306,27 +2292,10 @@ public sealed class BankSyncService(
                                  providerAccount,
                                  linkedAccount,
                                  sourceStage: !wasBooked && isNowBooked ? "status_transition_reconcile" : "existing_booked_reconcile",
-                                 triggerRecord: providerTransaction,
                                  projectionState,
                                  out var collidedTransactionId))
                         {
                             projectedSkippedDuplicate++;
-                            logger.LogDebug(
-                                "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
-                                providerAccount.ProviderId ?? "<unknown>",
-                                providerAccount.ProviderDisplayName ?? "<unknown>",
-                                linkedAccount.ConnectionId,
-                                providerAccount.AccountId,
-                                linkedAccount.Id,
-                                !wasBooked && isNowBooked ? "status_transition_reconcile" : "existing_booked_reconcile",
-                                collidedTransactionId,
-                                providerTransaction.ProviderTransactionId ?? existingRaw.ProviderTransactionId ?? "<none>",
-                                providerTransaction.NormalizedProviderTransactionId ?? "<none>",
-                                existingRaw.DedupeKey,
-                                existingRaw.Amount,
-                                existingRaw.Currency,
-                                existingRaw.BookedAtUtc,
-                                existingRaw.Description);
                             MarkProjectedForDeterministicReclassification(
                                 projectedTransactionIdsForDeterministicReclassification,
                                 existingRaw.ProjectedTransactionId);
@@ -2461,27 +2430,10 @@ public sealed class BankSyncService(
                             providerAccount,
                             linkedAccount,
                             sourceStage: "new_raw_reconcile",
-                            triggerRecord: providerTransaction,
                             projectionState,
                             out var collidedTransactionId))
                     {
                         projectedSkippedDuplicate++;
-                        logger.LogDebug(
-                            "Bank transaction projection dedupe matched existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description}",
-                            providerAccount.ProviderId ?? "<unknown>",
-                            providerAccount.ProviderDisplayName ?? "<unknown>",
-                            linkedAccount.ConnectionId,
-                            providerAccount.AccountId,
-                            linkedAccount.Id,
-                            "new_raw_reconcile",
-                            collidedTransactionId,
-                            providerTransaction.ProviderTransactionId ?? "<none>",
-                            providerTransaction.NormalizedProviderTransactionId ?? "<none>",
-                            providerTransaction.DedupeKey,
-                            providerTransaction.Amount,
-                            providerTransaction.Currency,
-                            providerTransaction.BookedAtUtc,
-                            providerTransaction.Description);
                         MarkProjectedForDeterministicReclassification(
                             projectedTransactionIdsForDeterministicReclassification,
                             rawTransaction.ProjectedTransactionId);
@@ -2590,6 +2542,9 @@ public sealed class BankSyncService(
                 x.Description))
             .ToListAsync(cancellationToken);
 
+        var dateOnlyImportedRows = await BuildDateOnlyImportedProjectionQuery(dbContext, projectedAccountId)
+            .ToListAsync(cancellationToken);
+
         var knownProjectedTransactionIds = projectedRows
             .Select(x => x.Id)
             .ToHashSet();
@@ -2617,72 +2572,196 @@ public sealed class BankSyncService(
             queue.Enqueue(row.Id);
         }
 
+        var dateOnlyImportedCandidatesByTimeZone = new Dictionary<string, DateOnlyProjectionCandidateBucket>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var row in dateOnlyImportedRows
+                     .OrderBy(x => x.EffectiveDate)
+                     .ThenBy(x => x.TransactionId))
+        {
+            if (!TryResolveProjectionTimeZone(row.TimeZoneId, out var timeZone))
+            {
+                continue;
+            }
+
+            if (!dateOnlyImportedCandidatesByTimeZone.TryGetValue(timeZone.Id, out var bucket))
+            {
+                bucket = new DateOnlyProjectionCandidateBucket(
+                    timeZone,
+                    new Dictionary<string, List<Guid>>(StringComparer.Ordinal));
+                dateOnlyImportedCandidatesByTimeZone[timeZone.Id] = bucket;
+            }
+
+            var fingerprint = CreateProjectionDateFingerprint(
+                row.Amount,
+                row.Currency,
+                row.EffectiveDate,
+                row.Description);
+            if (!bucket.FingerprintToProjectedIds.TryGetValue(fingerprint, out var candidateIds))
+            {
+                candidateIds = [];
+                bucket.FingerprintToProjectedIds[fingerprint] = candidateIds;
+            }
+
+            candidateIds.Add(row.TransactionId);
+        }
+
         return new ProjectionReconciliationState(
             knownProjectedTransactionIds,
             linkedProjectedTransactionIds,
             fingerprintToProjectedIds,
+            dateOnlyImportedCandidatesByTimeZone,
             projectedRows.Count);
     }
+
+    internal static IQueryable<DateOnlyImportedProjectionSnapshot> BuildDateOnlyImportedProjectionQuery(
+        AppDbContext sourceDbContext,
+        Guid projectedAccountId) =>
+        sourceDbContext.StatementImportRows
+            .Where(row =>
+                row.CommittedTransactionId.HasValue
+                && row.TimestampPrecision == StatementImportTimestampPrecisions.Date
+                && row.EffectiveDate.HasValue
+                && row.ImportJob != null
+                && row.ImportJob.Kind == ImportJobKinds.StatementCsv
+                && row.ImportJob.Status == StatementImportBatchStatuses.Committed
+                && row.ImportJob.FinancialAccountId == projectedAccountId
+                && row.CommittedTransaction != null
+                && row.CommittedTransaction.FinancialAccountId == projectedAccountId
+                && row.CommittedTransaction.EntryKind == TransactionEntryKinds.StatementImport)
+            .Select(row => new DateOnlyImportedProjectionSnapshot(
+                row.CommittedTransactionId!.Value,
+                row.EffectiveDate!.Value,
+                row.ImportJob!.TimeZoneId,
+                row.CommittedTransaction!.Amount,
+                row.CommittedTransaction.Currency,
+                row.CommittedTransaction.Description));
 
     private bool TryLinkRawRowToExistingProjectedTransaction(
         RawBankTransaction rawRow,
         TrueLayerAccountRecord providerAccount,
         LinkedBankAccount linkedAccount,
         string sourceStage,
-        TrueLayerTransactionRecord? triggerRecord,
         ProjectionReconciliationState projectionState,
         out Guid collidedTransactionId)
     {
         collidedTransactionId = Guid.Empty;
+        var matchStrategy = "exact_instant";
         var projectionFingerprint = CreateProjectionFingerprint(
             rawRow.Amount,
             rawRow.Currency,
             rawRow.BookedAtUtc,
             rawRow.Description);
 
-        if (!projectionState.FingerprintToProjectedIds.TryGetValue(projectionFingerprint, out var queue))
+        if (projectionState.FingerprintToProjectedIds.TryGetValue(projectionFingerprint, out var queue))
+        {
+            while (queue.Count > 0)
+            {
+                var candidateId = queue.Peek();
+                if (projectionState.LinkedProjectedTransactionIds.Contains(candidateId))
+                {
+                    queue.Dequeue();
+                    continue;
+                }
+
+                collidedTransactionId = candidateId;
+                break;
+            }
+        }
+
+        if (collidedTransactionId == Guid.Empty)
+        {
+            if (!TryFindUniqueDateOnlyImportedProjectionCandidate(
+                    rawRow,
+                    projectionState,
+                    out collidedTransactionId))
+            {
+                return false;
+            }
+
+            matchStrategy = "date_only_import";
+        }
+
+        projectionState.LinkedProjectedTransactionIds.Add(collidedTransactionId);
+        rawRow.ProjectedTransactionId = collidedTransactionId;
+
+        logger.LogDebug(
+            "Bank transaction projection reconciled existing ledger row providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} matchStrategy={MatchStrategy}",
+            providerAccount.ProviderId ?? "<unknown>",
+            providerAccount.ProviderDisplayName ?? "<unknown>",
+            linkedAccount.ConnectionId,
+            linkedAccount.Id,
+            sourceStage,
+            matchStrategy);
+
+        return true;
+    }
+
+    private static bool TryFindUniqueDateOnlyImportedProjectionCandidate(
+        RawBankTransaction rawRow,
+        ProjectionReconciliationState projectionState,
+        out Guid candidateId)
+    {
+        candidateId = Guid.Empty;
+        if (rawRow.BookedAtUtc.Kind != DateTimeKind.Utc)
         {
             return false;
         }
 
-        while (queue.Count > 0)
+        foreach (var bucket in projectionState.DateOnlyImportedCandidatesByTimeZone.Values)
         {
-            var candidateId = queue.Peek();
-            if (projectionState.LinkedProjectedTransactionIds.Contains(candidateId))
+            var localBookedDate = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTimeFromUtc(rawRow.BookedAtUtc, bucket.TimeZone));
+            var fingerprint = CreateProjectionDateFingerprint(
+                rawRow.Amount,
+                rawRow.Currency,
+                localBookedDate,
+                rawRow.Description);
+            if (!bucket.FingerprintToProjectedIds.TryGetValue(fingerprint, out var possibleIds))
             {
-                queue.Dequeue();
                 continue;
             }
 
-            collidedTransactionId = candidateId;
-            projectionState.LinkedProjectedTransactionIds.Add(candidateId);
-            rawRow.ProjectedTransactionId = candidateId;
+            foreach (var possibleId in possibleIds)
+            {
+                if (projectionState.LinkedProjectedTransactionIds.Contains(possibleId))
+                {
+                    continue;
+                }
 
-            logger.LogDebug(
-                "Bank transaction projection collision details providerId={ProviderId} providerDisplayName={ProviderDisplayName} connectionId={ConnectionId} accountId={AccountId} linkedBankAccountId={LinkedBankAccountId} sourceStage={SourceStage} existingTransactionId={ExistingTransactionId} fingerprint={ProjectionFingerprint} amount={Amount} currency={Currency} bookedAtUtc={BookedAtUtc} description={Description} providerTransactionId={ProviderTransactionId} normalizedProviderTransactionId={NormalizedProviderTransactionId} dedupeKey={DedupeKey} sourceEndpoint={SourceEndpoint} providerStatus={ProviderStatus} normalizedStatus={NormalizedStatus}",
-                providerAccount.ProviderId ?? "<unknown>",
-                providerAccount.ProviderDisplayName ?? "<unknown>",
-                linkedAccount.ConnectionId,
-                providerAccount.AccountId,
-                linkedAccount.Id,
-                sourceStage,
-                candidateId,
-                projectionFingerprint,
-                rawRow.Amount,
-                rawRow.Currency,
-                rawRow.BookedAtUtc,
-                rawRow.Description,
-                triggerRecord?.ProviderTransactionId ?? rawRow.ProviderTransactionId ?? "<none>",
-                triggerRecord?.NormalizedProviderTransactionId ?? "<none>",
-                rawRow.DedupeKey,
-                triggerRecord?.SourceEndpoint ?? "<backfill_raw>",
-                triggerRecord?.ProviderStatus ?? "<none>",
-                triggerRecord?.TransactionStatus ?? rawRow.TransactionStatus ?? "<null>");
+                if (candidateId != Guid.Empty && candidateId != possibleId)
+                {
+                    candidateId = Guid.Empty;
+                    return false;
+                }
 
-            return true;
+                candidateId = possibleId;
+            }
         }
 
-        return false;
+        return candidateId != Guid.Empty;
+    }
+
+    private static bool TryResolveProjectionTimeZone(string? timeZoneId, out TimeZoneInfo timeZone)
+    {
+        timeZone = TimeZoneInfo.Utc;
+        if (string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            return false;
+        }
+
+        try
+        {
+            timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId.Trim());
+            return true;
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return false;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return false;
+        }
     }
 
     private static Transaction CreateProjectedTransaction(
@@ -3531,20 +3610,57 @@ public sealed class BankSyncService(
         return candidateFinancialAccountIds.Count == 1 ? candidateFinancialAccountIds[0] : null;
     }
 
-    private static string CreateProjectionFingerprint(
+    internal static string CreateProjectionFingerprint(
         decimal amount,
         string currency,
         DateTime bookedAtUtc,
         string description)
     {
-        var normalizedCurrency = string.IsNullOrWhiteSpace(currency)
-            ? "EUR"
-            : currency.Trim().ToUpperInvariant();
         var normalizedDescription = string.IsNullOrWhiteSpace(description)
             ? "Imported transaction"
             : description.Trim();
 
-        return $"{amount:0.00}|{normalizedCurrency}|{bookedAtUtc:O}|{normalizedDescription}";
+        return $"{amount:0.00}|{NormalizeProjectionCurrency(currency)}|{bookedAtUtc:O}|{normalizedDescription}";
+    }
+
+    internal static string CreateProjectionDateFingerprint(
+        decimal amount,
+        string currency,
+        DateOnly effectiveDate,
+        string description) =>
+        $"{amount:0.00}|{NormalizeProjectionCurrency(currency)}|{effectiveDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}|{NormalizeProjectionDescription(description)}";
+
+    private static string NormalizeProjectionCurrency(string currency) =>
+        string.IsNullOrWhiteSpace(currency)
+            ? "EUR"
+            : currency.Trim().ToUpperInvariant();
+
+    private static string NormalizeProjectionDescription(string description)
+    {
+        var source = string.IsNullOrWhiteSpace(description)
+            ? "Imported transaction"
+            : description;
+        var builder = new StringBuilder(source.Length);
+        var pendingSpace = false;
+        foreach (var character in source.Normalize(NormalizationForm.FormKC))
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                if (pendingSpace && builder.Length > 0)
+                {
+                    builder.Append(' ');
+                }
+
+                builder.Append(char.ToLowerInvariant(character));
+                pendingSpace = false;
+            }
+            else
+            {
+                pendingSpace = true;
+            }
+        }
+
+        return builder.ToString();
     }
 
     private static bool IsBookedProjectionStatus(string? transactionStatus)
@@ -3562,7 +3678,20 @@ public sealed class BankSyncService(
         HashSet<Guid> KnownProjectedTransactionIds,
         HashSet<Guid> LinkedProjectedTransactionIds,
         Dictionary<string, Queue<Guid>> FingerprintToProjectedIds,
+        Dictionary<string, DateOnlyProjectionCandidateBucket> DateOnlyImportedCandidatesByTimeZone,
         int ProjectedCandidateCount);
+
+    private sealed record DateOnlyProjectionCandidateBucket(
+        TimeZoneInfo TimeZone,
+        Dictionary<string, List<Guid>> FingerprintToProjectedIds);
+
+    internal sealed record DateOnlyImportedProjectionSnapshot(
+        Guid TransactionId,
+        DateOnly EffectiveDate,
+        string? TimeZoneId,
+        decimal Amount,
+        string Currency,
+        string Description);
 
     private sealed record ProjectedTransactionSnapshot(
         Guid Id,
