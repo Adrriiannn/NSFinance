@@ -27,6 +27,7 @@ export function Button({
   style,
   labelStyle,
   accessibilityLabel,
+  accessibilityState,
   ...props
 }: ButtonProps) {
   const { buttonPresets, buttonStateStyles } = useButtonPresetStyles();
@@ -38,6 +39,11 @@ export function Button({
       {...props}
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityRole="button"
+      accessibilityState={{
+        ...accessibilityState,
+        busy: isLoading || accessibilityState?.busy,
+        disabled: isDisabled || accessibilityState?.disabled
+      }}
       disabled={isDisabled}
       onPress={onPress}
       style={({ pressed }) => [

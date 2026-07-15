@@ -6,7 +6,9 @@ import { useMutation } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { EmptyState } from "../../../src/components/ui/EmptyState";
+import { Banner } from "../../../src/components/ui/feedback/Banner";
 import { GlassCard } from "../../../src/components/ui/GlassCard";
 import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
@@ -15,6 +17,7 @@ import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
 import { resolveAccountBalancePresentation } from "../../../src/features/accounts/accountBalancePresentation";
+import { resolveAccountDetailsSectionState } from "../../../src/features/accounts/accountDetailsLoadState";
 import {
   useBankConnectionsQuery,
   useLinkedBankAccountsQuery,
@@ -23,6 +26,7 @@ import {
 import { useCreateExportRequestMutation } from "../../../src/features/support/useSupport";
 import { downloadExportRequestFile } from "../../../src/features/support/supportApi";
 import { useTransactionPageQuery } from "../../../src/features/transactions/useTransactionPageQuery";
+import { ApiClientError } from "../../../src/lib/api/errors";
 import { formatCurrency } from "../../../src/lib/format";
 import { getFloatingTabBarContentInset } from "../../../src/theme/insets";
 import { layout, palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
@@ -175,6 +179,10 @@ function findLinkedAccountForFinancialAccount(
   return linkedAccounts.find((item) => item.financialAccountId === financialAccountId) ?? null;
 }
 
+function isTerminalAccountFailure(error: unknown) {
+  return error instanceof ApiClientError && [401, 403, 404, 410].includes(error.status);
+}
+
 export default function AccountDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -213,18 +221,52 @@ export default function AccountDetailsScreen() {
     );
   }
 
-  const isInitialLoading =
-    (accountQuery.isLoading && !accountQuery.data) ||
-    (transactionsQuery.isLoading && !transactionsQuery.data) ||
-    (!isManualAccount && connectionsQuery.isLoading && !connectionsQuery.data);
-
-  const error =
-    accountQuery.error ??
-    transactionsQuery.error ??
-    (isManualAccount
-      ? null
-      : connectionsQuery.error ?? linkedAccountsQuery.error ?? linkedCardsQuery.error);
   const account = accountQuery.data;
+  const accountLoadState = resolveAccountDetailsSectionState([
+    {
+      hasData: account !== undefined,
+      isLoading: accountQuery.isLoading,
+      hasError: accountQuery.isError,
+      hasTerminalError: isTerminalAccountFailure(accountQuery.error)
+    }
+  ]);
+  const connectionDetailsLoadState = resolveAccountDetailsSectionState([
+    {
+      hasData: connectionsQuery.data !== undefined,
+      isLoading: connectionsQuery.isLoading,
+      hasError: connectionsQuery.isError
+    },
+    {
+      hasData: linkedAccountsQuery.data !== undefined,
+      isLoading: linkedAccountsQuery.isLoading,
+      hasError: linkedAccountsQuery.isError
+    }
+  ]);
+  const linkedCardsLoadState = resolveAccountDetailsSectionState([
+    {
+      hasData: linkedAccountsQuery.data !== undefined,
+      isLoading: linkedAccountsQuery.isLoading,
+      hasError: linkedAccountsQuery.isError
+    },
+    {
+      hasData: linkedCardsQuery.data !== undefined,
+      isLoading: linkedCardsQuery.isLoading,
+      hasError: linkedCardsQuery.isError
+    }
+  ]);
+  const transactionsLoadState = resolveAccountDetailsSectionState([
+    {
+      hasData: transactionsQuery.data !== undefined,
+      isLoading: transactionsQuery.isLoading,
+      hasError: transactionsQuery.isError
+    }
+  ]);
+  const isInitialLoading = accountLoadState === "loading";
+  const blockingError = accountLoadState === "error" ? accountQuery.error : null;
+  const connectionDetailsError =
+    connectionDetailsLoadState === "error" || connectionDetailsLoadState === "stale"
+      ? connectionsQuery.error ?? linkedAccountsQuery.error
+      : null;
   const balance = account ? resolveAccountBalancePresentation(account) : null;
   const linkedAccount = isManualAccount
     ? null
@@ -314,16 +356,35 @@ export default function AccountDetailsScreen() {
             <SkeletonBlock style={{ height: 130, borderRadius: 6 }} />
             <SkeletonBlock style={{ height: 130, borderRadius: 6 }} />
           </View>
-        ) : error ? (
+        ) : blockingError ? (
           <ErrorState
             title="Could not load account"
-            message={error.message}
+            message={blockingError.message}
             onRetry={() => {
-              void Promise.all([accountQuery.refetch(), transactionsQuery.refetch()]);
+              void accountQuery.refetch();
             }}
           />
         ) : account ? (
           <>
+            {accountLoadState === "stale" ? (
+              <View style={styles.sectionStatus}>
+                <Banner
+                  accessibilityLiveRegion="polite"
+                  tone="warning"
+                  title="Account data may be out of date"
+                  message="The last available balance remains visible while refresh is retried."
+                />
+                <Button
+                  variant="secondary"
+                  label="Retry account refresh"
+                  isLoading={accountQuery.isFetching}
+                  onPress={() => {
+                    void accountQuery.refetch();
+                  }}
+                />
+              </View>
+            ) : null}
+
             <GlassCard style={styles.accountCard}>
               <Text style={styles.accountName}>{accountTitle}</Text>
               <Text style={styles.accountBalance}>
@@ -371,22 +432,54 @@ export default function AccountDetailsScreen() {
                 {!isManualAccount ? (
                   <>
                     <Text style={[styles.sectionTitle, styles.connectionSectionTitle]}>Connection info</Text>
-                    {accountConnection?.connectedFullName ? (
-                      <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
-                    ) : null}
-                    <Text style={styles.accountMeta}>
-                      Connected bank: {accountConnection?.providerDisplayName ?? "Not linked yet"}
-                    </Text>
-                    <Text style={styles.accountMeta}>
-                      Connection provider: {accountConnection?.provider ?? "TrueLayer"}
-                    </Text>
-                    <Text style={styles.accountMeta}>
-                      Last synced at: {formatDateTime(accountConnection?.lastSuccessfulSyncUtc ?? accountConnection?.lastSyncAttemptedUtc)}
-                    </Text>
+                    {connectionDetailsLoadState === "loading" ? (
+                      <SkeletonBlock style={styles.connectionSkeleton} />
+                    ) : connectionDetailsLoadState === "error" ? (
+                      <Text style={styles.accountMeta}>Connection details are temporarily unavailable.</Text>
+                    ) : (
+                      <>
+                        {accountConnection?.connectedFullName ? (
+                          <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
+                        ) : null}
+                        <Text style={styles.accountMeta}>
+                          Connected bank: {accountConnection?.providerDisplayName ?? "Not linked yet"}
+                        </Text>
+                        <Text style={styles.accountMeta}>
+                          Connection provider: {accountConnection?.provider ?? "TrueLayer"}
+                        </Text>
+                        <Text style={styles.accountMeta}>
+                          Last synced at: {formatDateTime(accountConnection?.lastSuccessfulSyncUtc ?? accountConnection?.lastSyncAttemptedUtc)}
+                        </Text>
+                      </>
+                    )}
                   </>
                 ) : null}
               </View>
             </GlassCard>
+
+            {connectionDetailsError ? (
+              <View style={styles.sectionStatus}>
+                <Banner
+                  accessibilityLiveRegion="polite"
+                  tone="warning"
+                  title={connectionDetailsLoadState === "stale"
+                    ? "Bank details may be out of date"
+                    : "Some bank details are unavailable"}
+                  message="Your balance and account actions remain visible while this section is retried."
+                />
+                <Button
+                  variant="secondary"
+                  label="Retry bank details"
+                  isLoading={connectionsQuery.isFetching || linkedAccountsQuery.isFetching}
+                  onPress={() => {
+                    void Promise.all([
+                      connectionsQuery.refetch(),
+                      linkedAccountsQuery.refetch()
+                    ]);
+                  }}
+                />
+              </View>
+            ) : null}
 
             <View style={styles.primaryActions}>
               {!isManualAccount ? (
@@ -409,48 +502,139 @@ export default function AccountDetailsScreen() {
                 onPress={() => router.push("/(tabs)/accounts/support")}
               />
             </View>
-            {!isManualAccount && relatedCards.length > 0 ? (
-              <GlassCard style={styles.recurringCard}>
-                <Text style={styles.sectionTitle}>Linked cards</Text>
-                {relatedCards.map((card) => (
-                  <View key={card.id} style={styles.recurringRow}>
-                    <Text style={styles.recurringTitle}>{card.displayName}</Text>
-                    <Text style={styles.accountMeta}>
-                      {[card.cardNetwork, card.cardType, card.cardNumberLastFour ? `**** ${card.cardNumberLastFour}` : null]
-                        .filter(Boolean)
-                        .join(" | ")}
-                    </Text>
-                    <Text style={styles.accountMeta}>
-                      Balance:{" "}
-                      {card.latestCurrent !== null
-                        ? formatCurrency(card.latestCurrent, card.currency)
-                        : "Unavailable"}
-                    </Text>
+            {!isManualAccount && linkedCardsLoadState === "loading" ? (
+              <SkeletonBlock style={styles.linkedCardsSkeleton} />
+            ) : !isManualAccount && linkedCardsLoadState === "error" ? (
+              <View style={styles.sectionStatus}>
+                <Banner
+                  accessibilityLiveRegion="polite"
+                  tone="warning"
+                  title="Linked cards are unavailable"
+                  message="The rest of this account remains visible."
+                />
+                <Button
+                  variant="secondary"
+                  label="Retry linked cards"
+                  isLoading={linkedAccountsQuery.isFetching || linkedCardsQuery.isFetching}
+                  onPress={() => {
+                    void Promise.all([
+                      linkedAccountsQuery.refetch(),
+                      linkedCardsQuery.refetch()
+                    ]);
+                  }}
+                />
+              </View>
+            ) : !isManualAccount ? (
+              <>
+                {linkedCardsLoadState === "stale" ? (
+                  <View style={styles.sectionStatus}>
+                    <Banner
+                      accessibilityLiveRegion="polite"
+                      tone="warning"
+                      title="Linked cards may be out of date"
+                      message="The last available card details remain visible while refresh is retried."
+                    />
+                    <Button
+                      variant="secondary"
+                      label="Retry linked cards"
+                      isLoading={linkedAccountsQuery.isFetching || linkedCardsQuery.isFetching}
+                      onPress={() => {
+                        void Promise.all([
+                          linkedAccountsQuery.refetch(),
+                          linkedCardsQuery.refetch()
+                        ]);
+                      }}
+                    />
                   </View>
-                ))}
-              </GlassCard>
+                ) : null}
+                {relatedCards.length > 0 ? (
+                  <GlassCard style={styles.recurringCard}>
+                    <Text style={styles.sectionTitle}>Linked cards</Text>
+                    {relatedCards.map((card) => (
+                      <View key={card.id} style={styles.recurringRow}>
+                        <Text style={styles.recurringTitle}>{card.displayName}</Text>
+                        <Text style={styles.accountMeta}>
+                          {[card.cardNetwork, card.cardType, card.cardNumberLastFour ? `**** ${card.cardNumberLastFour}` : null]
+                            .filter(Boolean)
+                            .join(" | ")}
+                        </Text>
+                        <Text style={styles.accountMeta}>
+                          Balance:{" "}
+                          {card.latestCurrent !== null
+                            ? formatCurrency(card.latestCurrent, card.currency)
+                            : "Unavailable"}
+                        </Text>
+                      </View>
+                    ))}
+                  </GlassCard>
+                ) : null}
+              </>
             ) : null}
 
             <SectionHeader title="Recent transactions" />
             <View style={styles.transactionsWrap}>
-              {transactions.length > 0 ? (
-                transactions.map((transaction, index) => (
-                  <TransactionRow
-                    key={transaction.id}
-                    transaction={transaction}
-                    index={index}
-                    onPress={() => router.push(`/(tabs)/activity/${transaction.id}` as never)}
+              {transactionsLoadState === "loading" ? (
+                <>
+                  <SkeletonBlock style={styles.transactionSkeleton} />
+                  <SkeletonBlock style={styles.transactionSkeleton} />
+                </>
+              ) : transactionsLoadState === "error" ? (
+                <View style={styles.sectionStatus}>
+                  <Banner
+                    accessibilityLiveRegion="polite"
+                    tone="error"
+                    title="Recent activity is unavailable"
+                    message="Account details and statement tools remain visible."
                   />
-                ))
+                  <Button
+                    variant="secondary"
+                    label="Retry recent activity"
+                    isLoading={transactionsQuery.isFetching}
+                    onPress={() => {
+                      void transactionsQuery.refetch();
+                    }}
+                  />
+                </View>
               ) : (
-                <EmptyState
-                  title="No transactions yet"
-                  message={
-                    isManualAccount
-                      ? "This legacy account is read-only."
-                      : "Transactions will appear after the connected bank finishes syncing."
-                  }
-                />
+                <>
+                  {transactionsLoadState === "stale" ? (
+                    <View style={styles.sectionStatus}>
+                      <Banner
+                        accessibilityLiveRegion="polite"
+                        tone="warning"
+                        title="Recent activity may be out of date"
+                        message="The last available transactions remain visible while refresh is retried."
+                      />
+                      <Button
+                        variant="secondary"
+                        label="Retry recent activity"
+                        isLoading={transactionsQuery.isFetching}
+                        onPress={() => {
+                          void transactionsQuery.refetch();
+                        }}
+                      />
+                    </View>
+                  ) : null}
+                  {transactions.length > 0 ? (
+                    transactions.map((transaction, index) => (
+                      <TransactionRow
+                        key={transaction.id}
+                        transaction={transaction}
+                        index={index}
+                        onPress={() => router.push(`/(tabs)/activity/${transaction.id}` as never)}
+                      />
+                    ))
+                  ) : (
+                    <EmptyState
+                      title="No transactions yet"
+                      message={
+                        isManualAccount
+                          ? "This legacy account is read-only."
+                          : "Transactions will appear after the connected bank finishes syncing."
+                      }
+                    />
+                  )}
+                </>
               )}
             </View>
           </>
@@ -502,6 +686,10 @@ const styles = createRuntimeStyleSheet(() => ({
     color: palette.textSecondary,
     ...typography.body2
   },
+  connectionSkeleton: {
+    height: 72,
+    borderRadius: 6
+  },
   sectionTitle: {
     color: palette.textPrimary,
     ...typography.bodyStrong
@@ -524,6 +712,17 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   transactionsWrap: {
     gap: spacing[12]
+  },
+  transactionSkeleton: {
+    height: 76,
+    borderRadius: 6
+  },
+  linkedCardsSkeleton: {
+    height: 112,
+    borderRadius: 6
+  },
+  sectionStatus: {
+    gap: spacing[8]
   },
   loadingWrap: {
     gap: spacing[12]
