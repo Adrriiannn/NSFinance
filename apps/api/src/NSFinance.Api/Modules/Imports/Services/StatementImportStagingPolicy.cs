@@ -13,14 +13,15 @@ public static class StatementImportStagingPolicy
     public const int MaximumMappingJsonBytes = 16 * 1024;
     public const int MaximumSourceEvidenceJsonBytes = 4 * 1024;
 
-    private static readonly HashSet<string> AllowedEvidenceProperties = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> AllowedEvidenceValueProperties = new(StringComparer.Ordinal)
     {
         "date",
         "description",
         "amount",
         "debit",
         "credit",
-        "currency"
+        "currency",
+        "reference"
     };
 
     public static ServiceError? Validate(StageStatementImportBatchCommand command)
@@ -279,15 +280,61 @@ public static class StatementImportStagingPolicy
 
         using (document)
         {
-            foreach (var property in document!.RootElement.EnumerateObject())
+            var properties = document!.RootElement.EnumerateObject().ToList();
+            var propertyNames = new HashSet<string>(StringComparer.Ordinal);
+            var truncatedFields = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in properties)
             {
-                if (!AllowedEvidenceProperties.Contains(property.Name)
-                    || property.Value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)
-                    || (property.Value.ValueKind == JsonValueKind.String
-                        && property.Value.GetString()!.Length > 1_024))
+                if (!propertyNames.Add(property.Name))
                 {
                     return false;
                 }
+
+                if (AllowedEvidenceValueProperties.Contains(property.Name))
+                {
+                    if (property.Value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)
+                        || (property.Value.ValueKind == JsonValueKind.String
+                            && property.Value.GetString()!.Length > 1_024))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (property.Name == "version")
+                {
+                    if (property.Value.ValueKind != JsonValueKind.Number
+                        || !property.Value.TryGetInt32(out var version)
+                        || version != 1)
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (property.Name != "truncatedFields"
+                    || property.Value.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                foreach (var item in property.Value.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String
+                        || item.GetString() is not { } fieldName
+                        || !AllowedEvidenceValueProperties.Contains(fieldName)
+                        || !truncatedFields.Add(fieldName))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (truncatedFields.Any(field => !propertyNames.Contains(field)))
+            {
+                return false;
             }
         }
 

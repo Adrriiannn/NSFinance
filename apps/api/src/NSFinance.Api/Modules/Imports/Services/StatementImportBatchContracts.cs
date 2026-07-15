@@ -29,3 +29,10 @@ public sealed record StageStatementImportBatchCommand(
     string Locale,
     string TimeZoneId,
     IReadOnlyList<StageStatementImportRowCommand> Rows);
+
+public sealed record StatementImportRowsQuery(
+    string? Cursor = null,
+    int PageSize = 50,
+    string? ValidationStatus = null,
+    string? DuplicateClassification = null,
+    string? ReviewDisposition = null);

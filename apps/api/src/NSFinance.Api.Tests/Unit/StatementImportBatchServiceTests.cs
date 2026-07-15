@@ -44,8 +44,24 @@ public sealed class StatementImportBatchServiceTests
         Assert.Equal(0, result.Value.ExactDuplicateRowCount);
         Assert.Equal(1, result.Value.LikelyDuplicateRowCount);
         Assert.Equal(1, result.Value.IncludedRowCount);
-        Assert.Equal([1, 2, 3], result.Value.Rows.Select(row => row.RowNumber));
         Assert.Equal(StatementImportBatchStatuses.ReadyForReview, result.Value.Status);
+
+        var firstPage = await service.GetRowsAsync(
+            result.Value.Id,
+            new StatementImportRowsQuery(PageSize: 2),
+            CancellationToken.None);
+        var secondPage = await service.GetRowsAsync(
+            result.Value.Id,
+            new StatementImportRowsQuery(Cursor: firstPage.Value!.NextCursor, PageSize: 2),
+            CancellationToken.None);
+
+        Assert.True(firstPage.Succeeded);
+        Assert.Equal([1, 2], firstPage.Value!.Items.Select(row => row.RowNumber));
+        Assert.Equal(3, firstPage.Value.TotalMatchingRows);
+        Assert.NotNull(firstPage.Value.NextCursor);
+        Assert.True(secondPage.Succeeded);
+        Assert.Equal([3], secondPage.Value!.Items.Select(row => row.RowNumber));
+        Assert.Null(secondPage.Value.NextCursor);
 
         var stored = await dbContext.ImportJobs.Include(item => item.Rows).SingleAsync();
         Assert.Equal(ImportJobKinds.StatementCsv, stored.Kind);
@@ -114,11 +130,17 @@ public sealed class StatementImportBatchServiceTests
         var staged = await CreateService(dbContext, ownerId)
             .StageAsync(BuildCommand(accountId), CancellationToken.None);
 
-        var foreignRead = await CreateService(dbContext, otherId)
-            .GetAsync(staged.Value!.Id, CancellationToken.None);
+        var foreignService = CreateService(dbContext, otherId);
+        var foreignRead = await foreignService.GetAsync(staged.Value!.Id, CancellationToken.None);
+        var foreignRows = await foreignService.GetRowsAsync(
+            staged.Value.Id,
+            new StatementImportRowsQuery(),
+            CancellationToken.None);
 
         Assert.False(foreignRead.Succeeded);
         Assert.Equal("statement_import_batch_not_found", foreignRead.Error!.Code);
+        Assert.False(foreignRows.Succeeded);
+        Assert.Equal("statement_import_batch_not_found", foreignRows.Error!.Code);
     }
 
     [Fact]
@@ -153,14 +175,46 @@ public sealed class StatementImportBatchServiceTests
         var userId = await SeedUserAsync(dbContext, "owner@local");
         var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
 
-        var result = await CreateService(dbContext, userId)
-            .StageAsync(BuildCommand(accountId), CancellationToken.None);
+        var service = CreateService(dbContext, userId);
+        var result = await service.StageAsync(BuildCommand(accountId), CancellationToken.None);
+        var rows = await service.GetRowsAsync(
+            result.Value!.Id,
+            new StatementImportRowsQuery(),
+            CancellationToken.None);
 
         Assert.True(result.Succeeded);
-        var row = Assert.Single(result.Value!.Rows);
+        Assert.True(rows.Succeeded);
+        var row = Assert.Single(rows.Value!.Items);
         Assert.Equal(new DateOnly(2026, 7, 1), row.EffectiveDate);
         Assert.Null(row.EffectiveAtUtc);
         Assert.Equal(StatementImportTimestampPrecisions.Date, row.TimestampPrecision);
+    }
+
+    [Fact]
+    public async Task GetRowsAsync_RejectsInvalidPagingAndFilters()
+    {
+        await using var dbContext = CreateDbContext();
+        var userId = await SeedUserAsync(dbContext, "owner@local");
+        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
+        var service = CreateService(dbContext, userId);
+        var staged = await service.StageAsync(BuildCommand(accountId), CancellationToken.None);
+
+        var invalidPageSize = await service.GetRowsAsync(
+            staged.Value!.Id,
+            new StatementImportRowsQuery(PageSize: 101),
+            CancellationToken.None);
+        var invalidCursor = await service.GetRowsAsync(
+            staged.Value.Id,
+            new StatementImportRowsQuery(Cursor: "not-a-cursor"),
+            CancellationToken.None);
+        var invalidFilter = await service.GetRowsAsync(
+            staged.Value.Id,
+            new StatementImportRowsQuery(ValidationStatus: "unknown"),
+            CancellationToken.None);
+
+        Assert.Equal("statement_import_page_size_invalid", invalidPageSize.Error!.Code);
+        Assert.Equal("statement_import_cursor_invalid", invalidCursor.Error!.Code);
+        Assert.Equal("statement_import_row_filter_invalid", invalidFilter.Error!.Code);
     }
 
     [Fact]

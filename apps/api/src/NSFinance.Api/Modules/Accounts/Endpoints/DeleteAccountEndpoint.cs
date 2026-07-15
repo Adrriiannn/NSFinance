@@ -10,10 +10,9 @@ public static class DeleteAccountEndpoint
         AccountService accountService,
         CancellationToken cancellationToken)
     {
-        var deleted = await accountService.DeleteAccountAsync(id, cancellationToken);
-        return deleted
+        var result = await accountService.DeleteAccountAsync(id, cancellationToken);
+        return result.Succeeded
             ? Results.NoContent()
-            : Results.NotFound(new ApiErrorResponse("Account not found.", "account_not_found"));
+            : result.Error!.ToApiError();
     }
 }
-

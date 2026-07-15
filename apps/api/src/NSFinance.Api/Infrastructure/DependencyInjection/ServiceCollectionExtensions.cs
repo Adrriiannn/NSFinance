@@ -25,6 +25,8 @@ using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.Insights.Services;
+using NSFinance.Api.Modules.Imports.Mapping;
+using NSFinance.Api.Modules.Imports.Parsing;
 using NSFinance.Api.Modules.Imports.Services;
 using NSFinance.Api.Modules.Policies.Services;
 using NSFinance.Api.Modules.Support.Services;
@@ -523,7 +525,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SupportService>();
         services.AddScoped<AccountBalanceReadService>();
         services.AddScoped<AccountService>();
+        services.AddSingleton<IStatementImportMappingEngine, StatementImportMappingEngine>();
+        services.AddSingleton<IStatementCsvParser, StatementCsvParser>();
         services.AddScoped<StatementImportBatchService>();
+        services.AddScoped<StatementImportUploadService>();
+        services.AddScoped<StatementImportEvidenceCleanupService>();
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();
         services.AddScoped<DashboardService>();
@@ -582,6 +588,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PolicyDataSeeder>();
         services.AddHostedService<DatabaseInitializationHostedService>();
         services.AddHostedService<TransactionalMessageBackgroundWorker>();
+        services.AddHostedService<StatementImportEvidenceCleanupBackgroundWorker>();
 
         return services;
     }
@@ -690,6 +697,17 @@ public static class ServiceCollectionExtensions
                         QueueLimit = 0
                     }));
 
+            options.AddPolicy("statement-import-upload", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: ResolveAuthenticatedPartition(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 6,
+                        Window = TimeSpan.FromMinutes(5),
+                        QueueLimit = 0
+                    }));
+
             options.AddPolicy("provider-callback", httpContext =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     partitionKey: ResolveClientPartition(httpContext),
@@ -730,6 +748,15 @@ public static class ServiceCollectionExtensions
         return httpContext.Connection.RemoteIpAddress?.ToString()
             ?? httpContext.Request.Headers.Host.ToString()
             ?? "unknown";
+    }
+
+    private static string ResolveAuthenticatedPartition(HttpContext httpContext)
+    {
+        var subject = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        return string.IsNullOrWhiteSpace(subject)
+            ? $"client:{ResolveClientPartition(httpContext)}"
+            : $"user:{subject}";
     }
 
     private static void OverrideIfSet(

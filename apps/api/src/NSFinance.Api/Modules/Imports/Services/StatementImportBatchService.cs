@@ -196,7 +196,6 @@ public sealed class StatementImportBatchService(
     {
         var batch = await dbContext.ImportJobs
             .AsNoTracking()
-            .Include(item => item.Rows)
             .SingleOrDefaultAsync(
                 item => item.Id == batchId
                     && item.UserId == currentUserProvider.UserId
@@ -210,6 +209,106 @@ public sealed class StatementImportBatchService(
             : ServiceResult<StatementImportBatchDto>.Ok(ToDto(batch, wasReplay: false));
     }
 
+    public async Task<ServiceResult<StatementImportRowPageDto>> GetRowsAsync(
+        Guid batchId,
+        StatementImportRowsQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (query.PageSize is < 1 or > 100)
+        {
+            return ServiceResult<StatementImportRowPageDto>.Fail(
+                "Page size must be between 1 and 100.",
+                "statement_import_page_size_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        if (!StatementImportRowCursor.TryDecode(query.Cursor, out var afterRowNumber))
+        {
+            return ServiceResult<StatementImportRowPageDto>.Fail(
+                "Statement import row cursor is invalid.",
+                "statement_import_cursor_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var validationStatus = NormalizeOptionalToken(query.ValidationStatus);
+        var duplicateClassification = NormalizeOptionalToken(query.DuplicateClassification);
+        var reviewDisposition = NormalizeOptionalToken(query.ReviewDisposition);
+        if (!IsAllowedFilter(
+                validationStatus,
+                StatementImportValidationStatuses.Valid,
+                StatementImportValidationStatuses.Invalid)
+            || !IsAllowedFilter(
+                duplicateClassification,
+                StatementImportDuplicateClassifications.None,
+                StatementImportDuplicateClassifications.Exact,
+                StatementImportDuplicateClassifications.Likely)
+            || !IsAllowedFilter(
+                reviewDisposition,
+                StatementImportReviewDispositions.Included,
+                StatementImportReviewDispositions.Excluded,
+                StatementImportReviewDispositions.Pending))
+        {
+            return ServiceResult<StatementImportRowPageDto>.Fail(
+                "Statement import row filter is invalid.",
+                "statement_import_row_filter_invalid",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var batchExists = await dbContext.ImportJobs
+            .AsNoTracking()
+            .AnyAsync(
+                item => item.Id == batchId
+                    && item.UserId == currentUserProvider.UserId
+                    && item.Kind == ImportJobKinds.StatementCsv,
+                cancellationToken);
+        if (!batchExists)
+        {
+            return ServiceResult<StatementImportRowPageDto>.Fail(
+                "Statement import batch not found.",
+                "statement_import_batch_not_found",
+                StatusCodes.Status404NotFound);
+        }
+
+        var filteredRows = dbContext.StatementImportRows
+            .AsNoTracking()
+            .Where(row => row.ImportJobId == batchId);
+        if (validationStatus is not null)
+        {
+            filteredRows = filteredRows.Where(row => row.ValidationStatus == validationStatus);
+        }
+        if (duplicateClassification is not null)
+        {
+            filteredRows = filteredRows.Where(
+                row => row.DuplicateClassification == duplicateClassification);
+        }
+        if (reviewDisposition is not null)
+        {
+            filteredRows = filteredRows.Where(row => row.ReviewDisposition == reviewDisposition);
+        }
+
+        var totalMatchingRows = await filteredRows.CountAsync(cancellationToken);
+        var pageRows = await filteredRows
+            .Where(row => row.RowNumber > afterRowNumber)
+            .OrderBy(row => row.RowNumber)
+            .Take(query.PageSize + 1)
+            .ToListAsync(cancellationToken);
+        var hasMore = pageRows.Count > query.PageSize;
+        var items = pageRows
+            .Take(query.PageSize)
+            .Select(ToRowDto)
+            .ToList();
+        var nextCursor = hasMore && items.Count > 0
+            ? StatementImportRowCursor.Encode(items[^1].RowNumber)
+            : null;
+
+        return ServiceResult<StatementImportRowPageDto>.Ok(new StatementImportRowPageDto(
+            batchId,
+            items,
+            nextCursor,
+            query.PageSize,
+            totalMatchingRows));
+    }
+
     private Task<ImportJob?> FindExistingAsync(
         Guid accountId,
         string sourceFingerprint,
@@ -219,7 +318,6 @@ public sealed class StatementImportBatchService(
         CancellationToken cancellationToken) =>
         dbContext.ImportJobs
             .AsNoTracking()
-            .Include(item => item.Rows)
             .SingleOrDefaultAsync(
                 item => item.UserId == currentUserProvider.UserId
                     && item.FinancialAccountId == accountId
@@ -254,23 +352,28 @@ public sealed class StatementImportBatchService(
             batch.CommittedUtc,
             batch.UndoneUtc,
             batch.ExpiresUtc,
-            wasReplay,
-            batch.Rows
-                .OrderBy(row => row.RowNumber)
-                .Select(row => new StatementImportRowDto(
-                    row.Id,
-                    row.RowNumber,
-                    row.ValidationStatus,
-                    row.ValidationCode,
-                    row.DuplicateClassification,
-                    row.ReviewDisposition,
-                    row.DuplicateCandidateTransactionId,
-                    row.EffectiveDate,
-                    row.EffectiveAtUtc,
-                    row.TimestampPrecision,
-                    row.Description,
-                    row.Amount,
-                    row.Currency,
-                    row.CommittedTransactionId))
-                .ToList());
+            wasReplay);
+
+    private static StatementImportRowDto ToRowDto(StatementImportRow row) =>
+        new(
+            row.Id,
+            row.RowNumber,
+            row.ValidationStatus,
+            row.ValidationCode,
+            row.DuplicateClassification,
+            row.ReviewDisposition,
+            row.DuplicateCandidateTransactionId,
+            row.EffectiveDate,
+            row.EffectiveAtUtc,
+            row.TimestampPrecision,
+            row.Description,
+            row.Amount,
+            row.Currency,
+            row.CommittedTransactionId);
+
+    private static string? NormalizeOptionalToken(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
+
+    private static bool IsAllowedFilter(string? value, params string[] allowed) =>
+        value is null || allowed.Contains(value, StringComparer.Ordinal);
 }

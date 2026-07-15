@@ -39,5 +39,11 @@ public sealed record StatementImportBatchDto(
     DateTime? CommittedUtc,
     DateTime? UndoneUtc,
     DateTime? ExpiresUtc,
-    bool WasReplay,
-    IReadOnlyList<StatementImportRowDto> Rows);
+    bool WasReplay);
+
+public sealed record StatementImportRowPageDto(
+    Guid BatchId,
+    IReadOnlyList<StatementImportRowDto> Items,
+    string? NextCursor,
+    int PageSize,
+    int TotalMatchingRows);

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using NSFinance.Api.Common.Contracts;
 using NSFinance.Api.Modules.Accounts.DTOs;
 using NSFinance.Api.Modules.Users.Services;
 using NSFinance.Api.Persistence;
@@ -917,7 +918,7 @@ public sealed class AccountService(
         return accounts[0];
     }
 
-    public async Task<bool> DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
+    public async Task<ServiceResult> DeleteAccountAsync(Guid accountId, CancellationToken cancellationToken)
     {
         var account = await dbContext.FinancialAccounts
             .SingleOrDefaultAsync(
@@ -926,11 +927,29 @@ public sealed class AccountService(
 
         if (account is null)
         {
-            return false;
+            return ServiceResult.Fail(
+                "Account not found.",
+                "account_not_found",
+                StatusCodes.Status404NotFound);
+        }
+
+        var hasStatementImportHistory = await dbContext.ImportJobs
+            .AsNoTracking()
+            .AnyAsync(
+                importJob => importJob.UserId == currentUserProvider.UserId
+                    && importJob.FinancialAccountId == account.Id
+                    && importJob.Kind == ImportJobKinds.StatementCsv,
+                cancellationToken);
+        if (hasStatementImportHistory)
+        {
+            return ServiceResult.Fail(
+                "Discard or undo this account's statement imports before deleting it.",
+                "account_has_statement_import_history",
+                StatusCodes.Status409Conflict);
         }
 
         dbContext.FinancialAccounts.Remove(account);
         await dbContext.SaveChangesAsync(cancellationToken);
-        return true;
+        return ServiceResult.Ok();
     }
 }
