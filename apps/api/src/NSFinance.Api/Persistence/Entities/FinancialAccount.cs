@@ -12,4 +12,5 @@ public class FinancialAccount
 
     public User? User { get; set; }
     public ICollection<Transaction> Transactions { get; set; } = [];
+    public ICollection<ImportJob> ImportJobs { get; set; } = [];
 }

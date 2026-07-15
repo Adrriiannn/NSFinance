@@ -1,0 +1,31 @@
+namespace NSFinance.Api.Modules.Imports.Services;
+
+public sealed record StageStatementImportRowCommand(
+    int RowNumber,
+    string RowFingerprint,
+    string? SourceReferenceFingerprint,
+    string ValidationStatus,
+    string? ValidationCode,
+    string DuplicateClassification,
+    string ReviewDisposition,
+    Guid? DuplicateCandidateTransactionId,
+    string SourceEvidenceJson,
+    DateOnly? EffectiveDate,
+    DateTime? EffectiveAtUtc,
+    string? TimestampPrecision,
+    string? Description,
+    decimal? Amount,
+    string? Currency);
+
+public sealed record StageStatementImportBatchCommand(
+    Guid AccountId,
+    string FileName,
+    long FileSizeBytes,
+    string SourceFingerprint,
+    string MappingFingerprint,
+    string ParserVersion,
+    string MappingVersion,
+    string MappingJson,
+    string Locale,
+    string TimeZoneId,
+    IReadOnlyList<StageStatementImportRowCommand> Rows);

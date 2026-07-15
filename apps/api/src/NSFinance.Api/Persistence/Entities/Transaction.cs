@@ -46,4 +46,5 @@ public class Transaction
 
     public FinancialAccount? FinancialAccount { get; set; }
     public TransactionCategory? Category { get; set; }
+    public StatementImportRow? StatementImportRow { get; set; }
 }

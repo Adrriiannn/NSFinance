@@ -11,6 +11,8 @@ public class FinancialAccountConfiguration : IEntityTypeConfiguration<FinancialA
         builder.ToTable("FinancialAccounts");
 
         builder.HasKey(x => x.Id);
+        builder.HasAlternateKey(x => new { x.Id, x.UserId })
+            .HasName("AK_FinancialAccounts_Id_UserId");
         builder.Property(x => x.Name).HasMaxLength(120).IsRequired();
         builder.Property(x => x.Type).HasMaxLength(50).IsRequired();
         builder.Property(x => x.Currency).HasMaxLength(3).IsRequired();

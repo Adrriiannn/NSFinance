@@ -25,6 +25,7 @@ using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.Insights.Services;
+using NSFinance.Api.Modules.Imports.Services;
 using NSFinance.Api.Modules.Policies.Services;
 using NSFinance.Api.Modules.Support.Services;
 using NSFinance.Api.Modules.Transactions.Services;
@@ -522,6 +523,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SupportService>();
         services.AddScoped<AccountBalanceReadService>();
         services.AddScoped<AccountService>();
+        services.AddScoped<StatementImportBatchService>();
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();
         services.AddScoped<DashboardService>();

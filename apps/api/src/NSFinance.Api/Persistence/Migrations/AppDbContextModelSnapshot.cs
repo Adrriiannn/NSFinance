@@ -1907,6 +1907,9 @@ namespace NSFinance.Api.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("Id", "UserId")
+                        .HasName("AK_FinancialAccounts_Id_UserId");
+
                     b.HasIndex("Source");
 
                     b.HasIndex("UserId");
@@ -1999,27 +2002,138 @@ namespace NSFinance.Api.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AccountCurrency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<int>("CommittedRowCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CommittedUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("CreatedUtc")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<int>("ExactDuplicateRowCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FailedUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(96)
+                        .HasColumnType("character varying(96)");
 
                     b.Property<string>("FileName")
                         .IsRequired()
                         .HasMaxLength(260)
                         .HasColumnType("character varying(260)");
 
+                    b.Property<long?>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("FinancialAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("IncludedRowCount")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("InvalidRowCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("legacy");
+
+                    b.Property<int>("LikelyDuplicateRowCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Locale")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("MappingFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("MappingJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("MappingVersion")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ParserVersion")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime?>("ReadyForReviewUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Revision")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<string>("SourceFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("TimeZoneId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("TotalRowCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UndoneUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("ValidRowCount")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("FinancialAccountId", "CreatedUtc");
+
+                    b.HasIndex("FinancialAccountId", "UserId");
+
+                    b.HasIndex("Status", "ExpiresUtc");
+
+                    b.HasIndex("UserId", "FinancialAccountId", "SourceFingerprint")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ImportJobs_CommittedStatementSource")
+                        .HasFilter("\"Kind\" = 'statement_csv' AND \"Status\" = 'committed'");
+
+                    b.HasIndex("UserId", "FinancialAccountId", "Kind", "SourceFingerprint", "MappingFingerprint", "ParserVersion", "MappingVersion")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ImportJobs_StatementIdempotency")
+                        .HasFilter("\"Kind\" = 'statement_csv'");
+
+                    b.HasIndex("UserId", "Kind", "Status", "UpdatedUtc");
 
                     b.ToTable("ImportJobs", (string)null);
                 });
@@ -3791,6 +3905,111 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.ToTable("SessionRefreshTokens", (string)null);
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.StatementImportRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("Amount")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("CommittedTransactionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<Guid?>("DuplicateCandidateTransactionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DuplicateClassification")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime?>("EffectiveAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly?>("EffectiveDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("EvidenceExpiresUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ImportJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReviewDisposition")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("RowFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("RowNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SourceEvidenceJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("SourceReferenceFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TimestampPrecision")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("ValidationCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ValidationStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CommittedTransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_StatementImportRows_CommittedTransaction")
+                        .HasFilter("\"CommittedTransactionId\" IS NOT NULL");
+
+                    b.HasIndex("DuplicateCandidateTransactionId");
+
+                    b.HasIndex("EvidenceExpiresUtc");
+
+                    b.HasIndex("ImportJobId", "RowFingerprint");
+
+                    b.HasIndex("ImportJobId", "RowNumber")
+                        .IsUnique()
+                        .HasDatabaseName("UX_StatementImportRows_BatchRow");
+
+                    b.HasIndex("ImportJobId", "ValidationStatus", "ReviewDisposition");
+
+                    b.ToTable("StatementImportRows", (string)null);
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.SupportRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5273,11 +5492,19 @@ namespace NSFinance.Api.Persistence.Migrations
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ImportJob", b =>
                 {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.FinancialAccount", "FinancialAccount")
+                        .WithMany("ImportJobs")
+                        .HasForeignKey("FinancialAccountId", "UserId")
+                        .HasPrincipalKey("Id", "UserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
                         .WithMany("ImportJobs")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("FinancialAccount");
 
                     b.Navigation("User");
                 });
@@ -5582,6 +5809,31 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Navigation("Session");
                 });
 
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.StatementImportRow", b =>
+                {
+                    b.HasOne("NSFinance.Api.Persistence.Entities.Transaction", "CommittedTransaction")
+                        .WithOne("StatementImportRow")
+                        .HasForeignKey("NSFinance.Api.Persistence.Entities.StatementImportRow", "CommittedTransactionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.Transaction", "DuplicateCandidateTransaction")
+                        .WithMany()
+                        .HasForeignKey("DuplicateCandidateTransactionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("NSFinance.Api.Persistence.Entities.ImportJob", "ImportJob")
+                        .WithMany("Rows")
+                        .HasForeignKey("ImportJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CommittedTransaction");
+
+                    b.Navigation("DuplicateCandidateTransaction");
+
+                    b.Navigation("ImportJob");
+                });
+
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.SupportRequest", b =>
                 {
                     b.HasOne("NSFinance.Api.Persistence.Entities.User", "User")
@@ -5782,12 +6034,19 @@ namespace NSFinance.Api.Persistence.Migrations
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.FinancialAccount", b =>
                 {
+                    b.Navigation("ImportJobs");
+
                     b.Navigation("Transactions");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.IdentityChallenge", b =>
                 {
                     b.Navigation("Message");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.ImportJob", b =>
+                {
+                    b.Navigation("Rows");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.LinkedBankAccount", b =>
@@ -5857,6 +6116,11 @@ namespace NSFinance.Api.Persistence.Migrations
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TotpAuthenticator", b =>
                 {
                     b.Navigation("RecoveryCodes");
+                });
+
+            modelBuilder.Entity("NSFinance.Api.Persistence.Entities.Transaction", b =>
+                {
+                    b.Navigation("StatementImportRow");
                 });
 
             modelBuilder.Entity("NSFinance.Api.Persistence.Entities.TransactionCategory", b =>
