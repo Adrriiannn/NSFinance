@@ -67,8 +67,6 @@ const typography = {
 } as const;
 
 export function createThemeTokens(theme: SemanticTheme) {
-  const isDarkTheme = theme.isDark;
-
   const palette = {
     appBackground: theme.colors.canvas,
     elevatedBackground: theme.colors.elevatedCanvas,
@@ -80,6 +78,7 @@ export function createThemeTokens(theme: SemanticTheme) {
     borderStrong: theme.colors.border.strong,
     primary: theme.colors.action.primary,
     primaryGlow: theme.colors.action.primaryGlow,
+    onPrimaryAction: theme.colors.onAction.primary,
     accent: theme.colors.accent.primary,
     accentStrong: theme.colors.accent.primaryStrong,
     textPrimary: theme.colors.text.primary,
@@ -119,14 +118,16 @@ export function createThemeTokens(theme: SemanticTheme) {
     controlSurfaceStrong: surfaces.fieldStrong,
     primaryFill: theme.colors.action.primary,
     primaryBorder: theme.colors.action.primary,
-    activeFill: isDarkTheme ? "rgba(242, 140, 40, 0.18)" : "rgba(184, 94, 0, 0.12)",
-    activeBorder: isDarkTheme ? "rgba(242, 140, 40, 0.32)" : "rgba(184, 94, 0, 0.24)",
+    activeFill: theme.colors.action.button.ghost.active.background,
+    activeBorder: theme.colors.action.button.ghost.active.border,
+    focusBorder: theme.colors.border.focus,
+    button: theme.colors.action.button,
     pressedScale: 0.985
   } as const;
 
   return {
     theme,
-    isDarkTheme,
+    isDarkTheme: theme.isDark,
     palette,
     surfaces,
     radius,

@@ -1739,6 +1739,7 @@ export default function CashflowCompanionScreen() {
             <View style={styles.historyHeader}>
               <Text style={styles.historyTitle}>Chats</Text>
               <IconButton
+                accessibilityLabel="Close chat history"
                 onPress={() => setHistoryVisible(false)}
                 icon={<Ionicons name="close" size={16} color={palette.textPrimary} />}
               />

@@ -1,4 +1,7 @@
 export const sizing = {
+  touchTarget: {
+    minimum: 48
+  },
   button: {
     heights: {
       compact: 36,

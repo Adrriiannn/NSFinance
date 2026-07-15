@@ -1,27 +1,62 @@
 import { useMemo } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
+import type {
+  SemanticButtonStateColors,
+  SemanticButtonStates,
+  SemanticButtonVariant
+} from "../../../theme/semantic";
 import { useThemeTokens } from "../../../theme/tokens";
+import type { ButtonVisualState } from "./button.states";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive" | "icon" | "compact" | "pillAction";
+export type ButtonVariant = SemanticButtonVariant;
+
+type ButtonStatePreset = {
+  container: ViewStyle;
+  label: TextStyle;
+  activityColor: string;
+};
 
 type ButtonPreset = {
   container: ViewStyle;
   label: TextStyle;
-  activityColor: string;
+  states: Readonly<Record<ButtonVisualState, ButtonStatePreset>>;
   iconOnly?: boolean;
 };
 
 type ButtonPresetStateStyles = {
   buttonPresets: Record<ButtonVariant, ButtonPreset>;
   buttonStateStyles: {
+    focused: ViewStyle;
     pressed: ViewStyle;
-    disabled: ViewStyle;
   };
 };
 
+function createButtonStatePreset(colors: SemanticButtonStateColors): ButtonStatePreset {
+  return {
+    container: {
+      backgroundColor: colors.background,
+      borderColor: colors.border
+    },
+    label: {
+      color: colors.foreground
+    },
+    activityColor: colors.foreground
+  };
+}
+
+function createButtonStatePresets(
+  states: SemanticButtonStates
+): Readonly<Record<ButtonVisualState, ButtonStatePreset>> {
+  return {
+    idle: createButtonStatePreset(states.idle),
+    active: createButtonStatePreset(states.active),
+    disabled: createButtonStatePreset(states.disabled),
+    loading: createButtonStatePreset(states.loading)
+  };
+}
+
 export function useButtonPresetStyles(): ButtonPresetStateStyles {
-  const { borders, controls, opacity, palette, radius, sizing, spacing, surfaces, typography } =
-    useThemeTokens();
+  const { borders, controls, radius, sizing, spacing, typography } = useThemeTokens();
 
   return useMemo(() => {
     const baseContainer: ViewStyle = {
@@ -32,129 +67,115 @@ export function useButtonPresetStyles(): ButtonPresetStateStyles {
       gap: spacing[8]
     };
 
+    const textButtonContainer: ViewStyle = {
+      ...baseContainer,
+      paddingVertical: spacing[8]
+    };
+
     const baseLabel: TextStyle = {
       ...typography.buttonLabel,
       textAlign: "center"
     };
 
+    const standardMinHeight = Math.max(
+      sizing.button.heights.standard,
+      sizing.touchTarget.minimum
+    );
+    const compactMinHeight = Math.max(
+      sizing.button.heights.compact,
+      sizing.touchTarget.minimum
+    );
+    const pillActionMinHeight = Math.max(
+      sizing.button.heights.pillAction,
+      sizing.touchTarget.minimum
+    );
+    const iconSize = Math.max(sizing.button.heights.icon, sizing.touchTarget.minimum);
+
     const buttonPresets: Record<ButtonVariant, ButtonPreset> = {
       primary: {
         container: {
-          ...baseContainer,
-          minHeight: sizing.button.heights.standard,
+          ...textButtonContainer,
+          minHeight: standardMinHeight,
           borderRadius: radius.medium,
-          paddingHorizontal: sizing.button.horizontalPadding.standard,
-          backgroundColor: controls.primaryFill,
-          borderColor: controls.primaryBorder
+          paddingHorizontal: sizing.button.horizontalPadding.standard
         },
-        label: {
-          ...baseLabel,
-          color: "#FFFFFF"
-        },
-        activityColor: "#FFFFFF"
+        label: baseLabel,
+        states: createButtonStatePresets(controls.button.primary)
       },
       secondary: {
         container: {
-          ...baseContainer,
-          minHeight: sizing.button.heights.standard,
+          ...textButtonContainer,
+          minHeight: standardMinHeight,
           borderRadius: radius.medium,
-          paddingHorizontal: sizing.button.horizontalPadding.standard,
-          backgroundColor: surfaces.field,
-          borderColor: palette.border
+          paddingHorizontal: sizing.button.horizontalPadding.standard
         },
-        label: {
-          ...baseLabel,
-          color: palette.textPrimary
-        },
-        activityColor: palette.textPrimary
+        label: baseLabel,
+        states: createButtonStatePresets(controls.button.secondary)
       },
       ghost: {
         container: {
-          ...baseContainer,
-          minHeight: sizing.button.heights.standard,
+          ...textButtonContainer,
+          minHeight: standardMinHeight,
           borderRadius: radius.medium,
-          paddingHorizontal: sizing.button.horizontalPadding.standard,
-          backgroundColor: "transparent",
-          borderColor: "transparent"
+          paddingHorizontal: sizing.button.horizontalPadding.standard
         },
-        label: {
-          ...baseLabel,
-          color: palette.accent
-        },
-        activityColor: palette.accent
+        label: baseLabel,
+        states: createButtonStatePresets(controls.button.ghost)
       },
       destructive: {
         container: {
-          ...baseContainer,
-          minHeight: sizing.button.heights.standard,
+          ...textButtonContainer,
+          minHeight: standardMinHeight,
           borderRadius: radius.medium,
-          paddingHorizontal: sizing.button.horizontalPadding.standard,
-          backgroundColor: "rgba(226, 90, 90, 0.12)",
-          borderColor: "rgba(226, 90, 90, 0.52)"
+          paddingHorizontal: sizing.button.horizontalPadding.standard
         },
-        label: {
-          ...baseLabel,
-          color: palette.textPrimary
-        },
-        activityColor: palette.textPrimary
+        label: baseLabel,
+        states: createButtonStatePresets(controls.button.destructive)
       },
       icon: {
         container: {
           ...baseContainer,
-          width: sizing.button.heights.icon,
-          height: sizing.button.heights.icon,
-          borderRadius: radius.medium,
-          backgroundColor: surfaces.field,
-          borderColor: palette.border
+          width: iconSize,
+          height: iconSize,
+          borderRadius: radius.medium
         },
-        label: {
-          ...baseLabel,
-          color: palette.textPrimary
-        },
-        activityColor: palette.textPrimary,
+        label: baseLabel,
+        states: createButtonStatePresets(controls.button.icon),
         iconOnly: true
       },
       compact: {
         container: {
-          ...baseContainer,
-          minHeight: sizing.button.heights.compact,
+          ...textButtonContainer,
+          minHeight: compactMinHeight,
           borderRadius: radius.medium,
-          paddingHorizontal: sizing.button.horizontalPadding.compact,
-          backgroundColor: surfaces.field,
-          borderColor: palette.border
+          paddingHorizontal: sizing.button.horizontalPadding.compact
         },
         label: {
           ...baseLabel,
-          color: palette.textPrimary,
           ...typography.caption,
           fontWeight: "500"
         },
-        activityColor: palette.textPrimary
+        states: createButtonStatePresets(controls.button.compact)
       },
       pillAction: {
         container: {
-          ...baseContainer,
-          minHeight: sizing.button.heights.pillAction,
+          ...textButtonContainer,
+          minHeight: pillActionMinHeight,
           borderRadius: radius.medium,
-          paddingHorizontal: sizing.button.horizontalPadding.standard,
-          backgroundColor: surfaces.field,
-          borderColor: palette.border
+          paddingHorizontal: sizing.button.horizontalPadding.standard
         },
-        label: {
-          ...baseLabel,
-          color: palette.textPrimary
-        },
-        activityColor: palette.textPrimary
+        label: baseLabel,
+        states: createButtonStatePresets(controls.button.pillAction)
       }
     };
 
     const buttonStateStyles = {
-      pressed: {
-        transform: [{ scale: controls.pressedScale }],
-        opacity: opacity.pressed
+      focused: {
+        borderColor: controls.focusBorder,
+        borderWidth: borders.width.focus
       } as ViewStyle,
-      disabled: {
-        opacity: opacity.disabled
+      pressed: {
+        transform: [{ scale: controls.pressedScale }]
       } as ViewStyle
     };
 
@@ -162,5 +183,5 @@ export function useButtonPresetStyles(): ButtonPresetStateStyles {
       buttonPresets,
       buttonStateStyles
     };
-  }, [borders, controls, opacity, palette, radius, sizing, spacing, surfaces, typography]);
+  }, [borders, controls, radius, sizing, spacing, typography]);
 }

@@ -2,11 +2,11 @@ import type { ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { Button } from "./Button";
 
-type IconButtonProps = {
+export type IconButtonProps = {
   icon: ReactNode;
   onPress?: () => void;
   disabled?: boolean;
-  accessibilityLabel?: string;
+  accessibilityLabel: string;
   style?: StyleProp<ViewStyle>;
 };
 
