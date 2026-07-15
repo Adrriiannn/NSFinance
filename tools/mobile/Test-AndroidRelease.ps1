@@ -102,6 +102,7 @@ $mobilePackage = Get-Content -Raw $mobilePackagePath | ConvertFrom-Json
 Assert-Equal $appConfig.expo.android.package "com.nsfinance.mobile" "Android application ID"
 Assert-Equal $appConfig.expo.scheme "nsfinance" "Production application URI scheme"
 Assert-Equal $appConfig.expo.updates.url "https://u.expo.dev/21986a2d-cbfa-4757-bf6d-04eb6aa4f197" "EAS Update URL"
+Assert-Equal $appConfig.expo.updates.requestHeaders.'expo-channel-name' "production" "EAS Update channel"
 if ([int]$appConfig.expo.android.versionCode -lt 1) {
     throw "Android versionCode must be a positive integer."
 }
@@ -173,6 +174,12 @@ Assert-Equal $activityBackgroundNode.InnerText $appConfig.expo.backgroundColor "
 $manifest = Get-Content -Raw $androidManifestPath
 if (-not $manifest.Contains($appConfig.expo.updates.url)) {
     throw "AndroidManifest.xml does not contain the configured EAS Update URL."
+}
+
+$expectedUpdateHeaders = '{&quot;expo-channel-name&quot;:&quot;production&quot;}'
+if (-not $manifest.Contains('android:name="expo.modules.updates.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY"') -or
+    -not $manifest.Contains("android:value=`"$expectedUpdateHeaders`"")) {
+    throw "AndroidManifest.xml does not embed the production EAS Update channel header."
 }
 
 foreach ($requiredManifestValue in @(

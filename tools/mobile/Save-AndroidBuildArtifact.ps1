@@ -58,7 +58,11 @@ $shortCommit = $commit.Substring(0, [Math]::Min(8, $commit.Length))
 $versionName = [string]$appConfig.expo.version
 $versionCode = [string]$appConfig.expo.android.versionCode
 $runtimeVersion = [string]$appConfig.expo.android.runtimeVersion
+$updateChannel = [string]$appConfig.expo.updates.requestHeaders.'expo-channel-name'
 $applicationId = [string]$appConfig.expo.android.package
+if ([string]::IsNullOrWhiteSpace($updateChannel)) {
+    throw "Android artifact metadata requires an explicit Expo update channel."
+}
 $outputPath = [IO.Path]::GetFullPath($OutputDirectory, $repoRoot)
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
@@ -161,7 +165,7 @@ $manifest = [ordered]@{
     appVersion = $versionName
     androidVersionCode = $versionCode
     runtimeVersion = $runtimeVersion
-    updateChannel = "production"
+    updateChannel = $updateChannel
     sourceCommit = $commit
     sourceDirty = $sourceDirty
     githubRunId = [string]$env:GITHUB_RUN_ID

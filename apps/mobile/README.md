@@ -75,6 +75,10 @@ Expected public production values:
 
 ## Expo Updates
 
-`expo-updates`, the production channel, and the runtime contract remain configured.
+`expo-updates`, the sole `production` channel, and the runtime contract remain
+configured. Local release builds embed `expo-channel-name: production`; the
+Android release preflight checks both app config and generated native metadata
+so a build cannot silently query the update service without its channel.
+
 OTA publication is a separate controlled release action and is not performed by
 the APK/AAB build command.

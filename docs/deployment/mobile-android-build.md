@@ -104,11 +104,15 @@ gallery and foreground-location permissions remain for implemented journeys.
 
 ## Faster Compatible Updates
 
-`expo-updates`, the production channel, and runtime version `1.0.0` are already
-configured. After the first APK is installed and smoke-tested, compatible
-JavaScript and bundled-asset changes can use EAS Update instead of rebuilding an
-APK. This must not be automated until update-time production environment values,
-runtime compatibility, rollback, and real-device behavior are proven.
+`expo-updates`, the sole `production` channel, and the app-version runtime policy
+are configured. Local releases embed `expo-channel-name: production` in app and
+native metadata; `Test-AndroidRelease.ps1` rejects missing or divergent channel
+configuration. The current app/runtime version is `1.0.3`.
+
+After the first APK is installed and smoke-tested, compatible JavaScript and
+bundled-asset changes can use EAS Update instead of rebuilding an APK. This must
+not be automated until update-time production values, runtime compatibility,
+rollback, and real-device behavior are proven.
 
 Native dependencies, app configuration, permissions, Gradle, Android source,
 or signing changes still require a new APK and an intentional app/runtime
