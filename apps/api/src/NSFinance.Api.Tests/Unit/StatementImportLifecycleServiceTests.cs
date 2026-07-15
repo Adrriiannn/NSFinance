@@ -667,7 +667,7 @@ public sealed class StatementImportLifecycleServiceTests
             Name = "Statement account",
             Type = "Current",
             Currency = "EUR",
-            Source = FinancialAccountSources.Manual,
+            Source = FinancialAccountSources.ProviderProjected,
             CreatedUtc = UtcNow
         });
         await dbContext.SaveChangesAsync();

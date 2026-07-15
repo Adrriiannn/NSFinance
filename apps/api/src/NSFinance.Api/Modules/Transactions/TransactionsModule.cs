@@ -19,9 +19,6 @@ public static class TransactionsModule
         group.MapGet("/{id:guid}", GetTransactionByIdEndpoint.HandleAsync)
             .WithName("GetTransactionById");
 
-        group.MapPost("/", CreateTransactionEndpoint.HandleAsync)
-            .WithName("CreateTransaction");
-
         group.MapPatch("/{id:guid}", UpdateTransactionMetadataEndpoint.HandleAsync)
             .WithName("UpdateTransactionMetadata");
 

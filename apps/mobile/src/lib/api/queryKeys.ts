@@ -47,6 +47,11 @@ export const queryKeys = {
         }
       ] as const
   },
+  statementImports: {
+    all: ["statement-imports"] as const,
+    batch: (batchId: string) => ["statement-imports", "batch", batchId] as const,
+    rows: (batchId: string) => ["statement-imports", "rows", batchId] as const
+  },
   categories: {
     all: ["categories"] as const
   }

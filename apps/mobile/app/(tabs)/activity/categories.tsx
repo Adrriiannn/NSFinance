@@ -20,7 +20,6 @@ import {
 } from "../../../src/features/expenseTracker/expenseTaxonomySearch";
 import {
   setPendingTransactionDetailCategorySelection,
-  setPendingActivityAddTransactionSubcategorySelection,
   setPendingActivitySearchCategorySelection,
   type ActivitySearchCategorySelection,
   type TransactionDetailCategorySelection
@@ -45,19 +44,16 @@ export default function ActivityCategoryPickerRoute() {
     selectionMode &&
     (
       selectionTarget === "activitySearchCategoryFilter" ||
-      selectionTarget === "transactionDetailCategory" ||
-      selectionTarget === "activityAddTransaction"
+      selectionTarget === "transactionDetailCategory"
     );
   const selectionReturnTransactionId =
     typeof params.selectionReturnTransactionId === "string"
       ? params.selectionReturnTransactionId.trim()
       : "";
-  const selectionReturnPath: "/(tabs)/activity" | "/(tabs)/activity/add" | null =
+  const selectionReturnPath: "/(tabs)/activity" | null =
     selectionTarget === "activitySearchCategoryFilter"
       ? "/(tabs)/activity"
-      : selectionTarget === "activityAddTransaction"
-        ? "/(tabs)/activity/add"
-        : null;
+      : null;
   const taxonomyQuery = useExpenseTrackerTaxonomyQuery();
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -463,12 +459,6 @@ export default function ActivityCategoryPickerRoute() {
     }
 
     if (!pendingSubcategoryId) {
-      return;
-    }
-
-    if (selectionTarget === "activityAddTransaction") {
-      setPendingActivityAddTransactionSubcategorySelection(pendingSubcategoryId);
-      returnToSelectionOrigin();
       return;
     }
 

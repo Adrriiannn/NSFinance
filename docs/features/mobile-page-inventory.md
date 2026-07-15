@@ -25,7 +25,6 @@ This inventory maps every routed surface under `apps/mobile/app` and clarifies w
 | `/(tabs)` | `app/(tabs)/_layout.tsx` | Main tab root | Main app shell. |
 | `/(tabs)/index` | `app/(tabs)/index.tsx` | Main tab root | Default tab redirect/landing. |
 | `/(tabs)/activity` | `app/(tabs)/activity/index.tsx` | Main tab root | Activity root tab. |
-| `/(tabs)/activity/add` | `app/(tabs)/activity/add.tsx` | Modal-only flows | Add transaction flow (tab-scoped route). |
 | `/(tabs)/activity/[id]` | `app/(tabs)/activity/[id].tsx` | Utility/system/auth | Transaction detail route. |
 | `/(tabs)/cashflow` | `app/(tabs)/cashflow/index.tsx` | Main tab root | Cashflow root tab. |
 | `/(tabs)/cashflow/upcoming-payments` | `app/(tabs)/cashflow/upcoming-payments.tsx` | Accounts | Payment schedule surface. |
@@ -44,6 +43,7 @@ This inventory maps every routed surface under `apps/mobile/app` and clarifies w
 | `/(tabs)/companion` | `app/(tabs)/companion/index.tsx` | Main tab root | Companion root tab. |
 | `/(tabs)/accounts` | `app/(tabs)/accounts/index.tsx` | Main tab root | Accounts root tab. |
 | `/(tabs)/accounts/[id]` | `app/(tabs)/accounts/[id].tsx` | Accounts | Account detail route. |
+| `/(tabs)/accounts/import-statement` | `app/(tabs)/accounts/import-statement.tsx` | Accounts | Reviewable CSV import for a connected account. |
 | `/(tabs)/accounts/transfer` | `app/(tabs)/accounts/transfer.tsx` | Accounts | Transfer entry flow. |
 | `/(tabs)/accounts/statements` | `app/(tabs)/accounts/statements.tsx` | Accounts | Statements surface. |
 | `/(tabs)/accounts/profile` | `app/(tabs)/accounts/profile.tsx` | Menu / settings / legal | User profile/settings. |
@@ -57,13 +57,12 @@ This inventory maps every routed surface under `apps/mobile/app` and clarifies w
 | `/legal/open-banking` | `app/legal/open-banking.tsx` | Menu / settings / legal | Legal standalone route. |
 | `/legal/data-rights` | `app/legal/data-rights.tsx` | Menu / settings / legal | Legal standalone route. |
 | `/legal/ai-disclosure` | `app/legal/ai-disclosure.tsx` | Menu / settings / legal | Legal standalone route. |
-| `/modals/add-account` | `app/modals/add-account.tsx` | Modal-only flows | Explicit modal route. |
+| `/modals/add-account` | `app/modals/add-account.tsx` | Banking connection | Legacy redirect into the current bank-link flow. |
 | `/oauthredirect` | `app/oauthredirect.tsx` | Utility/system/auth | OAuth callback handler. |
 
 ## Misplacements and Follow-ups
 - `/(tabs)/accounts/security`: route placement is acceptable, but navigation must not leak users back into `connect-bank`; this pass fixed that back navigation behavior.
 - Legal routes are split between `/(tabs)/accounts/legal-privacy` and `/legal/*`; keep both for now, but unify legal entry points in a follow-up to reduce duplication.
-- `/(tabs)/activity/add` currently behaves as a page route; if product wants full modal semantics, consider moving under `/modals/*` in a dedicated navigation cleanup pass.
 - Planning categories are under planning (`/(tabs)/planning/categories`); if categories become global product objects, consider promoting to a dedicated categories stack.
 
 ## Current Pass Scope Outcome

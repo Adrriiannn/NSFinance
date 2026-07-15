@@ -808,64 +808,6 @@ public sealed class AccountService(
                 x.Source));
     }
 
-    public async Task<AccountDto> CreateAccountAsync(CreateAccountRequest request, CancellationToken cancellationToken)
-    {
-        var utcNow = DateTime.UtcNow;
-
-        var account = new FinancialAccount
-        {
-            Id = Guid.NewGuid(),
-            UserId = currentUserProvider.UserId,
-            Name = request.Name.Trim(),
-            Type = request.Type.Trim(),
-            Currency = request.Currency.Trim().ToUpperInvariant(),
-            Source = FinancialAccountSources.Manual,
-            CreatedUtc = utcNow
-        };
-
-        dbContext.FinancialAccounts.Add(account);
-
-        var openingBalance = request.OpeningBalance.GetValueOrDefault();
-        if (openingBalance != 0)
-        {
-            dbContext.Transactions.Add(new Transaction
-            {
-                Id = Guid.NewGuid(),
-                FinancialAccountId = account.Id,
-                Amount = openingBalance,
-                Currency = account.Currency,
-                Description = "Opening balance",
-                EntryKind = TransactionEntryKinds.OpeningBalanceAdjustment,
-                AnalyticsTreatment = TransactionAnalyticsTreatments.BalanceOnly,
-                BookedAtUtc = utcNow,
-                DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule,
-                DeterministicClassificationRuleKey = "provenance.opening_balance",
-                DeterministicReasonCode = "balance_only_entry",
-                DeterministicClassificationEvaluatedUtc = utcNow,
-                DeterministicClassificationTerminal = true,
-                CreatedUtc = utcNow
-            });
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return await AttachBalanceAsync(new AccountDto(
-            account.Id,
-            account.Name,
-            account.Type,
-            account.Currency,
-            openingBalance,
-            openingBalance == 0 ? 0 : 1,
-            account.CreatedUtc,
-            null,
-            null,
-            null,
-            null,
-            null,
-            false,
-            Source: account.Source), cancellationToken);
-    }
-
     public async Task<AccountDto?> UpdateAccountAsync(
         Guid accountId,
         UpdateAccountRequest request,
@@ -943,7 +885,7 @@ public sealed class AccountService(
         if (hasStatementImportHistory)
         {
             return ServiceResult.Fail(
-                "Discard or undo this account's statement imports before deleting it.",
+                "This account has statement-import history and cannot be deleted.",
                 "account_has_statement_import_history",
                 StatusCodes.Status409Conflict);
         }

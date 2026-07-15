@@ -1,6 +1,5 @@
 import { apiRequest } from "../../lib/api/client";
 import type {
-  CreateTransactionRequest,
   TransactionDto,
   TransactionPageDto,
   TransactionPageRequest,
@@ -50,15 +49,6 @@ export function getTransactionById(transactionId: string): Promise<TransactionDt
 
 export function getTransactionsForAccount(accountId: string): Promise<TransactionDto[]> {
   return apiRequest<TransactionDto[]>(`/api/accounts/${accountId}/transactions`);
-}
-
-export function createTransaction(
-  payload: CreateTransactionRequest
-): Promise<TransactionDto> {
-  return apiRequest<TransactionDto>("/api/transactions", {
-    method: "POST",
-    body: JSON.stringify(payload)
-  });
 }
 
 export function updateTransactionMetadata(

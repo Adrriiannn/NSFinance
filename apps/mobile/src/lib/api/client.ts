@@ -70,8 +70,10 @@ export async function apiRequest<T>(
   const requestUrl = resolveApiRequestUrl(path);
 
   const makeRequest = async (overrideToken: string | null): Promise<Response> => {
+    const isMultipartBody =
+      typeof FormData !== "undefined" && init?.body instanceof FormData;
     const headers: HeadersInit = {
-      "Content-Type": "application/json",
+      ...(isMultipartBody ? {} : { "Content-Type": "application/json" }),
       "x-platform": Platform.OS,
       "x-app-version": appMetadata.version,
       ...(overrideToken ? { Authorization: `Bearer ${overrideToken}` } : {}),

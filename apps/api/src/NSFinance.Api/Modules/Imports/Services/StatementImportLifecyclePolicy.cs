@@ -27,7 +27,7 @@ internal static class StatementImportLifecyclePolicy
             return stateError;
         }
 
-        var accountError = ValidateOwnedManualAccount(batch, out var account);
+        var accountError = ValidateOwnedConnectedAccount(batch, out var account);
         if (accountError is not null)
         {
             return accountError;
@@ -124,7 +124,7 @@ internal static class StatementImportLifecyclePolicy
             return stateError;
         }
 
-        var accountError = ValidateOwnedManualAccount(batch, out _);
+        var accountError = ValidateOwnedConnectedAccount(batch, out _);
         if (accountError is not null)
         {
             return accountError;
@@ -345,7 +345,7 @@ internal static class StatementImportLifecyclePolicy
             _ => false
         };
 
-    private static ServiceError? ValidateOwnedManualAccount(
+    private static ServiceError? ValidateOwnedConnectedAccount(
         ImportJob batch,
         out FinancialAccount? account)
     {
@@ -353,11 +353,11 @@ internal static class StatementImportLifecyclePolicy
         if (account is null
             || batch.FinancialAccountId != account.Id
             || batch.UserId != account.UserId
-            || account.Source != FinancialAccountSources.Manual)
+            || account.Source != FinancialAccountSources.ProviderProjected)
         {
             return Conflict(
-                "The destination account is not an owned manual account.",
-                "statement_import_account_not_manual");
+                "The destination account is not an owned connected account.",
+                "statement_import_account_not_connected");
         }
 
         if (!string.Equals(batch.AccountCurrency, account.Currency, StringComparison.Ordinal)

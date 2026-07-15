@@ -198,6 +198,7 @@ export default function AccountDetailsScreen() {
       return rightStamp - leftStamp;
     })[0] ?? null;
   }, [connectionsQuery.data]);
+  const isManualAccount = accountQuery.data?.source === "manual";
 
   if (!accountId) {
     return (
@@ -215,21 +216,25 @@ export default function AccountDetailsScreen() {
   const isInitialLoading =
     (accountQuery.isLoading && !accountQuery.data) ||
     (transactionsQuery.isLoading && !transactionsQuery.data) ||
-    (connectionsQuery.isLoading && !connectionsQuery.data);
+    (!isManualAccount && connectionsQuery.isLoading && !connectionsQuery.data);
 
   const error =
     accountQuery.error ??
     transactionsQuery.error ??
-    connectionsQuery.error ??
-    linkedAccountsQuery.error ??
-    linkedCardsQuery.error;
+    (isManualAccount
+      ? null
+      : connectionsQuery.error ?? linkedAccountsQuery.error ?? linkedCardsQuery.error);
   const account = accountQuery.data;
   const balance = account ? resolveAccountBalancePresentation(account) : null;
-  const linkedAccount = findLinkedAccountForFinancialAccount(linkedAccountsQuery.data, account?.id);
-  const accountConnection = linkedAccount
+  const linkedAccount = isManualAccount
+    ? null
+    : findLinkedAccountForFinancialAccount(linkedAccountsQuery.data, account?.id);
+  const accountConnection = !isManualAccount && linkedAccount
     ? (connectionsQuery.data ?? []).find((item) => item.id === linkedAccount.connectionId) ?? latestConnection
-    : latestConnection;
-  const relatedCards = linkedAccount
+    : !isManualAccount
+      ? latestConnection
+      : null;
+  const relatedCards = !isManualAccount && linkedAccount
     ? (linkedCardsQuery.data ?? []).filter((card) => {
       if (card.connectionId !== linkedAccount.connectionId) {
         return false;
@@ -330,6 +335,9 @@ export default function AccountDetailsScreen() {
                 <Text style={styles.sectionTitle}>Account info</Text>
                 <Text style={styles.accountMeta}>Type: {account.type}</Text>
                 <Text style={styles.accountMeta}>Currency: {account.currency}</Text>
+                <Text style={styles.accountMeta}>
+                  Source: {isManualAccount ? "Legacy account" : "Connected bank"}
+                </Text>
                 {balance?.available !== null && balance?.available !== undefined ? (
                   <Text style={styles.accountMeta}>
                     Available: {formatCurrency(balance.available, balance.currency)}
@@ -360,23 +368,37 @@ export default function AccountDetailsScreen() {
                     {line.label}: {line.value}
                   </Text>
                 ))}
-                <Text style={[styles.sectionTitle, styles.connectionSectionTitle]}>Connection info</Text>
-                {accountConnection?.connectedFullName ? (
-                  <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
+                {!isManualAccount ? (
+                  <>
+                    <Text style={[styles.sectionTitle, styles.connectionSectionTitle]}>Connection info</Text>
+                    {accountConnection?.connectedFullName ? (
+                      <Text style={styles.accountMeta}>Connected as: {accountConnection.connectedFullName}</Text>
+                    ) : null}
+                    <Text style={styles.accountMeta}>
+                      Connected bank: {accountConnection?.providerDisplayName ?? "Not linked yet"}
+                    </Text>
+                    <Text style={styles.accountMeta}>
+                      Connection provider: {accountConnection?.provider ?? "TrueLayer"}
+                    </Text>
+                    <Text style={styles.accountMeta}>
+                      Last synced at: {formatDateTime(accountConnection?.lastSuccessfulSyncUtc ?? accountConnection?.lastSyncAttemptedUtc)}
+                    </Text>
+                  </>
                 ) : null}
-                <Text style={styles.accountMeta}>
-                  Connected bank: {accountConnection?.providerDisplayName ?? "Not linked yet"}
-                </Text>
-                <Text style={styles.accountMeta}>
-                  Connection provider: {accountConnection?.provider ?? "TrueLayer"}
-                </Text>
-                <Text style={styles.accountMeta}>
-                  Last synced at: {formatDateTime(accountConnection?.lastSuccessfulSyncUtc ?? accountConnection?.lastSyncAttemptedUtc)}
-                </Text>
               </View>
             </GlassCard>
 
             <View style={styles.primaryActions}>
+              {!isManualAccount ? (
+                <PrimaryButton
+                  label="Import statement"
+                  onPress={() =>
+                    router.push(
+                      `/(tabs)/accounts/import-statement?accountId=${account.id}` as never
+                    )
+                  }
+                />
+              ) : null}
               <PrimaryButton
                 label="Export to Excel"
                 onPress={() => void exportExcel()}
@@ -387,7 +409,7 @@ export default function AccountDetailsScreen() {
                 onPress={() => router.push("/(tabs)/accounts/support")}
               />
             </View>
-            {relatedCards.length > 0 ? (
+            {!isManualAccount && relatedCards.length > 0 ? (
               <GlassCard style={styles.recurringCard}>
                 <Text style={styles.sectionTitle}>Linked cards</Text>
                 {relatedCards.map((card) => (
@@ -423,7 +445,11 @@ export default function AccountDetailsScreen() {
               ) : (
                 <EmptyState
                   title="No transactions yet"
-                  message="Add a transaction to this account to populate the export and details view."
+                  message={
+                    isManualAccount
+                      ? "This legacy account is read-only."
+                      : "Transactions will appear after the connected bank finishes syncing."
+                  }
                 />
               )}
             </View>

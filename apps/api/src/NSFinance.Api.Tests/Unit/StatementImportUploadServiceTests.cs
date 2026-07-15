@@ -280,10 +280,10 @@ public sealed class StatementImportUploadServiceTests
             {
                 Id = accountId,
                 UserId = userId,
-                Name = "Manual account",
+                Name = "Connected account",
                 Type = "Current",
                 Currency = "EUR",
-                Source = FinancialAccountSources.Manual,
+                Source = FinancialAccountSources.ProviderProjected,
                 CreatedUtc = UtcNow
             });
             await DbContext.SaveChangesAsync();

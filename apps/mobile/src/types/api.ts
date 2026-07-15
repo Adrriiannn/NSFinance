@@ -54,13 +54,6 @@ export type AccountDto = {
   source: AccountSource;
 };
 
-export type CreateAccountRequest = {
-  name: string;
-  type: AccountType;
-  currency: string;
-  openingBalance?: number | null;
-};
-
 export type UpdateAccountRequest = {
   name: string;
   type: AccountType;
@@ -140,6 +133,22 @@ export type TransactionDto = {
   createdUtc: string;
   metadataUpdatedUtc: string | null;
   direction: TransactionDirection;
+  accountSource: AccountSource;
+  accountCurrency: string;
+  effectiveTime: TransactionEffectiveTimeDto;
+  statementImport: StatementImportProvenanceDto | null;
+};
+
+export type TransactionEffectiveTimeDto = {
+  precision: "date" | "instant";
+  date: string | null;
+  instantUtc: string | null;
+};
+
+export type StatementImportProvenanceDto = {
+  batchId: string;
+  rowNumber: number;
+  committedUtc: string;
 };
 
 export type TransactionPageDirection = "income" | "expense";
@@ -168,21 +177,158 @@ export type TransactionPageDto = {
   filters: TransactionPageFiltersDto;
 };
 
-export type CreateTransactionRequest = {
-  accountId: string;
-  description: string;
-  amount: number;
-  direction: TransactionDirection;
-  currency?: string | null;
-  categoryId?: string | null;
-  bookedAtUtc?: string | null;
-};
-
 export type UpdateTransactionMetadataRequest = {
   reason?: string | null;
   notes?: string | null;
   taxonomyCategoryId: number;
   taxonomySubcategoryId?: number | null;
+};
+
+export type StatementCsvColumnDto = {
+  index: number;
+  name: string;
+};
+
+export type StatementCsvSampleRowDto = {
+  rowNumber: number;
+  fields: string[];
+};
+
+export type StatementCsvInspectionDto = {
+  fileName: string;
+  parserVersion: string;
+  delimiter: string;
+  sourceByteCount: number;
+  dataRowCount: number;
+  columns: StatementCsvColumnDto[];
+  sampleRows: StatementCsvSampleRowDto[];
+};
+
+export type StatementImportValidationStatus = "valid" | "invalid";
+export type StatementImportDuplicateClassification = "none" | "exact" | "likely";
+export type StatementImportReviewDisposition = "included" | "excluded" | "pending";
+export type StatementImportBatchStatus =
+  | "ready_for_review"
+  | "committed"
+  | "discarded"
+  | "undone";
+
+export type StatementImportRowDto = {
+  id: string;
+  rowNumber: number;
+  validationStatus: StatementImportValidationStatus;
+  validationCode: string | null;
+  duplicateClassification: StatementImportDuplicateClassification;
+  reviewDisposition: StatementImportReviewDisposition;
+  duplicateCandidateTransactionId: string | null;
+  effectiveDate: string | null;
+  effectiveAtUtc: string | null;
+  timestampPrecision: "date" | "instant" | null;
+  description: string | null;
+  amount: number | null;
+  currency: string | null;
+  committedTransactionId: string | null;
+};
+
+export type StatementImportBatchDto = {
+  id: string;
+  accountId: string;
+  fileName: string;
+  status: StatementImportBatchStatus;
+  accountCurrency: string;
+  locale: string;
+  timeZoneId: string;
+  fileSizeBytes: number;
+  totalRowCount: number;
+  validRowCount: number;
+  invalidRowCount: number;
+  exactDuplicateRowCount: number;
+  likelyDuplicateRowCount: number;
+  includedRowCount: number;
+  committedRowCount: number;
+  revision: number;
+  createdUtc: string;
+  updatedUtc: string;
+  readyForReviewUtc: string | null;
+  committedUtc: string | null;
+  undoneUtc: string | null;
+  expiresUtc: string | null;
+  wasReplay: boolean;
+};
+
+export type StatementImportRowPageDto = {
+  batchId: string;
+  items: StatementImportRowDto[];
+  nextCursor: string | null;
+  pageSize: number;
+  totalMatchingRows: number;
+};
+
+export type StatementImportPreviewDto = {
+  batch: StatementImportBatchDto;
+  rows: StatementImportRowPageDto;
+};
+
+export type StatementImportMappingRequest = {
+  accountId: string;
+  delimiter?: string | null;
+  dateColumn: number;
+  descriptionColumn: number;
+  amountColumn?: number | null;
+  debitColumn?: number | null;
+  creditColumn?: number | null;
+  currencyColumn?: number | null;
+  referenceColumn?: number | null;
+  dateFormat: string;
+  dateValueKind: "date" | "instant";
+  amountMode: "signed" | "debit_credit";
+  amountSign: "as_is" | "invert";
+  locale: string;
+  timeZoneId: string;
+};
+
+export type StatementImportRowsRequest = {
+  cursor?: string | null;
+  pageSize?: number | null;
+  validationStatus?: StatementImportValidationStatus | null;
+  duplicateClassification?: StatementImportDuplicateClassification | null;
+  reviewDisposition?: StatementImportReviewDisposition | null;
+};
+
+export type ReviewStatementImportRowsRequest = {
+  expectedRevision: number;
+  decisions: {
+    rowId: string;
+    reviewDisposition: StatementImportReviewDisposition;
+  }[];
+};
+
+export type StatementImportReviewMutationDto = {
+  batchId: string;
+  status: StatementImportBatchStatus;
+  revision: number;
+  includedRowCount: number;
+  pendingRowCount: number;
+  excludedRowCount: number;
+  updatedUtc: string;
+  reviewedRows: {
+    rowId: string;
+    rowNumber: number;
+    reviewDisposition: StatementImportReviewDisposition;
+    updatedUtc: string;
+  }[];
+};
+
+export type StatementImportLifecycleMutationDto = {
+  batchId: string;
+  status: StatementImportBatchStatus;
+  revision: number;
+  includedRowCount: number;
+  committedRowCount: number;
+  updatedUtc: string;
+  committedUtc: string | null;
+  undoneUtc: string | null;
+  wasReplay: boolean;
 };
 
 export type ExpenseTrackerEntryStatus = "planned" | "completed";

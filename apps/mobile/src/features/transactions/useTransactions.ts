@@ -2,13 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type {
-  CreateTransactionRequest,
   DashboardSummaryDto,
   TransactionDto,
   UpdateTransactionMetadataRequest
 } from "../../types/api";
 import {
-  createTransaction,
   getTransactionById,
   getTransactions,
   getTransactionsForAccount,
@@ -38,15 +36,6 @@ export function useTransactionDetailQuery(transactionId: string) {
     queryFn: () => getTransactionById(transactionId),
     enabled: Boolean(transactionId)
   });
-}
-
-function prependTransaction(list: TransactionDto[] | undefined, transaction: TransactionDto) {
-  const existing = list ?? [];
-  if (existing.some((item) => item.id === transaction.id)) {
-    return existing;
-  }
-
-  return [transaction, ...existing];
 }
 
 function replaceTransaction(list: TransactionDto[] | undefined, transaction: TransactionDto) {
@@ -88,36 +77,6 @@ function applyTransactionCacheUpdate(
           }
         : current
   );
-}
-
-export function useCreateTransactionMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (payload: CreateTransactionRequest) => createTransaction(payload),
-    onSuccess: async (transaction) => {
-      queryClient.setQueryData<TransactionDto[]>(
-        queryKeys.transactions.list(),
-        (current) => prependTransaction(current, transaction)
-      );
-      queryClient.setQueryData<TransactionDto[]>(
-        queryKeys.accounts.transactions(transaction.accountId),
-        (current) => prependTransaction(current, transaction)
-      );
-      queryClient.setQueryData<TransactionDto[]>(
-        queryKeys.transactions.list(transaction.accountId),
-        (current) => prependTransaction(current, transaction)
-      );
-
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.transactions(transaction.accountId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.detail(transaction.accountId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all })
-      ]);
-    }
-  });
 }
 
 export function useUpdateTransactionMetadataMutation() {

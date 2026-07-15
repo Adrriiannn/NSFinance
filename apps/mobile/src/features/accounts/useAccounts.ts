@@ -3,10 +3,9 @@ import { nearLiveFinanceQueryOptions } from "../../lib/api/liveQueryOptions";
 import { queryKeys } from "../../lib/api/queryKeys";
 import type {
   AccountDto,
-  CreateAccountRequest,
   UpdateAccountRequest
 } from "../../types/api";
-import { createAccount, deleteAccount, getAccountById, getAccounts, updateAccount } from "./accountsApi";
+import { deleteAccount, getAccountById, getAccounts, updateAccount } from "./accountsApi";
 
 export function useAccountsQuery() {
   return useQuery({
@@ -22,32 +21,6 @@ export function useAccountDetailQuery(accountId: string) {
     queryFn: () => getAccountById(accountId),
     enabled: Boolean(accountId),
     ...nearLiveFinanceQueryOptions
-  });
-}
-
-export function useCreateAccountMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (payload: CreateAccountRequest) => createAccount(payload),
-    onSuccess: async (account) => {
-      queryClient.setQueryData<AccountDto[] | undefined>(queryKeys.accounts.all, (current) => {
-        const existing = current ?? [];
-        if (existing.some((item) => item.id === account.id)) {
-          return existing;
-        }
-
-        return [...existing, account];
-      });
-
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard.summary }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all })
-      ]);
-
-      queryClient.setQueryData(queryKeys.accounts.detail(account.id), account);
-    }
   });
 }
 

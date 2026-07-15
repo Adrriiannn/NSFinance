@@ -40,11 +40,11 @@ public sealed class StatementImportBatchService(
                 StatusCodes.Status404NotFound);
         }
 
-        if (account.Source != FinancialAccountSources.Manual)
+        if (account.Source != FinancialAccountSources.ProviderProjected)
         {
             return ServiceResult<StatementImportBatchDto>.Fail(
-                "Statements can be imported only into a manual account.",
-                "statement_import_account_not_manual",
+                "Statements can be imported only into a connected account.",
+                "statement_import_account_not_connected",
                 StatusCodes.Status409Conflict);
         }
 

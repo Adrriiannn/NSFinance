@@ -142,7 +142,7 @@ Rules:
 - Keep consistent top spacing, radius, and border treatment.
 
 Rules:
-- Add Account, Add Transaction, and Transaction Context must feel like one family.
+- Bank Connection, Statement Import, and Transaction Context must feel like one family.
 - No white flash on open/close/back transitions.
 
 ## Iconography Rules

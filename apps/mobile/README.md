@@ -8,7 +8,7 @@ Expo Router + TypeScript mobile client for NSFinance.
 - Auth-gated app shell
 - Dashboard, Accounts, Activity, and Planner tabs
 - Account details screen with persistent tab bar
-- Add account and add transaction modals
+- TrueLayer bank connection and reviewed CSV statement import
 - Transaction context modal for planner enrichment fields
 - Centralized API client under `src/lib/api`
 - React Query hooks with mutation invalidation and optimistic cache reconciliation

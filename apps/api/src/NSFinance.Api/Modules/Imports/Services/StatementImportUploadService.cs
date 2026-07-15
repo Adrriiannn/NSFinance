@@ -107,12 +107,12 @@ internal sealed class StatementImportUploadService(
 
         if (!string.Equals(
                 accountContext.Source,
-                FinancialAccountSources.Manual,
+                FinancialAccountSources.ProviderProjected,
                 StringComparison.Ordinal))
         {
             return ServiceResult<StatementImportPreviewDto>.Fail(
-                "Statements can only be imported into a manual account.",
-                "statement_import_account_not_manual",
+                "Statements can only be imported into a connected account.",
+                "statement_import_account_not_connected",
                 StatusCodes.Status409Conflict);
         }
 

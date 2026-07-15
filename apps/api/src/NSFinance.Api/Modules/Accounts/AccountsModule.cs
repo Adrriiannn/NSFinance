@@ -13,9 +13,6 @@ public static class AccountsModule
         group.MapGet("/", GetAccountsEndpoint.HandleAsync)
             .WithName("GetAccounts");
 
-        group.MapPost("/", CreateAccountEndpoint.HandleAsync)
-            .WithName("CreateAccount");
-
         group.MapGet("/{id:guid}", GetAccountByIdEndpoint.HandleAsync)
             .WithName("GetAccountById");
 

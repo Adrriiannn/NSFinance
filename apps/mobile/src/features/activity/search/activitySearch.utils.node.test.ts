@@ -52,6 +52,14 @@ function buildTransaction(overrides: Partial<TransactionDto>): TransactionDto {
     createdUtc: "2026-04-09T10:30:00Z",
     metadataUpdatedUtc: null,
     direction: "Expense",
+    accountSource: "manual",
+    accountCurrency: "EUR",
+    effectiveTime: {
+      precision: "instant",
+      date: null,
+      instantUtc: "2026-04-09T10:30:00Z"
+    },
+    statementImport: null,
     ...overrides
   };
 }

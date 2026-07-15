@@ -36,6 +36,7 @@ public sealed class AccountStatementImportDeletionTests
 
         Assert.False(result.Succeeded);
         Assert.Equal("account_has_statement_import_history", result.Error!.Code);
+        Assert.Equal("This account has statement-import history and cannot be deleted.", result.Error.Message);
         Assert.Equal(StatusCodes.Status409Conflict, result.Error.StatusCode);
         Assert.True(await dbContext.FinancialAccounts.AnyAsync(account => account.Id == accountId));
     }
@@ -123,7 +124,7 @@ public sealed class AccountStatementImportDeletionTests
             Name = "Import account",
             Type = "Current",
             Currency = "EUR",
-            Source = FinancialAccountSources.Manual,
+            Source = FinancialAccountSources.ProviderProjected,
             CreatedUtc = UtcNow
         });
         await dbContext.SaveChangesAsync();

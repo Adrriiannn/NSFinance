@@ -18,7 +18,7 @@ public sealed class StatementImportBatchServiceTests
     {
         await using var dbContext = CreateDbContext();
         var userId = await SeedUserAsync(dbContext, "owner@local");
-        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
+        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.ProviderProjected);
         var duplicateCandidateId = await SeedTransactionAsync(dbContext, accountId);
         var service = CreateService(dbContext, userId);
         var command = BuildCommand(
@@ -80,7 +80,7 @@ public sealed class StatementImportBatchServiceTests
     {
         await using var dbContext = CreateDbContext();
         var userId = await SeedUserAsync(dbContext, "owner@local");
-        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
+        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.ProviderProjected);
         var service = CreateService(dbContext, userId);
         var command = BuildCommand(accountId);
 
@@ -101,22 +101,22 @@ public sealed class StatementImportBatchServiceTests
     }
 
     [Fact]
-    public async Task StageAsync_RejectsForeignAndProviderProjectedAccountsWithoutCreatingBatches()
+    public async Task StageAsync_RejectsForeignAndManualAccountsWithoutCreatingBatches()
     {
         await using var dbContext = CreateDbContext();
         var ownerId = await SeedUserAsync(dbContext, "owner@local");
         var otherId = await SeedUserAsync(dbContext, "other@local");
-        var foreignAccountId = await SeedAccountAsync(dbContext, otherId, FinancialAccountSources.Manual);
-        var providerAccountId = await SeedAccountAsync(dbContext, ownerId, FinancialAccountSources.ProviderProjected);
+        var foreignAccountId = await SeedAccountAsync(dbContext, otherId, FinancialAccountSources.ProviderProjected);
+        var manualAccountId = await SeedAccountAsync(dbContext, ownerId, FinancialAccountSources.Manual);
         var service = CreateService(dbContext, ownerId);
 
         var foreign = await service.StageAsync(BuildCommand(foreignAccountId), CancellationToken.None);
-        var provider = await service.StageAsync(BuildCommand(providerAccountId), CancellationToken.None);
+        var manual = await service.StageAsync(BuildCommand(manualAccountId), CancellationToken.None);
 
         Assert.False(foreign.Succeeded);
         Assert.Equal("statement_import_account_not_found", foreign.Error!.Code);
-        Assert.False(provider.Succeeded);
-        Assert.Equal("statement_import_account_not_manual", provider.Error!.Code);
+        Assert.False(manual.Succeeded);
+        Assert.Equal("statement_import_account_not_connected", manual.Error!.Code);
         Assert.Empty(dbContext.ImportJobs);
     }
 
@@ -126,7 +126,7 @@ public sealed class StatementImportBatchServiceTests
         await using var dbContext = CreateDbContext();
         var ownerId = await SeedUserAsync(dbContext, "owner@local");
         var otherId = await SeedUserAsync(dbContext, "other@local");
-        var accountId = await SeedAccountAsync(dbContext, ownerId, FinancialAccountSources.Manual);
+        var accountId = await SeedAccountAsync(dbContext, ownerId, FinancialAccountSources.ProviderProjected);
         var staged = await CreateService(dbContext, ownerId)
             .StageAsync(BuildCommand(accountId), CancellationToken.None);
 
@@ -148,7 +148,7 @@ public sealed class StatementImportBatchServiceTests
     {
         await using var dbContext = CreateDbContext();
         var userId = await SeedUserAsync(dbContext, "owner@local");
-        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
+        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.ProviderProjected);
         var duplicateRows = BuildCommand(
             accountId,
             rows: [ReadyRow(1, "1"), ReadyRow(1, "2")]);
@@ -173,7 +173,7 @@ public sealed class StatementImportBatchServiceTests
     {
         await using var dbContext = CreateDbContext();
         var userId = await SeedUserAsync(dbContext, "owner@local");
-        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
+        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.ProviderProjected);
 
         var service = CreateService(dbContext, userId);
         var result = await service.StageAsync(BuildCommand(accountId), CancellationToken.None);
@@ -195,7 +195,7 @@ public sealed class StatementImportBatchServiceTests
     {
         await using var dbContext = CreateDbContext();
         var userId = await SeedUserAsync(dbContext, "owner@local");
-        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
+        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.ProviderProjected);
         var service = CreateService(dbContext, userId);
         var staged = await service.StageAsync(BuildCommand(accountId), CancellationToken.None);
 
@@ -222,8 +222,8 @@ public sealed class StatementImportBatchServiceTests
     {
         await using var dbContext = CreateDbContext();
         var userId = await SeedUserAsync(dbContext, "owner@local");
-        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
-        var otherAccountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.Manual);
+        var accountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.ProviderProjected);
+        var otherAccountId = await SeedAccountAsync(dbContext, userId, FinancialAccountSources.ProviderProjected);
         var foreignCandidateId = await SeedTransactionAsync(dbContext, otherAccountId);
         var service = CreateService(dbContext, userId);
 

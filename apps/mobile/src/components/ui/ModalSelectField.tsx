@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Pressable } from "react-native";
 import { AppText } from "./text/AppText";
 import { SelectField as BaseSelectField } from "./fields/SelectField";
 import { ModalSheet } from "./surfaces/ModalSheet";
@@ -17,6 +16,8 @@ type ModalSelectFieldProps = {
   placeholder?: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  helper?: string;
+  error?: string;
   sheetMaxHeightRatio?: number;
 };
 
@@ -29,6 +30,8 @@ export function ModalSelectField({
   placeholder = "Select",
   onChange,
   disabled = false,
+  helper,
+  error,
   sheetMaxHeightRatio = DEFAULT_MODAL_SELECT_SHEET_MAX_HEIGHT_RATIO
 }: ModalSelectFieldProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -45,6 +48,8 @@ export function ModalSelectField({
         value={selected?.label ?? null}
         placeholder={placeholder}
         disabled={disabled}
+        helper={helper}
+        error={error}
         onPress={() => setIsOpen(true)}
       />
 
@@ -55,24 +60,17 @@ export function ModalSelectField({
         maxHeightRatio={sheetMaxHeightRatio}
       >
         {options.map((option) => (
-          <Pressable
+          <ListRow
             key={option.value}
+            title={option.label}
             onPress={() => {
               onChange(option.value);
               setIsOpen(false);
             }}
-          >
-            <ListRow
-              title={option.label}
-              onPress={() => {
-                onChange(option.value);
-                setIsOpen(false);
-              }}
-              trailing={
-                option.value === value ? <AppText preset="caption" tone="accent">Selected</AppText> : undefined
-              }
-            />
-          </Pressable>
+            trailing={
+              option.value === value ? <AppText preset="caption" tone="accent">Selected</AppText> : undefined
+            }
+          />
         ))}
       </ModalSheet>
     </>

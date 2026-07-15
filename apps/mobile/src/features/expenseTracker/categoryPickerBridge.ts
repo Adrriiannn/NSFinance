@@ -1,4 +1,3 @@
-let pendingActivityAddTransactionSubcategoryId: number | null = null;
 let pendingTransactionDetailCategorySelection: TransactionDetailCategorySelection | null = null;
 
 export type ActivitySearchCategorySelection = {
@@ -23,16 +22,6 @@ export type TransactionDetailCategorySelection = {
 };
 
 let pendingActivitySearchCategorySelection: ActivitySearchCategorySelection | null = null;
-
-export function setPendingActivityAddTransactionSubcategorySelection(subcategoryId: number) {
-  pendingActivityAddTransactionSubcategoryId = subcategoryId;
-}
-
-export function consumePendingActivityAddTransactionSubcategorySelection() {
-  const selected = pendingActivityAddTransactionSubcategoryId;
-  pendingActivityAddTransactionSubcategoryId = null;
-  return selected;
-}
 
 export function setPendingActivitySearchCategorySelection(
   selection: ActivitySearchCategorySelection
