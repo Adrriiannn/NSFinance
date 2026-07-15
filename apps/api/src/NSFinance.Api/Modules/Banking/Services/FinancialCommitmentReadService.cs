@@ -204,6 +204,7 @@ public sealed class FinancialCommitmentReadService(
             .AsNoTracking()
             .Where(transaction => transaction.FinancialAccount != null
                 && transaction.FinancialAccount.UserId == userId
+                && transaction.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary
                 && transaction.Amount < 0m
                 && transaction.BookedAtUtc >= fromUtc
                 && transaction.BookedAtUtc <= throughUtc

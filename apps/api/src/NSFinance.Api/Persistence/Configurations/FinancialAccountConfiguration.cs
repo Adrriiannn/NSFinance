@@ -14,7 +14,13 @@ public class FinancialAccountConfiguration : IEntityTypeConfiguration<FinancialA
         builder.Property(x => x.Name).HasMaxLength(120).IsRequired();
         builder.Property(x => x.Type).HasMaxLength(50).IsRequired();
         builder.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+        builder.Property(x => x.Source)
+            .HasMaxLength(32)
+            .HasDefaultValue(FinancialAccountSources.Manual)
+            .IsRequired();
         builder.Property(x => x.CreatedUtc).HasDefaultValueSql("timezone('utc', now())");
+
+        builder.HasIndex(x => x.Source);
 
         builder.HasOne(x => x.User)
             .WithMany(x => x.FinancialAccounts)

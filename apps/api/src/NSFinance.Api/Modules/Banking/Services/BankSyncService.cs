@@ -1895,6 +1895,7 @@ public sealed class BankSyncService(
                 Name = resolvedDisplayName,
                 Type = MapAccountType(providerAccount.AccountType),
                 Currency = providerAccount.Currency,
+                Source = FinancialAccountSources.ProviderProjected,
                 CreatedUtc = now
             };
             dbContext.FinancialAccounts.Add(projectionAccount);
@@ -1906,6 +1907,7 @@ public sealed class BankSyncService(
             linkedAccount.FinancialAccount.Name = resolvedDisplayName;
             linkedAccount.FinancialAccount.Type = MapAccountType(providerAccount.AccountType);
             linkedAccount.FinancialAccount.Currency = providerAccount.Currency;
+            linkedAccount.FinancialAccount.Source = FinancialAccountSources.ProviderProjected;
         }
 
         return linkedAccount;

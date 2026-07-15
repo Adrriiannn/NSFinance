@@ -12,6 +12,8 @@ function buildTransaction(overrides: Partial<TransactionDto>): TransactionDto {
     description: "Sample transaction",
     amount: -1,
     currency: "EUR",
+    entryKind: "ordinary",
+    analyticsTreatment: "ordinary",
     categoryId: null,
     categoryName: null,
     taxonomyDomainId: null,

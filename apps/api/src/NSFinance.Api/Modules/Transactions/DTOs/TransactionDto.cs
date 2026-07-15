@@ -47,4 +47,6 @@ public sealed record TransactionDto(
     DateTime BookedAtUtc,
     DateTime CreatedUtc,
     DateTime? MetadataUpdatedUtc,
-    string Direction);
+    string Direction,
+    string EntryKind = "ordinary",
+    string AnalyticsTreatment = "ordinary");

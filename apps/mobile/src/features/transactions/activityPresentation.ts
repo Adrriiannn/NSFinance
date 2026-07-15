@@ -3,7 +3,7 @@ import { areDisplayLabelsMeaningfullyDistinct } from "./activityGrouping";
 import type { CanonicalSemanticFamily, CanonicalTransactionSemantic } from "./semanticResolver";
 
 export type TransactionLeadingVisual = {
-  iconName: "swap-horizontal" | "wallet-outline" | "arrow-down" | "arrow-up";
+  iconName: "swap-horizontal" | "wallet-outline" | "arrow-down" | "arrow-up" | "calculator-outline";
   backgroundColor: string;
   iconColor: string;
 };
@@ -20,6 +20,7 @@ const ICON_COLOR_WHITE = "#FFFFFF";
 const ICON_BACKGROUND_EXPENSE = "rgba(226, 90, 90, 0.26)";
 const ICON_BACKGROUND_INCOME = "rgba(29, 186, 114, 0.22)";
 const ICON_BACKGROUND_SAVINGS = "rgba(90, 186, 226, 0.18)";
+const ICON_BACKGROUND_ADJUSTMENT = "rgba(148, 163, 184, 0.2)";
 
 export function resolveTransactionLeadingVisual(
   transaction: TransactionDto,
@@ -29,6 +30,14 @@ export function resolveTransactionLeadingVisual(
     return {
       iconName: "wallet-outline",
       backgroundColor: ICON_BACKGROUND_SAVINGS,
+      iconColor: ICON_COLOR_WHITE
+    };
+  }
+
+  if (semantic.styleKind === "balance_adjustment") {
+    return {
+      iconName: "calculator-outline",
+      backgroundColor: ICON_BACKGROUND_ADJUSTMENT,
       iconColor: ICON_COLOR_WHITE
     };
   }
@@ -53,6 +62,12 @@ export function resolveTransactionLeadingVisual(
       return {
         iconName: "swap-horizontal",
         backgroundColor: ICON_BACKGROUND_INCOME,
+        iconColor: ICON_COLOR_WHITE
+      };
+    case "adjustment":
+      return {
+        iconName: "calculator-outline",
+        backgroundColor: ICON_BACKGROUND_ADJUSTMENT,
         iconColor: ICON_COLOR_WHITE
       };
     default:
@@ -94,6 +109,14 @@ function resolveDirectionalVisual(
     return {
       iconName: "arrow-down",
       backgroundColor: ICON_BACKGROUND_EXPENSE,
+      iconColor: ICON_COLOR_WHITE
+    };
+  }
+
+  if (direction === "Adjustment") {
+    return {
+      iconName: "calculator-outline",
+      backgroundColor: ICON_BACKGROUND_ADJUSTMENT,
       iconColor: ICON_COLOR_WHITE
     };
   }

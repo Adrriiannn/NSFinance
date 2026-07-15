@@ -645,6 +645,7 @@ public sealed class AccountService(
                 x.Name,
                 x.Type,
                 x.Currency,
+                x.Source,
                 CurrentBalance = dbContext.LinkedBankAccounts
                     .Where(linked => linked.FinancialAccountId == x.Id)
                     .Select(linked => dbContext.BankBalanceSnapshots
@@ -684,7 +685,9 @@ public sealed class AccountService(
                 x.Provider != null
                     && (x.Provider.ProviderIconUrl != null
                         || x.Provider.ProviderLogoUrl != null
-                        || x.Provider.ProviderDisplayName != null)));
+                        || x.Provider.ProviderDisplayName != null),
+                null,
+                x.Source));
     }
 
     private IQueryable<AccountDto> QueryAccountsWithoutBranding()
@@ -713,7 +716,9 @@ public sealed class AccountService(
                 null,
                 null,
                 null,
-                false));
+                false,
+                null,
+                x.Source));
     }
 
     private IQueryable<AccountDto> QueryAccountByIdWithBranding(Guid accountId)
@@ -727,6 +732,7 @@ public sealed class AccountService(
                 x.Name,
                 x.Type,
                 x.Currency,
+                x.Source,
                 CurrentBalance = dbContext.LinkedBankAccounts
                     .Where(linked => linked.FinancialAccountId == x.Id)
                     .Select(linked => dbContext.BankBalanceSnapshots
@@ -766,7 +772,9 @@ public sealed class AccountService(
                 x.Provider != null
                     && (x.Provider.ProviderIconUrl != null
                         || x.Provider.ProviderLogoUrl != null
-                        || x.Provider.ProviderDisplayName != null)));
+                        || x.Provider.ProviderDisplayName != null),
+                null,
+                x.Source));
     }
 
     private IQueryable<AccountDto> QueryAccountByIdWithoutBranding(Guid accountId)
@@ -794,7 +802,9 @@ public sealed class AccountService(
                 null,
                 null,
                 null,
-                false));
+                false,
+                null,
+                x.Source));
     }
 
     public async Task<AccountDto> CreateAccountAsync(CreateAccountRequest request, CancellationToken cancellationToken)
@@ -808,6 +818,7 @@ public sealed class AccountService(
             Name = request.Name.Trim(),
             Type = request.Type.Trim(),
             Currency = request.Currency.Trim().ToUpperInvariant(),
+            Source = FinancialAccountSources.Manual,
             CreatedUtc = utcNow
         };
 
@@ -823,7 +834,14 @@ public sealed class AccountService(
                 Amount = openingBalance,
                 Currency = account.Currency,
                 Description = "Opening balance",
+                EntryKind = TransactionEntryKinds.OpeningBalanceAdjustment,
+                AnalyticsTreatment = TransactionAnalyticsTreatments.BalanceOnly,
                 BookedAtUtc = utcNow,
+                DeterministicClassificationStatus = DeterministicClassificationStatus.EvaluatedNoMatchingRule,
+                DeterministicClassificationRuleKey = "provenance.opening_balance",
+                DeterministicReasonCode = "balance_only_entry",
+                DeterministicClassificationEvaluatedUtc = utcNow,
+                DeterministicClassificationTerminal = true,
                 CreatedUtc = utcNow
             });
         }
@@ -843,7 +861,8 @@ public sealed class AccountService(
             null,
             null,
             null,
-            false), cancellationToken);
+            false,
+            Source: account.Source), cancellationToken);
     }
 
     public async Task<AccountDto?> UpdateAccountAsync(
@@ -886,7 +905,8 @@ public sealed class AccountService(
             null,
             null,
             null,
-            false), cancellationToken);
+            false,
+            Source: account.Source), cancellationToken);
     }
 
     private async Task<AccountDto> AttachBalanceAsync(

@@ -116,11 +116,15 @@ public sealed class TransactionService(
 
         if (direction == "income")
         {
-            query = query.Where(x => x.Amount >= 0);
+            query = query.Where(x =>
+                x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary
+                && x.Amount >= 0);
         }
         else if (direction == "expense")
         {
-            query = query.Where(x => x.Amount < 0);
+            query = query.Where(x =>
+                x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary
+                && x.Amount < 0);
         }
 
         if (decodedCursor.HasValue)
@@ -248,6 +252,8 @@ public sealed class TransactionService(
             Amount = signedAmount,
             Currency = currency,
             Description = request.Description.Trim(),
+            EntryKind = TransactionEntryKinds.ManualAdjustment,
+            AnalyticsTreatment = TransactionAnalyticsTreatments.Ordinary,
             CategoryId = request.CategoryId,
             BookedAtUtc = bookedAtUtc,
             CreatedUtc = utcNow
@@ -304,7 +310,9 @@ public sealed class TransactionService(
                 BookedAtUtc: transaction.BookedAtUtc,
                 CreatedUtc: transaction.CreatedUtc,
                 MetadataUpdatedUtc: null,
-                Direction: transaction.Amount < 0 ? "Expense" : "Income"),
+                Direction: transaction.Amount < 0 ? "Expense" : "Income",
+                EntryKind: transaction.EntryKind,
+                AnalyticsTreatment: transaction.AnalyticsTreatment),
             null);
     }
 
@@ -324,6 +332,14 @@ public sealed class TransactionService(
         if (transaction is null)
         {
             return (null, "transaction_not_found", "Transaction not found.");
+        }
+
+        if (transaction.AnalyticsTreatment != TransactionAnalyticsTreatments.Ordinary)
+        {
+            return (
+                null,
+                "transaction_not_categorizable",
+                "Balance adjustments cannot be categorized as income or spending.");
         }
 
         if (!request.TaxonomyCategoryId.HasValue)
@@ -603,6 +619,7 @@ public sealed class TransactionService(
 
     private TransactionDto MapToDto(TransactionReadModel transaction, RelationshipSummary? relationshipSummary)
     {
+        var isBalanceOnly = transaction.AnalyticsTreatment == TransactionAnalyticsTreatments.BalanceOnly;
         var effectiveTransferMaterialization = ResolveEffectiveTransferMaterialization(transaction);
         var taxonomyDomainName = expenseTaxonomyService.GetDomainName(effectiveTransferMaterialization.TaxonomyDomainId);
         var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(effectiveTransferMaterialization.TaxonomyCategoryId);
@@ -657,19 +674,23 @@ public sealed class TransactionService(
             relationshipSummary?.AnalyticsTreatment,
             relationshipSummary?.VirtualDestinationLabel,
             relationshipSummary?.CounterpartyTransactionId,
-            TransactionSemanticResolver.ResolveDisplaySemantic(
-                transaction.DeterministicClassificationStatus,
-                transaction.DeterministicRelationshipType,
-                transaction.DeterministicReasonCode),
+            isBalanceOnly
+                ? "balance_adjustment"
+                : TransactionSemanticResolver.ResolveDisplaySemantic(
+                    transaction.DeterministicClassificationStatus,
+                    transaction.DeterministicRelationshipType,
+                    transaction.DeterministicReasonCode),
             MapTransferPolicyKind(transferPolicy.PolicyKind),
-            transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
-            transferPolicy.IsGloballyNeutralized,
+            isBalanceOnly ? "balance_only" : transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
+            isBalanceOnly || transferPolicy.IsGloballyNeutralized,
             transaction.Reason,
             transaction.Notes,
             transaction.BookedAtUtc,
             transaction.CreatedUtc,
             transaction.MetadataUpdatedUtc,
-            transaction.Amount < 0 ? "Expense" : "Income");
+            isBalanceOnly ? "Adjustment" : transaction.Amount < 0 ? "Expense" : "Income",
+            transaction.EntryKind,
+            transaction.AnalyticsTreatment);
     }
 
     private static EffectiveTransferMaterialization ResolveEffectiveTransferMaterialization(TransactionReadModel transaction)
@@ -793,6 +814,8 @@ public sealed class TransactionService(
             x.Description,
             x.Amount,
             x.Currency,
+            x.EntryKind,
+            x.AnalyticsTreatment,
             x.CategoryId,
             x.Category != null ? x.Category.Name : null,
             x.TaxonomyDomainId,
@@ -829,6 +852,8 @@ public sealed class TransactionService(
         string Description,
         decimal Amount,
         string Currency,
+        string EntryKind,
+        string AnalyticsTreatment,
         Guid? LegacyCategoryId,
         string? LegacyCategoryName,
         int? TaxonomyDomainId,

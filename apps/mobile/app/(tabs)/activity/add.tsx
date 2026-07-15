@@ -26,11 +26,13 @@ import { usePlannerStore } from "../../../src/providers/PlannerProvider";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 import type { TransactionDirection } from "../../../src/types/api";
 
+type EntryDirection = Exclude<TransactionDirection, "Adjustment">;
+
 type FormErrors = Partial<
   Record<"description" | "amount" | "bookedDate" | "category", string>
 >;
 
-const directionOptions: { label: string; value: TransactionDirection }[] = [
+const directionOptions: { label: string; value: EntryDirection }[] = [
   { label: "Expense", value: "Expense" },
   { label: "Income", value: "Income" }
 ];
@@ -47,7 +49,7 @@ export default function AddTransactionScreen() {
   const [accountId, setAccountId] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [direction, setDirection] = useState<TransactionDirection>("Expense");
+  const [direction, setDirection] = useState<EntryDirection>("Expense");
   const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<number | null>(null);
   const [bookedDate, setBookedDate] = useState(new Date().toISOString().slice(0, 10));
   const [errors, setErrors] = useState<FormErrors>({});
@@ -227,7 +229,7 @@ export default function AddTransactionScreen() {
             label="Direction"
             value={direction}
             options={directionOptions}
-            onChange={(value: string) => setDirection(value as TransactionDirection)}
+            onChange={(value: string) => setDirection(value as EntryDirection)}
           />
 
           <View style={styles.fieldWrap}>

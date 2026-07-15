@@ -7,7 +7,7 @@ type AmountTextProps = {
   amount: number;
   currency?: string;
   style?: StyleProp<TextStyle>;
-  appearance?: "default" | "transaction";
+  appearance?: "default" | "transaction" | "neutral";
 };
 
 export function AmountText({
@@ -17,9 +17,17 @@ export function AmountText({
   appearance = "default"
 }: AmountTextProps) {
   const { palette } = useThemeTokens();
-  const preset = amount < 0 ? "negativeMoney" : amount > 0 ? "positiveMoney" : "moneyValue";
+  const preset = appearance === "neutral"
+    ? "moneyValue"
+    : amount < 0
+      ? "negativeMoney"
+      : amount > 0
+        ? "positiveMoney"
+        : "moneyValue";
   const transactionToneStyle =
-    appearance === "transaction"
+    appearance === "neutral"
+      ? { color: palette.textPrimary }
+      : appearance === "transaction"
       ? amount < 0
         ? { color: palette.moneyNegative }
         : amount > 0

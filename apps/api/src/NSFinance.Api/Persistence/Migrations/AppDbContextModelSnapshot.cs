@@ -1890,6 +1890,13 @@ namespace NSFinance.Api.Persistence.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("manual");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -1899,6 +1906,8 @@ namespace NSFinance.Api.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("Source");
 
                     b.HasIndex("UserId");
 
@@ -3895,6 +3904,13 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<string>("AnalyticsTreatment")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("ordinary");
+
                     b.Property<DateTime>("BookedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -3915,6 +3931,13 @@ namespace NSFinance.Api.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
+
+                    b.Property<string>("EntryKind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(48)
+                        .HasColumnType("character varying(48)")
+                        .HasDefaultValue("ordinary");
 
                     b.Property<int?>("DeterministicClassificationCategoryId")
                         .HasColumnType("integer");
@@ -4028,6 +4051,8 @@ namespace NSFinance.Api.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AnalyticsTreatment");
+
                     b.HasIndex("CategoryId");
 
                     b.HasIndex("DeterministicClassificationStatus");
@@ -4043,6 +4068,8 @@ namespace NSFinance.Api.Persistence.Migrations
                     b.HasIndex("DeterministicLinkedTransactionId");
 
                     b.HasIndex("DeterministicRelationshipGroupId");
+
+                    b.HasIndex("EntryKind");
 
                     b.HasIndex("FinancialAccountId");
 

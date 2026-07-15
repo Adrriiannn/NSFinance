@@ -1,5 +1,12 @@
 export type AccountType = "Current" | "Savings" | "Credit" | "Cash" | "Other";
-export type TransactionDirection = "Income" | "Expense";
+export type AccountSource = "manual" | "provider_projected";
+export type TransactionDirection = "Income" | "Expense" | "Adjustment";
+export type TransactionEntryKind =
+  | "ordinary"
+  | "opening_balance_adjustment"
+  | "manual_adjustment"
+  | "statement_import";
+export type TransactionAnalyticsTreatment = "ordinary" | "balance_only";
 
 export type AccountBalanceSource = "provider_snapshot" | "manual_ledger" | "unavailable";
 export type AccountBalanceFreshness = "fresh" | "stale" | "current" | "unknown";
@@ -44,6 +51,7 @@ export type AccountDto = {
   providerBrandBgColor: string | null;
   hasProviderBranding: boolean;
   balance?: AccountBalanceDto | null;
+  source: AccountSource;
 };
 
 export type CreateAccountRequest = {
@@ -65,6 +73,8 @@ export type TransactionDto = {
   description: string;
   amount: number;
   currency: string;
+  entryKind: TransactionEntryKind;
+  analyticsTreatment: TransactionAnalyticsTreatment;
   categoryId: string | null;
   categoryName: string | null;
   taxonomyDomainId: number | null;
@@ -114,7 +124,13 @@ export type TransactionDto = {
   relationshipAnalyticsTreatment?: string | null;
   relationshipVirtualDestinationLabel?: string | null;
   relationshipCounterpartyTransactionId?: string | null;
-  displaySemantic?: "real_transaction" | "internal_transfer" | "savings_roundup" | "savings_manual_move" | null;
+  displaySemantic?:
+    | "real_transaction"
+    | "internal_transfer"
+    | "savings_roundup"
+    | "savings_manual_move"
+    | "balance_adjustment"
+    | null;
   transferPolicyKind?: string | null;
   reportingBucket?: string | null;
   isGloballyNeutralized?: boolean | null;

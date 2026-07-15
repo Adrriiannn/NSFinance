@@ -12,6 +12,7 @@ public sealed class UserFinancialSummaryService(AppDbContext dbContext) : IUserF
         var rows = await dbContext.Transactions
             .AsNoTracking()
             .Where(x => x.FinancialAccount != null && x.FinancialAccount.UserId == userId)
+            .Where(x => x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary)
             .Where(x => x.BookedAtUtc >= windowStartUtc)
             .Select(x => new { x.Amount, x.Currency })
             .ToListAsync(cancellationToken);
@@ -35,6 +36,7 @@ public sealed class SpendingAnalysisService(AppDbContext dbContext) : ISpendingA
         var rows = await dbContext.Transactions
             .AsNoTracking()
             .Where(x => x.FinancialAccount != null && x.FinancialAccount.UserId == userId)
+            .Where(x => x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary)
             .Where(x => x.BookedAtUtc >= windowStartUtc && x.Amount < 0m)
             .Select(x => new { x.Amount, x.TaxonomyDomainId })
             .ToListAsync(cancellationToken);
@@ -62,6 +64,7 @@ public sealed class RecurringObligationsService(AppDbContext dbContext) : IRecur
         var rows = await dbContext.Transactions
             .AsNoTracking()
             .Where(x => x.FinancialAccount != null && x.FinancialAccount.UserId == userId)
+            .Where(x => x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary)
             .Where(x => x.BookedAtUtc >= windowStartUtc && x.Amount < 0m)
             .Select(x => new { x.BookedAtUtc, x.Amount, x.Description, x.Currency })
             .ToListAsync(cancellationToken);
@@ -131,6 +134,7 @@ public sealed class BudgetStatusService(AppDbContext dbContext) : IBudgetStatusS
         var monthToDateSpend = Math.Abs(await dbContext.Transactions
             .AsNoTracking()
             .Where(x => x.FinancialAccount != null && x.FinancialAccount.UserId == userId)
+            .Where(x => x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary)
             .Where(x => x.BookedAtUtc >= currentMonthStartUtc && x.Amount < 0m)
             .SumAsync(x => x.Amount, cancellationToken));
 
@@ -175,7 +179,8 @@ public sealed class TransactionQueryService(AppDbContext dbContext) : ITransacti
 
         var baseQuery = dbContext.Transactions
             .AsNoTracking()
-            .Where(x => x.FinancialAccount != null && x.FinancialAccount.UserId == userId);
+            .Where(x => x.FinancialAccount != null && x.FinancialAccount.UserId == userId)
+            .Where(x => x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary);
         foreach (var token in tokens)
         {
             var local = token;

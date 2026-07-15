@@ -14,4 +14,5 @@ public sealed record AccountDto(
     string? ProviderLogoUrl,
     string? ProviderBrandBgColor,
     bool HasProviderBranding,
-    AccountBalanceDto? Balance = null);
+    AccountBalanceDto? Balance = null,
+    string Source = "manual");

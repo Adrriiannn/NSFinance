@@ -579,7 +579,7 @@ export default function ActivityTabScreen() {
                       transactionId: item.id,
                       type: null,
                       reason: "Flagged for review",
-                      direction: item.direction
+                      direction: item.direction === "Adjustment" ? undefined : item.direction
                     })
                   }
                   onMarkOptional={() =>
@@ -587,7 +587,7 @@ export default function ActivityTabScreen() {
                       transactionId: item.id,
                       type: null,
                       reason: "Skipped from focus",
-                      direction: item.direction
+                      direction: item.direction === "Adjustment" ? undefined : item.direction
                     })
                   }
                 />

@@ -1,5 +1,8 @@
 import type { TransactionDto } from "../../types/api";
-import { resolveCanonicalTransactionSemantic } from "./semanticResolver";
+import {
+  resolveCanonicalTransactionSemantic,
+  type CanonicalSemanticFamily
+} from "./semanticResolver";
 
 export type TransferPolicyKind =
   | "none"
@@ -154,7 +157,7 @@ export function getTransferPolicyWarningForTransaction(transaction: TransactionD
 
 function getTransferPolicyWarningForSemantic(
   evaluation: TransferPolicyEvaluation,
-  semanticFamily: "none" | "internal_transfer" | "savings_transfer" | null): string | null {
+  semanticFamily: CanonicalSemanticFamily | null): string | null {
   if (!evaluation.isTransferTransaction) {
     return null;
   }

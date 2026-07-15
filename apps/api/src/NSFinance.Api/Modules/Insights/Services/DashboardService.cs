@@ -37,7 +37,9 @@ public sealed class DashboardService(
                 null,
                 null,
                 null,
-                false))
+                false,
+                null,
+                x.Source))
             .ToListAsync(cancellationToken);
         var accountsWithBalances = await accountBalanceReadService.AttachBalancesAsync(
             accounts,
@@ -54,7 +56,10 @@ public sealed class DashboardService(
         var transactionCount = await transactionQuery.CountAsync(cancellationToken);
 
         var recentOutflowCandidates = await transactionQuery
-            .Where(x => x.BookedAtUtc >= thirtyDaysAgo && x.Amount < 0)
+            .Where(x =>
+                x.AnalyticsTreatment == TransactionAnalyticsTreatments.Ordinary
+                && x.BookedAtUtc >= thirtyDaysAgo
+                && x.Amount < 0)
             .Select(x => new
             {
                 x.Amount,
@@ -95,6 +100,8 @@ public sealed class DashboardService(
                 x.Description,
                 x.Amount,
                 x.Currency,
+                x.EntryKind,
+                x.AnalyticsTreatment,
                 x.CategoryId,
                 LegacyCategoryName = x.Category != null ? x.Category.Name : null,
                 x.TaxonomyDomainId,
@@ -131,6 +138,7 @@ public sealed class DashboardService(
         var recentTransactionDtos = recentTransactions
             .Select(x =>
             {
+                var isBalanceOnly = x.AnalyticsTreatment == TransactionAnalyticsTreatments.BalanceOnly;
                 var taxonomyDomainName = expenseTaxonomyService.GetDomainName(x.TaxonomyDomainId);
                 var taxonomyCategoryName = expenseTaxonomyService.GetCategoryName(x.TaxonomyCategoryId);
                 var taxonomySubcategoryName = expenseTaxonomyService.GetSubcategoryName(x.TaxonomySubcategoryId);
@@ -185,19 +193,23 @@ public sealed class DashboardService(
                     relationshipSummary?.AnalyticsTreatment,
                     relationshipSummary?.VirtualDestinationLabel,
                     relationshipSummary?.CounterpartyTransactionId,
-                    TransactionSemanticResolver.ResolveDisplaySemantic(
-                        x.DeterministicClassificationStatus,
-                        x.DeterministicRelationshipType,
-                        x.DeterministicReasonCode),
+                    isBalanceOnly
+                        ? "balance_adjustment"
+                        : TransactionSemanticResolver.ResolveDisplaySemantic(
+                            x.DeterministicClassificationStatus,
+                            x.DeterministicRelationshipType,
+                            x.DeterministicReasonCode),
                     MapTransferPolicyKind(transferPolicy.PolicyKind),
-                    transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
-                    transferPolicy.IsGloballyNeutralized,
+                    isBalanceOnly ? "balance_only" : transferPolicy.ReportingBucket.ToString().ToLowerInvariant(),
+                    isBalanceOnly || transferPolicy.IsGloballyNeutralized,
                     x.Reason,
                     x.Notes,
                     x.BookedAtUtc,
                     x.CreatedUtc,
                     x.MetadataUpdatedUtc,
-                    x.Amount < 0 ? "Expense" : "Income");
+                    isBalanceOnly ? "Adjustment" : x.Amount < 0 ? "Expense" : "Income",
+                    x.EntryKind,
+                    x.AnalyticsTreatment);
             })
             .ToList();
 

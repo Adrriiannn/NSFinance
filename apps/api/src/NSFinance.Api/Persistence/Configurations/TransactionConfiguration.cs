@@ -14,6 +14,14 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
         builder.Property(x => x.Amount).HasColumnType("numeric(18,2)");
         builder.Property(x => x.Currency).HasMaxLength(3).IsRequired();
         builder.Property(x => x.Description).HasMaxLength(512).IsRequired();
+        builder.Property(x => x.EntryKind)
+            .HasMaxLength(48)
+            .HasDefaultValue(TransactionEntryKinds.Ordinary)
+            .IsRequired();
+        builder.Property(x => x.AnalyticsTreatment)
+            .HasMaxLength(32)
+            .HasDefaultValue(TransactionAnalyticsTreatments.Ordinary)
+            .IsRequired();
         builder.Property(x => x.Reason).HasMaxLength(140);
         builder.Property(x => x.Notes).HasMaxLength(1200);
         builder.Property(x => x.TransferKind).HasConversion<int?>();
@@ -47,6 +55,8 @@ public class TransactionConfiguration : IEntityTypeConfiguration<Transaction>
 
         builder.HasIndex(x => x.TaxonomyCategoryId);
         builder.HasIndex(x => x.TaxonomySubcategoryId);
+        builder.HasIndex(x => x.EntryKind);
+        builder.HasIndex(x => x.AnalyticsTreatment);
         builder.HasIndex(x => x.TransferKind);
         builder.HasIndex(x => x.LinkedTransferTransactionId);
         builder.HasIndex(x => x.TransferMatchConfidenceTier);

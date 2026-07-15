@@ -30,6 +30,7 @@ function buildAccount(overrides: Partial<BalanceAwareAccountDto> = {}): BalanceA
     providerLogoUrl: null,
     providerBrandBgColor: null,
     hasProviderBranding: true,
+    source: "provider_projected",
     ...overrides
   };
 }

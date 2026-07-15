@@ -126,7 +126,11 @@ export function TransactionRow({
         </View>
 
         <View style={{ alignItems: "flex-end", minWidth: 88 }}>
-          <AmountText amount={transaction.amount} currency={transaction.currency} appearance="transaction" />
+          <AmountText
+            amount={transaction.amount}
+            currency={transaction.currency}
+            appearance={transaction.analyticsTreatment === "balance_only" ? "neutral" : "transaction"}
+          />
           {showTimestamp ? <Text style={rowPresets.trailing}>{timestamp}</Text> : null}
         </View>
       </Pressable>

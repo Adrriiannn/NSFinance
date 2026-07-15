@@ -1,15 +1,17 @@
 import type { TransactionDto } from "../../types/api";
 
-export type CanonicalSemanticFamily = "none" | "internal_transfer" | "savings_transfer";
+export type CanonicalSemanticFamily = "none" | "internal_transfer" | "savings_transfer" | "balance_adjustment";
 export type CanonicalSemanticVariant =
   | "none"
   | "internal_transfer"
   | "savings_roundup"
-  | "savings_manual_move";
-export type CanonicalSemanticStyleKind = "default" | "internal_transfer" | "savings_transfer";
-export type CanonicalSemanticReasonSource = "deterministic" | "legacy_fallback" | "none";
+  | "savings_manual_move"
+  | "opening_balance_adjustment"
+  | "balance_adjustment";
+export type CanonicalSemanticStyleKind = "default" | "internal_transfer" | "savings_transfer" | "balance_adjustment";
+export type CanonicalSemanticReasonSource = "deterministic" | "legacy_fallback" | "provenance" | "none";
 export type CanonicalSemanticConfidenceState = "matched" | "deferred" | "ambiguous" | "uncategorized";
-export type CanonicalSemanticIconKind = "income" | "expense" | "transfer" | "savings";
+export type CanonicalSemanticIconKind = "income" | "expense" | "transfer" | "savings" | "adjustment";
 export type CanonicalPresentationStyleSource = "deterministic_semantic" | "taxonomy_fallback";
 
 export type CanonicalTransactionSemantic = {
@@ -60,7 +62,30 @@ const TRANSFER_SEMANTIC_MISMATCH_STATUSES = new Set([
 ]);
 
 export function resolveCanonicalTransactionSemantic(transaction: TransactionDto): CanonicalTransactionSemantic {
-  const defaultIconKind: CanonicalSemanticIconKind = transaction.direction === "Expense" ? "expense" : "income";
+  const balanceAdjustment = transaction.analyticsTreatment === "balance_only"
+    || transaction.displaySemantic === "balance_adjustment";
+  if (balanceAdjustment) {
+    const openingBalance = transaction.entryKind === "opening_balance_adjustment";
+    return {
+      family: "balance_adjustment",
+      variant: openingBalance ? "opening_balance_adjustment" : "balance_adjustment",
+      subtitle: openingBalance ? "Starting balance" : "Balance adjustment",
+      badgeText: "Balance only",
+      styleKind: "balance_adjustment",
+      iconKind: "adjustment",
+      analyticsNeutralized: true,
+      reasonSource: "provenance",
+      confidenceState: "matched",
+      isTransferLike: false,
+      isSavingsLike: false
+    };
+  }
+
+  const defaultIconKind: CanonicalSemanticIconKind = transaction.direction === "Expense"
+    ? "expense"
+    : transaction.direction === "Income"
+      ? "income"
+      : "adjustment";
   const defaultSemantic: CanonicalTransactionSemantic = {
     family: "none",
     variant: "none",

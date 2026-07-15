@@ -397,6 +397,30 @@ public sealed class FinancialCommitmentReadServiceTests
     }
 
     [Fact]
+    public async Task ListAsync_BalanceOnlySeries_IsExcludedFromInference()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedLinkedAccountAsync(dbContext, "EUR");
+        var transactions = AddMonthlySeries(
+            dbContext,
+            seeded.FinancialAccountId,
+            "Opening balance",
+            [-100m, -100m, -100m, -100m]);
+        foreach (var transaction in transactions)
+        {
+            transaction.EntryKind = TransactionEntryKinds.OpeningBalanceAdjustment;
+            transaction.AnalyticsTreatment = TransactionAnalyticsTreatments.BalanceOnly;
+        }
+
+        await dbContext.SaveChangesAsync();
+
+        var response = (await CreateService(dbContext, seeded.UserId)
+            .ListAsync(20, CancellationToken.None)).Value!;
+
+        Assert.Empty(response.Items);
+    }
+
+    [Fact]
     public async Task ListAsync_AnalyticsNeutralRelationshipSeries_IsExcludedFromInference()
     {
         await using var dbContext = CreateDbContext();

@@ -324,7 +324,7 @@ export default function PlannerTransactionDetailScreen() {
             <AmountText
               amount={transactionQuery.data.amount}
               currency={transactionQuery.data.currency}
-              appearance="transaction"
+              appearance={transactionQuery.data.analyticsTreatment === "balance_only" ? "neutral" : "transaction"}
               style={styles.transactionAmount}
             />
             <Text style={styles.transactionSubtitle}>
@@ -336,8 +336,14 @@ export default function PlannerTransactionDetailScreen() {
             <DetailLine label="Account" value={transactionQuery.data.accountName} />
             <DetailLine label="Date" value={formatDate(transactionQuery.data.bookedAtUtc)} />
             <DetailLine label="Time" value={formatTime(transactionQuery.data.bookedAtUtc)} />
-            <DetailLine label="Category" value={categoryLabel} />
-            <DetailLine label="Subcategory" value={subcategoryLabel} />
+            <DetailLine
+              label="Category"
+              value={transactionQuery.data.analyticsTreatment === "balance_only" ? "Balance adjustment" : categoryLabel}
+            />
+            <DetailLine
+              label="Subcategory"
+              value={transactionQuery.data.analyticsTreatment === "balance_only" ? "Not applicable" : subcategoryLabel}
+            />
           </GlassCard>
 
           {showLinkedTransactionSection ? (
@@ -366,7 +372,9 @@ export default function PlannerTransactionDetailScreen() {
             </GlassCard>
           ) : null}
 
-          <GlassCard style={styles.editCard}>
+          {transactionQuery.data.analyticsTreatment !== "balance_only" ? (
+            <>
+              <GlassCard style={styles.editCard}>
             <TextField
               label="Reason"
               value={reason}
@@ -427,22 +435,24 @@ export default function PlannerTransactionDetailScreen() {
             </View>
             {errors.category ? <Text style={styles.fieldError}>{errors.category}</Text> : null}
             {transferTotalsHint ? <Text style={styles.transferHint}>{transferTotalsHint}</Text> : null}
-          </GlassCard>
+              </GlassCard>
 
-          {updateMetadataMutation.isError ? (
-            <Text style={styles.mutationError}>{formatUnknownError(updateMetadataMutation.error)}</Text>
+              {updateMetadataMutation.isError ? (
+                <Text style={styles.mutationError}>{formatUnknownError(updateMetadataMutation.error)}</Text>
+              ) : null}
+
+              <View style={styles.actions}>
+                <PrimaryButton
+                  label="Save changes"
+                  onPress={() => {
+                    void handleSave();
+                  }}
+                  isLoading={updateMetadataMutation.isPending}
+                />
+                <SecondaryButton label="Back" onPress={() => router.back()} />
+              </View>
+            </>
           ) : null}
-
-          <View style={styles.actions}>
-            <PrimaryButton
-              label="Save changes"
-              onPress={() => {
-                void handleSave();
-              }}
-              isLoading={updateMetadataMutation.isPending}
-            />
-            <SecondaryButton label="Back" onPress={() => router.back()} />
-          </View>
         </>
       ) : null}
     </ScreenContainer>

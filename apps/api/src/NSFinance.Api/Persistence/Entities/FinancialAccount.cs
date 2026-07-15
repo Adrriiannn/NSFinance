@@ -7,6 +7,7 @@ public class FinancialAccount
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string Currency { get; set; } = "EUR";
+    public string Source { get; set; } = FinancialAccountSources.Manual;
     public DateTime CreatedUtc { get; set; }
 
     public User? User { get; set; }

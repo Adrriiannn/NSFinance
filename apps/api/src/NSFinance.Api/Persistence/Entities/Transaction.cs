@@ -7,6 +7,8 @@ public class Transaction
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "EUR";
     public string Description { get; set; } = string.Empty;
+    public string EntryKind { get; set; } = TransactionEntryKinds.Ordinary;
+    public string AnalyticsTreatment { get; set; } = TransactionAnalyticsTreatments.Ordinary;
     public DateTime BookedAtUtc { get; set; }
     public Guid? CategoryId { get; set; }
     public int? TaxonomyDomainId { get; set; }
