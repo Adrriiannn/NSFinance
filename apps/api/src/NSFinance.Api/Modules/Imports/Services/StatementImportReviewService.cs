@@ -50,7 +50,9 @@ public sealed class StatementImportReviewService(
             return RevisionConflict();
         }
 
-        if (batch.Status != StatementImportBatchStatuses.ReadyForReview)
+        if (batch.Status is not (
+            StatementImportBatchStatuses.ReadyForReview
+            or StatementImportBatchStatuses.Undone))
         {
             return ServiceResult<StatementImportReviewMutationDto>.Fail(
                 "This statement import batch is not open for review.",
@@ -59,7 +61,9 @@ public sealed class StatementImportReviewService(
         }
 
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
-        if (batch.ExpiresUtc.HasValue && batch.ExpiresUtc.Value <= utcNow)
+        if (batch.Status == StatementImportBatchStatuses.ReadyForReview
+            && batch.ExpiresUtc.HasValue
+            && batch.ExpiresUtc.Value <= utcNow)
         {
             return await ExpireAsync(batch, utcNow, cancellationToken);
         }

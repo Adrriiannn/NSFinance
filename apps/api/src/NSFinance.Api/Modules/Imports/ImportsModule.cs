@@ -52,6 +52,27 @@ public static class ImportsModule
             .WithMetadata(new RequestSizeLimitAttribute(
                 StatementImportReviewPolicy.MaximumRequestBodyBytes));
 
+        group.MapPost("/{batchId:guid}/commit", CommitStatementImportEndpoint.HandleAsync)
+            .WithName("CommitStatementImport")
+            .Accepts<StatementImportRevisionRequest>("application/json")
+            .RequireRateLimiting("statement-import-mutation")
+            .WithMetadata(new RequestSizeLimitAttribute(
+                StatementImportLifecyclePolicy.MaximumRequestBodyBytes));
+
+        group.MapPost("/{batchId:guid}/discard", DiscardStatementImportEndpoint.HandleAsync)
+            .WithName("DiscardStatementImport")
+            .Accepts<StatementImportRevisionRequest>("application/json")
+            .RequireRateLimiting("statement-import-mutation")
+            .WithMetadata(new RequestSizeLimitAttribute(
+                StatementImportLifecyclePolicy.MaximumRequestBodyBytes));
+
+        group.MapPost("/{batchId:guid}/undo", UndoStatementImportEndpoint.HandleAsync)
+            .WithName("UndoStatementImport")
+            .Accepts<StatementImportRevisionRequest>("application/json")
+            .RequireRateLimiting("statement-import-mutation")
+            .WithMetadata(new RequestSizeLimitAttribute(
+                StatementImportLifecyclePolicy.MaximumRequestBodyBytes));
+
         return app;
     }
 }

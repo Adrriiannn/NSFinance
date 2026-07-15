@@ -528,6 +528,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStatementImportMappingEngine, StatementImportMappingEngine>();
         services.AddSingleton<IStatementCsvParser, StatementCsvParser>();
         services.AddScoped<StatementImportBatchService>();
+        services.AddScoped<StatementImportLifecycleService>();
         services.AddScoped<StatementImportReviewService>();
         services.AddScoped<StatementImportUploadService>();
         services.AddScoped<StatementImportEvidenceCleanupService>();

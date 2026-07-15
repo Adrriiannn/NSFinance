@@ -399,6 +399,11 @@ internal sealed class StatementImportMappingEngine : IStatementImportMappingEngi
             amount = -amount;
         }
 
+        if (amount == 0m)
+        {
+            return StatementImportMappingErrorCodes.RowAmountZero;
+        }
+
         return null;
     }
 
@@ -1162,6 +1167,7 @@ internal static class StatementImportMappingErrorCodes
     public const string RowAmountRequired = "statement_import_row_amount_required";
     public const string RowDebitCreditShapeInvalid = "statement_import_row_debit_credit_shape_invalid";
     public const string RowAmountInvalid = "statement_import_row_amount_invalid";
+    public const string RowAmountZero = "statement_import_row_amount_zero";
     public const string RowAmountPrecisionInvalid = "statement_import_row_amount_precision_invalid";
     public const string RowAmountOutOfRange = "statement_import_row_amount_out_of_range";
     public const string RowSourceCurrencyInvalid = "statement_import_row_source_currency_invalid";

@@ -18,6 +18,7 @@ public sealed class StatementImportRouteMetadataTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddScoped<StatementImportBatchService>();
+        builder.Services.AddScoped<StatementImportLifecycleService>();
         builder.Services.AddScoped<StatementImportReviewService>();
         builder.Services.AddScoped<StatementImportUploadService>();
         await using var app = builder.Build();
@@ -32,12 +33,18 @@ public sealed class StatementImportRouteMetadataTests
         var batch = Find(endpoints, "/api/imports/statements/{batchId:guid}");
         var rows = Find(endpoints, "/api/imports/statements/{batchId:guid}/rows");
         var review = Find(endpoints, "/api/imports/statements/{batchId:guid}/review");
+        var commit = Find(endpoints, "/api/imports/statements/{batchId:guid}/commit");
+        var discard = Find(endpoints, "/api/imports/statements/{batchId:guid}/discard");
+        var undo = Find(endpoints, "/api/imports/statements/{batchId:guid}/undo");
 
-        Assert.All([inspect, preview, batch, rows, review], endpoint =>
+        Assert.All([inspect, preview, batch, rows, review, commit, discard, undo], endpoint =>
             Assert.NotEmpty(endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>()));
         AssertUploadMetadata(inspect);
         AssertUploadMetadata(preview);
-        AssertMutationMetadata(review);
+        AssertMutationMetadata(review, StatementImportReviewPolicy.MaximumRequestBodyBytes);
+        AssertMutationMetadata(commit, StatementImportLifecyclePolicy.MaximumRequestBodyBytes);
+        AssertMutationMetadata(discard, StatementImportLifecyclePolicy.MaximumRequestBodyBytes);
+        AssertMutationMetadata(undo, StatementImportLifecyclePolicy.MaximumRequestBodyBytes);
     }
 
     private static RouteEndpoint Find(
@@ -68,7 +75,7 @@ public sealed class StatementImportRouteMetadataTests
         Assert.Equal(16 * 1024, formLimit.ValueLengthLimit);
     }
 
-    private static void AssertMutationMetadata(RouteEndpoint endpoint)
+    private static void AssertMutationMetadata(RouteEndpoint endpoint, long maximumRequestBodyBytes)
     {
         var rateLimit = Assert.Single(
             endpoint.Metadata.GetOrderedMetadata<EnableRateLimitingAttribute>());
@@ -77,7 +84,7 @@ public sealed class StatementImportRouteMetadataTests
         var requestLimit = Assert.Single(
             endpoint.Metadata.GetOrderedMetadata<RequestSizeLimitAttribute>());
         Assert.Equal(
-            StatementImportReviewPolicy.MaximumRequestBodyBytes,
+            maximumRequestBodyBytes,
             ((IRequestSizeLimitMetadata)requestLimit).MaxRequestBodySize);
     }
 }

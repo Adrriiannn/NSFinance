@@ -286,6 +286,7 @@ public sealed class StatementImportMappingEngineTests
     }
 
     [Theory]
+    [InlineData("0.00", StatementImportMappingErrorCodes.RowAmountZero)]
     [InlineData("1.234", StatementImportMappingErrorCodes.RowAmountPrecisionInvalid)]
     [InlineData("10000000000000000.00", StatementImportMappingErrorCodes.RowAmountOutOfRange)]
     [InlineData("EUR 12.00", StatementImportMappingErrorCodes.RowAmountInvalid)]

@@ -44,3 +44,5 @@ public sealed record StatementImportRowReviewDecision(
 public sealed record ReviewStatementImportRowsCommand(
     int? ExpectedRevision,
     IReadOnlyList<StatementImportRowReviewDecision>? Decisions);
+
+public sealed record StatementImportRevisionCommand(int? ExpectedRevision);
