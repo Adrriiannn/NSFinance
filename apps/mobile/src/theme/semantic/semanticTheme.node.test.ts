@@ -6,7 +6,7 @@ import {
   themes,
   type SemanticTheme
 } from "./index";
-import { autumnTheme, springTheme, summerTheme, winterTheme } from "./seasonalThemes";
+import { autumnTheme, easterTheme, springTheme, summerTheme, winterTheme } from "./seasonalThemes";
 
 // Every selectable pack theme is held to the same contracts as the bases.
 const themeList: readonly SemanticTheme[] = [
@@ -14,7 +14,8 @@ const themeList: readonly SemanticTheme[] = [
   springTheme,
   summerTheme,
   autumnTheme,
-  winterTheme
+  winterTheme,
+  easterTheme
 ];
 
 function collectLeafPaths(value: unknown, prefix = ""): string[] {

@@ -1,10 +1,12 @@
 import { useMemo } from "react";
 import { StyleSheet, View } from "react-native";
 import { useThemeRuntime } from "../../../theme/runtime/ThemeRuntimeProvider";
+import { themePacks } from "../../../theme/runtime/themePacks";
 
 export function AppBackgroundLayer() {
-  const { theme } = useThemeRuntime();
+  const { theme, resolvedThemeName } = useThemeRuntime();
   const isDark = theme.isDark;
+  const DecorationComponent = themePacks[resolvedThemeName].DecorationComponent;
   const backgroundStyles = useMemo(
     () => ({
       neutralHaze: {
@@ -20,6 +22,7 @@ export function AppBackgroundLayer() {
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <View style={[styles.neutralHaze, backgroundStyles.neutralHaze]} />
+      {DecorationComponent ? <DecorationComponent /> : null}
       <View style={[styles.vignette, backgroundStyles.vignette]} />
     </View>
   );

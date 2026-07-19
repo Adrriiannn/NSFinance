@@ -1,10 +1,13 @@
+import type { ComponentType } from "react";
 import { themes, type SemanticTheme } from "../semantic";
 import {
   autumnTheme,
+  easterTheme,
   springTheme,
   summerTheme,
   winterTheme
 } from "../semantic/seasonalThemes";
+import { EasterDecorativeLayer } from "../decorations/EasterDecorativeLayer";
 import type { SeasonalThemeId } from "../seasonal/irishSeasonalCalendar";
 
 // Theme pack registry (THEME-001). A pack couples an identity with a concrete
@@ -12,13 +15,24 @@ import type { SeasonalThemeId } from "../seasonal/irishSeasonalCalendar";
 // an existing pack through the fallback map below, so Automatic rotation works
 // end to end and upgrades pack-by-pack without touching callers.
 
-export type ThemePackId = "light" | "dark" | "spring" | "summer" | "autumn" | "winter";
+export type ThemePackId =
+  | "light"
+  | "dark"
+  | "spring"
+  | "summer"
+  | "autumn"
+  | "winter"
+  | "easter";
 
 export type ThemePack = {
   id: ThemePackId;
   displayName: string;
   appearance: "light" | "dark";
   theme: SemanticTheme;
+  // Optional full-screen decorative layer rendered behind all content.
+  // Contractually non-interactive and low-opacity: it may never obscure
+  // financial content, authentication, or confirmation surfaces.
+  DecorationComponent?: ComponentType;
 };
 
 export const themePacks: Record<ThemePackId, ThemePack> = {
@@ -57,6 +71,13 @@ export const themePacks: Record<ThemePackId, ThemePack> = {
     displayName: "Winter",
     appearance: "dark",
     theme: winterTheme
+  },
+  easter: {
+    id: "easter",
+    displayName: "Easter",
+    appearance: "light",
+    theme: easterTheme,
+    DecorationComponent: EasterDecorativeLayer
   }
 };
 
@@ -72,7 +93,7 @@ export const seasonalPackFallback: Record<SeasonalThemeId, ThemePackId> = {
   autumn: "autumn",
   winter: "winter",
   stPatricks: "spring",
-  easter: "spring",
+  easter: "easter",
   halloween: "autumn",
   christmas: "winter"
 };

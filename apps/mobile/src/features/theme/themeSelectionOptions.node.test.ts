@@ -12,6 +12,14 @@ registerHooks({
       return { shortCircuit: true, url: "test:react-native" };
     }
 
+    if (specifier === "react-native-svg") {
+      return { shortCircuit: true, url: "test:react-native-svg" };
+    }
+
+    if (specifier === "react") {
+      return { shortCircuit: true, url: "test:react" };
+    }
+
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
@@ -27,7 +35,35 @@ registerHooks({
       return {
         format: "module",
         shortCircuit: true,
-        source: 'export const Appearance = { getColorScheme: () => "dark" };'
+        source: `
+          export const Appearance = { getColorScheme: () => "dark" };
+          export const StyleSheet = { absoluteFill: {}, absoluteFillObject: {}, create: (styles) => styles };
+          export const View = () => null;
+          export const useWindowDimensions = () => ({ width: 1080, height: 2400 });
+        `
+      };
+    }
+
+    if (url === "test:react-native-svg") {
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: `
+          const Stub = () => null;
+          export default Stub;
+          export const Circle = Stub, Defs = Stub, Ellipse = Stub, LinearGradient = Stub, Path = Stub, Stop = Stub;
+        `
+      };
+    }
+
+    if (url === "test:react") {
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: `
+          export const useMemo = (factory) => factory();
+          export default { useMemo };
+        `
       };
     }
 
@@ -51,6 +87,7 @@ test("options list System first, packs in base order, Automatic last", async () 
       "fixed:summer",
       "fixed:autumn",
       "fixed:winter",
+      "fixed:easter",
       "automatic"
     ]
   );

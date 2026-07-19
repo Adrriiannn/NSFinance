@@ -162,3 +162,15 @@ export const winterTheme = deriveSeasonalTheme({
   canvas: "#0C1218",
   elevatedCanvas: "#111A22"
 });
+
+// Easter: soft pastel violet over the light base; the decorated egg layer is
+// attached at the pack level so the semantic theme stays purely tonal.
+export const easterTheme = deriveSeasonalTheme({
+  name: "easter",
+  base: lightTheme,
+  accent: "#6E56A0",
+  accentStrong: "#5C4788",
+  accentGlow: "#8A6FC4",
+  canvas: "#F6F4F9",
+  elevatedCanvas: "#F0EDF6"
+});
