@@ -132,6 +132,182 @@ public static class CategoryCharacteristicsCatalog
             MerchantSignals: [],
             DirectionExpectation: CharacteristicsDirection.Either,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.NeutralTransfer,
-            ConfidenceFloor: null)
+            ConfidenceFloor: null),
+
+        // Transport > Fuel & Charging
+        new(
+            TaxonomyCategoryId: 12020,
+            TaxonomySubcategoryId: null,
+            Description: "Fuel and EV charging for your own vehicle.",
+            UseCases:
+            [
+                "Filling the tank at a forecourt",
+                "Motorway service station top-up",
+                "Public EV charge session"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a fuel forecourt or charging network",
+                "Direction is outflow",
+                "Amount fits a refuel profile rather than a small shop"
+            ],
+            ExclusionRules:
+            [
+                "Forecourt purchases with small amounts and food signals belong to Groceries or Dining",
+                "Tolls and parking belong to their transport categories"
+            ],
+            MerchantSignals:
+            [
+                "CIRCLE K",
+                "APPLEGREEN",
+                "MAXOL",
+                "TEXACO",
+                "ESB ECARS",
+                "IONITY"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per fill, typically 30-110 EUR"),
+
+        // Food & Dining > Dining Out
+        new(
+            TaxonomyCategoryId: 13020,
+            TaxonomySubcategoryId: null,
+            Description: "Prepared food and drink you did not cook: restaurants, takeaway, delivery.",
+            UseCases:
+            [
+                "Restaurant or cafe meal",
+                "Takeaway or delivery order",
+                "Lunch on the go"
+            ],
+            InclusionRules:
+            [
+                "Merchant prepares food or drink for immediate consumption",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Supermarket food belongs to Groceries",
+                "Hotel stays with dining folios belong to travel categories"
+            ],
+            MerchantSignals:
+            [
+                "MCDONALDS",
+                "SUPERMACS",
+                "BOOJUM",
+                "DELIVEROO",
+                "JUST EAT",
+                "UBER EATS",
+                "STARBUCKS",
+                "INSOMNIA"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 5-80 EUR"),
+
+        // Utilities > Electricity
+        new(
+            TaxonomyCategoryId: 14010,
+            TaxonomySubcategoryId: null,
+            Description: "Electricity supply for your home.",
+            UseCases:
+            [
+                "Monthly or bi-monthly electricity bill",
+                "Prepay electricity top-up"
+            ],
+            InclusionRules:
+            [
+                "Merchant is an electricity supplier",
+                "Direction is outflow",
+                "Cadence is recurring monthly or bi-monthly"
+            ],
+            ExclusionRules:
+            [
+                "Dual-fuel gas charges belong to Gas when itemized separately",
+                "EV charging networks belong to Fuel & Charging"
+            ],
+            MerchantSignals:
+            [
+                "ELECTRIC IRELAND",
+                "SSE AIRTRICITY",
+                "BORD GAIS ENERGY",
+                "ENERGIA",
+                "PINERGY",
+                "PREPAYPOWER"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Recurring, typically 60-260 EUR per bill"),
+
+        // Subscriptions > Streaming & Media
+        new(
+            TaxonomyCategoryId: 28010,
+            TaxonomySubcategoryId: null,
+            Description: "Recurring entertainment and media subscriptions.",
+            UseCases:
+            [
+                "Monthly video or music streaming charge",
+                "Annual media membership renewal"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a streaming or media service",
+                "Direction is outflow",
+                "Amount repeats on a monthly or annual cadence"
+            ],
+            ExclusionRules:
+            [
+                "One-off digital purchases and rentals are shopping, not subscriptions",
+                "Telecoms bundles that include TV belong to their utilities categories"
+            ],
+            MerchantSignals:
+            [
+                "NETFLIX",
+                "SPOTIFY",
+                "DISNEY",
+                "PRIME VIDEO",
+                "YOUTUBE PREMIUM",
+                "NOW TV",
+                "APPLE.COM/BILL"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Recurring, typically 5-25 EUR monthly"),
+
+        // Income > Salary
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 910101,
+            Description: "Pay from your employer.",
+            UseCases:
+            [
+                "Monthly, fortnightly, or weekly payroll credit",
+                "Back-pay or bonus from the same employer"
+            ],
+            InclusionRules:
+            [
+                "Direction is inflow",
+                "Reference carries payroll signals or a recurring employer name",
+                "Amount repeats on a payroll cadence"
+            ],
+            ExclusionRules:
+            [
+                "Transfers from your own accounts are never salary",
+                "State supports and refunds belong to their own income categories"
+            ],
+            MerchantSignals:
+            [
+                "SALARY",
+                "PAYROLL",
+                "WAGES",
+                "PAYE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Inflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Income,
+            ConfidenceFloor: 0.8)
     ];
 }
