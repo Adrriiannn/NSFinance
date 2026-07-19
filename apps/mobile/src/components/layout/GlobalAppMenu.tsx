@@ -1,9 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { usePathname, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AccessibilityInfo,
   Animated,
   Easing,
   Image,
@@ -17,9 +15,7 @@ import { SystemModal } from "../ui/surfaces/SystemModal";
 import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
-import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
-import { describeCurrentThemeSelection } from "../../features/theme/themeSelectionOptions";
-import { ThemeSelectionSheet } from "./ThemeSelectionSheet";
+import { ThemeSwatchRail } from "./ThemeSwatchRail";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type GlobalAppMenuProps = {
@@ -43,11 +39,6 @@ const menuItems = [
   { label: "Support", path: "/(tabs)/accounts/support", icon: "help-circle-outline" },
   { label: "About", path: "/(tabs)/accounts/about", icon: "information-circle-outline" }
 ] as const;
-
-const THEME_CONTROL_WIDTH = 60;
-const THEME_TOGGLE_HEIGHT = 20;
-const THEME_TOGGLE_THUMB_SIZE = 14;
-const THEME_TOGGLE_SIDE_PADDING = 2;
 
 function extractInitials(fullName: string) {
   const parts = fullName
@@ -92,13 +83,9 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   const router = useRouter();
   const pathname = usePathname();
   const { isAuthenticated, session, logout } = useAuthSession();
-  const { mode, preference, resolvedThemeName, setThemeMode, isTransitioning } = useThemeRuntime();
-  const [isThemeSheetOpen, setIsThemeSheetOpen] = useState(false);
   const profileQuery = useUserProfileQuery();
   const [isOpen, setIsOpen] = useState(false);
-  const [reducedMotionEnabled, setReducedMotionEnabled] = useState(false);
   const slideProgress = useRef(new Animated.Value(0)).current;
-  const themeToggleProgress = useRef(new Animated.Value(resolvedThemeName === "dark" ? 1 : 0)).current;
 
   useEffect(() => {
     setIsOpen(false);
@@ -122,31 +109,6 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
     }).start();
   }, [isOpen, slideProgress]);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then((enabled) => {
-        if (isMounted) {
-          setReducedMotionEnabled(enabled);
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          setReducedMotionEnabled(false);
-        }
-      });
-
-    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => {
-      setReducedMotionEnabled(enabled);
-    });
-
-    return () => {
-      isMounted = false;
-      subscription.remove();
-    };
-  }, []);
-
   const activePath = useMemo(() => pathname || "", [pathname]);
 
   const profile = profileQuery.data;
@@ -158,56 +120,6 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
     formatMemberSince(profile?.createdUtc ?? session?.user.createdUtc);
   const profileImageUrl = profile?.profileImageUrl ?? session?.user.profileImageUrl ?? null;
   const initials = extractInitials(fullName);
-  const effectiveThemeName = mode === "system" ? resolvedThemeName : mode;
-
-  useEffect(() => {
-    Animated.timing(themeToggleProgress, {
-      toValue: effectiveThemeName === "dark" ? 1 : 0,
-      duration: reducedMotionEnabled ? 120 : 230,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true
-    }).start();
-  }, [effectiveThemeName, reducedMotionEnabled, themeToggleProgress]);
-
-  const setManualTheme = (nextTheme: "light" | "dark") => {
-    if (isTransitioning) {
-      return;
-    }
-
-    setThemeMode(nextTheme);
-  };
-
-  const toggleToOppositeTheme = () => {
-    setManualTheme(effectiveThemeName === "dark" ? "light" : "dark");
-  };
-
-  const thumbTranslateX = themeToggleProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [
-      THEME_TOGGLE_SIDE_PADDING,
-      THEME_CONTROL_WIDTH - THEME_TOGGLE_THUMB_SIZE - THEME_TOGGLE_SIDE_PADDING
-    ]
-  });
-
-  const sunOpacity = themeToggleProgress.interpolate({
-    inputRange: [0, 0.35, 1],
-    outputRange: [1, 0.2, 0]
-  });
-
-  const moonOpacity = themeToggleProgress.interpolate({
-    inputRange: [0, 0.65, 1],
-    outputRange: [0, 0.2, 1]
-  });
-
-  const sunScale = themeToggleProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0.9]
-  });
-
-  const moonScale = themeToggleProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.9, 1]
-  });
 
   if (!isAuthenticated) {
     return null;
@@ -276,100 +188,10 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
                   {subtitle}
                 </Text>
               </View>
-              <View style={styles.themeControlWrap}>
-                <Pressable
-                  accessibilityRole="switch"
-                  accessibilityLabel="Theme toggle. Tap anywhere to switch between light and dark theme."
-                  accessibilityState={{
-                    checked: effectiveThemeName === "dark",
-                    disabled: isTransitioning
-                  }}
-                  disabled={isTransitioning}
-                  onPress={toggleToOppositeTheme}
-                  style={({ pressed }) => [
-                    styles.themeToggleTrack,
-                    effectiveThemeName === "dark"
-                      ? styles.themeToggleTrackDark
-                      : styles.themeToggleTrackLight,
-                    pressed && !isTransitioning ? styles.menuItemPressed : null,
-                    isTransitioning ? styles.themeControlDisabled : null
-                  ]}
-                >
-                  <LinearGradient
-                    pointerEvents="none"
-                    colors={
-                      effectiveThemeName === "dark"
-                        ? ["rgba(13,17,26,0.98)", "rgba(20,24,34,0.98)"]
-                        : ["rgba(247,242,233,0.98)", "rgba(245,236,221,0.98)"]
-                    }
-                    start={{ x: 0, y: 0.5 }}
-                    end={{ x: 1, y: 0.5 }}
-                    style={StyleSheet.absoluteFillObject}
-                  />
+            </View>
 
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.themeThumb,
-                      {
-                        transform: [{ translateX: thumbTranslateX }]
-                      }
-                    ]}
-                  >
-                    <View style={styles.thumbPressable}>
-                      <Animated.View
-                        style={[
-                          styles.thumbFace,
-                          {
-                            opacity: sunOpacity,
-                            transform: [{ scale: sunScale }]
-                          }
-                        ]}
-                      >
-                        <LinearGradient
-                          colors={["#FFBE5D", "#F28C28", "#CD6B09"]}
-                          start={{ x: 0.1, y: 0.1 }}
-                          end={{ x: 0.9, y: 0.9 }}
-                          style={styles.sunThumb}
-                        />
-                      </Animated.View>
-
-                      <Animated.View
-                        style={[
-                          styles.thumbFace,
-                          styles.moonThumb,
-                          {
-                            opacity: moonOpacity,
-                            transform: [{ scale: moonScale }]
-                          }
-                        ]}
-                      >
-                        <View style={styles.moonCraterOne} />
-                        <View style={styles.moonCraterTwo} />
-                        <View style={styles.moonCraterThree} />
-                      </Animated.View>
-                    </View>
-                  </Animated.View>
-                </Pressable>
-
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Theme: ${describeCurrentThemeSelection(preference)}. Open theme options`}
-                  accessibilityState={{ disabled: isTransitioning }}
-                  disabled={isTransitioning}
-                  onPress={() => setIsThemeSheetOpen(true)}
-                  style={({ pressed }) => [
-                    styles.systemRow,
-                    pressed && !isTransitioning ? styles.menuItemPressed : null,
-                    isTransitioning ? styles.themeControlDisabled : null
-                  ]}
-                >
-                  <Text style={styles.systemText} numberOfLines={1}>
-                    {describeCurrentThemeSelection(preference)}
-                  </Text>
-                  <Ionicons name="chevron-down" size={12} color={palette.textSecondary} />
-                </Pressable>
-              </View>
+            <View style={styles.themeRailSection}>
+              <ThemeSwatchRail />
             </View>
 
             <View style={styles.menuItems}>
@@ -452,7 +274,7 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
           </Animated.View>
         </View>
       </SystemModal>
-      <ThemeSelectionSheet visible={isThemeSheetOpen} onClose={() => setIsThemeSheetOpen(false)} />
+
     </>
   );
 }
@@ -535,97 +357,11 @@ const styles = createRuntimeStyleSheet(() => ({
     gap: 2
   },
   profileIdentityCopy: {
-    paddingRight: THEME_CONTROL_WIDTH + spacing[8]
-  },
-  themeControlWrap: {
-    position: "absolute",
-    top: spacing[10],
-    right: spacing[10],
-    width: THEME_CONTROL_WIDTH,
     gap: 2
   },
-  themeToggleTrack: {
-    width: THEME_CONTROL_WIDTH,
-    height: THEME_TOGGLE_HEIGHT,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: palette.border,
-    overflow: "hidden",
-    justifyContent: "center"
-  },
-  themeToggleTrackLight: {
-    backgroundColor: "rgba(247, 242, 233, 0.9)"
-  },
-  themeToggleTrackDark: {
-    backgroundColor: "rgba(12, 16, 24, 0.95)"
-  },
-  themeThumb: {
-    position: "absolute",
-    top: THEME_TOGGLE_SIDE_PADDING,
-    left: 0,
-    width: THEME_TOGGLE_THUMB_SIZE,
-    height: THEME_TOGGLE_THUMB_SIZE
-  },
-  thumbPressable: {
-    width: "100%",
-    height: "100%",
-    borderRadius: THEME_TOGGLE_THUMB_SIZE / 2,
-    overflow: "hidden"
-  },
-  thumbFace: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: THEME_TOGGLE_THUMB_SIZE / 2
-  },
-  sunThumb: {
-    ...StyleSheet.absoluteFillObject
-  },
-  moonThumb: {
-    backgroundColor: "#F2F2EE",
-    borderWidth: 1,
-    borderColor: "rgba(157, 157, 157, 0.48)"
-  },
-  moonCraterOne: {
-    position: "absolute",
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    top: 4,
-    left: 4,
-    backgroundColor: "rgba(188, 188, 188, 0.55)"
-  },
-  moonCraterTwo: {
-    position: "absolute",
-    width: 3,
-    height: 3,
-    borderRadius: 2,
-    top: 9,
-    right: 4,
-    backgroundColor: "rgba(176, 176, 176, 0.45)"
-  },
-  moonCraterThree: {
-    position: "absolute",
-    width: 2,
-    height: 2,
-    borderRadius: 2,
-    bottom: 4,
-    left: 7,
-    backgroundColor: "rgba(173, 173, 173, 0.42)"
-  },
-  systemRow: {
-    width: THEME_CONTROL_WIDTH,
-    minHeight: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3
-  },
-  systemText: {
-    color: palette.textSecondary,
-    ...typography.caption
-  },
-  themeControlDisabled: {
-    opacity: 0.56
+  themeRailSection: {
+    paddingHorizontal: spacing[4],
+    paddingBottom: spacing[8]
   },
   fullName: {
     color: palette.textPrimary,
