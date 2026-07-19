@@ -535,6 +535,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TransactionService>();
         services.AddScoped<CategoryService>();
         services.AddScoped<DashboardService>();
+        services.AddScoped<InsightPeriodsService>();
         services.AddScoped<ExpenseTaxonomyService>();
         services.AddScoped<ExpenseTrackerService>();
         services.AddScoped<ExpensePlanService>();

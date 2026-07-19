@@ -13,6 +13,13 @@ public static class InsightsModule
         group.MapGet("/summary", GetDashboardSummaryEndpoint.HandleAsync)
             .WithName("GetDashboardSummary");
 
+        var insightsGroup = app.MapGroup("/api/insights")
+            .WithTags("Insights")
+            .RequireAuthorization();
+
+        insightsGroup.MapGet("/periods", GetInsightPeriodsEndpoint.HandleAsync)
+            .WithName("GetInsightPeriods");
+
         return app;
     }
 }
