@@ -13,6 +13,9 @@ public static class CategoriesModule
         group.MapGet("/", GetCategoriesEndpoint.HandleAsync)
             .WithName("GetCategories");
 
+        group.MapGet("/characteristics", GetCategoryCharacteristicsEndpoint.Handle)
+            .WithName("GetCategoryCharacteristics");
+
         return app;
     }
 }
