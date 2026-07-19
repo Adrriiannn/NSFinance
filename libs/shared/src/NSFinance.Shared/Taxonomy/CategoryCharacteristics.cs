@@ -308,6 +308,147 @@ public static class CategoryCharacteristicsCatalog
             ],
             DirectionExpectation: CharacteristicsDirection.Inflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Income,
-            ConfidenceFloor: 0.8)
+            ConfidenceFloor: 0.8),
+
+        // Housing > Rent
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 100101,
+            Description: "Rent paid for your home.",
+            UseCases:
+            [
+                "Monthly rent standing order to a landlord or agency",
+                "Weekly rent payment"
+            ],
+            InclusionRules:
+            [
+                "Direction is outflow",
+                "Amount repeats on a monthly or weekly cadence",
+                "Reference names a landlord, letting agency, or rent keyword"
+            ],
+            ExclusionRules:
+            [
+                "Mortgage repayments belong to the mortgage category",
+                "Transfers to your own accounts are never rent"
+            ],
+            MerchantSignals:
+            [
+                "RENT",
+                "LETTING",
+                "PROPERTY MANAGEMENT",
+                "DAFT"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.85,
+            AmountProfile: "Recurring, typically 600-2500 EUR monthly"),
+
+        // Transport > Public Transport
+        new(
+            TaxonomyCategoryId: 12010,
+            TaxonomySubcategoryId: null,
+            Description: "Buses, trains, trams, and travel cards.",
+            UseCases:
+            [
+                "Leap card top-up",
+                "Train or bus ticket",
+                "Monthly commuter ticket"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a public transport operator or travel-card scheme",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Taxis and ride-hailing belong to their own transport category",
+                "Fuel belongs to Fuel & Charging"
+            ],
+            MerchantSignals:
+            [
+                "LEAP",
+                "TFI",
+                "IRISH RAIL",
+                "IARNROD EIREANN",
+                "DUBLIN BUS",
+                "BUS EIREANN",
+                "LUAS",
+                "GO-AHEAD"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Per trip or top-up, typically 2-120 EUR"),
+
+        // Insurance > Health Insurance
+        new(
+            TaxonomyCategoryId: 15010,
+            TaxonomySubcategoryId: null,
+            Description: "Private health insurance premiums.",
+            UseCases:
+            [
+                "Monthly health plan premium",
+                "Annual policy renewal"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a health insurer",
+                "Direction is outflow",
+                "Cadence is monthly or annual"
+            ],
+            ExclusionRules:
+            [
+                "Car, home, and travel policies belong to their own insurance categories",
+                "GP, pharmacy, and hospital charges are health expenses, not premiums"
+            ],
+            MerchantSignals:
+            [
+                "VHI",
+                "LAYA",
+                "IRISH LIFE HEALTH",
+                "LEVELHEALTH"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.85,
+            AmountProfile: "Recurring, typically 40-300 EUR monthly"),
+
+        // Utilities > Internet & Mobile
+        new(
+            TaxonomyCategoryId: 14040,
+            TaxonomySubcategoryId: null,
+            Description: "Home broadband and mobile phone plans.",
+            UseCases:
+            [
+                "Monthly broadband bill",
+                "Mobile plan charge or prepay top-up",
+                "TV and broadband bundle"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a telecoms provider",
+                "Direction is outflow",
+                "Amount repeats monthly or is a recognizable top-up"
+            ],
+            ExclusionRules:
+            [
+                "Standalone streaming services belong to Streaming & Media",
+                "Device purchases are shopping, not the plan"
+            ],
+            MerchantSignals:
+            [
+                "EIR",
+                "VODAFONE",
+                "THREE",
+                "GOMO",
+                "48.IE",
+                "SKY",
+                "VIRGIN MEDIA",
+                "TESCO MOBILE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Recurring, typically 10-120 EUR monthly")
     ];
 }
