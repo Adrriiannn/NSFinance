@@ -482,6 +482,139 @@ public static class CategoryCharacteristicsCatalog
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
             ConfidenceFloor: 0.8,
-            AmountProfile: "Recurring, typically 10-120 EUR monthly")
+            AmountProfile: "Recurring, typically 10-120 EUR monthly"),
+
+        // Transport > Air Travel > Flights
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 120801,
+            Description: "Flight tickets and airline booking fees.",
+            UseCases:
+            [
+                "Booking a flight with an airline",
+                "Flight purchased through a booking site"
+            ],
+            InclusionRules:
+            [
+                "Merchant is an airline or flight booking service",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Hotels and accommodation belong to their travel categories",
+                "Airport food and shops belong to Dining or shopping"
+            ],
+            MerchantSignals:
+            [
+                "RYANAIR",
+                "AER LINGUS",
+                "VOLA.RO",
+                "SKYSCANNER",
+                "KIWI.COM",
+                "EDREAMS"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Per booking, typically 30-600 EUR"),
+
+        // Insurance > Motor > Car Insurance
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 150401,
+            Description: "Car insurance premiums.",
+            UseCases:
+            [
+                "Monthly motor premium",
+                "Annual policy or renewal payment"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a motor insurer or broker",
+                "Direction is outflow",
+                "Cadence is monthly or annual"
+            ],
+            ExclusionRules:
+            [
+                "Health and home policies belong to their own insurance categories",
+                "Motor tax and NCT fees are motoring costs, not insurance"
+            ],
+            MerchantSignals:
+            [
+                "AXA",
+                "ALLIANZ",
+                "AVIVA",
+                "LIBERTY INSURANCE",
+                "ITS4WOMEN",
+                "CHILL INSURANCE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Recurring, typically 30-200 EUR monthly"),
+
+        // Personal Care > Grooming & Beauty
+        new(
+            TaxonomyCategoryId: 19010,
+            TaxonomySubcategoryId: null,
+            Description: "Grooming, beauty, and personal upkeep purchases.",
+            UseCases:
+            [
+                "Barber or salon visit",
+                "Grooming products ordered online"
+            ],
+            InclusionRules:
+            [
+                "Merchant sells grooming or beauty products or services",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Pharmacy healthcare items belong to health categories",
+                "Gym and fitness memberships belong to Gym Membership"
+            ],
+            MerchantSignals:
+            [
+                "MANSCAPED",
+                "BOOTS",
+                "THE BARBER",
+                "SALON"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7),
+
+        // Personal Care > Fitness > Gym Membership
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 190401,
+            Description: "Recurring gym and fitness memberships.",
+            UseCases:
+            [
+                "Monthly gym direct debit",
+                "Annual membership renewal"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a gym or fitness studio",
+                "Direction is outflow",
+                "Amount repeats on a membership cadence"
+            ],
+            ExclusionRules:
+            [
+                "One-off class passes and sports gear are not memberships"
+            ],
+            MerchantSignals:
+            [
+                "FLYEFIT",
+                "GYM PLUS",
+                "BEN DUNNE",
+                "WESTWOOD",
+                "ANYTIME FITNESS"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Recurring, typically 20-80 EUR monthly")
     ];
 }
