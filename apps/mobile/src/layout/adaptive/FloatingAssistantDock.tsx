@@ -14,6 +14,11 @@ import {
 } from "./assistantDock.storage";
 import type { FloatingAssistantDockProps } from "./adaptive.types";
 
+// An expanded dock resting over list content hides amounts and actions, so it
+// slides back to the slim docked handle after a short idle period. The user's
+// chosen side and height persist; only the resting mode returns to docked.
+const AUTO_REDOCK_IDLE_MS = 7000;
+
 export function FloatingAssistantDock({
   onPress,
   accessibilityLabel = "Open NS Companion",
@@ -326,6 +331,27 @@ export function FloatingAssistantDock({
       verticalRatio
     ]
   );
+
+  useEffect(() => {
+    if (!isExpanded || isDraggingDock || hidden || !hasHydratedDockState) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      snapDock(dockSide, topFromRatio(verticalRatio));
+    }, AUTO_REDOCK_IDLE_MS);
+
+    return () => clearTimeout(timer);
+  }, [
+    dockSide,
+    hasHydratedDockState,
+    hidden,
+    isDraggingDock,
+    isExpanded,
+    snapDock,
+    topFromRatio,
+    verticalRatio
+  ]);
 
   const showFullCircle = isExpanded || isDraggingDock;
 
