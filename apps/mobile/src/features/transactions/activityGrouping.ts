@@ -1,5 +1,5 @@
 import type { TransactionDto } from "../../types/api";
-import { formatLongDate, formatTime } from "../../lib/format";
+import { formatCalendarDateLong, formatLongDate, formatTime } from "../../lib/format";
 import {
   isTransferLikeLabel,
   shouldSuppressTransferLikeTaxonomyFallback
@@ -149,6 +149,12 @@ export function buildTransactionMetaLine(
 }
 
 export function buildTransactionDetailDate(transaction: TransactionDto): string {
+  // Date-precision rows carry a provider-authoritative calendar day and no real
+  // time; rendering bookedAtUtc would invent a midnight timestamp.
+  if (transaction.effectiveTime?.precision === "date" && transaction.effectiveTime.date) {
+    return formatCalendarDateLong(transaction.effectiveTime.date);
+  }
+
   return `${formatLongDate(transaction.bookedAtUtc)} | ${formatTime(transaction.bookedAtUtc)}`;
 }
 

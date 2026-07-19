@@ -26,7 +26,7 @@ import {
   resolveCanonicalTransactionLabels
 } from "../../../src/features/transactions/activityGrouping";
 import { formatUnknownError } from "../../../src/lib/api/errors";
-import { formatDate, formatTime } from "../../../src/lib/format";
+import { formatCalendarDate, formatDate, formatTime } from "../../../src/lib/format";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import type { TransactionDto } from "../../../src/types/api";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
@@ -327,14 +327,26 @@ export default function PlannerTransactionDetailScreen() {
               style={styles.transactionAmount}
             />
             <Text style={styles.transactionSubtitle}>
-              {transactionQuery.data.accountName} | {formatDate(transactionQuery.data.bookedAtUtc)}
+              {transactionQuery.data.accountName} |{" "}
+              {transactionQuery.data.effectiveTime?.precision === "date" && transactionQuery.data.effectiveTime.date
+                ? formatCalendarDate(transactionQuery.data.effectiveTime.date)
+                : formatDate(transactionQuery.data.bookedAtUtc)}
             </Text>
           </Card>
 
           <Card style={styles.detailCard}>
             <DetailLine label="Account" value={transactionQuery.data.accountName} />
-            <DetailLine label="Date" value={formatDate(transactionQuery.data.bookedAtUtc)} />
-            <DetailLine label="Time" value={formatTime(transactionQuery.data.bookedAtUtc)} />
+            <DetailLine
+              label="Date"
+              value={
+                transactionQuery.data.effectiveTime?.precision === "date" && transactionQuery.data.effectiveTime.date
+                  ? formatCalendarDate(transactionQuery.data.effectiveTime.date)
+                  : formatDate(transactionQuery.data.bookedAtUtc)
+              }
+            />
+            {transactionQuery.data.effectiveTime?.precision === "date" ? null : (
+              <DetailLine label="Time" value={formatTime(transactionQuery.data.bookedAtUtc)} />
+            )}
             <DetailLine
               label="Category"
               value={transactionQuery.data.analyticsTreatment === "balance_only" ? "Balance adjustment" : categoryLabel}

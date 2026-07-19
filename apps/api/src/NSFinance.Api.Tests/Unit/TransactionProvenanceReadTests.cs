@@ -241,6 +241,59 @@ public sealed class TransactionProvenanceReadTests
     }
 
     [Fact]
+    public async Task CanonicalReads_ProviderMidnightInstant_ExposesDatePrecision()
+    {
+        await using var dbContext = CreateDbContext();
+        var provider = await SeedAccountAsync(dbContext, FinancialAccountSources.ProviderProjected);
+        var utcMidnightId = Guid.NewGuid();
+        var irishSummerMidnightId = Guid.NewGuid();
+        var afterMidnightId = Guid.NewGuid();
+        var utcMidnight = new DateTime(2026, 1, 17, 0, 0, 0, DateTimeKind.Utc);
+        // 23:00Z on 16 July is 00:00 Irish Summer Time on 17 July.
+        var irishSummerMidnightUtc = new DateTime(2026, 7, 16, 23, 0, 0, DateTimeKind.Utc);
+        var afterMidnightUtc = new DateTime(2026, 7, 17, 0, 0, 1, DateTimeKind.Utc);
+
+        dbContext.Transactions.AddRange(
+            CreateTransaction(
+                utcMidnightId,
+                provider.AccountId,
+                TransactionEntryKinds.Ordinary,
+                utcMidnight),
+            CreateTransaction(
+                irishSummerMidnightId,
+                provider.AccountId,
+                TransactionEntryKinds.Ordinary,
+                irishSummerMidnightUtc),
+            CreateTransaction(
+                afterMidnightId,
+                provider.AccountId,
+                TransactionEntryKinds.Ordinary,
+                afterMidnightUtc));
+        await dbContext.SaveChangesAsync();
+
+        var rows = await CreateService(dbContext, provider.UserId)
+            .GetTransactionsAsync(null, CancellationToken.None);
+        var utcMidnightRow = Assert.Single(rows, row => row.Id == utcMidnightId);
+        var irishMidnightRow = Assert.Single(rows, row => row.Id == irishSummerMidnightId);
+        var afterMidnightRow = Assert.Single(rows, row => row.Id == afterMidnightId);
+
+        // Date-granular provider bookings arrive as exact-midnight instants in UTC or
+        // in the Irish local day; the read contract must not invent a "00:00" time.
+        Assert.Equal(StatementImportTimestampPrecisions.Date, utcMidnightRow.EffectiveTime.Precision);
+        Assert.Equal(new DateOnly(2026, 1, 17), utcMidnightRow.EffectiveTime.Date);
+        Assert.Null(utcMidnightRow.EffectiveTime.InstantUtc);
+
+        Assert.Equal(StatementImportTimestampPrecisions.Date, irishMidnightRow.EffectiveTime.Precision);
+        Assert.Equal(new DateOnly(2026, 7, 17), irishMidnightRow.EffectiveTime.Date);
+        Assert.Null(irishMidnightRow.EffectiveTime.InstantUtc);
+
+        // One second past midnight is a genuine instant and keeps full precision.
+        Assert.Equal(StatementImportTimestampPrecisions.Instant, afterMidnightRow.EffectiveTime.Precision);
+        Assert.Equal(afterMidnightUtc, afterMidnightRow.EffectiveTime.InstantUtc);
+        Assert.Null(afterMidnightRow.EffectiveTime.Date);
+    }
+
+    [Fact]
     public async Task CanonicalReads_CrossUserImportMetadata_IsNotExposed()
     {
         await using var dbContext = CreateDbContext();

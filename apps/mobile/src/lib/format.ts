@@ -21,6 +21,25 @@ export function formatLongDate(isoDate: string): string {
   }).format(new Date(isoDate));
 }
 
+// Formats a date-only value (e.g. "2026-07-17") as the calendar day it names.
+// Pinned to UTC so the rendered day never shifts with the device timezone.
+export function formatCalendarDateLong(isoDateOnly: string): string {
+  return new Intl.DateTimeFormat("en-IE", {
+    day: "2-digit",
+    month: "long",
+    timeZone: "UTC"
+  }).format(new Date(`${isoDateOnly}T00:00:00Z`));
+}
+
+export function formatCalendarDate(isoDateOnly: string): string {
+  return new Intl.DateTimeFormat("en-IE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC"
+  }).format(new Date(`${isoDateOnly}T00:00:00Z`));
+}
+
 export function formatShortDate(isoDate: string): string {
   return new Intl.DateTimeFormat("en-IE", {
     day: "2-digit",

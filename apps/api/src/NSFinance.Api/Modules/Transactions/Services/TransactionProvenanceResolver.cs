@@ -91,6 +91,26 @@ internal static class TransactionProvenanceResolver
                 throw Inconsistent(transactionId);
             }
 
+            // Providers such as AIB book transactions with date-level granularity that
+            // TrueLayer surfaces as exact-midnight instants, either in UTC or in the
+            // bank's local Irish day (23:00Z during Irish summer time). Reporting those
+            // as real instants invents a "00:00" time the provider never supplied, so
+            // classify them as date precision on the local calendar day. A genuine
+            // midnight-exact purchase loses only its implied time display, never its
+            // booked ordering, which stays on bookedAtUtc.
+            if (bookedAtUtc.Kind == DateTimeKind.Utc
+                && TryResolveProviderDateGranularity(bookedAtUtc, out var providerLocalDate))
+            {
+                return new TransactionReadProvenance(
+                    accountSource,
+                    accountCurrency,
+                    new TransactionEffectiveTimeDto(
+                        StatementImportTimestampPrecisions.Date,
+                        providerLocalDate,
+                        InstantUtc: null),
+                    StatementImport: null);
+            }
+
             return new TransactionReadProvenance(
                 accountSource,
                 accountCurrency,
@@ -145,6 +165,30 @@ internal static class TransactionProvenanceResolver
                 statementImport.BatchId,
                 statementImport.RowNumber,
                 statementImport.CommittedUtc));
+    }
+
+    private static readonly TimeZoneInfo IrishTimeZone =
+        TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
+
+    private static bool TryResolveProviderDateGranularity(
+        DateTime bookedAtUtc,
+        out DateOnly localDate)
+    {
+        if (bookedAtUtc.TimeOfDay == TimeSpan.Zero)
+        {
+            localDate = DateOnly.FromDateTime(bookedAtUtc);
+            return true;
+        }
+
+        var irishLocal = TimeZoneInfo.ConvertTimeFromUtc(bookedAtUtc, IrishTimeZone);
+        if (irishLocal.TimeOfDay == TimeSpan.Zero)
+        {
+            localDate = DateOnly.FromDateTime(irishLocal);
+            return true;
+        }
+
+        localDate = default;
+        return false;
     }
 
     private static InvalidOperationException Inconsistent(Guid transactionId) =>

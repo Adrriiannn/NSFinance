@@ -3,6 +3,7 @@ import test from "node:test";
 import type { TransactionDto } from "../../types/api";
 import {
   areDisplayLabelsMeaningfullyDistinct,
+  buildTransactionDetailDate,
   buildTransactionMetaLine,
   resolveTransactionDisplayLabel
 } from "./activityGrouping";
@@ -157,4 +158,49 @@ test("duplicate descriptor prevention treats near-identical labels as duplicates
     areDisplayLabelsMeaningfullyDistinct("Bank account transfer", "Linked transfer"),
     true
   );
+});
+
+test("date-precision transactions render the provider calendar day without a fabricated time", () => {
+  const transaction = buildTransaction({
+    bookedAtUtc: "2026-07-16T23:00:00Z",
+    effectiveTime: {
+      precision: "date",
+      date: "2026-07-17",
+      instantUtc: null
+    }
+  });
+
+  const line = buildTransactionDetailDate(transaction);
+
+  assert.equal(line.includes("|"), false, "date-precision rows must not render a time separator");
+  assert.equal(line.includes("00:00"), false, "date-precision rows must not invent midnight");
+  assert.equal(line.includes("17"), true, "the provider-authoritative calendar day must render");
+  assert.equal(line.toLowerCase().includes("july"), true);
+});
+
+test("instant-precision transactions keep their real time display", () => {
+  const transaction = buildTransaction({
+    bookedAtUtc: "2026-07-17T14:23:00Z",
+    effectiveTime: {
+      precision: "instant",
+      date: null,
+      instantUtc: "2026-07-17T14:23:00Z"
+    }
+  });
+
+  const line = buildTransactionDetailDate(transaction);
+
+  assert.equal(line.includes("|"), true, "instant rows keep the date | time layout");
+});
+
+test("missing effectiveTime falls back to legacy rendering without crashing", () => {
+  const transaction = buildTransaction({
+    bookedAtUtc: "2026-07-17T14:23:00Z",
+    effectiveTime: undefined as unknown as TransactionDto["effectiveTime"]
+  });
+
+  const line = buildTransactionDetailDate(transaction);
+
+  assert.equal(typeof line, "string");
+  assert.equal(line.includes("|"), true);
 });
