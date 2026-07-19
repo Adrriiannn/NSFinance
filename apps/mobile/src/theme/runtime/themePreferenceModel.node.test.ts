@@ -75,19 +75,23 @@ test("resolution honors fixed, system, and automatic kinds", async () => {
   assert.equal(resolveThemePackId({ kind: "system" }, "dark"), "dark");
   assert.equal(resolveThemePackId({ kind: "system" }, null), "dark");
 
-  // Automatic resolves through the Irish calendar with the seasonal fallback:
-  // high summer maps to the light base, Halloween week to the dark base.
+  // Automatic resolves through the Irish calendar to real seasonal packs;
+  // commemorative occasions use their fallback packs until decorated packs ship.
   assert.equal(
     resolveThemePackId({ kind: "automatic" }, "dark", { year: 2026, month: 6, day: 15 }),
-    "light"
+    "summer"
   );
   assert.equal(
     resolveThemePackId({ kind: "automatic" }, "light", { year: 2026, month: 10, day: 28 }),
-    "dark"
+    "autumn"
   );
   assert.equal(
     resolveThemePackId({ kind: "automatic" }, "light", { year: 2026, month: 12, day: 25 }),
-    "dark"
+    "winter"
+  );
+  assert.equal(
+    resolveThemePackId({ kind: "automatic" }, "dark", { year: 2026, month: 2, day: 14 }),
+    "spring"
   );
 });
 

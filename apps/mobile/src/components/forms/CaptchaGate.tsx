@@ -78,18 +78,19 @@ export function CaptchaGate(props: CaptchaGateProps) {
 }
 
 function TokenCaptchaGate({ token, onTokenChange, showLabel = true }: TokenCaptchaProps) {
-  const { resolvedThemeName } = useThemeRuntime();
+  const { theme } = useThemeRuntime();
+  const widgetAppearance = theme.isDark ? "dark" : "light";
   const [isChallengeReady, setIsChallengeReady] = useState(false);
   const [challengeSeed, setChallengeSeed] = useState(0);
   const [challengeState, setChallengeState] = useState<ChallengeState>("loading");
   const [lastError, setLastError] = useState<string | null>(null);
-  const widgetBackground = resolvedThemeName === "light" ? "#FFFFFF" : "#2f3136";
+  const widgetBackground = widgetAppearance === "light" ? "#FFFFFF" : "#2f3136";
   const pendingOverlayBackground =
-    resolvedThemeName === "light" ? "rgba(255,255,255,0.48)" : "rgba(11,26,45,0.22)";
+    widgetAppearance === "light" ? "rgba(255,255,255,0.48)" : "rgba(11,26,45,0.22)";
 
   const challengeUrl = useMemo(
-    () => buildTurnstileRegisterUrl(TURNSTILE_PAGE_BASE_URL, resolvedThemeName),
-    [resolvedThemeName]
+    () => buildTurnstileRegisterUrl(TURNSTILE_PAGE_BASE_URL, widgetAppearance),
+    [widgetAppearance]
   );
 
   useEffect(() => {

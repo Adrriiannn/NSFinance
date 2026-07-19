@@ -1,12 +1,18 @@
 import { themes, type SemanticTheme } from "../semantic";
+import {
+  autumnTheme,
+  springTheme,
+  summerTheme,
+  winterTheme
+} from "../semantic/seasonalThemes";
 import type { SeasonalThemeId } from "../seasonal/irishSeasonalCalendar";
 
 // Theme pack registry (THEME-001). A pack couples an identity with a concrete
-// semantic theme. Until dedicated seasonal packs ship, seasonal identities
-// resolve to a base appearance through the fallback map below, so Automatic
-// rotation works today and upgrades pack-by-pack without touching callers.
+// semantic theme. Seasonal identities without a dedicated pack yet resolve to
+// an existing pack through the fallback map below, so Automatic rotation works
+// end to end and upgrades pack-by-pack without touching callers.
 
-export type ThemePackId = "light" | "dark";
+export type ThemePackId = "light" | "dark" | "spring" | "summer" | "autumn" | "winter";
 
 export type ThemePack = {
   id: ThemePackId;
@@ -27,6 +33,30 @@ export const themePacks: Record<ThemePackId, ThemePack> = {
     displayName: "Dark",
     appearance: "dark",
     theme: themes.dark
+  },
+  spring: {
+    id: "spring",
+    displayName: "Spring",
+    appearance: "light",
+    theme: springTheme
+  },
+  summer: {
+    id: "summer",
+    displayName: "Summer",
+    appearance: "light",
+    theme: summerTheme
+  },
+  autumn: {
+    id: "autumn",
+    displayName: "Autumn",
+    appearance: "dark",
+    theme: autumnTheme
+  },
+  winter: {
+    id: "winter",
+    displayName: "Winter",
+    appearance: "dark",
+    theme: winterTheme
   }
 };
 
@@ -34,15 +64,15 @@ export function isThemePackId(value: string): value is ThemePackId {
   return Object.hasOwn(themePacks, value);
 }
 
-// Base appearance for each seasonal identity until its dedicated pack ships.
-// Bright occasions lean light; the darker half of the year leans dark.
+// Pack for each seasonal identity; commemorative occasions use a base
+// appearance until their decorated packs ship.
 export const seasonalPackFallback: Record<SeasonalThemeId, ThemePackId> = {
-  spring: "light",
-  summer: "light",
-  autumn: "dark",
-  winter: "dark",
-  stPatricks: "light",
-  easter: "light",
-  halloween: "dark",
-  christmas: "dark"
+  spring: "spring",
+  summer: "summer",
+  autumn: "autumn",
+  winter: "winter",
+  stPatricks: "spring",
+  easter: "spring",
+  halloween: "autumn",
+  christmas: "winter"
 };

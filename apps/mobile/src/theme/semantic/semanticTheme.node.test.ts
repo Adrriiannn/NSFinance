@@ -6,8 +6,16 @@ import {
   themes,
   type SemanticTheme
 } from "./index";
+import { autumnTheme, springTheme, summerTheme, winterTheme } from "./seasonalThemes";
 
-const themeList: readonly SemanticTheme[] = Object.values(themes);
+// Every selectable pack theme is held to the same contracts as the bases.
+const themeList: readonly SemanticTheme[] = [
+  ...Object.values(themes),
+  springTheme,
+  summerTheme,
+  autumnTheme,
+  winterTheme
+];
 
 function collectLeafPaths(value: unknown, prefix = ""): string[] {
   if (typeof value !== "object" || value === null) {
@@ -43,6 +51,14 @@ test("light and dark themes expose the same complete semantic shape", () => {
     collectLeafPaths(themes.light.colors),
     collectLeafPaths(themes.dark.colors)
   );
+
+  for (const theme of themeList) {
+    assert.deepEqual(
+      collectLeafPaths(theme.colors),
+      collectLeafPaths(themes.light.colors),
+      `${theme.name} must expose the complete semantic shape`
+    );
+  }
 
   for (const theme of themeList) {
     assert.deepEqual(

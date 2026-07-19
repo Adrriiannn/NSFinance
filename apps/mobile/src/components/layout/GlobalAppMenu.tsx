@@ -18,6 +18,8 @@ import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
 import { useThemeRuntime } from "../../theme/runtime/ThemeRuntimeProvider";
+import { describeCurrentThemeSelection } from "../../features/theme/themeSelectionOptions";
+import { ThemeSelectionSheet } from "./ThemeSelectionSheet";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type GlobalAppMenuProps = {
@@ -90,7 +92,8 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   const router = useRouter();
   const pathname = usePathname();
   const { isAuthenticated, session, logout } = useAuthSession();
-  const { mode, resolvedThemeName, setThemeMode, isTransitioning } = useThemeRuntime();
+  const { mode, preference, resolvedThemeName, setThemeMode, isTransitioning } = useThemeRuntime();
+  const [isThemeSheetOpen, setIsThemeSheetOpen] = useState(false);
   const profileQuery = useUserProfileQuery();
   const [isOpen, setIsOpen] = useState(false);
   const [reducedMotionEnabled, setReducedMotionEnabled] = useState(false);
@@ -156,7 +159,6 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   const profileImageUrl = profile?.profileImageUrl ?? session?.user.profileImageUrl ?? null;
   const initials = extractInitials(fullName);
   const effectiveThemeName = mode === "system" ? resolvedThemeName : mode;
-  const systemModeEnabled = mode === "system";
 
   useEffect(() => {
     Animated.timing(themeToggleProgress, {
@@ -177,19 +179,6 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
 
   const toggleToOppositeTheme = () => {
     setManualTheme(effectiveThemeName === "dark" ? "light" : "dark");
-  };
-
-  const toggleSystemMode = () => {
-    if (isTransitioning) {
-      return;
-    }
-
-    if (systemModeEnabled) {
-      setThemeMode(effectiveThemeName);
-      return;
-    }
-
-    setThemeMode("system");
   };
 
   const thumbTranslateX = themeToggleProgress.interpolate({
@@ -364,31 +353,21 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
                 </Pressable>
 
                 <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityLabel="Follow system theme"
-                  accessibilityState={{
-                    checked: systemModeEnabled,
-                    disabled: isTransitioning
-                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Theme: ${describeCurrentThemeSelection(preference)}. Open theme options`}
+                  accessibilityState={{ disabled: isTransitioning }}
                   disabled={isTransitioning}
-                  onPress={toggleSystemMode}
+                  onPress={() => setIsThemeSheetOpen(true)}
                   style={({ pressed }) => [
                     styles.systemRow,
                     pressed && !isTransitioning ? styles.menuItemPressed : null,
                     isTransitioning ? styles.themeControlDisabled : null
                   ]}
                 >
-                  <View
-                    style={[
-                      styles.systemCheckbox,
-                      systemModeEnabled ? styles.systemCheckboxChecked : null
-                    ]}
-                  >
-                    {systemModeEnabled ? <Ionicons name="checkmark" size={9} color="#FFFFFF" /> : null}
-                  </View>
                   <Text style={styles.systemText} numberOfLines={1}>
-                    System
+                    {describeCurrentThemeSelection(preference)}
                   </Text>
+                  <Ionicons name="chevron-down" size={12} color={palette.textSecondary} />
                 </Pressable>
               </View>
             </View>
@@ -473,6 +452,7 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
           </Animated.View>
         </View>
       </SystemModal>
+      <ThemeSelectionSheet visible={isThemeSheetOpen} onClose={() => setIsThemeSheetOpen(false)} />
     </>
   );
 }
@@ -639,20 +619,6 @@ const styles = createRuntimeStyleSheet(() => ({
     flexDirection: "row",
     alignItems: "center",
     gap: 3
-  },
-  systemCheckbox: {
-    width: 12,
-    height: 12,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: palette.borderStrong,
-    backgroundColor: surfaces.field,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  systemCheckboxChecked: {
-    borderColor: palette.accent,
-    backgroundColor: palette.accent
   },
   systemText: {
     color: palette.textSecondary,
