@@ -20,6 +20,7 @@ export const queryKeys = {
     accounts: ["banking", "accounts"] as const,
     cards: ["banking", "cards"] as const,
     recurringPayments: ["banking", "recurring-payments"] as const,
+    commitments: ["banking", "commitments"] as const,
     recurringPaymentsByAccount: (accountId: string) => ["banking", "recurring-payments", accountId] as const
   },
   expenseTracker: {

@@ -16,6 +16,7 @@ import {
   getLinkedBankCards,
   getConnectedBanks,
   getLinkedBankAccounts,
+  getFinancialCommitments,
   getRecurringPayments,
   getRecurringPaymentsForAccount,
   startTrueLayerLink,
@@ -180,6 +181,14 @@ export function useRecurringPaymentsQuery() {
   return useQuery({
     queryKey: queryKeys.banking.recurringPayments,
     queryFn: getRecurringPayments,
+    ...nearLiveFinanceQueryOptions
+  });
+}
+
+export function useFinancialCommitmentsQuery() {
+  return useQuery({
+    queryKey: queryKeys.banking.commitments,
+    queryFn: getFinancialCommitments,
     ...nearLiveFinanceQueryOptions
   });
 }

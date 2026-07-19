@@ -1,6 +1,7 @@
 import { apiRequest } from "../../lib/api/client";
 import type {
   BankRecurringPaymentsDto,
+  FinancialCommitmentsDto,
   BankConnectionDto,
   BankConnectionAttemptStatusDto,
   ConnectedBanksOverviewDto,
@@ -40,6 +41,10 @@ export function getLinkedBankCards(): Promise<LinkedBankCardDto[]> {
 
 export function getRecurringPayments(): Promise<BankRecurringPaymentsDto> {
   return apiRequest<BankRecurringPaymentsDto>("/api/banking/recurring-payments");
+}
+
+export function getFinancialCommitments(): Promise<FinancialCommitmentsDto> {
+  return apiRequest<FinancialCommitmentsDto>("/api/banking/commitments");
 }
 
 export function getRecurringPaymentsForAccount(accountId: string): Promise<BankRecurringPaymentsDto> {

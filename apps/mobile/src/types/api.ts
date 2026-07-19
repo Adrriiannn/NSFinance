@@ -1091,6 +1091,62 @@ export type BankRecurringPaymentsDto = {
   standingOrders: BankStandingOrderDto[];
 };
 
+export type FinancialCommitmentsDto = {
+  asOfUtc: string;
+  limit: number;
+  isTruncated: boolean;
+  items: FinancialCommitmentDto[];
+};
+
+export type FinancialCommitmentDto = {
+  id: string;
+  kind: string;
+  lifecycle: string;
+  source: string;
+  confidence: string;
+  confidenceScore: number | null;
+  direction: string;
+  accountId: string | null;
+  linkedBankAccountId: string | null;
+  accountDisplayName: string;
+  label: string;
+  cadence: string | null;
+  startsAtUtc: string | null;
+  endsAtUtc: string | null;
+  lastObservedDateUtc: string | null;
+  lastObservedAmount: number | null;
+  lastObservedCurrency: string | null;
+  nextDateUtc: string | null;
+  dateCertainty: string;
+  nextAmount: number | null;
+  currency: string | null;
+  amountCertainty: string;
+  isVariableAmount: boolean | null;
+  sourceUpdatedUtc: string;
+  freshness: string;
+  analyticsNeutral: boolean;
+  providerStatus: string | null;
+  exclusions: string[];
+  evidence: FinancialCommitmentEvidenceDto[];
+  userDecision: FinancialCommitmentUserDecisionDto | null;
+};
+
+export type FinancialCommitmentEvidenceDto = {
+  type: string;
+  sourceRecordId: string;
+  observedUtc: string;
+  authority: string;
+  reasonCodes: string[];
+};
+
+export type FinancialCommitmentUserDecisionDto = {
+  state: string;
+  decisionMode: string;
+  lastAction: string;
+  revision: number;
+  updatedUtc: string;
+};
+
 export type StartTrueLayerLinkResponse = {
   connectionId: string;
   attemptId: string;

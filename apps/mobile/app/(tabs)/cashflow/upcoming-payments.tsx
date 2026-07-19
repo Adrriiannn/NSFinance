@@ -4,7 +4,8 @@ import { EmptyState } from "../../../src/components/ui/feedback/EmptyState";
 import { Card } from "../../../src/components/ui/cards/Card";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { HeaderShell } from "../../../src/layout/appHeader";
-import { useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
+import { useFinancialCommitmentsQuery, useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
+import { buildUpcomingCommitmentRows } from "../../../src/features/banking/commitmentPresentation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { buildRecurringPaymentForecast } from "../../../src/features/planner/forecasting";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
@@ -74,6 +75,7 @@ function computeDaysUntilDue(nextPaymentDateUtc: string | null, now: Date) {
 export default function CashflowUpcomingPaymentsScreen() {
   const transactionsQuery = useTransactionsQuery();
   const recurringPaymentsQuery = useRecurringPaymentsQuery();
+  const commitmentsQuery = useFinancialCommitmentsQuery();
   const [clockNow, setClockNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -100,6 +102,16 @@ export default function CashflowUpcomingPaymentsScreen() {
     () => providerRecurring.filter((item) => item.daysUntilDue <= 7),
     [providerRecurring]
   );
+  const commitmentRows = useMemo(
+    () => buildUpcomingCommitmentRows(commitmentsQuery.data?.items, clockNow.getTime()),
+    [clockNow, commitmentsQuery.data?.items]
+  );
+  const commitmentsNext7Days = useMemo(() => {
+    const horizonMs = clockNow.getTime() + 7 * 24 * 60 * 60 * 1000;
+    return commitmentRows.filter(
+      (row) => row.nextDateUtc !== null && Date.parse(row.nextDateUtc) <= horizonMs
+    );
+  }, [clockNow, commitmentRows]);
 
   return (
     <ScreenContainer
@@ -111,7 +123,19 @@ export default function CashflowUpcomingPaymentsScreen() {
 
       <Card style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Next 7 days</Text>
-        {providerNext7Days.length > 0 ? (
+        {commitmentsNext7Days.length > 0 ? (
+          commitmentsNext7Days.map((commitment) => (
+            <View key={commitment.id} style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>
+                {commitment.label} <Text style={styles.sourceLabel}>({commitment.sourceLabel})</Text>
+              </Text>
+              <Text style={styles.paymentMeta}>
+                {commitment.amountText} {commitment.whenText}
+                {commitment.isStale ? " · may be out of date" : ""}
+              </Text>
+            </View>
+          ))
+        ) : providerNext7Days.length > 0 ? (
           providerNext7Days.map((payment) => (
             <View key={payment.id} style={styles.paymentRow}>
               <Text style={styles.paymentLabel}>
@@ -152,11 +176,26 @@ export default function CashflowUpcomingPaymentsScreen() {
       </Card>
 
       <Text style={styles.sectionTitle}>Forecast for the rest of the month</Text>
-      {providerRecurring.length === 0 && forecast.restOfMonth.length === 0 ? (
+      {commitmentRows.length === 0 && providerRecurring.length === 0 && forecast.restOfMonth.length === 0 ? (
         <EmptyState
           title="No recurring payments detected"
           message="As transaction history grows, recurring payment forecasts will appear here."
         />
+      ) : commitmentRows.length > 0 ? (
+        <View style={styles.listWrap}>
+          {commitmentRows.map((commitment) => (
+            <Card key={commitment.id} style={styles.itemCard}>
+              <Text style={styles.itemTitle}>{commitment.label}</Text>
+              <Text style={styles.itemMeta}>
+                {commitment.amountText} · {commitment.whenText}
+                {commitment.isStale ? " · may be out of date" : ""}
+              </Text>
+              <Text style={styles.itemMeta}>
+                {commitment.accountDisplayName} · {commitment.sourceLabel}
+              </Text>
+            </Card>
+          ))}
+        </View>
       ) : (
         <View style={styles.listWrap}>
           {providerRecurring.map((payment) => (

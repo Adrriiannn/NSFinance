@@ -27,7 +27,8 @@ import {
   buildRecurringPaymentForecast
 } from "../../../src/features/planner/forecasting";
 import { buildPlannerSuggestions } from "../../../src/features/planner/plannerInsights";
-import { useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
+import { useFinancialCommitmentsQuery, useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
+import { buildUpcomingCommitmentRows } from "../../../src/features/banking/commitmentPresentation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
@@ -136,6 +137,7 @@ export default function CashflowScreen() {
   const dashboardQuery = useDashboardSummaryQuery();
   const transactionsQuery = useTransactionsQuery();
   const recurringPaymentsQuery = useRecurringPaymentsQuery();
+  const commitmentsQuery = useFinancialCommitmentsQuery();
   const connectBankCta = useConnectBankCtaLabels();
   const [clockNow, setClockNow] = useState(() => new Date());
   const [currentPeriod, setCurrentPeriod] = useState<PlannerComparisonPeriod>(() => ({
@@ -220,6 +222,10 @@ export default function CashflowScreen() {
       }))
       .slice(0, 3);
   }, [clockNow, providerRecurringPayments]);
+  const upcomingCommitments = useMemo(
+    () => buildUpcomingCommitmentRows(commitmentsQuery.data?.items, clockNow.getTime()).slice(0, 3),
+    [clockNow, commitmentsQuery.data?.items]
+  );
   const suggestions = useMemo(
     () =>
       buildPlannerSuggestions({
@@ -471,7 +477,20 @@ export default function CashflowScreen() {
               onPress={() => router.push("/(tabs)/cashflow/upcoming-payments")}
             >
               <Text style={styles.upcomingTitle}>Upcoming payments</Text>
-              {providerUpcoming.length > 0 ? (
+              {upcomingCommitments.length > 0 ? (
+                upcomingCommitments.map((commitment) => (
+                  <View key={commitment.id} style={styles.upcomingRow}>
+                    <Text style={styles.upcomingLabel}>
+                      {commitment.label}{" "}
+                      <Text style={styles.upcomingSource}>({commitment.sourceLabel})</Text>
+                    </Text>
+                    <Text style={styles.upcomingMeta}>
+                      {commitment.amountText} {commitment.whenText}
+                      {commitment.isStale ? " · may be out of date" : ""}
+                    </Text>
+                  </View>
+                ))
+              ) : providerUpcoming.length > 0 ? (
                 providerUpcoming.map((payment) => (
                   <View key={payment.id} style={styles.upcomingRow}>
                     <Text style={styles.upcomingLabel}>
