@@ -5,12 +5,11 @@ import { useCallback, useMemo, useState } from "react";
 import { Alert, BackHandler, Pressable, Text, View } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { SelectField } from "../../../src/components/ui/SelectField";
-import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
-import { TextField } from "../../../src/components/ui/TextField";
+import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
+import { TextField } from "../../../src/components/ui/fields/TextField";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
 import { isProviderProjectedAccount } from "../../../src/features/accounts/accountProvenance";
 import {
@@ -530,8 +529,8 @@ export default function ImportStatementScreen() {
 
       {accountQuery.isLoading && !account ? (
         <View style={styles.loadingWrap}>
-          <SkeletonBlock style={styles.loadingBlock} />
-          <SkeletonBlock style={styles.loadingBlock} />
+          <Skeleton style={styles.loadingBlock} />
+          <Skeleton style={styles.loadingBlock} />
         </View>
       ) : accountQuery.isError ? (
         <ErrorState
@@ -568,7 +567,7 @@ export default function ImportStatementScreen() {
                   authoritative.
                 </Text>
               </View>
-              <PrimaryButton
+              <Button
                 label="Choose CSV file"
                 icon={<Ionicons name="folder-open-outline" size={18} color="#FFFFFF" />}
                 onPress={() => void chooseFile()}
@@ -732,12 +731,12 @@ export default function ImportStatementScreen() {
                 error={mappingErrors.timeZoneId}
               />
               <View style={styles.actions}>
-                <PrimaryButton
+                <Button
                   label="Review transactions"
                   onPress={() => void previewImport()}
                   isLoading={previewMutation.isPending}
                 />
-                <SecondaryButton
+                <Button variant="secondary"
                   label="Choose a different file"
                   onPress={() => {
                     setStage("select");
@@ -780,8 +779,8 @@ export default function ImportStatementScreen() {
 
               {isLoadingRows && rows.length === 0 ? (
                 <View style={styles.loadingWrap}>
-                  <SkeletonBlock style={styles.rowSkeleton} />
-                  <SkeletonBlock style={styles.rowSkeleton} />
+                  <Skeleton style={styles.rowSkeleton} />
+                  <Skeleton style={styles.rowSkeleton} />
                 </View>
               ) : rows.length > 0 ? (
                 <View style={styles.rowsList}>
@@ -800,7 +799,7 @@ export default function ImportStatementScreen() {
               )}
 
               {nextCursor ? (
-                <SecondaryButton
+                <Button variant="secondary"
                   label={isLoadingRows ? "Loading rows..." : "Load more rows"}
                   onPress={() => void loadRows(rowFilter, nextCursor)}
                   disabled={isLoadingRows}
@@ -808,13 +807,13 @@ export default function ImportStatementScreen() {
               ) : null}
 
               <View style={styles.actions}>
-                <PrimaryButton
+                <Button
                   label={`Import ${batch.includedRowCount} transactions`}
                   onPress={confirmCommit}
                   isLoading={commitMutation.isPending}
                   disabled={pendingRowCount > 0 || batch.includedRowCount <= 0}
                 />
-                <SecondaryButton
+                <Button variant="secondary"
                   label={discardMutation.isPending ? "Discarding..." : "Discard import"}
                   onPress={confirmDiscard}
                   disabled={anyMutationPending}
@@ -843,12 +842,12 @@ export default function ImportStatementScreen() {
                 </Text>
               </View>
               <View style={styles.actions}>
-                <PrimaryButton
+                <Button
                   label="View account"
                   onPress={() => router.replace(`/(tabs)/accounts/${accountId}` as never)}
                 />
                 {batch.status === "committed" ? (
-                  <SecondaryButton
+                  <Button variant="secondary"
                     label={undoMutation.isPending ? "Undoing..." : "Undo import"}
                     onPress={confirmUndo}
                     disabled={undoMutation.isPending}

@@ -7,11 +7,10 @@ import Svg, { Path } from "react-native-svg";
 import { CaptchaGate } from "../../src/components/forms/CaptchaGate";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { AuthLegalLinks } from "../../src/components/ui/AuthLegalLinks";
-import { PasswordField } from "../../src/components/ui/PasswordField";
+import { PasswordField } from "../../src/components/ui/fields/PasswordField";
 import { Button } from "../../src/components/ui/buttons/Button";
 import { Banner } from "../../src/components/ui/feedback/Banner";
-import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
-import { TextField } from "../../src/components/ui/TextField";
+import { TextField } from "../../src/components/ui/fields/TextField";
 import { useLoginMutation } from "../../src/features/auth/useAuthMutations";
 import { useGoogleSignIn } from "../../src/features/auth/useGoogleSignIn";
 import { useMicrosoftSignIn } from "../../src/features/auth/useMicrosoftSignIn";
@@ -712,7 +711,7 @@ export default function LoginScreen() {
                       showLabel={false}
                       dense
                       containerStyle={styles.insetFieldContainer}
-                      style={styles.authFieldInput}
+                      inputStyle={styles.authFieldInput}
                       error={errors.email}
                       onFocus={() => setFocusedField("email")}
                       forceFocused={focusedField === "email"}
@@ -776,7 +775,7 @@ export default function LoginScreen() {
               </View>
 
               <View style={[styles.ctaGroup, styles.narrowBlock]}>
-                <PrimaryButton
+                <Button
                   label="Log in"
                   onPress={() => void handleLogin()}
                   isLoading={loginMutation.isPending}

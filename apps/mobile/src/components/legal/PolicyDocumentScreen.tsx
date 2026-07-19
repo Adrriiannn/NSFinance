@@ -1,7 +1,7 @@
 import { ScrollView, Text, View } from "react-native";
 import { ErrorState } from "../feedback/ErrorState";
 import { ScreenContainer } from "../ui/ScreenContainer";
-import { SkeletonBlock } from "../ui/SkeletonBlock";
+import { Skeleton } from "../ui/feedback/Skeleton";
 import { HeaderShell } from "../../layout/appHeader";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import type { PolicyVersionDto } from "../../types/api";
@@ -40,9 +40,9 @@ export function PolicyDocumentScreen({
         />
       ) : isLoading ? (
         <View style={styles.loadingWrap}>
-          <SkeletonBlock style={{ height: 24, borderRadius: 6 }} />
-          <SkeletonBlock style={{ height: 18, borderRadius: 6 }} />
-          <SkeletonBlock style={{ height: 280, borderRadius: 6 }} />
+          <Skeleton style={{ height: 24, borderRadius: 6 }} />
+          <Skeleton style={{ height: 18, borderRadius: 6 }} />
+          <Skeleton style={{ height: 280, borderRadius: 6 }} />
         </View>
       ) : policy ? (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>

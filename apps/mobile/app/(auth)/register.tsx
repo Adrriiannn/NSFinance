@@ -7,10 +7,9 @@ import { CaptchaGate } from "../../src/components/forms/CaptchaGate";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { AuthScreen } from "../../src/components/layout/AuthScreen";
 import { AuthLegalLinks } from "../../src/components/ui/AuthLegalLinks";
-import { PasswordField } from "../../src/components/ui/PasswordField";
+import { PasswordField } from "../../src/components/ui/fields/PasswordField";
 import { Button } from "../../src/components/ui/buttons/Button";
-import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
-import { TextField } from "../../src/components/ui/TextField";
+import { TextField } from "../../src/components/ui/fields/TextField";
 import { checkPasswordPolicy } from "../../src/features/auth/authApi";
 import {
   type PasswordBreachStatus,
@@ -573,7 +572,7 @@ export default function RegisterScreen() {
                 showLabel={false}
                 dense
                 containerStyle={styles.insetFieldContainer}
-                style={styles.authFieldInput}
+                inputStyle={styles.authFieldInput}
                 error={errors.fullName}
                 onFocus={() => setFocusedField("fullName")}
                 forceFocused={focusedField === "fullName"}
@@ -593,7 +592,7 @@ export default function RegisterScreen() {
                 showLabel={false}
                 dense
                 containerStyle={styles.insetFieldContainer}
-                style={styles.authFieldInput}
+                inputStyle={styles.authFieldInput}
                 error={errors.email}
                 onFocus={() => setFocusedField("email")}
                 forceFocused={focusedField === "email"}
@@ -721,7 +720,7 @@ export default function RegisterScreen() {
         </View>
 
         <View style={[styles.ctaGroup, styles.narrowBlock]}>
-          <PrimaryButton
+          <Button
             label="Sign Up"
             onPress={() => void handleRegister()}
             isLoading={registerMutation.isPending}

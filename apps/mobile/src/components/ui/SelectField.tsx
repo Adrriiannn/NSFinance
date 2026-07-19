@@ -1,7 +1,7 @@
 import { View } from "react-native";
 import { FieldError } from "./forms/FieldError";
 import { AppText } from "./text/AppText";
-import { Chip } from "./Chip";
+import { Chip } from "./chips/Chip";
 import { useThemeTokens } from "../../theme/tokens";
 
 export type SelectOption = {
@@ -38,7 +38,8 @@ export function SelectField({
             label={option.label}
             selected={option.value === value}
             onPress={() => onChange(option.value)}
-            compact={compact}
+            variant={compact ? "compact" : "filter"}
+            tone={option.value === value ? "info" : "default"}
           />
         ))}
       </View>

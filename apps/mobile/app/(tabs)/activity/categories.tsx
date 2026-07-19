@@ -5,9 +5,9 @@ import { Animated, Easing, LayoutAnimation, Pressable, StyleSheet, Text, View } 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CategoryPickerScreen } from "../../../src/components/activity/CategoryPickerScreen";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
-import { TextField } from "../../../src/components/ui/TextField";
+import { Card } from "../../../src/components/ui/cards/Card";
+import { Button } from "../../../src/components/ui/buttons/Button";
+import { TextField } from "../../../src/components/ui/fields/TextField";
 import {
   flattenVisibleExpenseTaxonomy,
   getExpenseTrackerSubcategoryVisual,
@@ -507,7 +507,7 @@ export default function ActivityCategoryPickerRoute() {
             </View>
           ) : null}
 
-          <GlassCard style={styles.categoryLauncherCard}>
+          <Card style={styles.categoryLauncherCard}>
             {hasSearchQuery ? (
               searchResults.length > 0 ? (
                 <View style={styles.searchResultsList}>
@@ -772,7 +772,7 @@ export default function ActivityCategoryPickerRoute() {
                 })}
               </View>
             )}
-          </GlassCard>
+          </Card>
         </View>
     </>
   );
@@ -797,7 +797,7 @@ export default function ActivityCategoryPickerRoute() {
           }
         ]}
       >
-        <PrimaryButton
+        <Button
           label="Confirm selection"
           onPress={confirmSelection}
           disabled={!hasPendingSelection}

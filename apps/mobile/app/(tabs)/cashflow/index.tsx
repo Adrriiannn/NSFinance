@@ -7,9 +7,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { SpendTrendGraph } from "../../../src/components/planner/SpendTrendGraph";
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
-import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
+import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
 import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
@@ -368,9 +368,9 @@ export default function CashflowScreen() {
       >
         {isLoading ? (
           <View style={styles.loadingWrap}>
-            <SkeletonBlock style={styles.loadingHero} />
-            <SkeletonBlock style={styles.loadingCard} />
-            <SkeletonBlock style={styles.loadingCard} />
+            <Skeleton style={styles.loadingHero} />
+            <Skeleton style={styles.loadingCard} />
+            <Skeleton style={styles.loadingCard} />
           </View>
         ) : error ? (
           <ErrorState
@@ -394,7 +394,7 @@ export default function CashflowScreen() {
           />
         ) : (
           <>
-            <GlassCard style={styles.graphCard}>
+            <Card style={styles.graphCard}>
               <View style={styles.graphTitleRow}>
                 <Pressable
                   style={styles.graphMonthDropdown}
@@ -459,12 +459,12 @@ export default function CashflowScreen() {
                   period last month.
                 </Text>
               </View>
-            </GlassCard>
+            </Card>
 
-            <GlassCard style={styles.insightCard}>
+            <Card style={styles.insightCard}>
               <Text style={styles.insightTitle}>{graphModel.bucketTitle}</Text>
               <Text style={styles.insightBody}>{graphModel.bucketMessage}</Text>
-            </GlassCard>
+            </Card>
 
             <Pressable
               style={({ pressed }) => [styles.upcomingPaymentsCard, pressed ? styles.cardPressed : null]}
@@ -514,17 +514,17 @@ export default function CashflowScreen() {
             <Text style={styles.suggestionsTitle}>Suggestions</Text>
             <View style={styles.suggestionsWrap}>
               {suggestions.slice(0, 3).map((suggestion) => (
-                <GlassCard key={suggestion.id} style={styles.suggestionCard}>
+                <Card key={suggestion.id} style={styles.suggestionCard}>
                   <Text style={styles.suggestionTitle}>{suggestion.title}</Text>
                   <Text style={styles.suggestionMessage}>{suggestion.message}</Text>
-                </GlassCard>
+                </Card>
               ))}
               {suggestions.length === 0 ? (
-                <GlassCard style={styles.suggestionCard}>
+                <Card style={styles.suggestionCard}>
                   <Text style={styles.suggestionMessage}>
                     Suggestions will appear when more cashflow context is available.
                   </Text>
-                </GlassCard>
+                </Card>
               ) : null}
             </View>
           </>

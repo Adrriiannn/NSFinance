@@ -1,5 +1,5 @@
-import { PrimaryButton } from "../ui/PrimaryButton";
-import { GlassCard } from "../ui/GlassCard";
+import { Button } from "../ui/buttons/Button";
+import { Card } from "../ui/cards/Card";
 import { Banner } from "../ui/feedback/Banner";
 
 type ErrorStateProps = {
@@ -16,9 +16,9 @@ export function ErrorState({
   retryLabel = "Retry"
 }: ErrorStateProps) {
   return (
-    <GlassCard style={{ gap: 12 }}>
+    <Card style={{ gap: 12 }}>
       <Banner title={title} message={message} tone="error" />
-      {onRetry ? <PrimaryButton label={retryLabel} onPress={onRetry} /> : null}
-    </GlassCard>
+      {onRetry ? <Button label={retryLabel} onPress={onRetry} /> : null}
+    </Card>
   );
 }

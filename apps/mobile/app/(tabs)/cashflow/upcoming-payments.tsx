@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
-import { EmptyState } from "../../../src/components/ui/EmptyState";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { EmptyState } from "../../../src/components/ui/feedback/EmptyState";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
@@ -109,7 +109,7 @@ export default function CashflowUpcomingPaymentsScreen() {
     >
       <HeaderShell preset="secondaryDetail" title="Upcoming payments" />
 
-      <GlassCard style={styles.summaryCard}>
+      <Card style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Next 7 days</Text>
         {providerNext7Days.length > 0 ? (
           providerNext7Days.map((payment) => (
@@ -149,7 +149,7 @@ export default function CashflowUpcomingPaymentsScreen() {
             No provider recurring commitments found in the next 7 days.
           </Text>
         )}
-      </GlassCard>
+      </Card>
 
       <Text style={styles.sectionTitle}>Forecast for the rest of the month</Text>
       {providerRecurring.length === 0 && forecast.restOfMonth.length === 0 ? (
@@ -160,7 +160,7 @@ export default function CashflowUpcomingPaymentsScreen() {
       ) : (
         <View style={styles.listWrap}>
           {providerRecurring.map((payment) => (
-            <GlassCard key={payment.id} style={styles.itemCard}>
+            <Card key={payment.id} style={styles.itemCard}>
               <Text style={styles.itemTitle}>{payment.label}</Text>
               <Text style={styles.itemMeta}>
                 {payment.amount !== null && payment.currency
@@ -174,11 +174,11 @@ export default function CashflowUpcomingPaymentsScreen() {
               <Text style={styles.itemMeta}>
                 Source: {payment.source === "direct_debit" ? "Direct debit" : "Standing order"}
               </Text>
-            </GlassCard>
+            </Card>
           ))}
           {providerRecurring.length === 0
             ? forecast.restOfMonth.map((payment) => (
-                <GlassCard key={payment.id} style={styles.itemCard}>
+                <Card key={payment.id} style={styles.itemCard}>
                   <Text style={styles.itemTitle}>{payment.label}</Text>
                   <Text style={styles.itemMeta}>
                     {new Intl.NumberFormat("en-GB", {
@@ -188,7 +188,7 @@ export default function CashflowUpcomingPaymentsScreen() {
                     {formatCountdown(payment.daysUntilDue)}
                   </Text>
                   <Text style={styles.itemMeta}>Estimated cadence: {payment.cadenceLabel}</Text>
-                </GlassCard>
+                </Card>
               ))
             : null}
         </View>

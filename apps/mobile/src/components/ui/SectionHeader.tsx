@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import { spacing } from "../../theme/tokens";
-import { TertiaryButton } from "./TertiaryButton";
+import { Button } from "./buttons/Button";
 import { AppText } from "./text/AppText";
 
 type SectionHeaderProps = {
@@ -35,7 +35,7 @@ export function SectionHeader({
       {trailing}
 
       {!trailing && actionLabel ? (
-        <TertiaryButton label={actionLabel} onPress={onActionPress ?? (() => undefined)} />
+        <Button variant="ghost" label={actionLabel} onPress={onActionPress ?? (() => undefined)} />
       ) : null}
     </View>
   );

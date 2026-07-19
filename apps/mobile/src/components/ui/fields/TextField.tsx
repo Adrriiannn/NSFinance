@@ -17,6 +17,7 @@ type SharedTextFieldProps = TextInputProps & {
   containerStyle?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<TextStyle>;
   showLabel?: boolean;
+  forceFocused?: boolean;
 };
 
 export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function TextField(
@@ -30,6 +31,7 @@ export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function Te
     containerStyle,
     inputStyle,
     showLabel = true,
+    forceFocused = false,
     multiline,
     onFocus,
     onBlur,
@@ -65,7 +67,7 @@ export const TextField = forwardRef<TextInput, SharedTextFieldProps>(function Te
         style={[
           fieldPresets.container,
           dense ? fieldPresets.containerDense : null,
-          focused ? fieldPresets.containerFocused : null,
+          focused || forceFocused ? fieldPresets.containerFocused : null,
           error ? fieldPresets.containerError : null,
           containerStyle
         ]}

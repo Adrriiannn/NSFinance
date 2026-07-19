@@ -5,11 +5,11 @@ import {
   ActivityIndicator, Animated, Alert, Dimensions, Easing, FlatList, Keyboard, KeyboardAvoidingView, type KeyboardEvent, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { FloatingBottomNav } from "../components/layout/FloatingBottomNav";
 import { appBottomNavItems } from "../components/layout/bottomNavConfigs";
-import { GlassCard } from "../components/ui/GlassCard";
+import { Card } from "../components/ui/cards/Card";
 import { HeaderActionButton, HeaderShell } from "../layout/appHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { IconButton } from "../components/ui/IconButton";
-import { PrimaryButton } from "../components/ui/PrimaryButton";
+import { IconButton } from "../components/ui/buttons/IconButton";
+import { Button } from "../components/ui/buttons/Button";
 import { ScreenContainer } from "../components/ui/ScreenContainer";
 import { SystemModal } from "../components/ui/surfaces/SystemModal";
 import {
@@ -1508,7 +1508,7 @@ export default function CashflowCompanionScreen() {
                     item.role === "assistant" ? styles.assistantRow : styles.userRow
                   ]}
                 >
-                  <GlassCard
+                  <Card
                     style={[
                       styles.chatBubble,
                       item.role === "assistant" ? styles.assistantBubble : styles.userBubble
@@ -1519,7 +1519,7 @@ export default function CashflowCompanionScreen() {
                         ? getStructuredPlacesIntroText(item.text)
                         : item.text}
                     </Text>
-                  </GlassCard>
+                  </Card>
                   {item.role === "assistant" && item.structuredResults?.type === "places" ? (
                     <PlaceCardCarousel places={item.structuredResults.items} />
                   ) : null}
@@ -1745,7 +1745,7 @@ export default function CashflowCompanionScreen() {
               />
             </View>
 
-            <PrimaryButton label="New chat" onPress={startNewChat} icon={<Ionicons name="add" size={16} color={palette.textPrimary} />} />
+            <Button label="New chat" onPress={startNewChat} icon={<Ionicons name="add" size={16} color={palette.textPrimary} />} />
 
             <ScrollView contentContainerStyle={styles.historyList} showsVerticalScrollIndicator={false}>
               {pinnedChats.map((chat) => {
@@ -1954,7 +1954,7 @@ export default function CashflowCompanionScreen() {
               >
                 <Text style={styles.editCancelText}>Cancel</Text>
               </Pressable>
-              <PrimaryButton label="Save" onPress={saveEditedChat} />
+              <Button label="Save" onPress={saveEditedChat} />
             </View>
           </Pressable>
         </Pressable>

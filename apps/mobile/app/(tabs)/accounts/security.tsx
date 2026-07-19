@@ -18,11 +18,10 @@ import {
 import QRCode from "react-native-qrcode-svg";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { AccountProviderBadge } from "../../../src/components/accounts/AccountProviderBadge";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Card } from "../../../src/components/ui/cards/Card";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
-import { TextField } from "../../../src/components/ui/TextField";
+import { TextField } from "../../../src/components/ui/fields/TextField";
 import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
@@ -585,13 +584,13 @@ export default function SecuritySettingsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        <GlassCard style={styles.sectionCard}>
+        <Card style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Login & authentication</Text>
           <Text style={styles.metaLine}>
             Authenticator: {mfaStatusQuery.data?.enabled ? "On" : "Off"}
           </Text>
 
-          <SecondaryButton
+          <Button variant="secondary"
             label={mfaStatusQuery.data?.enabled ? "Turn off authenticator" : "Set up authenticator"}
             onPress={() => void openMfaFlow()}
             disabled={mfaStatusQuery.isLoading || beginMfaMutation.isPending}
@@ -617,15 +616,15 @@ export default function SecuritySettingsScreen() {
             />
           </View>
 
-          <PrimaryButton
+          <Button
             label="Change your password"
             onPress={() => {
               void startPasswordChangeFlow();
             }}
           />
-        </GlassCard>
+        </Card>
 
-        <GlassCard style={styles.sectionCard}>
+        <Card style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Sessions & devices</Text>
 
           {sessionsQuery.isError ? (
@@ -660,7 +659,7 @@ export default function SecuritySettingsScreen() {
                     <Text style={styles.metaLine}>
                       {session.platform ?? "unknown"} | last seen {formatDateTime(session.lastSeenUtc)}
                     </Text>
-                    <SecondaryButton
+                    <Button variant="secondary"
                       label="Terminate"
                       onPress={() => {
                         void revokeMutation.mutateAsync(session.id);
@@ -671,7 +670,7 @@ export default function SecuritySettingsScreen() {
                 ))
               )}
 
-              <PrimaryButton
+              <Button
                 label="Terminate all other sessions"
                 onPress={() => {
                   Alert.alert(
@@ -694,9 +693,9 @@ export default function SecuritySettingsScreen() {
               />
             </>
           )}
-        </GlassCard>
+        </Card>
 
-        <GlassCard style={styles.sectionCard}>
+        <Card style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Connected banks</Text>
           {connectedBanksQuery.isError ? (
             <Text style={styles.errorText}>{formatUnknownError(connectedBanksQuery.error)}</Text>
@@ -770,7 +769,7 @@ export default function SecuritySettingsScreen() {
                     </View>
                   </View>
 
-                  <SecondaryButton
+                  <Button variant="secondary"
                     label={
                       disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
                         ? "Disconnecting..."
@@ -876,7 +875,7 @@ export default function SecuritySettingsScreen() {
                       </View>
                     </View>
 
-                    <SecondaryButton
+                    <Button variant="secondary"
                       label={
                         disconnectingConnectionId === connection.id || connection.status === "disconnect_pending"
                           ? "Disconnecting..."
@@ -911,9 +910,9 @@ export default function SecuritySettingsScreen() {
               })}
             </>
           ) : null}
-        </GlassCard>
+        </Card>
 
-        <GlassCard style={styles.sectionCard}>
+        <Card style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Delete account</Text>
           <Text style={styles.warningText}>
             Deletion is a serious action. Linked banks are disconnected and active data is removed from normal use.
@@ -932,7 +931,7 @@ export default function SecuritySettingsScreen() {
             onChangeText={setDeletionConfirmationText}
             autoCapitalize="characters"
           />
-          <PrimaryButton
+          <Button
             label="Delete my account"
             onPress={() => {
               void requestDeletionCode();
@@ -944,7 +943,7 @@ export default function SecuritySettingsScreen() {
               {request.status} | requested {formatDateTime(request.requestedUtc)}
             </Text>
           ))}
-        </GlassCard>
+        </Card>
 
         {logoutAllMutation.isError ? (
           <Text style={styles.errorText}>{formatUnknownError(logoutAllMutation.error)}</Text>
@@ -981,8 +980,8 @@ export default function SecuritySettingsScreen() {
                         </Text>
                       ))}
                     </View>
-                    <SecondaryButton label="Share securely" onPress={() => void shareRecoveryCodes()} />
-                    <PrimaryButton
+                    <Button variant="secondary" label="Share securely" onPress={() => void shareRecoveryCodes()} />
+                    <Button
                       label="I've saved them"
                       onPress={() => {
                         setMfaModalVisible(false);
@@ -1012,7 +1011,7 @@ export default function SecuritySettingsScreen() {
                       autoCapitalize={mfaMethod === "totp" ? "none" : "characters"}
                       error={mfaError ?? undefined}
                     />
-                    <SecondaryButton
+                    <Button variant="secondary"
                       label={mfaMethod === "totp" ? "Use a recovery code" : "Use authenticator code"}
                       onPress={() => {
                         setMfaMethod((current) => (current === "totp" ? "recovery_code" : "totp"));
@@ -1020,7 +1019,7 @@ export default function SecuritySettingsScreen() {
                         setMfaError(null);
                       }}
                     />
-                    <PrimaryButton
+                    <Button
                       label="Turn off authenticator"
                       onPress={() => void submitMfaCode()}
                       disabled={!mfaCode.trim()}
@@ -1054,7 +1053,7 @@ export default function SecuritySettingsScreen() {
                       autoComplete="one-time-code"
                       error={mfaError ?? undefined}
                     />
-                    <PrimaryButton
+                    <Button
                       label="Confirm authenticator"
                       onPress={() => void submitMfaCode()}
                       disabled={mfaCode.length !== 6}
@@ -1085,7 +1084,7 @@ export default function SecuritySettingsScreen() {
               autoCorrect={false}
             />
             {passwordCodeError ? <Text style={styles.errorText}>{passwordCodeError}</Text> : null}
-            <PrimaryButton
+            <Button
               label="Verify code"
               onPress={() => {
                 void verifyCodeThenOpenPasswordModal();
@@ -1140,7 +1139,7 @@ export default function SecuritySettingsScreen() {
               secureTextEntry
               error={hasPasswordMismatch ? "Passwords do not match." : undefined}
             />
-            <PrimaryButton
+            <Button
               label="Update password"
               onPress={() => {
                 void completePasswordChange();
@@ -1175,7 +1174,7 @@ export default function SecuritySettingsScreen() {
               autoCorrect={false}
             />
             {deletionCodeError ? <Text style={styles.errorText}>{deletionCodeError}</Text> : null}
-            <PrimaryButton
+            <Button
               label="Confirm deletion request"
               onPress={() => {
                 void submitDeletion();

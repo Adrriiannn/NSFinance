@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
-import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
+import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
 import { ActivitySearchBar } from "../../../src/features/activity/components/ActivitySearchBar";
 import {
@@ -506,10 +506,10 @@ export default function ActivityTabScreen() {
         <View style={styles.feedWrap}>
           {isInitialLoading ? (
             <View style={styles.loadingList}>
-              <SkeletonBlock style={styles.loadingRow} />
-              <SkeletonBlock style={styles.loadingRow} />
-              <SkeletonBlock style={styles.loadingRow} />
-              <SkeletonBlock style={styles.loadingRow} />
+              <Skeleton style={styles.loadingRow} />
+              <Skeleton style={styles.loadingRow} />
+              <Skeleton style={styles.loadingRow} />
+              <Skeleton style={styles.loadingRow} />
             </View>
           ) : transactionsQuery.isError ? (
             <ErrorState

@@ -7,13 +7,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { Button } from "../../../src/components/ui/buttons/Button";
-import { EmptyState } from "../../../src/components/ui/EmptyState";
+import { EmptyState } from "../../../src/components/ui/feedback/EmptyState";
 import { Banner } from "../../../src/components/ui/feedback/Banner";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SectionHeader } from "../../../src/components/ui/SectionHeader";
-import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
+import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { useAccountDetailQuery } from "../../../src/features/accounts/useAccounts";
 import { resolveAccountBalancePresentation } from "../../../src/features/accounts/accountBalancePresentation";
@@ -344,9 +343,9 @@ export default function AccountDetailsScreen() {
       >
         {isInitialLoading ? (
           <View style={styles.loadingWrap}>
-            <SkeletonBlock style={{ height: 168, borderRadius: 6 }} />
-            <SkeletonBlock style={{ height: 130, borderRadius: 6 }} />
-            <SkeletonBlock style={{ height: 130, borderRadius: 6 }} />
+            <Skeleton style={{ height: 168, borderRadius: 6 }} />
+            <Skeleton style={{ height: 130, borderRadius: 6 }} />
+            <Skeleton style={{ height: 130, borderRadius: 6 }} />
           </View>
         ) : blockingError ? (
           <ErrorState
@@ -377,7 +376,7 @@ export default function AccountDetailsScreen() {
               </View>
             ) : null}
 
-            <GlassCard style={styles.accountCard}>
+            <Card style={styles.accountCard}>
               <Text style={styles.accountName}>{accountTitle}</Text>
               <Text style={styles.accountBalance}>
                 {balance?.current === null
@@ -425,7 +424,7 @@ export default function AccountDetailsScreen() {
                   <>
                     <Text style={[styles.sectionTitle, styles.connectionSectionTitle]}>Connection info</Text>
                     {connectionDetailsLoadState === "loading" ? (
-                      <SkeletonBlock style={styles.connectionSkeleton} />
+                      <Skeleton style={styles.connectionSkeleton} />
                     ) : connectionDetailsLoadState === "error" ? (
                       <Text style={styles.accountMeta}>Connection details are temporarily unavailable.</Text>
                     ) : (
@@ -447,7 +446,7 @@ export default function AccountDetailsScreen() {
                   </>
                 ) : null}
               </View>
-            </GlassCard>
+            </Card>
 
             {connectionDetailsError ? (
               <View style={styles.sectionStatus}>
@@ -475,7 +474,7 @@ export default function AccountDetailsScreen() {
 
             <View style={styles.primaryActions}>
               {!isManualAccount ? (
-                <PrimaryButton
+                <Button
                   label="Import statement"
                   onPress={() =>
                     router.push(
@@ -484,18 +483,18 @@ export default function AccountDetailsScreen() {
                   }
                 />
               ) : null}
-              <PrimaryButton
+              <Button
                 label="Export to Excel"
                 onPress={() => void exportExcel()}
                 isLoading={createExportMutation.isPending || downloadExportMutation.isPending}
               />
-              <PrimaryButton
+              <Button
                 label="Get Help"
                 onPress={() => router.push("/(tabs)/accounts/support")}
               />
             </View>
             {!isManualAccount && linkedCardsLoadState === "loading" ? (
-              <SkeletonBlock style={styles.linkedCardsSkeleton} />
+              <Skeleton style={styles.linkedCardsSkeleton} />
             ) : !isManualAccount && linkedCardsLoadState === "error" ? (
               <View style={styles.sectionStatus}>
                 <Banner
@@ -540,7 +539,7 @@ export default function AccountDetailsScreen() {
                   </View>
                 ) : null}
                 {relatedCards.length > 0 ? (
-                  <GlassCard style={styles.recurringCard}>
+                  <Card style={styles.recurringCard}>
                     <Text style={styles.sectionTitle}>Linked cards</Text>
                     {relatedCards.map((card) => (
                       <View key={card.id} style={styles.recurringRow}>
@@ -558,7 +557,7 @@ export default function AccountDetailsScreen() {
                         </Text>
                       </View>
                     ))}
-                  </GlassCard>
+                  </Card>
                 ) : null}
               </>
             ) : null}
@@ -567,8 +566,8 @@ export default function AccountDetailsScreen() {
             <View style={styles.transactionsWrap}>
               {transactionsLoadState === "loading" ? (
                 <>
-                  <SkeletonBlock style={styles.transactionSkeleton} />
-                  <SkeletonBlock style={styles.transactionSkeleton} />
+                  <Skeleton style={styles.transactionSkeleton} />
+                  <Skeleton style={styles.transactionSkeleton} />
                 </>
               ) : transactionsLoadState === "error" ? (
                 <View style={styles.sectionStatus}>

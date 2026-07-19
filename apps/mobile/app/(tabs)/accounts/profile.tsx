@@ -15,12 +15,12 @@ import {
   View
 } from "react-native";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
-import { TextField } from "../../../src/components/ui/TextField";
+import { TextField } from "../../../src/components/ui/fields/TextField";
 import { HeaderActionButton, HeaderShell } from "../../../src/layout/appHeader";
 import {
   countryCodeToFlag,
@@ -1019,7 +1019,7 @@ export default function ProfileSettingsScreen() {
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-          <GlassCard style={styles.identityHero}>
+          <Card style={styles.identityHero}>
             <Pressable
               onPress={() => void handlePickAvatar()}
               style={({ pressed }) => [styles.avatarCircle, pressed ? styles.avatarPressed : null]}
@@ -1039,9 +1039,9 @@ export default function ProfileSettingsScreen() {
               <Text style={styles.identityDisplay}>{formatNsTag(displayName)}</Text>
               <Text style={styles.identityMeta}>{formatMemberSince(profileQuery.data?.createdUtc)}</Text>
             </View>
-          </GlassCard>
+          </Card>
 
-          <GlassCard style={styles.sectionCard}>
+          <Card style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Identity</Text>
             <TextField
               label="Email"
@@ -1149,16 +1149,16 @@ export default function ProfileSettingsScreen() {
               }}
               placeholder="Select currency"
             />
-            <PrimaryButton
+            <Button
               label="Use current location"
               onPress={() => {
                 void handleUseCurrentLocation();
               }}
               isLoading={isResolvingLocation}
             />
-          </GlassCard>
+          </Card>
 
-          <GlassCard style={styles.sectionCard}>
+          <Card style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Financial focus</Text>
             <Text style={styles.sectionDescription}>
               Select what you want NSFinance to optimize first. You can pick up to 6 priorities.
@@ -1183,9 +1183,9 @@ export default function ProfileSettingsScreen() {
                 );
               })}
             </View>
-          </GlassCard>
+          </Card>
 
-          <GlassCard style={styles.sectionCard}>
+          <Card style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Financial profile (optional)</Text>
             <ModalSelectField
               label="Employment status"
@@ -1208,11 +1208,11 @@ export default function ProfileSettingsScreen() {
               onChange={(value) => setPrimaryConcern(value)}
               placeholder="Select primary concern"
             />
-          </GlassCard>
+          </Card>
 
           {localError ? <Text style={styles.errorText}>{localError}</Text> : null}
 
-          <PrimaryButton
+          <Button
             label="Save profile"
             onPress={() => {
               void handleSave();
@@ -1228,7 +1228,7 @@ export default function ProfileSettingsScreen() {
           <Pressable style={styles.modalCard} onPress={() => undefined}>
             <Text style={styles.modalTitle}>You have unsaved changes</Text>
             <Text style={styles.modalBody}>Are you sure you want to leave?</Text>
-            <PrimaryButton
+            <Button
               label="Save changes"
               onPress={() => {
                 void (async () => {
@@ -1334,7 +1334,7 @@ export default function ProfileSettingsScreen() {
               </View>
             </View>
 
-            <PrimaryButton label="Done" onPress={() => setDobDialVisible(false)} />
+            <Button label="Done" onPress={() => setDobDialVisible(false)} />
           </View>
         </View>
       </SystemModal>

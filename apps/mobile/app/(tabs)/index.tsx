@@ -6,11 +6,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard";
 import { TransactionRow } from "../../src/components/transactions/TransactionRow";
-import { GlassCard } from "../../src/components/ui/GlassCard";
-import { PrimaryButton } from "../../src/components/ui/PrimaryButton";
+import { Card } from "../../src/components/ui/cards/Card";
+import { Button } from "../../src/components/ui/buttons/Button";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";
-import { SecondaryButton } from "../../src/components/ui/SecondaryButton";
-import { SkeletonBlock } from "../../src/components/ui/SkeletonBlock";
+import { Skeleton } from "../../src/components/ui/feedback/Skeleton";
 import { TabEmptyStateCard } from "../../src/components/ui/TabEmptyStateCard";
 import { useAccountsQuery } from "../../src/features/accounts/useAccounts";
 import {
@@ -504,7 +503,7 @@ export default function DashboardTabScreen() {
 
               <View style={styles.quickActionRow}>
                 <View style={styles.quickActionPrimary}>
-                  <PrimaryButton
+                  <Button
                     label="View activity"
                     onPress={() => router.push("/(tabs)/activity")}
                     labelStyle={styles.viewActivityLabel}
@@ -518,7 +517,7 @@ export default function DashboardTabScreen() {
                   />
                 </View>
                 <View style={styles.quickActionSecondary}>
-                  <SecondaryButton
+                  <Button variant="secondary"
                     label={connectBankCta.compactLabel}
                     onPress={() =>
                       router.push(buildConnectBankRoute({ intent: "new", returnTo: "/(tabs)" }))
@@ -536,17 +535,17 @@ export default function DashboardTabScreen() {
                 <View style={styles.suggestionsWrap}>
                   {suggestions.length > 0 ? (
                     suggestions.map((item) => (
-                      <GlassCard key={item.id} style={styles.suggestionCard}>
+                      <Card key={item.id} style={styles.suggestionCard}>
                         <Text style={styles.suggestionTitle}>{item.title}</Text>
                         <Text style={styles.suggestionBody}>{item.message}</Text>
-                      </GlassCard>
+                      </Card>
                     ))
                   ) : (
-                    <GlassCard style={styles.suggestionCard}>
+                    <Card style={styles.suggestionCard}>
                       <Text style={styles.suggestionBody}>
                         More guidance will appear as spending patterns become clearer.
                       </Text>
-                    </GlassCard>
+                    </Card>
                   )}
                 </View>
               </Animated.View>
@@ -589,10 +588,10 @@ export default function DashboardTabScreen() {
 function DashboardLoading() {
   return (
     <View style={styles.loadingWrap}>
-      <SkeletonBlock style={{ height: 184, borderRadius: 6 }} />
-      <SkeletonBlock style={{ height: 132, borderRadius: 6 }} />
-      <SkeletonBlock style={{ height: 110, borderRadius: 6 }} />
-      <SkeletonBlock style={{ height: 94, borderRadius: 6 }} />
+      <Skeleton style={{ height: 184, borderRadius: 6 }} />
+      <Skeleton style={{ height: 132, borderRadius: 6 }} />
+      <Skeleton style={{ height: 110, borderRadius: 6 }} />
+      <Skeleton style={{ height: 94, borderRadius: 6 }} />
     </View>
   );
 }

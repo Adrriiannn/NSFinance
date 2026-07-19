@@ -3,11 +3,10 @@ import { useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import * as Sharing from "expo-sharing";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
@@ -281,7 +280,7 @@ export default function StatementsScreen() {
       <HeaderShell preset="secondaryDetail" title="Statements" />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        <GlassCard style={styles.sectionCard}>
+        <Card style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Export filters</Text>
           <Text style={styles.hintText}>Choose a bank, select a date range, and generate your statements file.</Text>
 
@@ -329,17 +328,17 @@ export default function StatementsScreen() {
               );
             })}
           </View>
-        </GlassCard>
+        </Card>
 
         <View style={styles.actionsWrap}>
-          <PrimaryButton
+          <Button
             label="Generate your file"
             onPress={() => {
               void submitExport();
             }}
             isLoading={createExportMutation.isPending}
           />
-          <SecondaryButton
+          <Button variant="secondary"
             label="Download your file"
             onPress={() => {
               if (!latestExport) {
@@ -362,7 +361,7 @@ export default function StatementsScreen() {
           />
         ) : null}
 
-        <GlassCard style={styles.sectionCard}>
+        <Card style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Export details</Text>
           <View style={styles.metaChip}>
             <View style={styles.metaLineRow}>
@@ -386,7 +385,7 @@ export default function StatementsScreen() {
               <Text style={styles.metaValue}>{`${toDateOnlyString(startDate)} to ${toDateOnlyString(endDate, true)}`}</Text>
             </View>
           </View>
-        </GlassCard>
+        </Card>
       </ScrollView>
 
       <SystemModal

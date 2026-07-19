@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -73,7 +73,7 @@ test("canonical Button uses semantic state colors and accessible sizing", () => 
   assert.equal(sizing.touchTarget.minimum, 48);
 });
 
-test("IconButton requires an accessible name and the root adapter delegates", () => {
+test("IconButton requires an accessible name and consumers use the canonical module", () => {
   const canonicalSource = readMobileSource(
     "src",
     "components",
@@ -81,18 +81,18 @@ test("IconButton requires an accessible name and the root adapter delegates", ()
     "buttons",
     "IconButton.tsx"
   );
-  const adapterSource = readMobileSource("src", "components", "ui", "IconButton.tsx");
   const companionSource = readMobileSource("src", "screens", "CompanionScreen.tsx");
 
   assert.match(canonicalSource, /accessibilityLabel:\s*string;/);
   assert.doesNotMatch(canonicalSource, /accessibilityLabel\?:\s*string/);
   assert.match(canonicalSource, /<Button[\s\S]*accessibilityLabel=\{accessibilityLabel\}/);
 
-  assert.match(
-    adapterSource,
-    /export \{ IconButton, type IconButtonProps \} from "\.\/buttons\/IconButton";/
+  assert.equal(
+    existsSync(join(mobileRoot, "src", "components", "ui", "IconButton.tsx")),
+    false,
+    "the retired root IconButton adapter must not return"
   );
-  assert.doesNotMatch(adapterSource, /Pressable|BaseIconButton/);
+  assert.match(companionSource, /from "\.\.\/components\/ui\/buttons\/IconButton"/);
   assert.match(
     companionSource,
     /<IconButton[\s\S]{0,200}accessibilityLabel="Close chat history"/

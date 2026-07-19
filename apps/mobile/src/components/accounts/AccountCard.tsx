@@ -3,7 +3,7 @@ import { formatShortDate } from "../../lib/format";
 import type { AccountDto } from "../../types/api";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 import { AmountText } from "../ui/AmountText";
-import { GlassCard } from "../ui/GlassCard";
+import { Card } from "../ui/cards/Card";
 import { AccountProviderBadge } from "./AccountProviderBadge";
 import { resolveAccountBalancePresentation } from "../../features/accounts/accountBalancePresentation";
 
@@ -17,7 +17,7 @@ export function AccountCard({ account, onPress, compact = false }: AccountCardPr
   const balance = resolveAccountBalancePresentation(account);
 
   return (
-    <GlassCard onPress={onPress} style={compact ? styles.compactCard : undefined}>
+    <Card onPress={onPress} style={compact ? styles.compactCard : undefined}>
       <View style={styles.topRow}>
         <View style={styles.titleWrap}>
           <Text style={styles.name}>{account.name}</Text>
@@ -42,7 +42,7 @@ export function AccountCard({ account, onPress, compact = false }: AccountCardPr
         {balance.freshness === "stale" ? "Balance may be out of date | " : ""}
         Opened {formatShortDate(account.createdUtc)}
       </Text>
-    </GlassCard>
+    </Card>
   );
 }
 

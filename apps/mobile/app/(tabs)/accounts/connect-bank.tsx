@@ -7,9 +7,8 @@ import {
   ConnectionStatusIndicator,
   type ConnectionStatus
 } from "../../../src/components/ui/ConnectionStatusIndicator";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
 import {
   useBankEnrichmentProgressQuery,
   useBankConnectionQuery,
@@ -1346,7 +1345,7 @@ export default function AddAccountModalScreen() {
                       : "Refresh is optional. NSFinance is already handling this flow."}
             </Text>
             <View style={styles.resumeActions}>
-              <SecondaryButton
+              <Button variant="secondary"
                 label={
                   uiState === "syncing_data"
                   || uiState === "import_complete_enrichment_queued"
@@ -1360,7 +1359,7 @@ export default function AddAccountModalScreen() {
                 }}
               />
               {showResumeAction ? (
-                <SecondaryButton
+                <Button variant="secondary"
                   label="Open browser again"
                   onPress={() => {
                     void handleResumeConsent();
@@ -1374,7 +1373,7 @@ export default function AddAccountModalScreen() {
 
         {showPrimaryConnectAction ? (
           <View style={styles.primaryActions}>
-            <PrimaryButton
+            <Button
               label={primaryActionLabel}
               onPress={() => {
                 void handleConnectBank();

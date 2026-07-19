@@ -1,6 +1,6 @@
 import { View } from "react-native";
 import { spacing, createRuntimeStyleSheet } from "../../theme/tokens";
-import { EmptyState } from "./EmptyState";
+import { EmptyState } from "./feedback/EmptyState";
 
 type TabEmptyStateCardProps = {
   title: string;

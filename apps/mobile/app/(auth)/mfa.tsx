@@ -16,7 +16,7 @@ import {
   OtpCodeField,
   type OtpCodeFieldHandle
 } from "../../src/components/ui/OtpCodeField";
-import { TextField } from "../../src/components/ui/TextField";
+import { TextField } from "../../src/components/ui/fields/TextField";
 import { Button } from "../../src/components/ui/buttons/Button";
 import { SystemModal } from "../../src/components/ui/surfaces/SystemModal";
 import { useVerifyMfaLoginMutation } from "../../src/features/auth/useAuthMutations";

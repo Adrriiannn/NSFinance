@@ -1,5 +1,5 @@
 import { Linking, Pressable, Text } from "react-native";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import { appMetadata } from "../../../src/lib/config/appMetadata";
@@ -10,22 +10,22 @@ export default function AboutScreen() {
     <ScreenContainer contentStyle={styles.content} withBottomTabOffset>
       <HeaderShell preset="secondaryDetail" title="About" />
 
-      <GlassCard style={styles.card}>
+      <Card style={styles.card}>
         <Text style={styles.title}>NSFinance</Text>
         <Text style={styles.body}>
           NSFinance is a bank-linked personal finance app focused on account clarity, spending analysis, and cash-flow awareness.
         </Text>
         <Text style={styles.meta}>Version: {appMetadata.version}</Text>
-      </GlassCard>
+      </Card>
 
-      <GlassCard style={styles.card}>
+      <Card style={styles.card}>
         <Text style={styles.sectionTitle}>Trust notes</Text>
         <Text style={styles.body}>Bank connections are powered by TrueLayer.</Text>
         <Text style={styles.body}>NSFinance does not store banking credentials.</Text>
         <Text style={styles.body}>AI insights are informational only, not financial advice.</Text>
-      </GlassCard>
+      </Card>
 
-      <GlassCard style={styles.card}>
+      <Card style={styles.card}>
         <Text style={styles.sectionTitle}>Contact</Text>
         <Pressable
           onPress={() => {
@@ -35,7 +35,7 @@ export default function AboutScreen() {
           <Text style={styles.linkText}>Website: https://nsireland.ie</Text>
         </Pressable>
         <Text style={styles.body}>Support: available in the Support page.</Text>
-      </GlassCard>
+      </Card>
     </ScreenContainer>
   );
 }

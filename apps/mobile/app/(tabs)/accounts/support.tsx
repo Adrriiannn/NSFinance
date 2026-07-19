@@ -4,12 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { ModalSelectField } from "../../../src/components/ui/ModalSelectField";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
-import { TextField } from "../../../src/components/ui/TextField";
+import { TextField } from "../../../src/components/ui/fields/TextField";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   useBankConnectionsQuery,
@@ -275,7 +274,7 @@ export default function AccountSupportScreen() {
           />
         ) : null}
 
-        <GlassCard style={styles.block}>
+        <Card style={styles.block}>
           <Text style={styles.itemTitle}>Report an issue</Text>
           <Text style={styles.itemBody}>Diagnostics will be included to help us investigate.</Text>
 
@@ -338,7 +337,7 @@ export default function AccountSupportScreen() {
 
           <View style={styles.attachmentsHeader}>
             <Text style={styles.itemBody}>Screenshots (up to 3)</Text>
-            <SecondaryButton label="Attach screenshot" onPress={() => void attachScreenshot()} />
+            <Button variant="secondary" label="Attach screenshot" onPress={() => void attachScreenshot()} />
           </View>
           <View style={styles.attachmentsRow}>
             {attachments.map((item) => (
@@ -358,7 +357,7 @@ export default function AccountSupportScreen() {
             ))}
           </View>
 
-          <PrimaryButton
+          <Button
             label="Submit support request"
             onPress={() => {
               void submitSupport();
@@ -366,9 +365,9 @@ export default function AccountSupportScreen() {
             isLoading={createSupportMutation.isPending}
             disabled={!title.trim() || !message.trim() || !category || !subcategory}
           />
-        </GlassCard>
+        </Card>
 
-        <GlassCard style={styles.block}>
+        <Card style={styles.block}>
           <Text style={styles.itemTitle}>Help center</Text>
           <Text style={styles.itemBody}>How bank connections work</Text>
           <Text style={styles.helpText}>
@@ -378,10 +377,10 @@ export default function AccountSupportScreen() {
           <Text style={styles.helpText}>
             Trigger a sync, verify the connected bank status, and include the affected account in your report so diagnostics include sync details.
           </Text>
-          <SecondaryButton label="Open Security settings" onPress={() => router.push("/(tabs)/accounts/security")} />
-        </GlassCard>
+          <Button variant="secondary" label="Open Security settings" onPress={() => router.push("/(tabs)/accounts/security")} />
+        </Card>
 
-        <GlassCard style={styles.block}>
+        <Card style={styles.block}>
           <Text style={styles.itemTitle}>Recent support requests</Text>
           {(myRequestsQuery.data ?? []).length === 0 ? (
             <Text style={styles.itemBody}>No support requests submitted yet.</Text>
@@ -396,7 +395,7 @@ export default function AccountSupportScreen() {
               </View>
             ))
           )}
-        </GlassCard>
+        </Card>
 
         {statusMessage ? <Text style={styles.status}>{statusMessage}</Text> : null}
       </ScrollView>

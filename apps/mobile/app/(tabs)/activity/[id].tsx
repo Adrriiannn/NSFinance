@@ -5,12 +5,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { AmountText } from "../../../src/components/ui/AmountText";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { Card } from "../../../src/components/ui/cards/Card";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
-import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
-import { TextField } from "../../../src/components/ui/TextField";
+import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
+import { TextField } from "../../../src/components/ui/fields/TextField";
 import { consumePendingTransactionDetailCategorySelection } from "../../../src/features/expenseTracker/categoryPickerBridge";
 import { useExpenseTrackerTaxonomyQuery } from "../../../src/features/expenseTracker/useExpenseTracker";
 import {
@@ -305,9 +304,9 @@ export default function PlannerTransactionDetailScreen() {
         <ErrorState title="Transaction not found" message="No transaction was selected." />
       ) : transactionQuery.isLoading && !transactionQuery.data ? (
         <View style={styles.loadingWrap}>
-          <SkeletonBlock style={{ height: 148, borderRadius: 6 }} />
-          <SkeletonBlock style={{ height: 196, borderRadius: 6 }} />
-          <SkeletonBlock style={{ height: 248, borderRadius: 6 }} />
+          <Skeleton style={{ height: 148, borderRadius: 6 }} />
+          <Skeleton style={{ height: 196, borderRadius: 6 }} />
+          <Skeleton style={{ height: 248, borderRadius: 6 }} />
         </View>
       ) : transactionQuery.isError ? (
         <ErrorState
@@ -319,7 +318,7 @@ export default function PlannerTransactionDetailScreen() {
         />
       ) : transactionQuery.data ? (
         <>
-          <GlassCard style={styles.heroCard}>
+          <Card style={styles.heroCard}>
             <Text style={styles.transactionName}>{transactionQuery.data.description}</Text>
             <AmountText
               amount={transactionQuery.data.amount}
@@ -330,9 +329,9 @@ export default function PlannerTransactionDetailScreen() {
             <Text style={styles.transactionSubtitle}>
               {transactionQuery.data.accountName} | {formatDate(transactionQuery.data.bookedAtUtc)}
             </Text>
-          </GlassCard>
+          </Card>
 
-          <GlassCard style={styles.detailCard}>
+          <Card style={styles.detailCard}>
             <DetailLine label="Account" value={transactionQuery.data.accountName} />
             <DetailLine label="Date" value={formatDate(transactionQuery.data.bookedAtUtc)} />
             <DetailLine label="Time" value={formatTime(transactionQuery.data.bookedAtUtc)} />
@@ -344,13 +343,13 @@ export default function PlannerTransactionDetailScreen() {
               label="Subcategory"
               value={transactionQuery.data.analyticsTreatment === "balance_only" ? "Not applicable" : subcategoryLabel}
             />
-          </GlassCard>
+          </Card>
 
           {showLinkedTransactionSection ? (
-            <GlassCard style={styles.linkedTransactionCard}>
+            <Card style={styles.linkedTransactionCard}>
               <Text style={styles.linkedTransactionTitle}>Linked transaction</Text>
               {linkedTransactionQuery.isLoading && !linkedTransactionQuery.data ? (
-                <SkeletonBlock style={styles.linkedTransactionSkeleton} />
+                <Skeleton style={styles.linkedTransactionSkeleton} />
               ) : linkedTransactionQuery.data ? (
                 <TransactionRow
                   transaction={linkedTransactionQuery.data}
@@ -369,12 +368,12 @@ export default function PlannerTransactionDetailScreen() {
                   Could not load the linked transaction right now.
                 </Text>
               ) : null}
-            </GlassCard>
+            </Card>
           ) : null}
 
           {transactionQuery.data.analyticsTreatment !== "balance_only" ? (
             <>
-              <GlassCard style={styles.editCard}>
+              <Card style={styles.editCard}>
             <TextField
               label="Reason"
               value={reason}
@@ -395,7 +394,7 @@ export default function PlannerTransactionDetailScreen() {
               maxLength={notesMaxLength}
               error={errors.notes}
               helper={`${notes.trim().length}/${notesMaxLength}`}
-              style={styles.notesInput}
+              inputStyle={styles.notesInput}
             />
 
             <View style={styles.fieldWrap}>
@@ -435,21 +434,21 @@ export default function PlannerTransactionDetailScreen() {
             </View>
             {errors.category ? <Text style={styles.fieldError}>{errors.category}</Text> : null}
             {transferTotalsHint ? <Text style={styles.transferHint}>{transferTotalsHint}</Text> : null}
-              </GlassCard>
+              </Card>
 
               {updateMetadataMutation.isError ? (
                 <Text style={styles.mutationError}>{formatUnknownError(updateMetadataMutation.error)}</Text>
               ) : null}
 
               <View style={styles.actions}>
-                <PrimaryButton
+                <Button
                   label="Save changes"
                   onPress={() => {
                     void handleSave();
                   }}
                   isLoading={updateMetadataMutation.isPending}
                 />
-                <SecondaryButton label="Back" onPress={() => router.back()} />
+                <Button variant="secondary" label="Back" onPress={() => router.back()} />
               </View>
             </>
           ) : null}

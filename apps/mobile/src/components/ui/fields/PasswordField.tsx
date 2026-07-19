@@ -2,10 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { Pressable, TextInput, View } from "react-native";
 import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
-import { useThemeTokens } from "../../theme/tokens";
-import { FieldError } from "./forms/FieldError";
-import { AppText } from "./text/AppText";
-import { useFieldPresets } from "./fields/field.presets";
+import { useThemeTokens } from "../../../theme/tokens";
+import { FieldError } from "../forms/FieldError";
+import { AppText } from "../text/AppText";
+import { useFieldPresets } from "./field.presets";
 
 type PasswordFieldProps = Omit<TextInputProps, "secureTextEntry"> & {
   label: string;
@@ -14,7 +14,6 @@ type PasswordFieldProps = Omit<TextInputProps, "secureTextEntry"> & {
   dense?: boolean;
   containerStyle?: StyleProp<ViewStyle>;
   forceFocused?: boolean;
-  surfaceMode?: "normal" | "solid";
   isPasswordVisible?: boolean;
   onPasswordVisibilityChange?: (isVisible: boolean) => void;
   autoHideOnBlur?: boolean;
@@ -28,14 +27,13 @@ export function PasswordField({
   dense = false,
   containerStyle,
   forceFocused = false,
-  surfaceMode = "normal",
   isPasswordVisible,
   onPasswordVisibilityChange,
   autoHideOnBlur = true,
   ...props
 }: PasswordFieldProps) {
   const fieldPresets = useFieldPresets();
-  const { palette, surfaces } = useThemeTokens();
+  const { palette } = useThemeTokens();
   const [internalVisible, setInternalVisible] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const visible = typeof isPasswordVisible === "boolean" ? isPasswordVisible : internalVisible;
@@ -57,7 +55,6 @@ export function PasswordField({
         style={[
           fieldPresets.container,
           dense ? fieldPresets.containerDense : null,
-          surfaceMode === "solid" ? { backgroundColor: surfaces.fieldStrong } : null,
           forceFocused ? fieldPresets.containerFocused : null,
           error ? fieldPresets.containerError : null,
           containerStyle

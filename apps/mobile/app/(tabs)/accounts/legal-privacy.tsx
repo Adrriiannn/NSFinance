@@ -2,9 +2,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ScrollView, Switch, Text, View } from "react-native";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
+import { Card } from "../../../src/components/ui/cards/Card";
 import { ScreenContainer } from "../../../src/components/ui/ScreenContainer";
-import { SecondaryButton } from "../../../src/components/ui/SecondaryButton";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import {
   useAiDisclosurePolicyQuery,
@@ -189,7 +189,7 @@ export default function LegalPrivacyScreen() {
       </Text>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.listContent}>
-        <GlassCard style={styles.itemCard}>
+        <Card style={styles.itemCard}>
           <Text style={styles.itemTitle}>Privacy controls</Text>
           <Text style={styles.itemBody}>
             Manage how NSFinance uses your financial data for AI, personalization, and product analytics.
@@ -234,36 +234,36 @@ export default function LegalPrivacyScreen() {
             Current product analytics consent: {productAnalyticsConsent}
           </Text>
 
-          <SecondaryButton
+          <Button variant="secondary"
             label="Save privacy controls"
             onPress={() => {
               void saveFlags();
             }}
             disabled={updatePreferencesMutation.isPending || updateConsentMutation.isPending}
           />
-        </GlassCard>
+        </Card>
 
         {items.map((item) => (
-          <GlassCard key={item.key} style={styles.itemCard} onPress={item.onPress}>
+          <Card key={item.key} style={styles.itemCard} onPress={item.onPress}>
             <Text style={styles.itemTitle}>{item.title}</Text>
             <Text style={styles.itemBody}>{item.description}</Text>
             <View style={styles.itemFooter}>
               <Text style={styles.itemMeta}>{item.version}</Text>
               <Ionicons name="chevron-forward" size={14} color={palette.textSecondary} />
             </View>
-          </GlassCard>
+          </Card>
         ))}
 
-        <GlassCard style={styles.itemCard}>
+        <Card style={styles.itemCard}>
           <Text style={styles.itemTitle}>Privacy rights</Text>
           <Text style={styles.itemBody}>
             Statement exports and account deletion are available in dedicated security surfaces.
           </Text>
-          <SecondaryButton
+          <Button variant="secondary"
             label="Download my data"
             onPress={() => router.push("/(tabs)/accounts/statements")}
           />
-          <SecondaryButton
+          <Button variant="secondary"
             label="Delete my account"
             onPress={() => router.push("/(tabs)/accounts/security")}
           />
@@ -272,7 +272,7 @@ export default function LegalPrivacyScreen() {
               Deletion request: {item.status} at {new Date(item.updatedUtc).toLocaleString("en-GB")}
             </Text>
           ))}
-        </GlassCard>
+        </Card>
       </ScrollView>
     </ScreenContainer>
   );

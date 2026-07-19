@@ -9,15 +9,15 @@ import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendi
 import { AccountProviderBadge } from "../../../src/components/accounts/AccountProviderBadge";
 import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
-import { EmptyState } from "../../../src/components/ui/EmptyState";
-import { GlassCard } from "../../../src/components/ui/GlassCard";
-import { PrimaryButton } from "../../../src/components/ui/PrimaryButton";
+import { EmptyState } from "../../../src/components/ui/feedback/EmptyState";
+import { Card } from "../../../src/components/ui/cards/Card";
+import { Button } from "../../../src/components/ui/buttons/Button";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { SectionHeader } from "../../../src/components/ui/SectionHeader";
 import { SelectField } from "../../../src/components/ui/SelectField";
-import { SkeletonBlock } from "../../../src/components/ui/SkeletonBlock";
+import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
-import { TextField } from "../../../src/components/ui/TextField";
+import { TextField } from "../../../src/components/ui/fields/TextField";
 import { SystemModal } from "../../../src/components/ui/surfaces/SystemModal";
 import { AdaptiveScreen } from "../../../src/layout/adaptive/AdaptiveScreen";
 import { HeaderActionButton, HeaderDropdownSlot, HeaderShell } from "../../../src/layout/appHeader";
@@ -303,9 +303,9 @@ export default function AccountsTabScreen() {
 
       {isInitialLoading ? (
         <View style={styles.loadingWrap}>
-          <SkeletonBlock style={{ height: 54, borderRadius: 6 }} />
-          <SkeletonBlock style={{ height: 156, borderRadius: 6 }} />
-          <SkeletonBlock style={{ height: 150, borderRadius: 6 }} />
+          <Skeleton style={{ height: 54, borderRadius: 6 }} />
+          <Skeleton style={{ height: 156, borderRadius: 6 }} />
+          <Skeleton style={{ height: 150, borderRadius: 6 }} />
         </View>
       ) : accountsQuery.isError ? (
         <ErrorState
@@ -339,7 +339,7 @@ export default function AccountsTabScreen() {
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          <GlassCard style={styles.heroCard}>
+          <Card style={styles.heroCard}>
             <View style={styles.heroTopRow}>
               <Text style={styles.heroType}>{selectedAccount.type} account</Text>
               <AccountProviderBadge account={selectedAccount} />
@@ -358,7 +358,7 @@ export default function AccountsTabScreen() {
               {selectedBalance?.currency ?? selectedAccount.currency}
               {selectedBalance?.freshness === "stale" ? " | Balance may be out of date" : ""}
             </Text>
-          </GlassCard>
+          </Card>
 
           <View style={styles.actionGrid}>
             <ActionItem
@@ -520,7 +520,7 @@ export default function AccountsTabScreen() {
               onChange={(value) => setEditedType(value as AccountType)}
             />
 
-            <PrimaryButton
+            <Button
               label="Save changes"
               onPress={() => void submitEdit()}
               isLoading={updateAccountMutation.isPending}
