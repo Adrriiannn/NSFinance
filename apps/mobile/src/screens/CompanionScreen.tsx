@@ -70,8 +70,8 @@ const introPromptPairs: IntroPromptPair[] = [
     placeholder: "Build a focused plan..."
   },
   {
-    intro: "Thinking about food, travel, or money?",
-    placeholder: "Let's explore our options..."
+    intro: "Wondering where your money went this week?",
+    placeholder: "Ask about your spending..."
   },
   {
     intro: "Not sure where your budget is slipping?",

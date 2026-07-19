@@ -19,6 +19,7 @@ import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
 import { TabEmptyStateCard } from "../../../src/components/ui/TabEmptyStateCard";
+import { Chip } from "../../../src/components/ui/chips/Chip";
 import { ActivitySearchBar } from "../../../src/features/activity/components/ActivitySearchBar";
 import {
   consumeActivitySearchSnapshot,
@@ -163,6 +164,9 @@ export default function ActivityTabScreen() {
   // legacy list only backs an active search until server-side search exists.
   const hasActiveSearch =
     search.tokens.length > 0 || search.rawSearchText.trim().length > 0;
+  const isUncategorizedQuickFilterActive =
+    search.tokens.length === 0
+    && search.rawSearchText.trim().toLowerCase() === "uncategorized";
   const isInitialLoading = hasActiveSearch
     ? transactionsQuery.isLoading && !transactionsQuery.data
     : transactionPages.isLoading && !transactionPages.data;
@@ -516,6 +520,23 @@ export default function ActivityTabScreen() {
             />
           }
         />
+
+        <View style={styles.quickFilterRow}>
+          <Chip
+            label="Uncategorized"
+            variant="filter"
+            selected={isUncategorizedQuickFilterActive}
+            tone={isUncategorizedQuickFilterActive ? "info" : "default"}
+            onPress={() => {
+              if (isUncategorizedQuickFilterActive) {
+                search.clearSearch();
+                return;
+              }
+
+              search.setRawSearchText("Uncategorized");
+            }}
+          />
+        </View>
 
         {search.dropdownOpen && search.dropdownMode !== "hidden" ? (
           <Pressable
@@ -912,6 +933,11 @@ const styles = createRuntimeStyleSheet(() => ({
   loadingRow: {
     height: 78,
     borderRadius: 6
+  },
+  quickFilterRow: {
+    flexDirection: "row",
+    paddingHorizontal: spacing[16],
+    paddingBottom: spacing[4]
   },
   pageFooterLoading: {
     gap: spacing[8],
