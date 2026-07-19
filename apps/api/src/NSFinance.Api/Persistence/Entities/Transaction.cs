@@ -14,6 +14,13 @@ public class Transaction
     public int? TaxonomyDomainId { get; set; }
     public int? TaxonomyCategoryId { get; set; }
     public int? TaxonomySubcategoryId { get; set; }
+    // Merchant categorization evidence (CAT-001): how an automatic assignment
+    // was made, for replay, display, and the corrections ledger. Null for
+    // user-chosen or unassigned categories.
+    public string? CategorizationRuleKey { get; set; }
+    public string? CategorizationSignal { get; set; }
+    public int? CategorizationCharacteristicsVersion { get; set; }
+    public DateTime? CategorizedUtc { get; set; }
     public string? Reason { get; set; }
     public string? Notes { get; set; }
     public TransactionTransferKind? TransferKind { get; set; }

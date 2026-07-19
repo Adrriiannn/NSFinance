@@ -87,6 +87,11 @@ public sealed class MerchantCategorizationBackfillService(
                 continue;
             }
 
+            transaction.CategorizationRuleKey = "merchant_signal";
+            transaction.CategorizationSignal = match.MatchedSignal;
+            transaction.CategorizationCharacteristicsVersion = match.CharacteristicsVersion;
+            transaction.CategorizedUtc = DateTime.UtcNow;
+
             categorized += 1;
             logger.LogInformation(
                 "Merchant categorization assigned transactionId={TransactionId} ruleKey=merchant_signal signal={Signal} characteristicsVersion={Version} domainId={DomainId} categoryId={CategoryId} subcategoryId={SubcategoryId}",

@@ -39,6 +39,10 @@ public sealed class MerchantCategorizationBackfillTests
         Assert.Equal(130, reloadedTesco.TaxonomyDomainId);
         Assert.Equal(13010, reloadedTesco.TaxonomyCategoryId);
         Assert.Null(reloadedTesco.TaxonomySubcategoryId);
+        Assert.Equal("merchant_signal", reloadedTesco.CategorizationRuleKey);
+        Assert.Equal("TESCO", reloadedTesco.CategorizationSignal);
+        Assert.NotNull(reloadedTesco.CategorizationCharacteristicsVersion);
+        Assert.NotNull(reloadedTesco.CategorizedUtc);
 
         // The inflow refund must stay uncategorized (direction enforcement).
         var reloadedRefund = await dbContext.Transactions.SingleAsync(x => x.Id == refund.Id);
