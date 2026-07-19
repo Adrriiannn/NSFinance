@@ -45,6 +45,18 @@ export const queryKeys = {
           toUtc: request.toUtc ?? null,
           direction: request.direction ?? null
         }
+      ] as const,
+    pages: (request: Omit<TransactionPageRequest, "cursor"> = {}) =>
+      [
+        "transactions",
+        "pages",
+        {
+          pageSize: request.pageSize ?? null,
+          accountId: request.accountId ?? null,
+          fromUtc: request.fromUtc ?? null,
+          toUtc: request.toUtc ?? null,
+          direction: request.direction ?? null
+        }
       ] as const
   },
   statementImports: {

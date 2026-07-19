@@ -94,3 +94,24 @@ test("transaction page query keys normalize equivalent filters", () => {
     queryKeys.transactions.page({ ...first, cursor: "next-page" })
   );
 });
+
+test("infinite pages query keys normalize equivalent requests and stay distinct from single pages", () => {
+  const defaulted = queryKeys.transactions.pages();
+  const explicit = queryKeys.transactions.pages({
+    pageSize: null,
+    accountId: null,
+    fromUtc: null,
+    toUtc: null,
+    direction: null
+  });
+
+  assert.deepEqual(defaulted, explicit);
+  assert.equal(defaulted[1], "pages");
+
+  const singlePage = queryKeys.transactions.page({});
+  assert.notDeepEqual(defaulted, singlePage);
+
+  const filtered = queryKeys.transactions.pages({ accountId: "acc-1", pageSize: 25 });
+  assert.notDeepEqual(defaulted, filtered);
+  assert.deepEqual(filtered, queryKeys.transactions.pages({ pageSize: 25, accountId: "acc-1" }));
+});

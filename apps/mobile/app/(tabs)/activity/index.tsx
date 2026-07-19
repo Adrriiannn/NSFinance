@@ -50,6 +50,7 @@ import { useConnectBankCtaLabels } from "../../../src/features/banking/connectBa
 import { useGlobalBankSyncMutation } from "../../../src/features/banking/useBanking";
 import { logActivityFocusEvent } from "../../../src/features/transactions/activityFocusNavigation";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
+import { useTransactionPagesInfiniteQuery } from "../../../src/features/transactions/useTransactionPageQuery";
 import { showFlashMessage } from "../../../src/lib/flashMessage";
 import { useUserProfileQuery } from "../../../src/features/users/useUserSettings";
 import { usePlannerStore } from "../../../src/providers/PlannerProvider";
@@ -92,11 +93,14 @@ export default function ActivityTabScreen() {
   const syncSpinDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncSpinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const transactionsQuery = useTransactionsQuery();
-  const isInitialLoading = transactionsQuery.isLoading && !transactionsQuery.data;
+  const transactionPages = useTransactionPagesInfiniteQuery();
+  const pagedTransactions = useMemo(
+    () => transactionPages.data?.pages.flatMap((page) => page.items) ?? [],
+    [transactionPages.data]
+  );
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [showSyncSpin, setShowSyncSpin] = useState(false);
   const [isListInteracting, setIsListInteracting] = useState(false);
-  const refreshing = isManualRefreshing && !isInitialLoading;
   const focusTransactionId =
     typeof params.focusTransactionId === "string" ? params.focusTransactionId : "";
   const focusNonce = typeof params.focusNonce === "string" ? params.focusNonce : "";
@@ -155,23 +159,40 @@ export default function ActivityTabScreen() {
   const applyPickedCategory = search.applyPickedCategory;
   const dismissSearchDropdown = search.dismissDropdown;
 
+  // Browsing renders from the canonical cursor-paged contract; the unbounded
+  // legacy list only backs an active search until server-side search exists.
+  const hasActiveSearch =
+    search.tokens.length > 0 || search.rawSearchText.trim().length > 0;
+  const isInitialLoading = hasActiveSearch
+    ? transactionsQuery.isLoading && !transactionsQuery.data
+    : transactionPages.isLoading && !transactionPages.data;
+  const refreshing = isManualRefreshing && !isInitialLoading;
+  const activeSourceIsError = hasActiveSearch
+    ? transactionsQuery.isError
+    : transactionPages.isError;
+
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
     try {
-      await transactionsQuery.refetch();
+      if (hasActiveSearch) {
+        await transactionsQuery.refetch();
+      } else {
+        await transactionPages.refetch();
+      }
     } finally {
       setIsManualRefreshing(false);
     }
-  }, [transactionsQuery]);
+  }, [hasActiveSearch, transactionsQuery, transactionPages]);
 
   const groupedCandidate = useMemo(() => {
-    return groupTransactionsByTimeBucket(search.filteredTransactions)
+    const source = hasActiveSearch ? search.filteredTransactions : pagedTransactions;
+    return groupTransactionsByTimeBucket(source)
       .filter((section) => section.items.length > 0)
       .map((section) => ({
         title: section.title,
         data: section.items
       }));
-  }, [search.filteredTransactions]);
+  }, [hasActiveSearch, search.filteredTransactions, pagedTransactions]);
   const [grouped, setGrouped] = useState(groupedCandidate);
   const pendingGroupedRef = useRef(groupedCandidate);
 
@@ -200,17 +221,17 @@ export default function ActivityTabScreen() {
       setActivityFeedInteracting(false);
     };
   }, []);
-  const hasAnyTransactions = (transactionsQuery.data?.length ?? 0) > 0;
-  const hasActiveSearch =
-    search.tokens.length > 0 || search.rawSearchText.trim().length > 0;
+  const hasAnyTransactions = hasActiveSearch
+    ? (transactionsQuery.data?.length ?? 0) > 0
+    : pagedTransactions.length > 0;
   const showNoSearchResultsState =
     !isInitialLoading &&
-    !transactionsQuery.isError &&
+    !activeSourceIsError &&
     grouped.length === 0 &&
     hasAnyTransactions &&
     hasActiveSearch;
   const showNoActivityState =
-    !isInitialLoading && !transactionsQuery.isError && grouped.length === 0 && !showNoSearchResultsState;
+    !isInitialLoading && !activeSourceIsError && grouped.length === 0 && !showNoSearchResultsState;
 
   useFocusEffect(
     useCallback(() => {
@@ -336,7 +357,7 @@ export default function ActivityTabScreen() {
       return;
     }
 
-    if (transactionsQuery.isError) {
+    if (activeSourceIsError) {
       logActivityFocusEvent("focus_target_skipped", {
         reason: "transactions_query_error",
         focusKey: pendingFocusRequest.key,
@@ -429,7 +450,7 @@ export default function ActivityTabScreen() {
         current === pendingFocusRequest.transactionId ? null : current
       );
     }, 1800);
-  }, [grouped, hasActiveSearch, isInitialLoading, pendingFocusRequest, transactionsQuery.isError]);
+  }, [grouped, hasActiveSearch, isInitialLoading, pendingFocusRequest, activeSourceIsError]);
 
   return (
     <AdaptiveScreen contentStyle={styles.container} gestureHandlers={gestureHandlers}>
@@ -511,12 +532,19 @@ export default function ActivityTabScreen() {
               <Skeleton style={styles.loadingRow} />
               <Skeleton style={styles.loadingRow} />
             </View>
-          ) : transactionsQuery.isError ? (
+          ) : activeSourceIsError ? (
             <ErrorState
               title="Could not load activity"
-              message={transactionsQuery.error.message}
+              message={
+                (hasActiveSearch ? transactionsQuery.error?.message : transactionPages.error?.message)
+                ?? "Something went wrong."
+              }
               onRetry={() => {
-                void transactionsQuery.refetch();
+                if (hasActiveSearch) {
+                  void transactionsQuery.refetch();
+                } else {
+                  void transactionPages.refetch();
+                }
               }}
             />
           ) : showNoSearchResultsState ? (
@@ -560,6 +588,24 @@ export default function ActivityTabScreen() {
                 }
               }}
               onMomentumScrollEnd={commitPendingGrouped}
+              onEndReachedThreshold={0.6}
+              onEndReached={() => {
+                if (
+                  !hasActiveSearch
+                  && transactionPages.hasNextPage
+                  && !transactionPages.isFetchingNextPage
+                ) {
+                  void transactionPages.fetchNextPage();
+                }
+              }}
+              ListFooterComponent={
+                !hasActiveSearch && transactionPages.isFetchingNextPage ? (
+                  <View style={styles.pageFooterLoading}>
+                    <Skeleton style={styles.loadingRow} />
+                    <Skeleton style={styles.loadingRow} />
+                  </View>
+                ) : null
+              }
               renderSectionHeader={({ section }) => (
                 <Text style={styles.groupHeading}>{section.title}</Text>
               )}
@@ -866,6 +912,11 @@ const styles = createRuntimeStyleSheet(() => ({
   loadingRow: {
     height: 78,
     borderRadius: 6
+  },
+  pageFooterLoading: {
+    gap: spacing[8],
+    paddingTop: spacing[8],
+    paddingBottom: spacing[16]
   },
   swipeWrap: {
     position: "relative"
