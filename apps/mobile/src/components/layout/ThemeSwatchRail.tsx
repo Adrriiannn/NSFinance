@@ -10,9 +10,9 @@ import { AppText } from "../ui/text/AppText";
 // swatch on a single horizontal rail - no toggle/dropdown split, no second
 // navigation level. Selection applies instantly behind the reveal transition.
 
-const SWATCH_SIZE = 44;
+const SWATCH_SIZE = 40;
 
-function SystemSwatchFace() {
+export function SystemSwatchFace() {
   return (
     <View style={faceStyles.face}>
       <View style={[faceStyles.half, { backgroundColor: themePacks.light.theme.colors.canvas }]} />
@@ -21,7 +21,7 @@ function SystemSwatchFace() {
   );
 }
 
-function AutomaticSwatchFace() {
+export function AutomaticSwatchFace() {
   return (
     <View style={faceStyles.face}>
       <View style={faceStyles.quadrantRow}>
@@ -44,7 +44,7 @@ function AutomaticSwatchFace() {
   );
 }
 
-function PackSwatchFace({ preference }: { preference: ThemePreference }) {
+export function PackSwatchFace({ preference }: { preference: ThemePreference }) {
   if (preference.kind !== "fixed") {
     return null;
   }
@@ -60,15 +60,28 @@ function PackSwatchFace({ preference }: { preference: ThemePreference }) {
   );
 }
 
+// Renders the face of whatever is currently selected - used by the compact
+// trigger that sits on the profile card.
+export function ThemeCurrentSwatchFace() {
+  const { preference } = useThemeRuntime();
+
+  if (preference.kind === "system") {
+    return <SystemSwatchFace />;
+  }
+
+  if (preference.kind === "automatic") {
+    return <AutomaticSwatchFace />;
+  }
+
+  return <PackSwatchFace preference={preference} />;
+}
+
 export function ThemeSwatchRail() {
   const { preference, setThemePreference, isTransitioning } = useThemeRuntime();
   const options = buildThemeSelectionOptions(preference);
 
   return (
     <View style={styles.wrap}>
-      <AppText preset="fieldLabel" style={styles.title}>
-        Theme
-      </AppText>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

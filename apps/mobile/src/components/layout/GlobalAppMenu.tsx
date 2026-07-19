@@ -15,7 +15,7 @@ import { SystemModal } from "../ui/surfaces/SystemModal";
 import { useUserProfileQuery } from "../../features/users/useUserSettings";
 import { externalLinks } from "../../lib/config/externalLinks";
 import { useAuthSession } from "../../providers/AuthProvider";
-import { ThemeSwatchRail } from "./ThemeSwatchRail";
+import { ThemeCurrentSwatchFace, ThemeSwatchRail } from "./ThemeSwatchRail";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../theme/tokens";
 
 type GlobalAppMenuProps = {
@@ -85,7 +85,18 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
   const { isAuthenticated, session, logout } = useAuthSession();
   const profileQuery = useUserProfileQuery();
   const [isOpen, setIsOpen] = useState(false);
+  const [isThemePanelOpen, setIsThemePanelOpen] = useState(false);
   const slideProgress = useRef(new Animated.Value(0)).current;
+  const themePanelProgress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(themePanelProgress, {
+      toValue: isThemePanelOpen ? 1 : 0,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false
+    }).start();
+  }, [isThemePanelOpen, themePanelProgress]);
 
   useEffect(() => {
     setIsOpen(false);
@@ -188,11 +199,42 @@ export function GlobalAppMenu({ topOffset = 8, showTrigger = true }: GlobalAppMe
                   {subtitle}
                 </Text>
               </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={isThemePanelOpen ? "Hide theme options" : "Show theme options"}
+                accessibilityState={{ expanded: isThemePanelOpen }}
+                onPress={() => setIsThemePanelOpen((current) => !current)}
+                style={({ pressed }) => [
+                  styles.themeTrigger,
+                  pressed ? styles.menuItemPressed : null
+                ]}
+              >
+                <ThemeCurrentSwatchFace />
+                <Ionicons
+                  name={isThemePanelOpen ? "chevron-up" : "chevron-down"}
+                  size={11}
+                  color={palette.textSecondary}
+                  style={styles.themeTriggerChevron}
+                />
+              </Pressable>
             </View>
 
-            <View style={styles.themeRailSection}>
-              <ThemeSwatchRail />
-            </View>
+            <Animated.View
+              style={[
+                styles.themeSlideOut,
+                {
+                  height: themePanelProgress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 104]
+                  }),
+                  opacity: themePanelProgress
+                }
+              ]}
+            >
+              <View style={styles.themeSlideOutInner}>
+                <ThemeSwatchRail />
+              </View>
+            </Animated.View>
 
             <View style={styles.menuItems}>
               {menuItems.map((item) => {
@@ -357,10 +399,32 @@ const styles = createRuntimeStyleSheet(() => ({
     gap: 2
   },
   profileIdentityCopy: {
-    gap: 2
+    gap: 2,
+    paddingRight: 52
   },
-  themeRailSection: {
-    paddingHorizontal: spacing[4],
+  themeTrigger: {
+    position: "absolute",
+    top: spacing[10],
+    right: spacing[10],
+    alignItems: "center",
+    gap: 1
+  },
+  themeTriggerChevron: {
+    marginTop: -2
+  },
+  themeSlideOut: {
+    overflow: "hidden",
+    marginTop: -6,
+    borderBottomLeftRadius: 6,
+    borderBottomRightRadius: 6,
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: palette.border,
+    backgroundColor: surfaces.card
+  },
+  themeSlideOutInner: {
+    paddingTop: spacing[12],
+    paddingHorizontal: spacing[12],
     paddingBottom: spacing[8]
   },
   fullName: {
