@@ -4,6 +4,9 @@ export const queryKeys = {
   auth: {
     me: ["auth", "me"] as const
   },
+  insights: {
+    periods: (months?: number) => ["insights", "periods", months ?? null] as const
+  },
   dashboard: {
     summary: ["dashboard", "summary"] as const
   },

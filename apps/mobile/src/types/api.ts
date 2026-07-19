@@ -1091,6 +1091,27 @@ export type BankRecurringPaymentsDto = {
   standingOrders: BankStandingOrderDto[];
 };
 
+export type InsightPeriodsDto = {
+  asOfUtc: string;
+  monthsRequested: number;
+  currencyGroups: InsightPeriodCurrencyGroupDto[];
+};
+
+export type InsightPeriodCurrencyGroupDto = {
+  currency: string;
+  periods: InsightPeriodDto[];
+};
+
+export type InsightPeriodDto = {
+  year: number;
+  month: number;
+  income: number;
+  spend: number;
+  net: number;
+  countedTransactionCount: number;
+  isPartial: boolean;
+};
+
 export type FinancialCommitmentsDto = {
   asOfUtc: string;
   limit: number;
