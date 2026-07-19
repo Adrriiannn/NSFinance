@@ -3,6 +3,7 @@ using System;
 using System.Linq;
 using NSFinance.Api.Modules.Banking.DTOs;
 using NSFinance.Api.Modules.Banking.Services;
+using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.Users.Services;
 
 namespace NSFinance.Api.Modules.Banking.Endpoints;
@@ -13,6 +14,7 @@ public static class SyncAllBankConnectionsEndpoint
         GlobalBankSyncRequest? request,
         ICurrentUserProvider currentUserProvider,
         BankGlobalSyncService globalSyncService,
+        MerchantCategorizationBackfillService merchantBackfillService,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -48,6 +50,22 @@ public static class SyncAllBankConnectionsEndpoint
                 result.Trigger,
                 result.Outcome,
                 endpointStopwatch.ElapsedMilliseconds);
+
+            if (merchantBackfillService.IsEnabled)
+            {
+                try
+                {
+                    await merchantBackfillService.BackfillAsync(userId, detachedSyncToken);
+                }
+                catch (Exception backfillException)
+                {
+                    // Categorization must never fail a sync response.
+                    logger.LogError(
+                        backfillException,
+                        "Merchant categorization backfill failed after global sync userId={UserId}",
+                        userId);
+                }
+            }
 
             var response = new GlobalBankSyncResponse(
                 Trigger: result.Trigger,
