@@ -111,6 +111,39 @@ public static class CategoryCharacteristicsCatalog
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.NeutralTransfer,
             ConfidenceFloor: 0.8),
 
+        // Savings > General Savings Transfer - inflow side. Money arriving
+        // from your own external savings is a neutral transfer, never income;
+        // leaving it unlabelled would inflate income aggregates.
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 180102,
+            Description: "Money you moved back from savings you hold elsewhere.",
+            UseCases:
+            [
+                "Withdrawing from an external savings vault to your current account",
+                "Moving saved money back for a planned purchase"
+            ],
+            InclusionRules:
+            [
+                "Direction is inflow",
+                "Reference names the user's own savings: savings keyword, vault name, or own-name reference",
+                "No linked counterpart account exists"
+            ],
+            ExclusionRules:
+            [
+                "A linked-account counterpart pairing exists: Internal Transfer decides deterministically",
+                "Employer or third-party references are income, not savings returns"
+            ],
+            MerchantSignals:
+            [
+                "SAVINGS",
+                "VAULT",
+                "MOBI SAVINGS"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Inflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.NeutralTransfer,
+            ConfidenceFloor: 0.8),
+
         // Transfers > Internal Transfers (deterministic-only)
         new(
             TaxonomyCategoryId: 92010,
