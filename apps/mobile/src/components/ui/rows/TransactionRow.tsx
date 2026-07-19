@@ -13,6 +13,7 @@ import {
   shouldRenderSemanticHelperLine
 } from "../../../features/transactions/activityPresentation";
 import { resolveCanonicalTransactionSemantic } from "../../../features/transactions/semanticResolver";
+import { formatMerchantDisplayName } from "../../../features/transactions/merchantDisplay";
 import { AmountText } from "../../ui/AmountText";
 import { useRowPresets } from "./row.presets";
 
@@ -113,7 +114,7 @@ export function TransactionRow({
 
         <View style={{ flex: 1 }}>
           <Text numberOfLines={1} style={rowPresets.title}>
-            {transaction.description}
+            {formatMerchantDisplayName(transaction.description)}
           </Text>
           <Text numberOfLines={1} style={rowPresets.subtitle}>
             {metadata}

@@ -5,7 +5,7 @@ import * as Sharing from "expo-sharing";
 import { useMutation } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
-import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
+import { TransactionRow } from "../../../src/components/ui/rows/TransactionRow";
 import { Button } from "../../../src/components/ui/buttons/Button";
 import { EmptyState } from "../../../src/components/ui/feedback/EmptyState";
 import { Banner } from "../../../src/components/ui/feedback/Banner";

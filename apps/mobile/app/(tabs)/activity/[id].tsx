@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
-import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
+import { TransactionRow } from "../../../src/components/ui/rows/TransactionRow";
 import { AmountText } from "../../../src/components/ui/AmountText";
 import { Card } from "../../../src/components/ui/cards/Card";
 import { Button } from "../../../src/components/ui/buttons/Button";
@@ -27,6 +27,7 @@ import {
 } from "../../../src/features/transactions/activityGrouping";
 import { formatUnknownError } from "../../../src/lib/api/errors";
 import { formatCalendarDate, formatDate, formatTime } from "../../../src/lib/format";
+import { formatMerchantDisplayName, hasDistinctStatementText } from "../../../src/features/transactions/merchantDisplay";
 import { HeaderShell } from "../../../src/layout/appHeader";
 import type { TransactionDto } from "../../../src/types/api";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
@@ -319,7 +320,14 @@ export default function PlannerTransactionDetailScreen() {
       ) : transactionQuery.data ? (
         <>
           <Card style={styles.heroCard}>
-            <Text style={styles.transactionName}>{transactionQuery.data.description}</Text>
+            <Text style={styles.transactionName}>
+              {formatMerchantDisplayName(transactionQuery.data.description)}
+            </Text>
+            {hasDistinctStatementText(transactionQuery.data.description) ? (
+              <Text style={styles.statementText} numberOfLines={2}>
+                Statement text: {transactionQuery.data.description}
+              </Text>
+            ) : null}
             <AmountText
               amount={transactionQuery.data.amount}
               currency={transactionQuery.data.currency}
@@ -497,6 +505,11 @@ const styles = createRuntimeStyleSheet(() => ({
     color: palette.textPrimary,
     ...typography.displayL,
     fontVariant: ["tabular-nums"]
+  },
+  statementText: {
+    color: palette.textSecondary,
+    ...typography.caption,
+    marginTop: 2
   },
   transactionSubtitle: {
     color: palette.textSecondary,

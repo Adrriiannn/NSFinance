@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { CheckSpendingsCard } from "../../../src/components/accounts/CheckSpendingsCard";
 import { AccountProviderBadge } from "../../../src/components/accounts/AccountProviderBadge";
-import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
+import { TransactionRow } from "../../../src/components/ui/rows/TransactionRow";
 import { AnimatedCurrencyText } from "../../../src/components/ui/AnimatedCurrencyText";
 import { EmptyState } from "../../../src/components/ui/feedback/EmptyState";
 import { Card } from "../../../src/components/ui/cards/Card";

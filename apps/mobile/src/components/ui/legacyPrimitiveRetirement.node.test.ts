@@ -18,6 +18,7 @@ const RETIRED_PRIMITIVE_FILES = [
   ["src", "components", "ui", "EmptyState.tsx"],
   ["src", "components", "ui", "SkeletonBlock.tsx"],
   ["src", "components", "ui", "FloatingActionButton.tsx"],
+  ["src", "components", "transactions", "TransactionRow.tsx"],
   ["src", "components", "Card.tsx"]
 ] as const;
 

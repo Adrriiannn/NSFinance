@@ -5,7 +5,7 @@ import { Animated, Easing, Pressable, RefreshControl, ScrollView, Text, View } f
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ErrorState } from "../../src/components/feedback/ErrorState";
 import { BalanceHeroCard } from "../../src/components/dashboard/BalanceHeroCard";
-import { TransactionRow } from "../../src/components/transactions/TransactionRow";
+import { TransactionRow } from "../../src/components/ui/rows/TransactionRow";
 import { Card } from "../../src/components/ui/cards/Card";
 import { Button } from "../../src/components/ui/buttons/Button";
 import { SectionHeader } from "../../src/components/ui/SectionHeader";

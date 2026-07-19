@@ -14,7 +14,7 @@ import {
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { TransactionRow } from "../../../src/components/transactions/TransactionRow";
+import { TransactionRow } from "../../../src/components/ui/rows/TransactionRow";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { useMainTabSwipeNavigation } from "../../../src/components/layout/useHorizontalSiblingSwipe";
 import { Skeleton } from "../../../src/components/ui/feedback/Skeleton";
