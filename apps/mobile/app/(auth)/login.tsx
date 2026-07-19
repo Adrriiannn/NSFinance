@@ -858,7 +858,7 @@ const styles = createRuntimeStyleSheet(() => ({
   },
   centerWrap: {
     flex: 1,
-    marginTop: spacing[32],
+    justifyContent: "center",
     gap: spacing[40]
   },
   narrowBlock: {
