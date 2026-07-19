@@ -19,15 +19,20 @@ import {
   useWindowDimensions,
   View
 } from "react-native";
-import { themes, type SemanticTheme } from "../semantic";
+import { type SemanticTheme } from "../semantic";
+import { toLocalCalendarDate } from "../seasonal/irishSeasonalCalendar";
+import { themePacks } from "./themePacks";
 import { setRuntimeThemeSnapshot } from "./themeSnapshot";
 import {
   cycleThemeMode,
-  getStoredThemeModeSync,
-  persistThemeMode,
-  resolveThemeName,
+  getStoredThemePreferenceSync,
+  persistThemePreference,
+  preferenceFromThemeMode,
+  resolveThemePackId,
+  themeModeFromPreference,
   type ResolvedThemeName,
-  type ThemeMode
+  type ThemeMode,
+  type ThemePreference
 } from "./themePreference";
 
 type ThemeTransitionPhase = "idle" | "starting" | "running" | "finishing";
@@ -40,10 +45,12 @@ type ThemeTransitionState = {
 };
 
 type ThemeRuntimeContextValue = {
+  preference: ThemePreference;
   mode: ThemeMode;
   resolvedThemeName: ResolvedThemeName;
   theme: SemanticTheme;
   isTransitioning: boolean;
+  setThemePreference: (preference: ThemePreference) => void;
   setThemeMode: (mode: ThemeMode) => void;
   cycleTheme: () => void;
 };
@@ -84,10 +91,29 @@ function withAlpha(hexColor: string, alpha: number) {
 export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
   const systemScheme = useColorScheme();
   const { width: viewportWidth } = useWindowDimensions();
-  const startupModeRef = useRef<ThemeMode>(getStoredThemeModeSync());
-  const [mode, setMode] = useState<ThemeMode>(startupModeRef.current);
+  const startupPreferenceRef = useRef<ThemePreference>(getStoredThemePreferenceSync());
+  const [preference, setPreference] = useState<ThemePreference>(startupPreferenceRef.current);
+  const [localDate, setLocalDate] = useState(() => toLocalCalendarDate(new Date()));
   const [reducedMotionEnabled, setReducedMotionEnabled] = useState(false);
   const [transitionState, setTransitionState] = useState<ThemeTransitionState | null>(null);
+  const mode = themeModeFromPreference(preference);
+
+  // Automatic rotation follows the local calendar day, so re-resolve at each
+  // local midnight while the preference is automatic. The resolved-change
+  // effect below masks any resulting switch with the reveal transition.
+  useEffect(() => {
+    if (preference.kind !== "automatic") {
+      return;
+    }
+
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+    const timer = setTimeout(() => {
+      setLocalDate(toLocalCalendarDate(new Date()));
+    }, Math.max(1000, nextMidnight.getTime() - now.getTime()));
+
+    return () => clearTimeout(timer);
+  }, [preference.kind, localDate]);
 
   const transitionProgress = useRef(new Animated.Value(0)).current;
   const transitionIdRef = useRef(0);
@@ -97,10 +123,10 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
   const finishTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resolvedThemeName = useMemo(
-    () => resolveThemeName(mode, systemScheme),
-    [mode, systemScheme]
+    () => resolveThemePackId(preference, systemScheme, localDate),
+    [preference, systemScheme, localDate]
   );
-  const theme = themes[resolvedThemeName];
+  const theme = themePacks[resolvedThemeName].theme;
   const isTransitioning = transitionState !== null;
 
   setRuntimeThemeSnapshot(theme);
@@ -234,18 +260,18 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
     [finishTransition, transitionProgress]
   );
 
-  const setThemeMode = useCallback(
-    (nextMode: ThemeMode) => {
-      if (isTransitioningRef.current || nextMode === mode) {
+  const setThemePreference = useCallback(
+    (nextPreference: ThemePreference) => {
+      if (isTransitioningRef.current) {
         return;
       }
 
-      const nextResolvedTheme = resolveThemeName(nextMode, systemScheme);
+      const nextResolvedTheme = resolveThemePackId(nextPreference, systemScheme, localDate);
       const resolvedAlreadyMatches = nextResolvedTheme === resolvedThemeName;
 
       if (resolvedAlreadyMatches) {
-        setMode(nextMode);
-        void persistThemeMode(nextMode);
+        setPreference(nextPreference);
+        void persistThemePreference(nextPreference);
         return;
       }
 
@@ -264,8 +290,8 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
         phase: "starting"
       });
 
-      setMode(nextMode);
-      void persistThemeMode(nextMode);
+      setPreference(nextPreference);
+      void persistThemePreference(nextPreference);
 
       const transitionDuration = reducedMotionEnabled
         ? REDUCED_MOTION_DURATION_MS
@@ -276,13 +302,24 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
     },
     [
       clearTransitionTimers,
-      mode,
+      localDate,
       reducedMotionEnabled,
       resolvedThemeName,
       startTransitionAnimation,
       systemScheme,
       transitionProgress
     ]
+  );
+
+  const setThemeMode = useCallback(
+    (nextMode: ThemeMode) => {
+      if (nextMode === mode && preference.kind !== "automatic") {
+        return;
+      }
+
+      setThemePreference(preferenceFromThemeMode(nextMode));
+    },
+    [mode, preference.kind, setThemePreference]
   );
 
   const cycleTheme = useCallback(() => {
@@ -341,14 +378,25 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
 
   const contextValue = useMemo<ThemeRuntimeContextValue>(
     () => ({
+      preference,
       mode,
       resolvedThemeName,
       theme,
       isTransitioning,
+      setThemePreference,
       setThemeMode,
       cycleTheme
     }),
-    [cycleTheme, isTransitioning, mode, resolvedThemeName, setThemeMode, theme]
+    [
+      cycleTheme,
+      isTransitioning,
+      mode,
+      preference,
+      resolvedThemeName,
+      setThemeMode,
+      setThemePreference,
+      theme
+    ]
   );
 
   return (
@@ -391,7 +439,7 @@ function ThemeRevealOverlay({
   viewportWidth,
   reducedMotionEnabled
 }: ThemeRevealOverlayProps) {
-  const fromTheme = themes[fromThemeName];
+  const fromTheme = themePacks[fromThemeName].theme;
   const fromCanvas = fromTheme.colors.canvas;
 
   if (reducedMotionEnabled) {
