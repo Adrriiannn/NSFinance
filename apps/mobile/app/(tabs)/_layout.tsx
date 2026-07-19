@@ -11,6 +11,7 @@ import {
   requestForegroundLocationAccess
 } from "../../src/features/ai/location/locationPermissionService";
 import { AdaptiveAppShell } from "../../src/layout/adaptive/AdaptiveAppShell";
+import { isTopLevelExitRoute } from "../../src/lib/navigation/exitRoutePolicy";
 import { useAuthSession } from "../../src/providers/AuthProvider";
 import { useThemeRuntime } from "../../src/theme/runtime/ThemeRuntimeProvider";
 
@@ -74,7 +75,7 @@ export default function TabsLayout() {
     isLocked: isAppLocked,
     isAuthenticated
   });
-  const isTopLevelTabRoute = segments[0] === "(tabs)" && segments.length <= 2;
+  const isTopLevelTabRoute = isTopLevelExitRoute(segments);
 
   useEffect(() => {
     if (Platform.OS !== "android" || !canRenderTabs || !isTopLevelTabRoute) {
