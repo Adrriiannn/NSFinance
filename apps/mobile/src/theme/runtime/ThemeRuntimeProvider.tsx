@@ -289,6 +289,47 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
     setThemeMode(cycleThemeMode(mode));
   }, [mode, setThemeMode]);
 
+  // System-driven scheme changes (mode === "system" while the OS flips) do not
+  // pass through setThemeMode, so mask their atomic remount with the same
+  // reveal transition users get for manual changes.
+  const previousResolvedThemeNameRef = useRef(resolvedThemeName);
+  useEffect(() => {
+    const previous = previousResolvedThemeNameRef.current;
+    previousResolvedThemeNameRef.current = resolvedThemeName;
+
+    if (previous === resolvedThemeName || isTransitioningRef.current) {
+      return;
+    }
+
+    const transitionId = transitionIdRef.current + 1;
+    transitionIdRef.current = transitionId;
+    isTransitioningRef.current = true;
+    clearTransitionTimers();
+    transitionAnimationRef.current?.stop();
+    transitionAnimationRef.current = null;
+    transitionProgress.setValue(0);
+
+    setTransitionState({
+      id: transitionId,
+      from: previous,
+      to: resolvedThemeName,
+      phase: "starting"
+    });
+
+    const transitionDuration = reducedMotionEnabled
+      ? REDUCED_MOTION_DURATION_MS
+      : FULL_MOTION_DURATION_MS;
+    requestAnimationFrame(() => {
+      startTransitionAnimation(transitionId, transitionDuration);
+    });
+  }, [
+    clearTransitionTimers,
+    reducedMotionEnabled,
+    resolvedThemeName,
+    startTransitionAnimation,
+    transitionProgress
+  ]);
+
   useEffect(() => {
     return () => {
       clearTransitionTimers();
@@ -313,7 +354,17 @@ export function ThemeRuntimeProvider({ children }: ThemeRuntimeProviderProps) {
   return (
     <ThemeRuntimeContext.Provider value={contextValue}>
       <View style={styles.container}>
-        {children}
+        {/*
+          The subtree is keyed by the resolved theme so every theme change
+          remounts it atomically. Without this, components that do not consume
+          the theme context keep stale runtime-stylesheet registrations when
+          the system scheme flips while the app is foregrounded, leaving a
+          mixed half-theme render. The reveal overlay stays outside the keyed
+          node so it can mask the remount.
+        */}
+        <View key={resolvedThemeName} style={styles.container}>
+          {children}
+        </View>
         {transitionState ? (
           <ThemeRevealOverlay
             fromThemeName={transitionState.from}
