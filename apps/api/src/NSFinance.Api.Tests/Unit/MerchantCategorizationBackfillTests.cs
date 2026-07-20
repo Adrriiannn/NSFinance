@@ -249,6 +249,48 @@ public sealed class MerchantCategorizationBackfillTests
     }
 
     [Fact]
+    public async Task Backfill_VersionBump_ReopensNeedsReviewCandidates_ExactlyOnce()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var past = DateTime.UtcNow.AddHours(-2);
+
+        dbContext.MerchantKnowledgeCandidates.Add(new MerchantKnowledgeCandidate
+        {
+            Id = Guid.NewGuid(),
+            NormalizedDescriptor = "TEBEX",
+            RawDescriptorSample = "TEBEX.ORG",
+            Status = MerchantKnowledgeCandidateStatuses.NeedsReview,
+            ObservedOccurrences = 2,
+            ObservedSpendAbs = 60m,
+            ObservedDirection = "outflow",
+            AttemptCount = 3,
+            LastOutcomeCode = "judgment_abstained",
+            CreatedUtc = past,
+            UpdatedUtc = past
+        });
+        await dbContext.SaveChangesAsync();
+
+        // First run of a fresh version: seeds materialize and the parked
+        // candidate re-opens for another judgment under the new catalog.
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var candidate = await dbContext.MerchantKnowledgeCandidates.SingleAsync();
+        Assert.Equal(MerchantKnowledgeCandidateStatuses.Pending, candidate.Status);
+        Assert.Equal("reopened_by_catalog_version", candidate.LastOutcomeCode);
+        Assert.Null(candidate.NextEligibleUtc);
+
+        // A second run in the same version must not touch it again.
+        candidate.Status = MerchantKnowledgeCandidateStatuses.NeedsReview;
+        candidate.LastOutcomeCode = "judgment_abstained";
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+        var untouched = await dbContext.MerchantKnowledgeCandidates.SingleAsync();
+        Assert.Equal(MerchantKnowledgeCandidateStatuses.NeedsReview, untouched.Status);
+    }
+
+    [Fact]
     public async Task Backfill_SeedsKnowledgeOncePerCatalogVersion()
     {
         await using var dbContext = CreateDbContext();

@@ -41,7 +41,11 @@ public static class CategoryCharacteristicsCatalog
     // Version 2 (2026-07-20): pass six added ten everyday-Ireland categories
     // and moved the coffee-first cafes from Dining to Coffee Shops. Seeding
     // retargets changed seed rows exactly once per version bump.
-    public const int Version = 2;
+    // Version 3 (2026-07-20): pass seven added the digital economy - Gaming,
+    // Electronics, Software & Digital Tools, Web Services - written directly
+    // from the first live growth run, whose judge verified those merchants
+    // and honestly abstained for lack of matching definitions.
+    public const int Version = 3;
 
     public static readonly IReadOnlyList<CategoryCharacteristicsDefinition> Definitions =
     [
@@ -943,6 +947,143 @@ public static class CategoryCharacteristicsCatalog
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
             ConfidenceFloor: 0.7,
-            AmountProfile: "Per visit, typically 5-60 EUR")
+            AmountProfile: "Per visit, typically 5-60 EUR"),
+
+        // Entertainment > Gaming
+        new(
+            TaxonomyCategoryId: 21020,
+            TaxonomySubcategoryId: null,
+            Description: "Games and in-game content: storefronts, server platforms, digital purchases.",
+            UseCases:
+            [
+                "Game purchase on a digital storefront",
+                "In-game or game-server payment",
+                "Console store top-up"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a game storefront, platform, or game-content payment processor",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Recurring gaming memberships belong to Gaming Subscription",
+                "Gaming hardware belongs to Electronics"
+            ],
+            MerchantSignals:
+            [
+                "TEBEX",
+                "STEAM",
+                "PLAYSTATION",
+                "NINTENDO",
+                "XBOX",
+                "EPIC GAMES",
+                "RIOT GAMES"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per purchase, typically 5-80 EUR"),
+
+        // Shopping > Electronics
+        new(
+            TaxonomyCategoryId: 23030,
+            TaxonomySubcategoryId: null,
+            Description: "Consumer electronics and appliances from electronics retailers.",
+            UseCases:
+            [
+                "New phone, laptop, or accessory",
+                "Home appliance purchase"
+            ],
+            InclusionRules:
+            [
+                "Merchant is an electronics or appliance retailer",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Software and app subscriptions belong to Software & Digital Tools",
+                "Supermarket purchases belong to Groceries even when they include gadgets"
+            ],
+            MerchantSignals:
+            [
+                "CURRYS",
+                "HARVEY NORMAN",
+                "DID ELECTRICAL",
+                "POWER CITY",
+                "EXPERT.IE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Per purchase, typically 20-1500 EUR"),
+
+        // Subscriptions > Software & Digital Tools
+        new(
+            TaxonomyCategoryId: 28020,
+            TaxonomySubcategoryId: null,
+            Description: "Software, app, and AI tool subscriptions and licences.",
+            UseCases:
+            [
+                "Office or creative suite subscription",
+                "AI assistant subscription",
+                "Developer tooling plan"
+            ],
+            InclusionRules:
+            [
+                "Merchant sells software, apps, or digital productivity tools",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Video and music streaming belong to Streaming",
+                "Web hosting and domains belong to Software & Services"
+            ],
+            MerchantSignals:
+            [
+                "MICROSOFT",
+                "ADOBE",
+                "OPENAI",
+                "CHATGPT",
+                "GITHUB",
+                "CANVA"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Recurring, typically 5-60 EUR monthly"),
+
+        // Business Expenses > Software & Services (hosting, domains, web infrastructure)
+        new(
+            TaxonomyCategoryId: 29030,
+            TaxonomySubcategoryId: null,
+            Description: "Web infrastructure: hosting, domain names, site builders, cloud services.",
+            UseCases:
+            [
+                "Annual domain renewal",
+                "Monthly website hosting",
+                "Site builder subscription"
+            ],
+            InclusionRules:
+            [
+                "Merchant provides hosting, domains, or web infrastructure",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "General productivity software belongs to Software & Digital Tools"
+            ],
+            MerchantSignals:
+            [
+                "GODADDY",
+                "BLACKNIGHT",
+                "NAMECHEAP",
+                "SQUARESPACE",
+                "WIX.COM"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Recurring or annual, typically 5-40 EUR")
     ];
 }

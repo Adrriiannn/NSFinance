@@ -160,7 +160,9 @@ public sealed class MerchantKnowledgeGrowthService(
                 || judgment.DefinitionKey is null
                 || !MerchantCategoryJudgmentService.TryGetDefinition(judgment.DefinitionKey, out var definition))
             {
-                ParkForReview(candidate, nowUtc, judgment.AbstainReason ?? "judgment_abstained");
+                // Stable code only - the model's free-text reason lives in
+                // the summary JSON. A future catalog version re-opens these.
+                ParkForReview(candidate, nowUtc, "judgment_abstained");
                 sentToReview += 1;
                 continue;
             }

@@ -76,8 +76,9 @@ public sealed class MerchantKnowledgeGrowthTests
 
         var candidate = await dbContext.MerchantKnowledgeCandidates.SingleAsync();
         Assert.Equal(MerchantKnowledgeCandidateStatuses.NeedsReview, candidate.Status);
-        Assert.Equal("mixed_use", candidate.LastOutcomeCode);
-        Assert.NotNull(candidate.InvestigationSummaryJson);
+        Assert.Equal("judgment_abstained", candidate.LastOutcomeCode);
+        // The model's free-text reason survives in the evidence JSON.
+        Assert.Contains("mixed_use", candidate.InvestigationSummaryJson);
     }
 
     [Fact]

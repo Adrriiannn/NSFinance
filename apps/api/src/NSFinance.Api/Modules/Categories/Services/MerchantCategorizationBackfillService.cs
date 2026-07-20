@@ -248,10 +248,26 @@ public sealed class MerchantCategorizationBackfillService(
             }
         }
 
+        // A new catalog version can supply the definition a parked candidate
+        // was waiting for - re-open the review queue for another judgment.
+        // Runs only on the version's first seeding pass, so re-opening
+        // happens exactly once per catalog change.
+        var reopened = await dbContext.MerchantKnowledgeCandidates
+            .Where(x => x.Status == MerchantKnowledgeCandidateStatuses.NeedsReview)
+            .ToListAsync(cancellationToken);
+        foreach (var candidate in reopened)
+        {
+            candidate.Status = MerchantKnowledgeCandidateStatuses.Pending;
+            candidate.NextEligibleUtc = null;
+            candidate.LastOutcomeCode = "reopened_by_catalog_version";
+            candidate.UpdatedUtc = now;
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         logger.LogInformation(
-            "Merchant knowledge seeded characteristicsVersion={Version}",
-            version);
+            "Merchant knowledge seeded characteristicsVersion={Version} reopenedCandidates={ReopenedCandidates}",
+            version,
+            reopened.Count);
     }
 
     private static MerchantKnowledge? MatchAgainstKnowledge(
