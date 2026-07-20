@@ -16,6 +16,15 @@ public static class CategoriesModule
         group.MapGet("/characteristics", GetCategoryCharacteristicsEndpoint.Handle)
             .WithName("GetCategoryCharacteristics");
 
+        // Candidate rows carry statement descriptors across users, so the
+        // review queue is operator-only.
+        var internalGroup = app.MapGroup("/api/internal/categories")
+            .WithTags("CategoriesInternal")
+            .RequireAuthorization("SupportOrAdmin");
+
+        internalGroup.MapGet("/knowledge-review", GetMerchantKnowledgeReviewQueueEndpoint.HandleAsync)
+            .WithName("GetMerchantKnowledgeReviewQueue");
+
         return app;
     }
 }
