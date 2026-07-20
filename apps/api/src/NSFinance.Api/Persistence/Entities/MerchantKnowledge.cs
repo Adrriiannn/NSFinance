@@ -9,6 +9,11 @@ public class MerchantKnowledge
 {
     public Guid Id { get; set; }
 
+    // Null = global verified truth (seeds, integrity-checked AI research).
+    // Set = one user's own correction; wins over global rows for that user
+    // without rewriting what everyone else sees.
+    public Guid? UserId { get; set; }
+
     // Uppercase contains-pattern matched against normalized statement text.
     public string NormalizedPattern { get; set; } = string.Empty;
 

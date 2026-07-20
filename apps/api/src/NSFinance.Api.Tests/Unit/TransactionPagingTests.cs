@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSFinance.Api.Common.Contracts;
+using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.DTOs;
 using NSFinance.Api.Modules.Transactions.Endpoints;
@@ -248,7 +250,8 @@ public sealed class TransactionPagingTests
         return new TransactionService(
             dbContext,
             new TestCurrentUserProvider(userId),
-            new ExpenseTaxonomyService());
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
     }
 
     private static AppDbContext CreateDbContext()

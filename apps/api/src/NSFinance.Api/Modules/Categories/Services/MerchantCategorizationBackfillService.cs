@@ -47,7 +47,7 @@ public sealed class MerchantCategorizationBackfillService(
 
         var knowledge = await dbContext.MerchantKnowledge
             .AsNoTracking()
-            .Where(x => x.IsActive)
+            .Where(x => x.IsActive && (x.UserId == null || x.UserId == userId))
             .ToListAsync(cancellationToken);
 
         var candidates = await dbContext.Transactions
@@ -163,7 +163,10 @@ public sealed class MerchantCategorizationBackfillService(
             return;
         }
 
+        // Dedup against global rows only: a user's personal override must
+        // never block the global seed for everyone else.
         var existingPatterns = await dbContext.MerchantKnowledge
+            .Where(x => x.UserId == null)
             .Select(x => x.NormalizedPattern)
             .ToListAsync(cancellationToken);
         var known = new HashSet<string>(existingPatterns, StringComparer.Ordinal);
@@ -262,7 +265,12 @@ public sealed class MerchantCategorizationBackfillService(
                 continue;
             }
 
-            if (best is null || entry.NormalizedPattern.Length > best.NormalizedPattern.Length)
+            // A user's own correction always beats global knowledge; within
+            // the same scope the longest pattern wins.
+            if (best is null
+                || (entry.UserId is not null && best.UserId is null)
+                || (entry.UserId is null == best.UserId is null
+                    && entry.NormalizedPattern.Length > best.NormalizedPattern.Length))
             {
                 best = entry;
             }

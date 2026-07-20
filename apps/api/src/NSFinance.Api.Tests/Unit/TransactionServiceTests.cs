@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSFinance.Api.Modules.Banking.Services.Deterministic;
+using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.DTOs;
 using NSFinance.Api.Modules.Transactions.Services;
@@ -19,7 +21,8 @@ public class TransactionServiceTests
         var service = new TransactionService(
             dbContext,
             new TestCurrentUserProvider(seeded.UserId),
-            new ExpenseTaxonomyService());
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
 
         var result = await service.UpdateTransactionMetadataAsync(
             seeded.DebitTransactionId,
@@ -60,7 +63,8 @@ public class TransactionServiceTests
         var service = new TransactionService(
             dbContext,
             new TestCurrentUserProvider(seeded.UserId),
-            new ExpenseTaxonomyService());
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
 
         var result = await service.UpdateTransactionMetadataAsync(
             seeded.DebitTransactionId,
@@ -182,7 +186,8 @@ public class TransactionServiceTests
         var service = new TransactionService(
             dbContext,
             new TestCurrentUserProvider(userId),
-            new ExpenseTaxonomyService());
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
 
         var rows = await service.GetTransactionsAsync(accountId, CancellationToken.None);
         var merchant = rows.Single(x => x.Id == merchantTransactionId);
@@ -260,7 +265,8 @@ public class TransactionServiceTests
         var service = new TransactionService(
             dbContext,
             new TestCurrentUserProvider(userId),
-            new ExpenseTaxonomyService());
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
 
         var rows = await service.GetTransactionsAsync(accountId, CancellationToken.None);
         var row = Assert.Single(rows);
@@ -277,7 +283,8 @@ public class TransactionServiceTests
         var service = new TransactionService(
             dbContext,
             new TestCurrentUserProvider(seeded.UserId),
-            taxonomy);
+            taxonomy,
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
 
         var detail = await service.GetTransactionByIdAsync(seeded.OutflowTransactionId, CancellationToken.None);
         Assert.NotNull(detail);
@@ -303,7 +310,8 @@ public class TransactionServiceTests
         var service = new TransactionService(
             dbContext,
             new TestCurrentUserProvider(seeded.UserId),
-            new ExpenseTaxonomyService());
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
 
         var list = await service.GetTransactionsAsync(null, CancellationToken.None);
         var listRow = list.Single(x => x.Id == seeded.OutflowTransactionId);
@@ -316,6 +324,160 @@ public class TransactionServiceTests
         Assert.Equal(listRow.TaxonomySubcategoryId, detailRow.TaxonomySubcategoryId);
         Assert.Equal(listRow.CategoryName, detailRow.CategoryName);
         Assert.Equal(listRow.DisplaySemantic, detailRow.DisplaySemantic);
+    }
+
+    [Fact]
+    public async Task UpdateTransactionMetadataAsync_StampsUserCorrectionEvidence()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedOrdinaryMerchantRowsAsync(dbContext);
+        var service = CreateOrdinaryService(dbContext, seeded.UserId);
+
+        var result = await service.UpdateTransactionMetadataAsync(
+            seeded.TargetTransactionId,
+            new UpdateTransactionMetadataRequest(
+                Reason: null,
+                Notes: null,
+                TaxonomyCategoryId: 13020,
+                TaxonomySubcategoryId: null),
+            CancellationToken.None);
+
+        Assert.Null(result.ErrorCode);
+        var reloaded = await dbContext.Transactions.SingleAsync(x => x.Id == seeded.TargetTransactionId);
+        Assert.Equal("user_correction", reloaded.CategorizationRuleKey);
+        Assert.Null(reloaded.CategorizationSignal);
+        Assert.NotNull(reloaded.CategorizedUtc);
+
+        // Without LearnMerchant the knowledge base must not grow.
+        Assert.Empty(await dbContext.MerchantKnowledge.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UpdateTransactionMetadataAsync_LearnMerchant_GrowsKnowledgeAndRetargetsSiblings()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedOrdinaryMerchantRowsAsync(dbContext);
+        var service = CreateOrdinaryService(dbContext, seeded.UserId);
+
+        var result = await service.UpdateTransactionMetadataAsync(
+            seeded.TargetTransactionId,
+            new UpdateTransactionMetadataRequest(
+                Reason: null,
+                Notes: null,
+                TaxonomyCategoryId: 13020,
+                TaxonomySubcategoryId: null,
+                LearnMerchant: true),
+            CancellationToken.None);
+
+        Assert.Null(result.ErrorCode);
+
+        var knowledge = await dbContext.MerchantKnowledge.SingleAsync();
+        Assert.Equal(seeded.UserId, knowledge.UserId);
+        Assert.Equal("NEWBAKERY CORK", knowledge.NormalizedPattern);
+        Assert.Equal(MerchantKnowledgeSources.UserCorrection, knowledge.Source);
+        Assert.Equal(13020, knowledge.TaxonomyCategoryId);
+        Assert.Equal(1.0, knowledge.Confidence);
+
+        // The auto-categorized sibling follows the correction.
+        var autoSibling = await dbContext.Transactions.SingleAsync(x => x.Id == seeded.AutoCategorizedSiblingId);
+        Assert.Equal(13020, autoSibling.TaxonomyCategoryId);
+        Assert.Equal("merchant_knowledge", autoSibling.CategorizationRuleKey);
+        Assert.Equal("NEWBAKERY CORK", autoSibling.CategorizationSignal);
+
+        // A sibling the user corrected earlier is protected.
+        var protectedSibling = await dbContext.Transactions.SingleAsync(x => x.Id == seeded.UserCorrectedSiblingId);
+        Assert.Equal(19010, protectedSibling.TaxonomyCategoryId);
+        Assert.Equal("user_correction", protectedSibling.CategorizationRuleKey);
+    }
+
+    private static TransactionService CreateOrdinaryService(AppDbContext dbContext, Guid userId)
+    {
+        return new TransactionService(
+            dbContext,
+            new TestCurrentUserProvider(userId),
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
+    }
+
+    private static async Task<(Guid UserId, Guid TargetTransactionId, Guid AutoCategorizedSiblingId, Guid UserCorrectedSiblingId)> SeedOrdinaryMerchantRowsAsync(AppDbContext dbContext)
+    {
+        var now = DateTime.UtcNow;
+        var userId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+
+        dbContext.Users.Add(new User
+        {
+            Id = userId,
+            PrimaryEmail = $"correction-{userId:N}@local",
+            NormalizedEmail = $"correction-{userId:N}@local",
+            DisplayName = "Correction Tester",
+            Status = "active",
+            OnboardingStatus = "profile_created",
+            Role = "user",
+            CreatedUtc = now
+        });
+        dbContext.FinancialAccounts.Add(new FinancialAccount
+        {
+            Id = accountId,
+            UserId = userId,
+            Name = "Main",
+            Type = "Current",
+            Currency = "EUR",
+            CreatedUtc = now
+        });
+
+        var targetId = Guid.NewGuid();
+        var autoSiblingId = Guid.NewGuid();
+        var correctedSiblingId = Guid.NewGuid();
+        dbContext.Transactions.AddRange(
+            new Transaction
+            {
+                Id = targetId,
+                FinancialAccountId = accountId,
+                Amount = -5m,
+                Currency = "EUR",
+                Description = "VDC-NEWBAKERY CORK",
+                EntryKind = TransactionEntryKinds.Ordinary,
+                AnalyticsTreatment = TransactionAnalyticsTreatments.Ordinary,
+                BookedAtUtc = now,
+                CreatedUtc = now
+            },
+            new Transaction
+            {
+                Id = autoSiblingId,
+                FinancialAccountId = accountId,
+                Amount = -7m,
+                Currency = "EUR",
+                Description = "VDC-NEWBAKERY CORK",
+                EntryKind = TransactionEntryKinds.Ordinary,
+                AnalyticsTreatment = TransactionAnalyticsTreatments.Ordinary,
+                BookedAtUtc = now.AddDays(-1),
+                CreatedUtc = now.AddDays(-1),
+                TaxonomyDomainId = 130,
+                TaxonomyCategoryId = 13010,
+                CategorizationRuleKey = "merchant_knowledge",
+                CategorizationSignal = "NEWBAKERY",
+                CategorizedUtc = now.AddDays(-1)
+            },
+            new Transaction
+            {
+                Id = correctedSiblingId,
+                FinancialAccountId = accountId,
+                Amount = -9m,
+                Currency = "EUR",
+                Description = "VDC-NEWBAKERY CORK",
+                EntryKind = TransactionEntryKinds.Ordinary,
+                AnalyticsTreatment = TransactionAnalyticsTreatments.Ordinary,
+                BookedAtUtc = now.AddDays(-2),
+                CreatedUtc = now.AddDays(-2),
+                TaxonomyDomainId = 190,
+                TaxonomyCategoryId = 19010,
+                CategorizationRuleKey = "user_correction",
+                CategorizedUtc = now.AddDays(-2)
+            });
+
+        await dbContext.SaveChangesAsync();
+        return (userId, targetId, autoSiblingId, correctedSiblingId);
     }
 
     private static AppDbContext CreateDbContext()

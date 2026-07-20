@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NSFinance.Api.Common.Contracts;
+using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Transactions.DTOs;
 using NSFinance.Api.Modules.Transactions.TransferPolicy;
@@ -13,7 +14,8 @@ namespace NSFinance.Api.Modules.Transactions.Services;
 public sealed class TransactionService(
     AppDbContext dbContext,
     ICurrentUserProvider currentUserProvider,
-    ExpenseTaxonomyService expenseTaxonomyService)
+    ExpenseTaxonomyService expenseTaxonomyService,
+    MerchantCorrectionLearningService correctionLearningService)
 {
     private const int DefaultPageSize = 50;
     private const int MaximumPageSize = 100;
@@ -326,6 +328,24 @@ public sealed class TransactionService(
 
         transaction.NeedsDeterministicReclassification = true;
         transaction.MetadataUpdatedUtc = DateTime.UtcNow;
+
+        // A manual assignment is a protected user correction: the evidence
+        // trail records it and automatic passes never overwrite it.
+        transaction.CategorizationRuleKey = "user_correction";
+        transaction.CategorizationSignal = null;
+        transaction.CategorizationCharacteristicsVersion = null;
+        transaction.CategorizedUtc = DateTime.UtcNow;
+
+        if (request.LearnMerchant == true)
+        {
+            await correctionLearningService.LearnFromCorrectionAsync(
+                currentUserProvider.UserId,
+                transaction,
+                selectedDomainId,
+                selectedCategoryId,
+                selectedSubcategoryId,
+                cancellationToken);
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
 

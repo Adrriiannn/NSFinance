@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSFinance.Api.Modules.Accounts.Services;
+using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Modules.ExpenseTracker.Services;
 using NSFinance.Api.Modules.Insights.Services;
 using NSFinance.Api.Modules.Transactions.DTOs;
@@ -479,7 +481,8 @@ public sealed class TransactionProvenanceReadTests
         return new TransactionService(
             dbContext,
             new TestCurrentUserProvider(userId),
-            new ExpenseTaxonomyService());
+            new ExpenseTaxonomyService(),
+            new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance));
     }
 
     private static AppDbContext CreateDbContext()

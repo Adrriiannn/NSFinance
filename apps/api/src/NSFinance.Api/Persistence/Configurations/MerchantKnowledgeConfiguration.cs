@@ -17,7 +17,9 @@ public class MerchantKnowledgeConfiguration : IEntityTypeConfiguration<MerchantK
         builder.Property(x => x.Source).HasMaxLength(40).IsRequired();
         builder.Property(x => x.VerificationEvidenceJson).HasColumnType("jsonb");
 
-        builder.HasIndex(x => x.NormalizedPattern).IsUnique();
+        // Composite uniqueness: one global row per pattern (code-level dedup
+        // keeps null-UserId duplicates out) and one override per user+pattern.
+        builder.HasIndex(x => new { x.UserId, x.NormalizedPattern }).IsUnique();
         builder.HasIndex(x => new { x.IsActive, x.Source });
     }
 }

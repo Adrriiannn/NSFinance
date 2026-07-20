@@ -126,6 +126,48 @@ public sealed class MerchantCategorizationBackfillTests
     }
 
     [Fact]
+    public async Task Backfill_UserScopedCorrectionRow_BeatsGlobalKnowledge()
+    {
+        await using var dbContext = CreateDbContext();
+        var corrector = await SeedUserWithAccountAsync(dbContext);
+        var other = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        // The corrector taught the system that their TESCO spend is Dining
+        // (say, the in-store cafe); everyone else keeps the global truth.
+        dbContext.MerchantKnowledge.Add(new MerchantKnowledge
+        {
+            Id = Guid.NewGuid(),
+            UserId = corrector.UserId,
+            NormalizedPattern = "TESCO",
+            DisplayName = "Tesco (my cafe)",
+            TaxonomyDomainId = 130,
+            TaxonomyCategoryId = 13020,
+            DirectionExpectation = "outflow",
+            Source = MerchantKnowledgeSources.UserCorrection,
+            Confidence = 1.0,
+            CharacteristicsVersion = 1,
+            IsActive = true,
+            CreatedUtc = now,
+            UpdatedUtc = now
+        });
+
+        var correctorTesco = CreateTransaction(corrector.AccountId, "VDC-TESCO STORES 3", -20m, now);
+        var otherTesco = CreateTransaction(other.AccountId, "VDC-TESCO STORES 3", -20m, now);
+        dbContext.Transactions.AddRange(correctorTesco, otherTesco);
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(corrector.UserId, CancellationToken.None);
+        await CreateService(dbContext).BackfillAsync(other.UserId, CancellationToken.None);
+
+        var reloadedCorrector = await dbContext.Transactions.SingleAsync(x => x.Id == correctorTesco.Id);
+        Assert.Equal(13020, reloadedCorrector.TaxonomyCategoryId);
+
+        var reloadedOther = await dbContext.Transactions.SingleAsync(x => x.Id == otherTesco.Id);
+        Assert.Equal(13010, reloadedOther.TaxonomyCategoryId);
+    }
+
+    [Fact]
     public async Task Backfill_SeedsKnowledgeOncePerCatalogVersion()
     {
         await using var dbContext = CreateDbContext();

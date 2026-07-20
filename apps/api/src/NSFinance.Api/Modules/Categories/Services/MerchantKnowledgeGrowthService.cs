@@ -187,7 +187,9 @@ public sealed class MerchantKnowledgeGrowthService(
             }
 
             var patternExists = await dbContext.MerchantKnowledge
-                .AnyAsync(x => x.NormalizedPattern == group.NormalizedDescriptor, cancellationToken);
+                .AnyAsync(
+                    x => x.UserId == null && x.NormalizedPattern == group.NormalizedDescriptor,
+                    cancellationToken);
             if (patternExists)
             {
                 candidate.Status = MerchantKnowledgeCandidateStatuses.Promoted;

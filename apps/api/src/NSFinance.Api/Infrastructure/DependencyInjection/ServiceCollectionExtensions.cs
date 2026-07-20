@@ -540,6 +540,7 @@ public static class ServiceCollectionExtensions
         services.Configure<MerchantCategorizationOptions>(
             configuration.GetSection(MerchantCategorizationOptions.SectionName));
         services.AddScoped<MerchantKnowledgeGrowthService>();
+        services.AddScoped<MerchantCorrectionLearningService>();
         services.AddScoped<IMerchantCategoryJudge, MerchantCategoryJudgmentService>();
         services.Configure<MerchantKnowledgeGrowthOptions>(
             configuration.GetSection(MerchantKnowledgeGrowthOptions.SectionName));
