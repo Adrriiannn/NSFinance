@@ -30,6 +30,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Transaction> Transactions => Set<Transaction>();
     public DbSet<TransactionRelationship> TransactionRelationships => Set<TransactionRelationship>();
     public DbSet<MerchantKnowledge> MerchantKnowledge => Set<MerchantKnowledge>();
+    public DbSet<MerchantKnowledgeCandidate> MerchantKnowledgeCandidates => Set<MerchantKnowledgeCandidate>();
     public DbSet<TransactionCategory> TransactionCategories => Set<TransactionCategory>();
     public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
     public DbSet<StatementImportRow> StatementImportRows => Set<StatementImportRow>();

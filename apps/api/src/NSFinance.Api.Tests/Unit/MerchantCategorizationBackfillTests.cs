@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSFinance.Api.Modules.AI.Services;
+using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
@@ -144,14 +146,44 @@ public sealed class MerchantCategorizationBackfillTests
 
     private static MerchantCategorizationBackfillService CreateService(AppDbContext dbContext)
     {
+        // Growth stays disabled here; the growth loop has its own test suite.
+        var growthService = new MerchantKnowledgeGrowthService(
+            dbContext,
+            new ThrowingInvestigationService(),
+            new MerchantAcceptancePolicy(),
+            new ThrowingCategoryJudge(),
+            Options.Create(new MerchantKnowledgeGrowthOptions { Enabled = false }),
+            NullLogger<MerchantKnowledgeGrowthService>.Instance);
+
         return new MerchantCategorizationBackfillService(
             dbContext,
+            growthService,
             Options.Create(new MerchantCategorizationOptions
             {
                 BackfillOnGlobalSyncEnabled = true,
                 MaxRowsPerRun = 500
             }),
             NullLogger<MerchantCategorizationBackfillService>.Instance);
+    }
+
+    private sealed class ThrowingInvestigationService : IMerchantInvestigationService
+    {
+        public Task<MerchantInvestigationResult> InvestigateAsync(
+            MerchantInvestigationRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("Investigation must not run when growth is disabled.");
+        }
+    }
+
+    private sealed class ThrowingCategoryJudge : IMerchantCategoryJudge
+    {
+        public Task<MerchantCategoryJudgment> JudgeAsync(
+            MerchantCategoryJudgmentInput input,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("Judgment must not run when growth is disabled.");
+        }
     }
 
     private static Transaction CreateTransaction(

@@ -21,7 +21,8 @@ public sealed class MerchantCategorizationOptions
 public sealed record MerchantBackfillSummary(
     int RowsExamined,
     int RowsCategorized,
-    int RowsUnmatched);
+    int RowsUnmatched,
+    MerchantGrowthRunSummary? Growth = null);
 
 // Deterministic merchant categorization backfill (CAT-001). Strictly additive:
 // only rows with no taxonomy at all are considered, rows claimed by the
@@ -30,6 +31,7 @@ public sealed record MerchantBackfillSummary(
 // catalog. Every assignment logs its rule evidence without statement text.
 public sealed class MerchantCategorizationBackfillService(
     AppDbContext dbContext,
+    MerchantKnowledgeGrowthService growthService,
     IOptions<MerchantCategorizationOptions> options,
     ILogger<MerchantCategorizationBackfillService> logger)
 {
@@ -62,15 +64,10 @@ public sealed class MerchantCategorizationBackfillService(
             .ToListAsync(cancellationToken);
 
         var categorized = 0;
+        var unmatched = new List<Transaction>();
 
-        foreach (var transaction in candidates)
+        void ApplyMatch(Transaction transaction, MerchantKnowledge match)
         {
-            var match = MatchAgainstKnowledge(knowledge, transaction.Description, transaction.Amount);
-            if (match is null)
-            {
-                continue;
-            }
-
             transaction.TaxonomyDomainId = match.TaxonomyDomainId;
             transaction.TaxonomyCategoryId = match.TaxonomyCategoryId;
             transaction.TaxonomySubcategoryId = match.TaxonomySubcategoryId;
@@ -91,6 +88,43 @@ public sealed class MerchantCategorizationBackfillService(
                 transaction.TaxonomySubcategoryId);
         }
 
+        foreach (var transaction in candidates)
+        {
+            var match = MatchAgainstKnowledge(knowledge, transaction.Description, transaction.Amount);
+            if (match is null)
+            {
+                unmatched.Add(transaction);
+                continue;
+            }
+
+            ApplyMatch(transaction, match);
+        }
+
+        // The growth loop: unknown descriptors go through AI investigation,
+        // integrity checks, and category judgment; promotions land in
+        // MerchantKnowledge and are applied to this run's rows immediately.
+        MerchantGrowthRunSummary? growthSummary = null;
+        if (growthService.IsEnabled && unmatched.Count > 0)
+        {
+            growthSummary = await growthService.GrowAsync(unmatched, cancellationToken);
+            if (growthSummary.Promoted > 0)
+            {
+                var grownKnowledge = await dbContext.MerchantKnowledge
+                    .AsNoTracking()
+                    .Where(x => x.IsActive && x.Source == MerchantKnowledgeSources.AiInvestigation)
+                    .ToListAsync(cancellationToken);
+
+                foreach (var transaction in unmatched.Where(x => x.TaxonomyCategoryId == null))
+                {
+                    var match = MatchAgainstKnowledge(grownKnowledge, transaction.Description, transaction.Amount);
+                    if (match is not null)
+                    {
+                        ApplyMatch(transaction, match);
+                    }
+                }
+            }
+        }
+
         if (categorized > 0)
         {
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -99,7 +133,8 @@ public sealed class MerchantCategorizationBackfillService(
         var summary = new MerchantBackfillSummary(
             RowsExamined: candidates.Count,
             RowsCategorized: categorized,
-            RowsUnmatched: candidates.Count - categorized);
+            RowsUnmatched: candidates.Count - categorized,
+            Growth: growthSummary);
 
         logger.LogInformation(
             "Merchant categorization backfill userId={UserId} rowsExamined={RowsExamined} rowsCategorized={RowsCategorized} rowsUnmatched={RowsUnmatched} characteristicsVersion={Version}",
