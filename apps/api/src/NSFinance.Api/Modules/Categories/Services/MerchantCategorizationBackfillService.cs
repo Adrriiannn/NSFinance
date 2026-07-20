@@ -41,6 +41,13 @@ public sealed class MerchantCategorizationBackfillService(
     {
         var maxRows = Math.Clamp(options.Value.MaxRowsPerRun, 1, 2000);
 
+        await EnsureSeedKnowledgeAsync(cancellationToken);
+
+        var knowledge = await dbContext.MerchantKnowledge
+            .AsNoTracking()
+            .Where(x => x.IsActive)
+            .ToListAsync(cancellationToken);
+
         var candidates = await dbContext.Transactions
             .Where(x =>
                 x.FinancialAccount != null
@@ -54,49 +61,30 @@ public sealed class MerchantCategorizationBackfillService(
             .Take(maxRows)
             .ToListAsync(cancellationToken);
 
-        var catalog = NSFinanceTaxonomyCatalog.Instance;
         var categorized = 0;
 
         foreach (var transaction in candidates)
         {
-            var match = DeterministicMerchantCategorizer.Match(
-                transaction.Description,
-                transaction.Amount);
-
+            var match = MatchAgainstKnowledge(knowledge, transaction.Description, transaction.Amount);
             if (match is null)
             {
                 continue;
             }
 
-            if (match.TaxonomySubcategoryId is { } subcategoryId
-                && catalog.SubcategoriesById.TryGetValue(subcategoryId, out var subcategory))
-            {
-                transaction.TaxonomyDomainId = subcategory.DomainId;
-                transaction.TaxonomyCategoryId = subcategory.CategoryId;
-                transaction.TaxonomySubcategoryId = subcategory.Id;
-            }
-            else if (match.TaxonomyCategoryId is { } categoryId
-                && catalog.CategoriesById.TryGetValue(categoryId, out var category))
-            {
-                transaction.TaxonomyDomainId = category.DomainId;
-                transaction.TaxonomyCategoryId = category.Id;
-                transaction.TaxonomySubcategoryId = null;
-            }
-            else
-            {
-                continue;
-            }
-
-            transaction.CategorizationRuleKey = "merchant_signal";
-            transaction.CategorizationSignal = match.MatchedSignal;
+            transaction.TaxonomyDomainId = match.TaxonomyDomainId;
+            transaction.TaxonomyCategoryId = match.TaxonomyCategoryId;
+            transaction.TaxonomySubcategoryId = match.TaxonomySubcategoryId;
+            transaction.CategorizationRuleKey = "merchant_knowledge";
+            transaction.CategorizationSignal = match.NormalizedPattern;
             transaction.CategorizationCharacteristicsVersion = match.CharacteristicsVersion;
             transaction.CategorizedUtc = DateTime.UtcNow;
 
             categorized += 1;
             logger.LogInformation(
-                "Merchant categorization assigned transactionId={TransactionId} ruleKey=merchant_signal signal={Signal} characteristicsVersion={Version} domainId={DomainId} categoryId={CategoryId} subcategoryId={SubcategoryId}",
+                "Merchant categorization assigned transactionId={TransactionId} ruleKey=merchant_knowledge pattern={Pattern} source={Source} characteristicsVersion={Version} domainId={DomainId} categoryId={CategoryId} subcategoryId={SubcategoryId}",
                 transaction.Id,
-                match.MatchedSignal,
+                match.NormalizedPattern,
+                match.Source,
                 match.CharacteristicsVersion,
                 transaction.TaxonomyDomainId,
                 transaction.TaxonomyCategoryId,
@@ -122,5 +110,129 @@ public sealed class MerchantCategorizationBackfillService(
             CategoryCharacteristicsCatalog.Version);
 
         return summary;
+    }
+
+    // Seeds the knowledge base once per characteristics version from the
+    // catalog's bootstrap signals, so the system starts knowing what the
+    // contract's worked examples knew. All later growth comes from AI
+    // investigation and user corrections, never from code changes.
+    private async Task EnsureSeedKnowledgeAsync(CancellationToken cancellationToken)
+    {
+        var version = CategoryCharacteristicsCatalog.Version;
+        var seedExists = await dbContext.MerchantKnowledge.AnyAsync(
+            x => x.Source == MerchantKnowledgeSources.Seed && x.CharacteristicsVersion == version,
+            cancellationToken);
+
+        if (seedExists)
+        {
+            return;
+        }
+
+        var existingPatterns = await dbContext.MerchantKnowledge
+            .Select(x => x.NormalizedPattern)
+            .ToListAsync(cancellationToken);
+        var known = new HashSet<string>(existingPatterns, StringComparer.Ordinal);
+        var catalog = NSFinanceTaxonomyCatalog.Instance;
+        var now = DateTime.UtcNow;
+
+        foreach (var definition in CategoryCharacteristicsCatalog.Definitions)
+        {
+            int? domainId = null;
+            int? categoryId = null;
+            int? subcategoryId = null;
+
+            if (definition.TaxonomySubcategoryId is { } subId
+                && catalog.SubcategoriesById.TryGetValue(subId, out var subcategory))
+            {
+                domainId = subcategory.DomainId;
+                categoryId = subcategory.CategoryId;
+                subcategoryId = subcategory.Id;
+            }
+            else if (definition.TaxonomyCategoryId is { } catId
+                && catalog.CategoriesById.TryGetValue(catId, out var category))
+            {
+                domainId = category.DomainId;
+                categoryId = category.Id;
+            }
+            else
+            {
+                continue;
+            }
+
+            var direction = definition.DirectionExpectation switch
+            {
+                CharacteristicsDirection.Outflow => "outflow",
+                CharacteristicsDirection.Inflow => "inflow",
+                _ => "either"
+            };
+
+            foreach (var signal in definition.MerchantSignals)
+            {
+                var pattern = signal.Trim().ToUpperInvariant();
+                if (pattern.Length < 2 || !known.Add(pattern))
+                {
+                    continue;
+                }
+
+                dbContext.MerchantKnowledge.Add(new MerchantKnowledge
+                {
+                    Id = Guid.NewGuid(),
+                    NormalizedPattern = pattern,
+                    DisplayName = signal.Trim(),
+                    TaxonomyDomainId = domainId,
+                    TaxonomyCategoryId = categoryId,
+                    TaxonomySubcategoryId = subcategoryId,
+                    DirectionExpectation = direction,
+                    Source = MerchantKnowledgeSources.Seed,
+                    Confidence = 1.0,
+                    CharacteristicsVersion = version,
+                    IsActive = true,
+                    CreatedUtc = now,
+                    UpdatedUtc = now
+                });
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        logger.LogInformation(
+            "Merchant knowledge seeded characteristicsVersion={Version}",
+            version);
+    }
+
+    private static MerchantKnowledge? MatchAgainstKnowledge(
+        IReadOnlyList<MerchantKnowledge> knowledge,
+        string rawDescription,
+        decimal amount)
+    {
+        var normalized = DeterministicMerchantCategorizer.NormalizeStatementText(rawDescription);
+        if (normalized.Length < 2)
+        {
+            return null;
+        }
+
+        MerchantKnowledge? best = null;
+
+        foreach (var entry in knowledge)
+        {
+            var directionSatisfied = entry.DirectionExpectation switch
+            {
+                "outflow" => amount < 0,
+                "inflow" => amount > 0,
+                _ => true
+            };
+
+            if (!directionSatisfied
+                || !normalized.Contains(entry.NormalizedPattern, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (best is null || entry.NormalizedPattern.Length > best.NormalizedPattern.Length)
+            {
+                best = entry;
+            }
+        }
+
+        return best;
     }
 }

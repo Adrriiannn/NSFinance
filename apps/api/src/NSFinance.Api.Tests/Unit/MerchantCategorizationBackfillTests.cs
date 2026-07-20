@@ -39,7 +39,7 @@ public sealed class MerchantCategorizationBackfillTests
         Assert.Equal(130, reloadedTesco.TaxonomyDomainId);
         Assert.Equal(13010, reloadedTesco.TaxonomyCategoryId);
         Assert.Null(reloadedTesco.TaxonomySubcategoryId);
-        Assert.Equal("merchant_signal", reloadedTesco.CategorizationRuleKey);
+        Assert.Equal("merchant_knowledge", reloadedTesco.CategorizationRuleKey);
         Assert.Equal("TESCO", reloadedTesco.CategorizationSignal);
         Assert.NotNull(reloadedTesco.CategorizationCharacteristicsVersion);
         Assert.NotNull(reloadedTesco.CategorizedUtc);
@@ -84,6 +84,62 @@ public sealed class MerchantCategorizationBackfillTests
 
         var reloadedOther = await dbContext.Transactions.SingleAsync(x => x.Id == otherUsersTesco.Id);
         Assert.Null(reloadedOther.TaxonomyCategoryId);
+    }
+
+    [Fact]
+    public async Task Backfill_UsesGrownKnowledgeRows_WithoutCodeChanges()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        // A row learned by AI investigation, not present in any catalog signal.
+        dbContext.MerchantKnowledge.Add(new MerchantKnowledge
+        {
+            Id = Guid.NewGuid(),
+            NormalizedPattern = "NEWCAFE DUNDRUM",
+            DisplayName = "NewCafe Dundrum",
+            TaxonomyDomainId = 130,
+            TaxonomyCategoryId = 13020,
+            TaxonomySubcategoryId = null,
+            DirectionExpectation = "outflow",
+            Source = MerchantKnowledgeSources.AiInvestigation,
+            Confidence = 0.92,
+            CharacteristicsVersion = 1,
+            IsActive = true,
+            CreatedUtc = now,
+            UpdatedUtc = now
+        });
+
+        var cafeVisit = CreateTransaction(seeded.AccountId, "VDP-NEWCAFE DUNDRUM 12", -6.4m, now);
+        dbContext.Transactions.Add(cafeVisit);
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var reloaded = await dbContext.Transactions.SingleAsync(x => x.Id == cafeVisit.Id);
+        Assert.Equal(13020, reloaded.TaxonomyCategoryId);
+        Assert.Equal("merchant_knowledge", reloaded.CategorizationRuleKey);
+        Assert.Equal("NEWCAFE DUNDRUM", reloaded.CategorizationSignal);
+    }
+
+    [Fact]
+    public async Task Backfill_SeedsKnowledgeOncePerCatalogVersion()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+        var afterFirst = await dbContext.MerchantKnowledge.CountAsync();
+        Assert.True(afterFirst > 0, "seeding must materialize the catalog signals");
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+        var afterSecond = await dbContext.MerchantKnowledge.CountAsync();
+        Assert.Equal(afterFirst, afterSecond);
+
+        Assert.All(
+            await dbContext.MerchantKnowledge.ToListAsync(),
+            row => Assert.Equal(MerchantKnowledgeSources.Seed, row.Source));
     }
 
     private static MerchantCategorizationBackfillService CreateService(AppDbContext dbContext)

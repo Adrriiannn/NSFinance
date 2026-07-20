@@ -16,7 +16,7 @@ public sealed record DeterministicCategoryMatch(
 public static class DeterministicMerchantCategorizer
 {
     // Mirrors the mobile display normalizer's rules server-side.
-    private static string NormalizeStatementText(string rawDescription)
+    public static string NormalizeStatementText(string rawDescription)
     {
         var text = (rawDescription ?? string.Empty).Trim().TrimStart('*').Trim();
         text = System.Text.RegularExpressions.Regex.Replace(
