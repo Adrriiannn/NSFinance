@@ -1,6 +1,6 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Switch, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ErrorState } from "../../../src/components/feedback/ErrorState";
 import { TransactionRow } from "../../../src/components/ui/rows/TransactionRow";
@@ -29,7 +29,7 @@ import { formatUnknownError } from "../../../src/lib/api/errors";
 import { formatCalendarDate, formatDate, formatTime } from "../../../src/lib/format";
 import { formatMerchantDisplayName, hasDistinctStatementText } from "../../../src/features/transactions/merchantDisplay";
 import { HeaderShell } from "../../../src/layout/appHeader";
-import type { TransactionDto } from "../../../src/types/api";
+import type { TransactionCategorizationEvidenceDto, TransactionDto } from "../../../src/types/api";
 import { palette, spacing, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
 
 type FormErrors = Partial<Record<"category" | "reason" | "notes", string>>;
@@ -51,6 +51,7 @@ export default function PlannerTransactionDetailScreen() {
   const [notes, setNotes] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<string | null>(null);
+  const [learnMerchant, setLearnMerchant] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const hydratedServerSignatureRef = useRef<string | null>(null);
 
@@ -149,6 +150,7 @@ export default function PlannerTransactionDetailScreen() {
     setSelectedSubcategoryId(
       transactionQuery.data.taxonomySubcategoryId ? String(transactionQuery.data.taxonomySubcategoryId) : null
     );
+    setLearnMerchant(false);
     setErrors({});
     hydratedServerSignatureRef.current = serverDraftSignature;
   }, [serverDraftSignature, transactionQuery.data]);
@@ -231,14 +233,16 @@ export default function PlannerTransactionDetailScreen() {
         reason: reason.trim() ? reason.trim() : null,
         notes: notes.trim() ? notes.trim() : null,
         taxonomyCategoryId: Number(selectedCategoryId),
-        taxonomySubcategoryId: selectedSubcategoryId ? Number(selectedSubcategoryId) : null
+        taxonomySubcategoryId: selectedSubcategoryId ? Number(selectedSubcategoryId) : null,
+        ...(learnMerchant ? { learnMerchant: true } : {})
       }
     });
     console.info("[Transaction Details]", {
       event: "metadata_saved",
       transactionId: transactionQuery.data.id,
       categoryId: selectedCategoryId ? Number(selectedCategoryId) : null,
-      subcategoryId: selectedSubcategoryId ? Number(selectedSubcategoryId) : null
+      subcategoryId: selectedSubcategoryId ? Number(selectedSubcategoryId) : null,
+      learnMerchant
     });
   };
 
@@ -363,6 +367,14 @@ export default function PlannerTransactionDetailScreen() {
               label="Subcategory"
               value={transactionQuery.data.analyticsTreatment === "balance_only" ? "Not applicable" : subcategoryLabel}
             />
+            {transactionQuery.data.analyticsTreatment !== "balance_only"
+            && transactionQuery.data.taxonomyCategoryId
+            && transactionQuery.data.categorizationEvidence ? (
+              <DetailLine
+                label="Categorized by"
+                value={describeCategorizationEvidence(transactionQuery.data.categorizationEvidence)}
+              />
+            ) : null}
           </Card>
 
           {showLinkedTransactionSection ? (
@@ -454,6 +466,21 @@ export default function PlannerTransactionDetailScreen() {
             </View>
             {errors.category ? <Text style={styles.fieldError}>{errors.category}</Text> : null}
             {transferTotalsHint ? <Text style={styles.transferHint}>{transferTotalsHint}</Text> : null}
+
+            <View style={styles.learnRow}>
+              <View style={styles.learnTextWrap}>
+                <Text style={styles.learnTitle}>Always use for this merchant</Text>
+                <Text style={styles.learnMeta}>
+                  Also applies this category to your past and future transactions with this statement text.
+                </Text>
+              </View>
+              <Switch
+                value={learnMerchant}
+                onValueChange={setLearnMerchant}
+                thumbColor="#FFFFFF"
+                trackColor={{ false: palette.borderStrong, true: palette.accent }}
+              />
+            </View>
               </Card>
 
               {updateMetadataMutation.isError ? (
@@ -485,6 +512,29 @@ function DetailLine({ label, value }: { label: string; value: string }) {
       <Text style={styles.detailValue}>{value}</Text>
     </View>
   );
+}
+
+// Human wording for the "why this category" evidence trail.
+function describeCategorizationEvidence(evidence: TransactionCategorizationEvidenceDto): string {
+  if (evidence.ruleKey === "user_correction") {
+    return "You";
+  }
+
+  if (evidence.ruleKey === "merchant_knowledge") {
+    const merchant = evidence.merchantDisplayName ?? null;
+    switch (evidence.knowledgeSource) {
+      case "user_correction":
+        return merchant ? `Your merchant rule (${merchant})` : "Your merchant rule";
+      case "ai_investigation":
+        return merchant ? `AI-verified merchant (${merchant})` : "AI-verified merchant";
+      case "seed":
+        return merchant ? `Known merchant (${merchant})` : "Known merchant";
+      default:
+        return "Merchant match";
+    }
+  }
+
+  return "Automatic";
 }
 
 function buildLinkedTransactionMetadata(transaction: TransactionDto): string {
@@ -593,6 +643,23 @@ const styles = createRuntimeStyleSheet(() => ({
     ...typography.caption
   },
   transferHint: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  learnRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[12]
+  },
+  learnTextWrap: {
+    flex: 1,
+    gap: spacing[4]
+  },
+  learnTitle: {
+    color: palette.textPrimary,
+    ...typography.fieldLabel
+  },
+  learnMeta: {
     color: palette.textSecondary,
     ...typography.caption
   },

@@ -137,6 +137,19 @@ export type TransactionDto = {
   accountCurrency: string;
   effectiveTime: TransactionEffectiveTimeDto;
   statementImport: StatementImportProvenanceDto | null;
+  categorizationEvidence?: TransactionCategorizationEvidenceDto | null;
+};
+
+// Why this category: rule key + matched signal on every read; the detail
+// read enriches with the knowledge row's source, name, and confidence.
+export type TransactionCategorizationEvidenceDto = {
+  ruleKey: string;
+  signal: string | null;
+  characteristicsVersion: number | null;
+  categorizedUtc: string | null;
+  knowledgeSource?: "seed" | "ai_investigation" | "user_correction" | null;
+  merchantDisplayName?: string | null;
+  confidence?: number | null;
 };
 
 export type TransactionEffectiveTimeDto = {
@@ -182,6 +195,9 @@ export type UpdateTransactionMetadataRequest = {
   notes?: string | null;
   taxonomyCategoryId: number;
   taxonomySubcategoryId?: number | null;
+  // Merchant-scope correction: also teach the knowledge base so every
+  // transaction from this merchant follows. Omitted = this one only.
+  learnMerchant?: boolean;
 };
 
 export type StatementCsvColumnDto = {
