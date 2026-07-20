@@ -132,8 +132,8 @@ public sealed class MerchantKnowledgeGrowthService(
                 ApplyFailureCooldown(candidate, nowUtc, $"identity_{acceptance.DecisionType.ToString().ToLowerInvariant()}");
                 candidate.InvestigationSummaryJson = BuildSummaryJson(investigation, acceptance, judgment: null);
                 logger.LogInformation(
-                    "Merchant growth identity not accepted descriptor={Descriptor} decision={Decision} reasons={Reasons}",
-                    group.NormalizedDescriptor,
+                    "Merchant growth identity not accepted candidateId={CandidateId} decision={Decision} reasons={Reasons}",
+                    candidate.Id,
                     acceptance.DecisionType,
                     string.Join(',', acceptance.ReasonCodes));
                 continue;
@@ -232,9 +232,10 @@ public sealed class MerchantKnowledgeGrowthService(
             candidate.PromotedKnowledgeId = knowledge.Id;
             promoted += 1;
 
+            // Verified business identity is loggable; raw statement text is not.
             logger.LogInformation(
-                "Merchant growth promoted descriptor={Descriptor} canonicalName={CanonicalName} definitionKey={DefinitionKey} confidence={Confidence} domainId={DomainId} categoryId={CategoryId} subcategoryId={SubcategoryId}",
-                group.NormalizedDescriptor,
+                "Merchant growth promoted candidateId={CandidateId} canonicalName={CanonicalName} definitionKey={DefinitionKey} confidence={Confidence} domainId={DomainId} categoryId={CategoryId} subcategoryId={SubcategoryId}",
+                candidate.Id,
                 identity.CanonicalName,
                 judgment.DefinitionKey,
                 judgment.Confidence,

@@ -45,49 +45,75 @@ internal sealed class AzureOpenAIProviderTransport(
         var endpoint = config.AzureOpenAI.Endpoint!.TrimEnd('/');
         var requestUri = $"{endpoint}/openai/deployments/{Uri.EscapeDataString(route.Deployment)}/chat/completions?api-version={Uri.EscapeDataString(config.AzureOpenAI.ApiVersion)}";
 
-        var payload = new
+        // Reasoning-class deployments reject any non-default temperature with
+        // HTTP 400; when a deployment says so, retry once without it. The
+        // serializer drops null properties, so null means "omit".
+        double? temperature = request.Temperature ?? 0.2d;
+
+        long latencyMs;
+        string rawJson;
+        for (var attempt = 0; ; attempt++)
         {
-            messages = BuildMessages(request),
-            temperature = request.Temperature ?? 0.2d,
-            max_tokens = request.MaxOutputTokens,
-            response_format = request.StructuredOutputSchemaName is null ? null : new { type = "json_object" },
-            user = request.CorrelationId
-        };
+            var payload = new
+            {
+                messages = BuildMessages(request),
+                temperature,
+                max_completion_tokens = request.MaxOutputTokens,
+                response_format = request.StructuredOutputSchemaName is null ? null : new { type = "json_object" },
+                user = request.CorrelationId
+            };
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, requestUri)
-        {
-            Content = JsonContent.Create(payload, options: SerializerOptions)
-        };
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, requestUri)
+            {
+                Content = JsonContent.Create(payload, options: SerializerOptions)
+            };
 
-        httpRequest.Headers.TryAddWithoutValidation("x-correlation-id", request.CorrelationId);
+            httpRequest.Headers.TryAddWithoutValidation("x-correlation-id", request.CorrelationId);
 
-        IAzureOpenAIAuthStrategy auth = config.AzureOpenAI.UseManagedIdentity
-            ? managedIdentityAuthStrategy
-            : apiKeyAuthStrategy;
+            IAzureOpenAIAuthStrategy auth = config.AzureOpenAI.UseManagedIdentity
+                ? managedIdentityAuthStrategy
+                : apiKeyAuthStrategy;
 
-        if (!await auth.ApplyAsync(httpRequest, cancellationToken))
-        {
-            return AIResponse.Failed(
-                provider: AIProviderKind.AzureOpenAI.ToString(),
-                model: route.Model,
-                deployment: route.Deployment,
-                failureReason: auth.FailureReason);
-        }
+            if (!await auth.ApplyAsync(httpRequest, cancellationToken))
+            {
+                return AIResponse.Failed(
+                    provider: AIProviderKind.AzureOpenAI.ToString(),
+                    model: route.Model,
+                    deployment: route.Deployment,
+                    failureReason: auth.FailureReason);
+            }
 
-        var client = httpClientFactory.CreateClient("AI.AzureOpenAI");
-        var started = DateTime.UtcNow;
+            var client = httpClientFactory.CreateClient("AI.AzureOpenAI");
+            var started = DateTime.UtcNow;
 
-        using var httpResponse = await client.SendAsync(httpRequest, cancellationToken);
-        var latencyMs = (long)Math.Max(0, (DateTime.UtcNow - started).TotalMilliseconds);
-        var rawJson = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
+            using var httpResponse = await client.SendAsync(httpRequest, cancellationToken);
+            latencyMs = (long)Math.Max(0, (DateTime.UtcNow - started).TotalMilliseconds);
+            rawJson = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
 
-        if (!httpResponse.IsSuccessStatusCode)
-        {
+            if (httpResponse.IsSuccessStatusCode)
+            {
+                break;
+            }
+
             logger.LogWarning(
-                "Azure OpenAI request failed statusCode={StatusCode} task={TaskType} correlationId={CorrelationId}",
+                "Azure OpenAI request failed statusCode={StatusCode} task={TaskType} correlationId={CorrelationId} errorBody={ErrorBody}",
                 (int)httpResponse.StatusCode,
                 request.TaskType,
-                request.CorrelationId);
+                request.CorrelationId,
+                Truncate(rawJson, 500));
+
+            if (attempt == 0
+                && temperature is not null
+                && httpResponse.StatusCode == System.Net.HttpStatusCode.BadRequest
+                && RejectedParameter(rawJson) == "temperature")
+            {
+                logger.LogInformation(
+                    "Azure OpenAI deployment {Deployment} rejects temperature; retrying without it correlationId={CorrelationId}",
+                    route.Deployment,
+                    request.CorrelationId);
+                temperature = null;
+                continue;
+            }
 
             return new AIResponse(
                 Content: null,
@@ -173,6 +199,30 @@ internal sealed class AzureOpenAIProviderTransport(
                 RawDiagnostics: rawJson,
                 Succeeded: false,
                 FailureReason: "Azure OpenAI response parse failed.");
+        }
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    // Azure OpenAI 400 bodies name the offending parameter:
+    // {"error":{"param":"temperature","code":"unsupported_value",...}}
+    private static string? RejectedParameter(string rawJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawJson);
+            return document.RootElement.TryGetProperty("error", out var error)
+                   && error.TryGetProperty("param", out var param)
+                   && param.ValueKind == JsonValueKind.String
+                ? param.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
