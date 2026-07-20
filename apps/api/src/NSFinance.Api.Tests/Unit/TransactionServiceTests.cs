@@ -390,6 +390,46 @@ public class TransactionServiceTests
         Assert.Equal("user_correction", protectedSibling.CategorizationRuleKey);
     }
 
+    [Fact]
+    public async Task GetTransactionByIdAsync_ExposesCategorizationEvidence_WithKnowledgeEnrichment()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedOrdinaryMerchantRowsAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        dbContext.MerchantKnowledge.Add(new MerchantKnowledge
+        {
+            Id = Guid.NewGuid(),
+            NormalizedPattern = "NEWBAKERY",
+            DisplayName = "NewBakery Cork",
+            TaxonomyDomainId = 130,
+            TaxonomyCategoryId = 13010,
+            DirectionExpectation = "outflow",
+            Source = MerchantKnowledgeSources.AiInvestigation,
+            Confidence = 0.92,
+            CharacteristicsVersion = 1,
+            IsActive = true,
+            CreatedUtc = now,
+            UpdatedUtc = now
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateOrdinaryService(dbContext, seeded.UserId);
+        var detail = await service.GetTransactionByIdAsync(seeded.AutoCategorizedSiblingId, CancellationToken.None);
+
+        Assert.NotNull(detail?.CategorizationEvidence);
+        var evidence = detail!.CategorizationEvidence!;
+        Assert.Equal("merchant_knowledge", evidence.RuleKey);
+        Assert.Equal("NEWBAKERY", evidence.Signal);
+        Assert.Equal(MerchantKnowledgeSources.AiInvestigation, evidence.KnowledgeSource);
+        Assert.Equal("NewBakery Cork", evidence.MerchantDisplayName);
+        Assert.Equal(0.92, evidence.Confidence);
+
+        // The uncategorized target carries no evidence block.
+        var uncategorized = await service.GetTransactionByIdAsync(seeded.TargetTransactionId, CancellationToken.None);
+        Assert.Null(uncategorized!.CategorizationEvidence);
+    }
+
     private static TransactionService CreateOrdinaryService(AppDbContext dbContext, Guid userId)
     {
         return new TransactionService(

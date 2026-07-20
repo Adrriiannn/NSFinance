@@ -53,7 +53,20 @@ public sealed record TransactionDto(
     string AccountSource,
     string AccountCurrency,
     TransactionEffectiveTimeDto EffectiveTime,
-    StatementImportProvenanceDto? StatementImport);
+    StatementImportProvenanceDto? StatementImport,
+    TransactionCategorizationEvidenceDto? CategorizationEvidence = null);
+
+// Why this category (CAT-001 explainability): present when an automatic
+// pass or a manual correction assigned the taxonomy. Knowledge enrichment
+// (source, merchant name, confidence) is resolved on the detail read.
+public sealed record TransactionCategorizationEvidenceDto(
+    string RuleKey,
+    string? Signal,
+    int? CharacteristicsVersion,
+    DateTime? CategorizedUtc,
+    string? KnowledgeSource = null,
+    string? MerchantDisplayName = null,
+    double? Confidence = null);
 
 public sealed record TransactionEffectiveTimeDto(
     string Precision,

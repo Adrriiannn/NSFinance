@@ -231,10 +231,47 @@ public sealed class TransactionService(
                     : [],
                 cancellationToken);
 
-        return MapToDto(
+        var dto = MapToDto(
             transaction,
             relationshipsByTransactionId.TryGetValue(transaction.Id, out var summary) ? summary : null,
             statementImportsByTransactionId);
+
+        return await EnrichCategorizationEvidenceAsync(dto, cancellationToken);
+    }
+
+    // Detail-only knowledge enrichment: resolves the matched pattern to its
+    // knowledge row so the "why this category" surface can show who decided
+    // (seed, verified AI research, or the user's own correction).
+    private async Task<TransactionDto> EnrichCategorizationEvidenceAsync(
+        TransactionDto dto,
+        CancellationToken cancellationToken)
+    {
+        if (dto.CategorizationEvidence is not { RuleKey: "merchant_knowledge", Signal: { } signal })
+        {
+            return dto;
+        }
+
+        var userId = currentUserProvider.UserId;
+        var knowledge = await dbContext.MerchantKnowledge
+            .AsNoTracking()
+            .Where(x => x.NormalizedPattern == signal && (x.UserId == null || x.UserId == userId))
+            .OrderByDescending(x => x.UserId != null)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (knowledge is null)
+        {
+            return dto;
+        }
+
+        return dto with
+        {
+            CategorizationEvidence = dto.CategorizationEvidence with
+            {
+                KnowledgeSource = knowledge.Source,
+                MerchantDisplayName = knowledge.DisplayName,
+                Confidence = knowledge.Confidence
+            }
+        };
     }
 
     public async Task<(TransactionDto? Transaction, string? ErrorCode, string? ErrorMessage)> UpdateTransactionMetadataAsync(
@@ -645,7 +682,14 @@ public sealed class TransactionService(
             provenance.AccountSource,
             provenance.AccountCurrency,
             provenance.EffectiveTime,
-            provenance.StatementImport);
+            provenance.StatementImport,
+            transaction.CategorizationRuleKey is null
+                ? null
+                : new TransactionCategorizationEvidenceDto(
+                    transaction.CategorizationRuleKey,
+                    transaction.CategorizationSignal,
+                    transaction.CategorizationCharacteristicsVersion,
+                    transaction.CategorizedUtc));
     }
 
     private static EffectiveTransferMaterialization ResolveEffectiveTransferMaterialization(TransactionReadModel transaction)
@@ -799,7 +843,11 @@ public sealed class TransactionService(
             x.Notes,
             x.BookedAtUtc,
             x.CreatedUtc,
-            x.MetadataUpdatedUtc);
+            x.MetadataUpdatedUtc,
+            x.CategorizationRuleKey,
+            x.CategorizationSignal,
+            x.CategorizationCharacteristicsVersion,
+            x.CategorizedUtc);
     }
 
     private sealed record TransactionReadModel(
@@ -839,7 +887,11 @@ public sealed class TransactionService(
         string? Notes,
         DateTime BookedAtUtc,
         DateTime CreatedUtc,
-        DateTime? MetadataUpdatedUtc);
+        DateTime? MetadataUpdatedUtc,
+        string? CategorizationRuleKey,
+        string? CategorizationSignal,
+        int? CategorizationCharacteristicsVersion,
+        DateTime? CategorizedUtc);
 
     private sealed record EffectiveTransferMaterialization(
         int? TaxonomyDomainId,
