@@ -69,6 +69,29 @@ public sealed class CategoryCharacteristicsTests
     }
 
     [Fact]
+    public void MerchantSignals_AreUniqueAcrossDefinitions()
+    {
+        // A signal owned by two definitions would make matching ambiguous
+        // (longest-pattern would decide arbitrarily between categories).
+        var seen = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var definition in CategoryCharacteristicsCatalog.Definitions)
+        {
+            var owner = definition.TaxonomySubcategoryId?.ToString()
+                ?? definition.TaxonomyCategoryId?.ToString()
+                ?? "?";
+            foreach (var signal in definition.MerchantSignals)
+            {
+                var normalized = signal.Trim().ToUpperInvariant();
+                Assert.False(
+                    seen.TryGetValue(normalized, out var existingOwner) && existingOwner != owner,
+                    $"signal '{normalized}' is claimed by both {seen.GetValueOrDefault(normalized)} and {owner}");
+                seen[normalized] = owner;
+            }
+        }
+    }
+
+    [Fact]
     public void Endpoint_SerializesCatalogWithVersionAndWireEnums()
     {
         var result = GetCategoryCharacteristicsEndpoint.Handle();

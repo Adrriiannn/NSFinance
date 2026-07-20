@@ -163,36 +163,21 @@ public sealed class MerchantCategorizationBackfillService(
             return;
         }
 
-        // Dedup against global rows only: a user's personal override must
-        // never block the global seed for everyone else.
-        var existingPatterns = await dbContext.MerchantKnowledge
+        // Global rows only: a user's personal override must never block or
+        // be rewritten by the global seed.
+        var globalRows = await dbContext.MerchantKnowledge
             .Where(x => x.UserId == null)
-            .Select(x => x.NormalizedPattern)
             .ToListAsync(cancellationToken);
-        var known = new HashSet<string>(existingPatterns, StringComparer.Ordinal);
-        var catalog = NSFinanceTaxonomyCatalog.Instance;
+        var byPattern = globalRows.ToDictionary(x => x.NormalizedPattern, StringComparer.Ordinal);
         var now = DateTime.UtcNow;
 
         foreach (var definition in CategoryCharacteristicsCatalog.Definitions)
         {
-            int? domainId = null;
-            int? categoryId = null;
-            int? subcategoryId = null;
-
-            if (definition.TaxonomySubcategoryId is { } subId
-                && catalog.SubcategoriesById.TryGetValue(subId, out var subcategory))
-            {
-                domainId = subcategory.DomainId;
-                categoryId = subcategory.CategoryId;
-                subcategoryId = subcategory.Id;
-            }
-            else if (definition.TaxonomyCategoryId is { } catId
-                && catalog.CategoriesById.TryGetValue(catId, out var category))
-            {
-                domainId = category.DomainId;
-                categoryId = category.Id;
-            }
-            else
+            if (!CharacteristicsTaxonomyResolver.TryResolve(
+                    definition,
+                    out var domainId,
+                    out var categoryId,
+                    out var subcategoryId))
             {
                 continue;
             }
@@ -207,12 +192,42 @@ public sealed class MerchantCategorizationBackfillService(
             foreach (var signal in definition.MerchantSignals)
             {
                 var pattern = signal.Trim().ToUpperInvariant();
-                if (pattern.Length < 2 || !known.Add(pattern))
+                if (pattern.Length < 2)
                 {
                     continue;
                 }
 
-                dbContext.MerchantKnowledge.Add(new MerchantKnowledge
+                if (byPattern.TryGetValue(pattern, out var existing))
+                {
+                    // Catalog evolution: when a version bump moves a seed
+                    // signal to a different node, retarget that seed row once.
+                    // AI-researched and correction-derived rows are never
+                    // rewritten by the catalog.
+                    if (existing.Source == MerchantKnowledgeSources.Seed
+                        && (existing.TaxonomyDomainId != domainId
+                            || existing.TaxonomyCategoryId != categoryId
+                            || existing.TaxonomySubcategoryId != subcategoryId
+                            || existing.DirectionExpectation != direction))
+                    {
+                        existing.TaxonomyDomainId = domainId;
+                        existing.TaxonomyCategoryId = categoryId;
+                        existing.TaxonomySubcategoryId = subcategoryId;
+                        existing.DirectionExpectation = direction;
+                        existing.CharacteristicsVersion = version;
+                        existing.UpdatedUtc = now;
+                        logger.LogInformation(
+                            "Merchant knowledge seed retargeted pattern={Pattern} characteristicsVersion={Version} domainId={DomainId} categoryId={CategoryId} subcategoryId={SubcategoryId}",
+                            pattern,
+                            version,
+                            domainId,
+                            categoryId,
+                            subcategoryId);
+                    }
+
+                    continue;
+                }
+
+                var row = new MerchantKnowledge
                 {
                     Id = Guid.NewGuid(),
                     NormalizedPattern = pattern,
@@ -227,7 +242,9 @@ public sealed class MerchantCategorizationBackfillService(
                     IsActive = true,
                     CreatedUtc = now,
                     UpdatedUtc = now
-                });
+                };
+                dbContext.MerchantKnowledge.Add(row);
+                byPattern.Add(pattern, row);
             }
         }
 

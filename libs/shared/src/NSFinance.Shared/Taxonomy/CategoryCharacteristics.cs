@@ -38,7 +38,10 @@ public sealed record CategoryCharacteristicsDefinition(
 
 public static class CategoryCharacteristicsCatalog
 {
-    public const int Version = 1;
+    // Version 2 (2026-07-20): pass six added ten everyday-Ireland categories
+    // and moved the coffee-first cafes from Dining to Coffee Shops. Seeding
+    // retargets changed seed rows exactly once per version bump.
+    public const int Version = 2;
 
     public static readonly IReadOnlyList<CategoryCharacteristicsDefinition> Definitions =
     [
@@ -222,7 +225,8 @@ public static class CategoryCharacteristicsCatalog
             ExclusionRules:
             [
                 "Supermarket food belongs to Groceries",
-                "Hotel stays with dining folios belong to travel categories"
+                "Hotel stays with dining folios belong to travel categories",
+                "Coffee-first cafes belong to Coffee Shops"
             ],
             MerchantSignals:
             [
@@ -231,9 +235,7 @@ public static class CategoryCharacteristicsCatalog
                 "BOOJUM",
                 "DELIVEROO",
                 "JUST EAT",
-                "UBER EATS",
-                "STARBUCKS",
-                "INSOMNIA"
+                "UBER EATS"
             ],
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
@@ -615,6 +617,332 @@ public static class CategoryCharacteristicsCatalog
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
             ConfidenceFloor: 0.8,
-            AmountProfile: "Recurring, typically 20-80 EUR monthly")
+            AmountProfile: "Recurring, typically 20-80 EUR monthly"),
+
+        // Food & Dining > Coffee Shops > Coffee Shops
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 130301,
+            Description: "Coffee-first cafes: takeaway coffee, pastries, a quick sit-in.",
+            UseCases:
+            [
+                "Morning takeaway coffee",
+                "Cafe catch-up",
+                "Coffee and a pastry"
+            ],
+            InclusionRules:
+            [
+                "Merchant is primarily a coffee shop or cafe chain",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Restaurants and takeaway meals belong to Dining",
+                "Supermarket coffee beans belong to Groceries"
+            ],
+            MerchantSignals:
+            [
+                "STARBUCKS",
+                "INSOMNIA",
+                "COSTA COFFEE",
+                "CAFFE NERO",
+                "BUTLERS",
+                "ESQUIRES"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 3-15 EUR"),
+
+        // Transport > Public Transport > Taxi / Ride-hailing
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 120108,
+            Description: "Taxis and ride-hailing trips.",
+            UseCases:
+            [
+                "Night out taxi home",
+                "Airport run",
+                "Ride-hailing app trip"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a taxi or ride-hailing operator",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Food delivery from the same brands belongs to Dining",
+                "Buses, trams, and trains belong to Public Transport"
+            ],
+            MerchantSignals:
+            [
+                "FREE NOW",
+                "FREENOW",
+                "UBER",
+                "BOLT.EU"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Per trip, typically 8-40 EUR"),
+
+        // Transport > Parking & Tolls
+        new(
+            TaxonomyCategoryId: 12050,
+            TaxonomySubcategoryId: null,
+            Description: "Parking charges and road tolls.",
+            UseCases:
+            [
+                "City car park",
+                "Motorway toll top-up",
+                "Street parking app payment"
+            ],
+            InclusionRules:
+            [
+                "Merchant operates parking facilities or toll roads",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Fines and penalties are not routine parking spend"
+            ],
+            MerchantSignals:
+            [
+                "EFLOW",
+                "APCOA",
+                "Q-PARK",
+                "PARKING TAG"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Small, typically 2-30 EUR"),
+
+        // Utilities > Gas & Heating
+        new(
+            TaxonomyCategoryId: 14020,
+            TaxonomySubcategoryId: null,
+            Description: "Gas supply and home heating fuel.",
+            UseCases:
+            [
+                "Monthly gas bill",
+                "Heating oil or bottled gas refill"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a gas or heating fuel supplier",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Dual-fuel brands that also sell electricity stay unassigned here: the bill split is not knowable from the merchant alone",
+                "Petrol-station fuel belongs to Fuel"
+            ],
+            MerchantSignals:
+            [
+                "FLOGAS",
+                "CALOR"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Recurring or seasonal, typically 40-250 EUR"),
+
+        // Utilities > Waste > Bin / Refuse Collection
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 140303,
+            Description: "Household bin and refuse collection services.",
+            UseCases:
+            [
+                "Monthly or quarterly bin charges",
+                "Lift-fee top-up"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a waste collection provider",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Skip hire for renovations belongs to home improvement costs"
+            ],
+            MerchantSignals:
+            [
+                "PANDA WASTE",
+                "CITY BIN",
+                "BARNA RECYCLING",
+                "KWD RECYCLING"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Recurring, typically 10-40 EUR"),
+
+        // Home & Garden > DIY & Improvement Supplies
+        new(
+            TaxonomyCategoryId: 11030,
+            TaxonomySubcategoryId: null,
+            Description: "DIY, hardware, and home improvement supplies.",
+            UseCases:
+            [
+                "Paint and tools run",
+                "Timber or fixings for a project",
+                "Builders merchant order"
+            ],
+            InclusionRules:
+            [
+                "Merchant sells DIY, hardware, or building supplies",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Furniture and decor belong to furnishing categories",
+                "Professional trade labour is a service, not supplies"
+            ],
+            MerchantSignals:
+            [
+                "WOODIES",
+                "B&Q",
+                "SCREWFIX",
+                "CHADWICKS"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Per visit, typically 10-200 EUR"),
+
+        // Entertainment > Cinema & Events > Cinema
+        new(
+            TaxonomyCategoryId: null,
+            TaxonomySubcategoryId: 210101,
+            Description: "Cinema tickets and in-cinema spend.",
+            UseCases:
+            [
+                "Film tickets",
+                "Cinema snacks bought at the counter"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a cinema operator",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Streaming subscriptions belong to Streaming"
+            ],
+            MerchantSignals:
+            [
+                "ODEON",
+                "CINEWORLD",
+                "OMNIPLEX",
+                "IMC CINEMA",
+                "VUE CINEMA"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Per visit, typically 8-40 EUR"),
+
+        // Shopping > Clothing
+        new(
+            TaxonomyCategoryId: 23010,
+            TaxonomySubcategoryId: null,
+            Description: "Clothing and everyday fashion purchases.",
+            UseCases:
+            [
+                "Wardrobe top-up",
+                "Seasonal clothes shop",
+                "Online fashion order"
+            ],
+            InclusionRules:
+            [
+                "Merchant primarily sells clothing",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Mixed general retailers that also sell groceries stay unassigned here",
+                "Sportswear bought for a gym habit is still Clothing unless it is equipment"
+            ],
+            MerchantSignals:
+            [
+                "PENNEYS",
+                "ZARA",
+                "H&M",
+                "TK MAXX",
+                "NEW LOOK",
+                "RIVER ISLAND"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 10-150 EUR"),
+
+        // Pets > Pet Food & Supplies
+        new(
+            TaxonomyCategoryId: 25010,
+            TaxonomySubcategoryId: null,
+            Description: "Pet food, supplies, and accessories.",
+            UseCases:
+            [
+                "Monthly pet food shop",
+                "Toys, bedding, or litter"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a pet supplies retailer",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Vet visits belong to Veterinary Care",
+                "Pet insurance belongs to Insurance"
+            ],
+            MerchantSignals:
+            [
+                "PETSTOP",
+                "PETMANIA",
+                "MAXI ZOO",
+                "PETWORLD"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Per visit, typically 10-80 EUR"),
+
+        // Health > Prescriptions & Medications
+        new(
+            TaxonomyCategoryId: 16040,
+            TaxonomySubcategoryId: null,
+            Description: "Pharmacy purchases: prescriptions and over-the-counter medicine.",
+            UseCases:
+            [
+                "Monthly prescription collection",
+                "Over-the-counter remedies"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a pharmacy or the statement text names one",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Health-and-beauty chains with large grooming ranges belong to Grooming & Beauty",
+                "GP and consultant fees are medical services, not pharmacy spend"
+            ],
+            MerchantSignals:
+            [
+                "PHARMACY",
+                "LLOYDS PHARMACY",
+                "MCCABES",
+                "MCCAULEY",
+                "CHEMIST"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 5-60 EUR")
     ];
 }

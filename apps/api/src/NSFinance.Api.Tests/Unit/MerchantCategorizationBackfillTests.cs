@@ -6,6 +6,7 @@ using NSFinance.Api.Modules.Banking.Services.MerchantIntelligence;
 using NSFinance.Api.Modules.Categories.Services;
 using NSFinance.Api.Persistence;
 using NSFinance.Api.Persistence.Entities;
+using NSFinance.Shared.Taxonomy;
 
 namespace NSFinance.Api.Tests.Unit;
 
@@ -165,6 +166,86 @@ public sealed class MerchantCategorizationBackfillTests
 
         var reloadedOther = await dbContext.Transactions.SingleAsync(x => x.Id == otherTesco.Id);
         Assert.Equal(13010, reloadedOther.TaxonomyCategoryId);
+    }
+
+    [Fact]
+    public async Task Backfill_VersionBump_RetargetsMovedSeedRows_AndLeavesOtherSourcesAlone()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var past = DateTime.UtcNow.AddDays(-30);
+
+        // A version-1-era seed row still mapping Starbucks to Dining, and an
+        // AI-learned row that must never be rewritten by the catalog.
+        dbContext.MerchantKnowledge.AddRange(
+            new MerchantKnowledge
+            {
+                Id = Guid.NewGuid(),
+                NormalizedPattern = "STARBUCKS",
+                DisplayName = "STARBUCKS",
+                TaxonomyDomainId = 130,
+                TaxonomyCategoryId = 13020,
+                TaxonomySubcategoryId = null,
+                DirectionExpectation = "outflow",
+                Source = MerchantKnowledgeSources.Seed,
+                Confidence = 1.0,
+                CharacteristicsVersion = 1,
+                IsActive = true,
+                CreatedUtc = past,
+                UpdatedUtc = past
+            },
+            new MerchantKnowledge
+            {
+                Id = Guid.NewGuid(),
+                NormalizedPattern = "MCDONALDS",
+                DisplayName = "McDonald's",
+                TaxonomyDomainId = 999,
+                TaxonomyCategoryId = 99999,
+                TaxonomySubcategoryId = null,
+                DirectionExpectation = "outflow",
+                Source = MerchantKnowledgeSources.AiInvestigation,
+                Confidence = 0.9,
+                CharacteristicsVersion = 1,
+                IsActive = true,
+                CreatedUtc = past,
+                UpdatedUtc = past
+            });
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var starbucks = await dbContext.MerchantKnowledge.SingleAsync(x => x.NormalizedPattern == "STARBUCKS");
+        Assert.Equal(130301, starbucks.TaxonomySubcategoryId);
+        Assert.Equal(CategoryCharacteristicsCatalog.Version, starbucks.CharacteristicsVersion);
+
+        var mcdonalds = await dbContext.MerchantKnowledge.SingleAsync(x => x.NormalizedPattern == "MCDONALDS");
+        Assert.Equal(99999, mcdonalds.TaxonomyCategoryId);
+        Assert.Equal(MerchantKnowledgeSources.AiInvestigation, mcdonalds.Source);
+    }
+
+    [Fact]
+    public async Task Backfill_PassSixSignals_CategorizeEverydayIrishSpend()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        var coffee = CreateTransaction(seeded.AccountId, "VDP-CAFFE NERO 021", -4.1m, now);
+        var pharmacy = CreateTransaction(seeded.AccountId, "VDC-BRADYS PHARMACY NAVAN", -18.5m, now);
+        var toll = CreateTransaction(seeded.AccountId, "EFLOW.IE TOLL", -3.5m, now);
+        dbContext.Transactions.AddRange(coffee, pharmacy, toll);
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var reloadedCoffee = await dbContext.Transactions.SingleAsync(x => x.Id == coffee.Id);
+        Assert.Equal(130301, reloadedCoffee.TaxonomySubcategoryId);
+
+        var reloadedPharmacy = await dbContext.Transactions.SingleAsync(x => x.Id == pharmacy.Id);
+        Assert.Equal(16040, reloadedPharmacy.TaxonomyCategoryId);
+
+        var reloadedToll = await dbContext.Transactions.SingleAsync(x => x.Id == toll.Id);
+        Assert.Equal(12050, reloadedToll.TaxonomyCategoryId);
     }
 
     [Fact]
