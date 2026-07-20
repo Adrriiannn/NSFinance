@@ -93,7 +93,10 @@ public sealed class MerchantInvestigationOrchestrator(
             systemInstructions: prompt.SystemInstructions,
             structuredOutputSchemaName: prompt.StructuredSchemaName,
             temperature: 0.1d,
-            maxOutputTokens: 1000,
+            // Reasoning-class models spend completion tokens on hidden
+            // reasoning before any JSON appears; 1000 starved the output to
+            // empty content in production.
+            maxOutputTokens: 4000,
             metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["triggerSource"] = request.TriggerSource,

@@ -175,7 +175,9 @@ internal sealed class AzureOpenAIProviderTransport(
                 WasMocked: false,
                 RawDiagnostics: null,
                 Succeeded: !string.IsNullOrWhiteSpace(content),
-                FailureReason: string.IsNullOrWhiteSpace(content) ? "Azure OpenAI returned empty content." : null);
+                FailureReason: string.IsNullOrWhiteSpace(content)
+                    ? $"Azure OpenAI returned empty content (finishReason={finishReason ?? "unknown"})."
+                    : null);
         }
         catch (Exception ex)
         {

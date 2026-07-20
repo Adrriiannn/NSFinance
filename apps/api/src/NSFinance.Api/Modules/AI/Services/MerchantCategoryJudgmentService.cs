@@ -75,7 +75,9 @@ public sealed class MerchantCategoryJudgmentService(
             systemInstructions: SystemInstructions,
             structuredOutputSchemaName: "merchant_category_judgment_v1",
             temperature: 0.0d,
-            maxOutputTokens: 400,
+            // Generous headroom for reasoning-class models whose hidden
+            // reasoning also draws from the completion budget.
+            maxOutputTokens: 1500,
             metadata: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["normalizedDescriptor"] = input.NormalizedDescriptor,
