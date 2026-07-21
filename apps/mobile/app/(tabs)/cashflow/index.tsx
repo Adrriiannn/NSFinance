@@ -29,6 +29,8 @@ import {
 import { buildPlannerSuggestions } from "../../../src/features/planner/plannerInsights";
 import { useFinancialCommitmentsQuery, useRecurringPaymentsQuery } from "../../../src/features/banking/useBanking";
 import { buildUpcomingCommitmentRows } from "../../../src/features/banking/commitmentPresentation";
+import { buildCategoryBreakdownBlock } from "../../../src/features/insights/categoryBreakdownPresentation";
+import { useInsightCategoryBreakdownQuery } from "../../../src/features/insights/useInsightCategoryBreakdownQuery";
 import { useTransactionsQuery } from "../../../src/features/transactions/useTransactions";
 import { useThemeRuntime } from "../../../src/theme/runtime/ThemeRuntimeProvider";
 import { layout, palette, spacing, surfaces, typography, createRuntimeStyleSheet } from "../../../src/theme/tokens";
@@ -138,6 +140,7 @@ export default function CashflowScreen() {
   const transactionsQuery = useTransactionsQuery();
   const recurringPaymentsQuery = useRecurringPaymentsQuery();
   const commitmentsQuery = useFinancialCommitmentsQuery();
+  const categoryBreakdownQuery = useInsightCategoryBreakdownQuery(12);
   const connectBankCta = useConnectBankCtaLabels();
   const [clockNow, setClockNow] = useState(() => new Date());
   const [currentPeriod, setCurrentPeriod] = useState<PlannerComparisonPeriod>(() => ({
@@ -178,11 +181,15 @@ export default function CashflowScreen() {
   const handleRefresh = useCallback(async () => {
     setIsManualRefreshing(true);
     try {
-      await Promise.all([dashboardQuery.refetch(), transactionsQuery.refetch()]);
+      await Promise.all([
+        dashboardQuery.refetch(),
+        transactionsQuery.refetch(),
+        categoryBreakdownQuery.refetch()
+      ]);
     } finally {
       setIsManualRefreshing(false);
     }
-  }, [dashboardQuery, transactionsQuery]);
+  }, [categoryBreakdownQuery, dashboardQuery, transactionsQuery]);
 
   const yearOptions = useMemo(() => {
     const currentYear = clockNow.getFullYear();
@@ -209,6 +216,16 @@ export default function CashflowScreen() {
   const recurringForecast = useMemo(
     () => buildRecurringPaymentForecast(transactions, clockNow),
     [clockNow, transactions]
+  );
+  const categoryBlock = useMemo(
+    () =>
+      buildCategoryBreakdownBlock(
+        categoryBreakdownQuery.data,
+        graphModel.displayCurrency,
+        currentPeriod.year,
+        currentPeriod.month + 1
+      ),
+    [categoryBreakdownQuery.data, currentPeriod, graphModel.displayCurrency]
   );
   const providerRecurringPayments = useMemo(
     () => normalizeProviderRecurringPayments(recurringPaymentsQuery.data),
@@ -471,6 +488,51 @@ export default function CashflowScreen() {
               <Text style={styles.insightTitle}>{graphModel.bucketTitle}</Text>
               <Text style={styles.insightBody}>{graphModel.bucketMessage}</Text>
             </Card>
+
+            {categoryBlock ? (
+              <Card style={styles.categoryCard}>
+                <View style={styles.categoryTitleRow}>
+                  <Text style={styles.categoryTitle}>Where it went</Text>
+                  <Text style={styles.categoryMonth}>{categoryBlock.monthLabel}</Text>
+                </View>
+                {categoryBlock.bars.map((bar) => (
+                  <View key={bar.key} style={styles.categoryRow}>
+                    <View style={styles.categoryLabelRow}>
+                      <Text style={styles.categoryLabel} numberOfLines={1}>
+                        {bar.label}
+                      </Text>
+                      <Text style={styles.categoryAmount}>{bar.amountText}</Text>
+                    </View>
+                    <View style={styles.categoryBarTrack}>
+                      <View
+                        style={[
+                          styles.categoryBarFill,
+                          { width: `${Math.max(bar.share * 100, 2)}%` }
+                        ]}
+                      />
+                    </View>
+                  </View>
+                ))}
+                {categoryBlock.remainingSpendText ? (
+                  <Text style={styles.categoryFootnote}>
+                    +{categoryBlock.remainingCategoryCount} more{" "}
+                    {categoryBlock.remainingCategoryCount === 1 ? "category" : "categories"} ·{" "}
+                    {categoryBlock.remainingSpendText}
+                  </Text>
+                ) : null}
+                {categoryBlock.uncategorized ? (
+                  <Text style={styles.categoryFootnote}>
+                    Uncategorized · {categoryBlock.uncategorized.amountText} (
+                    {categoryBlock.uncategorized.count}{" "}
+                    {categoryBlock.uncategorized.count === 1 ? "transaction" : "transactions"})
+                  </Text>
+                ) : null}
+                <Text style={styles.categoryCoverage}>
+                  {categoryBlock.coveragePercent}% of {categoryBlock.totalText} categorized
+                  {categoryBlock.isPartial ? " · month in progress" : ""}
+                </Text>
+              </Card>
+            ) : null}
 
             <Pressable
               style={({ pressed }) => [styles.upcomingPaymentsCard, pressed ? styles.cardPressed : null]}
@@ -770,6 +832,60 @@ const styles = createRuntimeStyleSheet(() => ({
   insightBody: {
     color: palette.textSecondary,
     ...typography.body2
+  },
+  categoryCard: {
+    gap: spacing[8]
+  },
+  categoryTitleRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between"
+  },
+  categoryTitle: {
+    color: palette.textPrimary,
+    ...typography.bodyStrong
+  },
+  categoryMonth: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  categoryRow: {
+    gap: spacing[4]
+  },
+  categoryLabelRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: spacing[8]
+  },
+  categoryLabel: {
+    flex: 1,
+    color: palette.textPrimary,
+    ...typography.body2
+  },
+  categoryAmount: {
+    color: palette.textPrimary,
+    ...typography.body2,
+    fontVariant: ["tabular-nums"]
+  },
+  categoryBarTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: surfaces.muted,
+    overflow: "hidden"
+  },
+  categoryBarFill: {
+    height: "100%",
+    borderRadius: 4,
+    backgroundColor: palette.accent
+  },
+  categoryFootnote: {
+    color: palette.textSecondary,
+    ...typography.caption
+  },
+  categoryCoverage: {
+    color: palette.textMuted,
+    ...typography.caption
   },
   upcomingPaymentsCard: {
     borderRadius: 6,

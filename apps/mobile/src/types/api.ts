@@ -164,6 +164,40 @@ export type StatementImportProvenanceDto = {
   committedUtc: string;
 };
 
+// Where the money went, per month and category (INS-001 + CAT-001).
+// Server-computed under transfer-policy honesty; the uncategorized
+// remainder is always present so bars never overstate coverage.
+export type InsightCategoryBreakdownDto = {
+  asOfUtc: string;
+  monthsRequested: number;
+  currencyGroups: InsightCategoryCurrencyGroupDto[];
+};
+
+export type InsightCategoryCurrencyGroupDto = {
+  currency: string;
+  periods: InsightCategoryPeriodDto[];
+};
+
+export type InsightCategoryPeriodDto = {
+  year: number;
+  month: number;
+  totalSpend: number;
+  categorizedSpend: number;
+  uncategorizedSpend: number;
+  uncategorizedTransactionCount: number;
+  isPartial: boolean;
+  categories: InsightCategorySpendDto[];
+};
+
+export type InsightCategorySpendDto = {
+  taxonomyDomainId: number;
+  domainName: string;
+  taxonomyCategoryId: number;
+  categoryName: string;
+  spend: number;
+  transactionCount: number;
+};
+
 export type TransactionPageDirection = "income" | "expense";
 
 export type TransactionPageRequest = {
