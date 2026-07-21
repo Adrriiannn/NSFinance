@@ -20,6 +20,9 @@ public static class InsightsModule
         insightsGroup.MapGet("/periods", GetInsightPeriodsEndpoint.HandleAsync)
             .WithName("GetInsightPeriods");
 
+        insightsGroup.MapGet("/categories", GetInsightCategoryBreakdownEndpoint.HandleAsync)
+            .WithName("GetInsightCategoryBreakdown");
+
         return app;
     }
 }

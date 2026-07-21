@@ -536,6 +536,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<CategoryService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<InsightPeriodsService>();
+        services.AddScoped<InsightCategoryBreakdownService>();
         services.AddScoped<MerchantCategorizationBackfillService>();
         services.Configure<MerchantCategorizationOptions>(
             configuration.GetSection(MerchantCategorizationOptions.SectionName));
