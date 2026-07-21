@@ -49,7 +49,14 @@ public static class CategoryCharacteristicsCatalog
     // merged direction semantics propagate: signals shared by the
     // outflow/inflow savings pair retarget to direction "either" (the earlier
     // collapse left savings arrivals uncategorized in production).
-    public const int Version = 4;
+    // Version 5+ (2026-07-22): the full-coverage program - every category
+    // gets a definition, domain by domain, per the user's completeness
+    // directive. "Other ..." catch-all categories deliberately get none: the
+    // AI must abstain honestly rather than dump uncertainty into a bucket.
+    // Definitions without merchant signals are AI-lane only: no seeds, but
+    // the judge may assign them (services whose merchants are too varied to
+    // enumerate).
+    public const int Version = 5;
 
     public static readonly IReadOnlyList<CategoryCharacteristicsDefinition> Definitions =
     [
@@ -1088,6 +1095,1102 @@ public static class CategoryCharacteristicsCatalog
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
             ConfidenceFloor: 0.7,
-            AmountProfile: "Recurring or annual, typically 5-40 EUR")
+            AmountProfile: "Recurring or annual, typically 5-40 EUR"),
+
+        // ---- Full-coverage pass: Housing (100) ----
+
+        // Housing > Rent & Mortgage
+        new(
+            TaxonomyCategoryId: 10010,
+            TaxonomySubcategoryId: null,
+            Description: "Keeping a roof: mortgage payments, ground rent, housing association charges.",
+            UseCases:
+            [
+                "Monthly mortgage direct debit",
+                "Ground rent or leasehold charge",
+                "Room or shared-housing payment"
+            ],
+            InclusionRules:
+            [
+                "Payment secures the home you live in",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Rent to a landlord follows the Rent subcategory definition",
+                "Property taxes belong to Property Taxes & Fees"
+            ],
+            MerchantSignals:
+            [
+                "MORTGAGE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Recurring monthly, typically 800-2500 EUR"),
+
+        // Housing > Property Taxes & Fees
+        new(
+            TaxonomyCategoryId: 10020,
+            TaxonomySubcategoryId: null,
+            Description: "Taxes and fees attached to owning or occupying property.",
+            UseCases:
+            [
+                "Local Property Tax payment to Revenue",
+                "Management company annual fee",
+                "Land registry fee"
+            ],
+            InclusionRules:
+            [
+                "Charge exists because of property ownership or occupancy",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Income taxes belong to the Taxes domain",
+                "Repairs and improvements belong to their own categories"
+            ],
+            MerchantSignals:
+            [
+                "LPT",
+                "PROPERTY TAX"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.8,
+            AmountProfile: "Annual or phased, typically 90-1000 EUR"),
+
+        // Housing > Home Maintenance & Repairs
+        new(
+            TaxonomyCategoryId: 10030,
+            TaxonomySubcategoryId: null,
+            Description: "Keeping the home working: trades, repairs, cleaning, pest control.",
+            UseCases:
+            [
+                "Plumber or electrician call-out",
+                "Appliance repair",
+                "Home cleaning service"
+            ],
+            InclusionRules:
+            [
+                "Service fixes or maintains the existing home",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Materials you buy yourself belong to DIY & Improvement Supplies",
+                "Upgrades and renovations belong to Home Improvements"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per job, typically 60-500 EUR"),
+
+        // Housing > Home Improvements & Renovation
+        new(
+            TaxonomyCategoryId: 10040,
+            TaxonomySubcategoryId: null,
+            Description: "Making the home better: renovation projects and contractor work.",
+            UseCases:
+            [
+                "Kitchen or bathroom renovation invoice",
+                "Insulation or window upgrade",
+                "Painter and decorator"
+            ],
+            InclusionRules:
+            [
+                "Work upgrades the home beyond its previous state",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Like-for-like fixes belong to Home Maintenance & Repairs",
+                "Self-bought materials belong to DIY & Improvement Supplies"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per project, typically 200-20000 EUR"),
+
+        // Housing > Furniture & Appliances
+        new(
+            TaxonomyCategoryId: 10050,
+            TaxonomySubcategoryId: null,
+            Description: "Furnishing the home: furniture, mattresses, large and small appliances.",
+            UseCases:
+            [
+                "Sofa or bed purchase",
+                "Washing machine replacement",
+                "Home office desk"
+            ],
+            InclusionRules:
+            [
+                "Merchant sells furniture or household appliances",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Consumer electronics belong to Electronics",
+                "Small decor items belong to Home Décor & Furnishings"
+            ],
+            MerchantSignals:
+            [
+                "IKEA",
+                "EZ LIVING",
+                "DFS ",
+                "HOMESTORE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per purchase, typically 40-2000 EUR"),
+
+        // Housing > Moving & Temporary Housing
+        new(
+            TaxonomyCategoryId: 10060,
+            TaxonomySubcategoryId: null,
+            Description: "Changing homes: movers, van hire, storage, temporary stays.",
+            UseCases:
+            [
+                "Moving company",
+                "Self-storage unit rent",
+                "Short-term accommodation between homes"
+            ],
+            InclusionRules:
+            [
+                "Cost exists because of a move or between-homes period",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Holiday accommodation belongs to Travel"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7),
+
+        // Housing > Security & Home Services
+        new(
+            TaxonomyCategoryId: 10070,
+            TaxonomySubcategoryId: null,
+            Description: "Protecting the home: alarms, monitoring, cameras, building services.",
+            UseCases:
+            [
+                "Monitored alarm subscription",
+                "CCTV purchase and fitting",
+                "Key cutting"
+            ],
+            InclusionRules:
+            [
+                "Merchant provides home security or building services",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Insurance belongs to Home & Property Insurance"
+            ],
+            MerchantSignals:
+            [
+                "PHONEWATCH"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Recurring, typically 20-60 EUR monthly"),
+
+        // ---- Full-coverage pass: Home & Garden (110) ----
+
+        // Home & Garden > Home Supplies & Consumables
+        new(
+            TaxonomyCategoryId: 11010,
+            TaxonomySubcategoryId: null,
+            Description: "Things the household uses up: cleaning, laundry, bulbs, batteries.",
+            UseCases:
+            [
+                "Cleaning products top-up",
+                "Light bulbs and batteries",
+                "Laundry supplies"
+            ],
+            InclusionRules:
+            [
+                "Consumable household goods rather than food",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Supermarket runs that are mostly food belong to Groceries",
+                "Toiletries belong to Personal Care"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.65,
+            AmountProfile: "Per visit, typically 5-40 EUR"),
+
+        // Home & Garden > Home Décor & Furnishings
+        new(
+            TaxonomyCategoryId: 11020,
+            TaxonomySubcategoryId: null,
+            Description: "Making the home look right: decor, candles, soft furnishings, art.",
+            UseCases:
+            [
+                "Decor shop visit",
+                "Seasonal decorations",
+                "Cushions and throws"
+            ],
+            InclusionRules:
+            [
+                "Merchant sells decorative household goods",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Furniture and appliances belong to Furniture & Appliances"
+            ],
+            MerchantSignals:
+            [
+                "HOMESENSE",
+                "SOSTRENE GRENE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 10-150 EUR"),
+
+        // Home & Garden > Garden & Outdoor
+        new(
+            TaxonomyCategoryId: 11040,
+            TaxonomySubcategoryId: null,
+            Description: "The garden: plants, compost, tools, outdoor furniture.",
+            UseCases:
+            [
+                "Garden centre visit",
+                "Plants and compost",
+                "Outdoor furniture for summer"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a garden centre or goods are for the garden",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Hired landscaping services belong to Seasonal & Outdoor Maintenance",
+                "General DIY materials belong to DIY & Improvement Supplies"
+            ],
+            MerchantSignals:
+            [
+                "GARDEN CENTRE",
+                "GARDEN CENTER"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Seasonal, typically 10-200 EUR"),
+
+        // Home & Garden > Seasonal & Outdoor Maintenance
+        new(
+            TaxonomyCategoryId: 11050,
+            TaxonomySubcategoryId: null,
+            Description: "Hired outdoor upkeep: landscaping, tree work, gutters, power washing.",
+            UseCases:
+            [
+                "Landscaper invoice",
+                "Tree surgeon",
+                "Gutter cleaning"
+            ],
+            InclusionRules:
+            [
+                "Service maintains the outside of the property",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Goods you buy for the garden belong to Garden & Outdoor"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7),
+
+        // Home & Garden > Workshop & Projects
+        new(
+            TaxonomyCategoryId: 11060,
+            TaxonomySubcategoryId: null,
+            Description: "Hobby-grade making at home: workshop supplies and personal projects.",
+            UseCases:
+            [
+                "Workshop consumables",
+                "Materials for a personal build project"
+            ],
+            InclusionRules:
+            [
+                "Purchase serves a home project rather than house maintenance",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "House-improvement materials belong to DIY & Improvement Supplies",
+                "Craft materials belong to Arts & Crafts"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.65),
+
+        // ---- Full-coverage pass: Transportation (120) ----
+
+        // Transportation > Car Ownership
+        new(
+            TaxonomyCategoryId: 12030,
+            TaxonomySubcategoryId: null,
+            Description: "Owning the car itself: purchase payments, motor tax, ownership admin.",
+            UseCases:
+            [
+                "Motor tax payment",
+                "Car purchase deposit or payment",
+                "Change-of-ownership fees"
+            ],
+            InclusionRules:
+            [
+                "Cost exists because you own the vehicle, not because you used or fixed it",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Fuel belongs to Fuel & Charging",
+                "Repairs belong to Car Maintenance & Repairs",
+                "Insurance belongs to Vehicle Insurance",
+                "Car loans belong to Auto & Vehicle Loans"
+            ],
+            MerchantSignals:
+            [
+                "MOTOR TAX",
+                "MOTORTAX"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Annual or per purchase, typically 100-30000 EUR"),
+
+        // Transportation > Car Maintenance & Repairs
+        new(
+            TaxonomyCategoryId: 12040,
+            TaxonomySubcategoryId: null,
+            Description: "Keeping the car going: garages, tyres, servicing, parts.",
+            UseCases:
+            [
+                "Annual service",
+                "Tyre replacement",
+                "Breakdown repair"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a garage, tyre centre, or parts seller",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "The NCT test itself belongs to Driving & Licensing",
+                "Fuel-station shop purchases follow the fuel or grocery profile"
+            ],
+            MerchantSignals:
+            [
+                "ADVANCE PITSTOP",
+                "FASTFIT",
+                "KWIK FIT"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 50-800 EUR"),
+
+        // Transportation > Cycling & Micro-Mobility
+        new(
+            TaxonomyCategoryId: 12060,
+            TaxonomySubcategoryId: null,
+            Description: "Bikes, e-bikes, scooters: buying, fixing, and shared schemes.",
+            UseCases:
+            [
+                "Bike shop purchase or repair",
+                "Shared bike or e-scooter scheme charge"
+            ],
+            InclusionRules:
+            [
+                "Cost serves two-wheeled or micro-mobility transport",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Public transport fares belong to Public Transport"
+            ],
+            MerchantSignals:
+            [
+                "BLEEPERBIKE",
+                "MOBY BIKES",
+                "TIER",
+                "DUBLINBIKES"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Small recurring or one-off, typically 2-1500 EUR"),
+
+        // Transportation > Driving & Licensing
+        new(
+            TaxonomyCategoryId: 12070,
+            TaxonomySubcategoryId: null,
+            Description: "Being allowed to drive: licences, tests, lessons, NCT.",
+            UseCases:
+            [
+                "NCT test fee",
+                "Driving licence renewal",
+                "Driving lessons"
+            ],
+            InclusionRules:
+            [
+                "Cost relates to driving permission or competence",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Motor tax belongs to Car Ownership",
+                "Repairs to pass the test belong to Car Maintenance & Repairs"
+            ],
+            MerchantSignals:
+            [
+                "NCTS",
+                "NDLS",
+                "DRIVING SCHOOL"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Occasional, typically 30-600 EUR"),
+
+        // Transportation > Long-Distance Transport
+        new(
+            TaxonomyCategoryId: 12080,
+            TaxonomySubcategoryId: null,
+            Description: "Getting far: intercity coaches, trains, ferries.",
+            UseCases:
+            [
+                "Intercity coach ticket",
+                "Ferry crossing",
+                "Long-distance rail"
+            ],
+            InclusionRules:
+            [
+                "Journey is intercity or international surface travel",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Flights follow the Flights subcategory definition",
+                "Commuter fares belong to Public Transport"
+            ],
+            MerchantSignals:
+            [
+                "IRISH FERRIES",
+                "STENA",
+                "AIRCOACH",
+                "CITYLINK",
+                "FLIXBUS"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per trip, typically 10-200 EUR"),
+
+        // ---- Full-coverage pass: Food & Dining remainder (130) ----
+
+        // Food & Dining > Drinks & Social Food
+        new(
+            TaxonomyCategoryId: 13030,
+            TaxonomySubcategoryId: null,
+            Description: "Social drinking and nightlife: pubs, bars, rounds, club nights.",
+            UseCases:
+            [
+                "Round at the pub",
+                "Cocktail bar",
+                "Night out food and drinks"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a pub, bar, or nightlife venue",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Coffee-first cafes follow the Coffee Shops definition",
+                "Off-licence bottles for home follow the grocery profile",
+                "Restaurant meals belong to Dining Out"
+            ],
+            MerchantSignals:
+            [
+                "WETHERSPOON",
+                "THE TEMPLE BAR",
+                "TAVERN",
+                " BAR ",
+                "PUB "
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.65,
+            AmountProfile: "Per night, typically 8-120 EUR"),
+
+        // Food & Dining > Special Dietary Spending
+        new(
+            TaxonomyCategoryId: 13040,
+            TaxonomySubcategoryId: null,
+            Description: "Diet-specific food: sports nutrition, baby food, specialty diets.",
+            UseCases:
+            [
+                "Protein and sports nutrition order",
+                "Gluten-free specialty shop",
+                "Baby food stock-up"
+            ],
+            InclusionRules:
+            [
+                "Merchant specializes in dietary-specific food",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Ordinary supermarket baskets belong to Groceries",
+                "Vitamins and supplements belong to Preventive & Wellness"
+            ],
+            MerchantSignals:
+            [
+                "MYPROTEIN",
+                "BULK.COM"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per order, typically 15-80 EUR"),
+
+        // Food & Dining > Meal Services
+        new(
+            TaxonomyCategoryId: 13050,
+            TaxonomySubcategoryId: null,
+            Description: "Prepared-food services: meal kits, meal-prep subscriptions, catering.",
+            UseCases:
+            [
+                "Weekly meal-kit box",
+                "Meal-prep subscription",
+                "Event catering"
+            ],
+            InclusionRules:
+            [
+                "Merchant delivers recurring prepared or kit meals, or caters events",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "One-off restaurant delivery belongs to Dining Out"
+            ],
+            MerchantSignals:
+            [
+                "HELLOFRESH",
+                "GOUSTO",
+                "DROP CHEF"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Recurring weekly, typically 30-90 EUR"),
+
+        // Food & Dining > Tobacco & Nicotine
+        new(
+            TaxonomyCategoryId: 13070,
+            TaxonomySubcategoryId: null,
+            Description: "Cigarettes, tobacco, vaping, and nicotine products.",
+            UseCases:
+            [
+                "Cigarettes at the till",
+                "Vape shop visit",
+                "Nicotine pouches"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a tobacconist or vape shop, or the purchase is nicotine products",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Mixed convenience baskets follow the grocery profile unless the merchant is nicotine-specific"
+            ],
+            MerchantSignals:
+            [
+                "VAPE",
+                "TOBACCO",
+                "ECIG"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per purchase, typically 8-60 EUR"),
+
+        // ---- Full-coverage pass: Utilities & Communications remainder (140) ----
+
+        // Utilities > Water & Waste
+        new(
+            TaxonomyCategoryId: 14030,
+            TaxonomySubcategoryId: null,
+            Description: "Water in, waste out: water charges, sewage, septic services.",
+            UseCases:
+            [
+                "Water bill",
+                "Septic tank emptying"
+            ],
+            InclusionRules:
+            [
+                "Merchant supplies water or removes waste for the home",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Bin collection follows the Bin / Refuse Collection definition"
+            ],
+            MerchantSignals:
+            [
+                "IRISH WATER",
+                "UISCE EIREANN"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Recurring or occasional, typically 20-250 EUR"),
+
+        // Utilities > TV & Media Utilities
+        new(
+            TaxonomyCategoryId: 14050,
+            TaxonomySubcategoryId: null,
+            Description: "Television as a utility: TV licence, cable and satellite packages.",
+            UseCases:
+            [
+                "TV licence payment",
+                "Satellite TV package"
+            ],
+            InclusionRules:
+            [
+                "Cost is broadcast or bundled TV service, not on-demand streaming",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Streaming subscriptions belong to Streaming & Media",
+                "Broadband-led bundles belong to Internet & Communications"
+            ],
+            MerchantSignals:
+            [
+                "TV LICENCE",
+                "TV LICENSE",
+                "AN POST TV"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Annual or monthly, typically 13-160 EUR"),
+
+        // Utilities > Utility Setup & Service Fees
+        new(
+            TaxonomyCategoryId: 14060,
+            TaxonomySubcategoryId: null,
+            Description: "The joins between utilities: deposits, connections, late fees.",
+            UseCases:
+            [
+                "Connection or reconnection fee",
+                "Utility deposit",
+                "Late payment fee on a bill"
+            ],
+            InclusionRules:
+            [
+                "Charge is an administrative utility fee rather than usage",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Ordinary usage bills belong to their utility's category"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.65),
+
+        // ---- Full-coverage pass: Insurance remainder (150) ----
+
+        // Insurance > Life & Disability
+        new(
+            TaxonomyCategoryId: 15020,
+            TaxonomySubcategoryId: null,
+            Description: "Insuring the person: life cover, income protection, serious illness.",
+            UseCases:
+            [
+                "Monthly life policy premium",
+                "Income protection premium"
+            ],
+            InclusionRules:
+            [
+                "Policy pays on death, illness, or lost income",
+                "Direction is outflow",
+                "Amount repeats on a premium cadence"
+            ],
+            ExclusionRules:
+            [
+                "Health cover belongs to Health Insurance"
+            ],
+            MerchantSignals:
+            [
+                "IRISH LIFE ASSURANCE",
+                "ROYAL LONDON"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Recurring monthly, typically 15-120 EUR"),
+
+        // Insurance > Home & Property Insurance
+        new(
+            TaxonomyCategoryId: 15030,
+            TaxonomySubcategoryId: null,
+            Description: "Insuring the home and its contents.",
+            UseCases:
+            [
+                "Annual home insurance premium",
+                "Contents-only renter policy"
+            ],
+            InclusionRules:
+            [
+                "Policy covers buildings or contents",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Mortgage protection follows Life & Disability when sold as life cover"
+            ],
+            MerchantSignals:
+            [
+                "HOME INSURANCE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Annual or monthly, typically 20-600 EUR"),
+
+        // Insurance > Vehicle Insurance (category level; the Car Insurance
+        // subcategory definition keeps its own signals)
+        new(
+            TaxonomyCategoryId: 15040,
+            TaxonomySubcategoryId: null,
+            Description: "Insuring vehicles: car, van, motorbike policies.",
+            UseCases:
+            [
+                "Motor policy renewal",
+                "Monthly instalment on car insurance"
+            ],
+            InclusionRules:
+            [
+                "Policy covers a vehicle",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Breakdown-club memberships follow their own merchant profile",
+                "Named motor insurers follow the Car Insurance subcategory definition"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Annual or monthly, typically 30-250 EUR"),
+
+        // Insurance > Travel & Event Insurance
+        new(
+            TaxonomyCategoryId: 15050,
+            TaxonomySubcategoryId: null,
+            Description: "Short-horizon cover: travel policies, event and gadget cover.",
+            UseCases:
+            [
+                "Single-trip travel insurance",
+                "Annual multi-trip policy"
+            ],
+            InclusionRules:
+            [
+                "Policy covers a trip, event, or item for a bounded period",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Ongoing home or vehicle policies belong to their categories"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.65),
+
+        // Insurance > Pet & Other Insurance
+        new(
+            TaxonomyCategoryId: 15060,
+            TaxonomySubcategoryId: null,
+            Description: "Insuring the pets and the odds and ends.",
+            UseCases:
+            [
+                "Monthly pet policy premium"
+            ],
+            InclusionRules:
+            [
+                "Policy covers a pet or a niche risk",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Vet bills themselves belong to Veterinary Care"
+            ],
+            MerchantSignals:
+            [
+                "PETINSURE"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Recurring monthly, typically 10-60 EUR"),
+
+        // ---- Full-coverage pass: Healthcare remainder (160) ----
+
+        // Healthcare > Primary Care & Specialists
+        new(
+            TaxonomyCategoryId: 16010,
+            TaxonomySubcategoryId: null,
+            Description: "Seeing the doctor: GP visits, consultants, clinics.",
+            UseCases:
+            [
+                "GP visit fee",
+                "Consultant appointment",
+                "Out-of-hours clinic"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a medical practice or clinic",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Medicines belong to Prescriptions & Medications",
+                "Dental and vision have their own categories"
+            ],
+            MerchantSignals:
+            [
+                "MEDICAL CENTRE",
+                "CLINIC",
+                "WEBDOCTOR"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 30-250 EUR"),
+
+        // Healthcare > Dental Care
+        new(
+            TaxonomyCategoryId: 16020,
+            TaxonomySubcategoryId: null,
+            Description: "Teeth: checkups, hygienist, treatment, orthodontics.",
+            UseCases:
+            [
+                "Dental checkup and cleaning",
+                "Filling or extraction",
+                "Orthodontic instalment"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a dental practice",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Toothpaste and brushes belong to Personal Care"
+            ],
+            MerchantSignals:
+            [
+                "DENTAL",
+                "DENTIST",
+                "SMILES"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit, typically 40-400 EUR"),
+
+        // Healthcare > Vision & Eye Care
+        new(
+            TaxonomyCategoryId: 16030,
+            TaxonomySubcategoryId: null,
+            Description: "Eyes: tests, glasses, lenses.",
+            UseCases:
+            [
+                "Eye test",
+                "New glasses",
+                "Contact lens subscription"
+            ],
+            InclusionRules:
+            [
+                "Merchant is an optician or eye-care provider",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Fashion sunglasses without prescription belong to Shoes & Accessories"
+            ],
+            MerchantSignals:
+            [
+                "SPECSAVERS",
+                "VISION EXPRESS",
+                "OPTICIAN"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.75,
+            AmountProfile: "Occasional, typically 25-400 EUR"),
+
+        // Healthcare > Medical Equipment & Supplies
+        new(
+            TaxonomyCategoryId: 16050,
+            TaxonomySubcategoryId: null,
+            Description: "Medical kit at home: devices, mobility aids, supplies.",
+            UseCases:
+            [
+                "Blood pressure monitor",
+                "Mobility aid purchase"
+            ],
+            InclusionRules:
+            [
+                "Purchase is a medical device or supply for home use",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Medicines belong to Prescriptions & Medications"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.65),
+
+        // Healthcare > Hospital & Surgery
+        new(
+            TaxonomyCategoryId: 16060,
+            TaxonomySubcategoryId: null,
+            Description: "Hospital care: admissions, procedures, A&E charges.",
+            UseCases:
+            [
+                "Emergency department charge",
+                "Procedure excess or co-pay"
+            ],
+            InclusionRules:
+            [
+                "Merchant is a hospital or surgical facility",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Insurance premiums belong to Health Insurance"
+            ],
+            MerchantSignals:
+            [
+                "HOSPITAL"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Occasional, typically 100-1000 EUR"),
+
+        // Healthcare > Mental & Behavioral Health
+        new(
+            TaxonomyCategoryId: 16070,
+            TaxonomySubcategoryId: null,
+            Description: "Minding the mind: therapy, counselling, psychiatry.",
+            UseCases:
+            [
+                "Weekly therapy session",
+                "Online counselling subscription"
+            ],
+            InclusionRules:
+            [
+                "Merchant provides mental-health care",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Meditation apps belong to Software & Digital Tools unless clinical"
+            ],
+            MerchantSignals:
+            [
+                "COUNSELLING",
+                "PSYCHOLOG",
+                "BETTERHELP"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Recurring, typically 50-120 EUR per session"),
+
+        // Healthcare > Preventive & Wellness
+        new(
+            TaxonomyCategoryId: 16080,
+            TaxonomySubcategoryId: null,
+            Description: "Staying well: vitamins, supplements, screenings, physio.",
+            UseCases:
+            [
+                "Vitamins and supplements",
+                "Physiotherapy session",
+                "Health screening"
+            ],
+            InclusionRules:
+            [
+                "Purchase maintains health rather than treats illness",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Sports nutrition belongs to Special Dietary Spending",
+                "Gym membership belongs to Gym Membership"
+            ],
+            MerchantSignals:
+            [
+                "HOLLAND & BARRETT",
+                "PHYSIO"
+            ],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.7,
+            AmountProfile: "Per visit or purchase, typically 10-90 EUR"),
+
+        // Healthcare > Travel & Accessibility
+        new(
+            TaxonomyCategoryId: 16090,
+            TaxonomySubcategoryId: null,
+            Description: "Getting to care and living accessibly: medical transport, accessibility aids.",
+            UseCases:
+            [
+                "Transport to treatment",
+                "Accessibility adaptation cost"
+            ],
+            InclusionRules:
+            [
+                "Cost enables access to medical care or accessible living",
+                "Direction is outflow"
+            ],
+            ExclusionRules:
+            [
+                "Ordinary taxis belong to Taxi / Ride-hailing"
+            ],
+            MerchantSignals: [],
+            DirectionExpectation: CharacteristicsDirection.Outflow,
+            AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
+            ConfidenceFloor: 0.65)
     ];
 }
