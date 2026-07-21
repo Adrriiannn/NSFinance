@@ -36,7 +36,7 @@ public sealed record CategoryCharacteristicsDefinition(
     double? ConfidenceFloor,
     string? AmountProfile = null);
 
-public static class CategoryCharacteristicsCatalog
+public static partial class CategoryCharacteristicsCatalog
 {
     // Version 2 (2026-07-20): pass six added ten everyday-Ireland categories
     // and moved the coffee-first cafes from Dining to Coffee Shops. Seeding
@@ -58,7 +58,17 @@ public static class CategoryCharacteristicsCatalog
     // enumerate).
     public const int Version = 5;
 
-    public static readonly IReadOnlyList<CategoryCharacteristicsDefinition> Definitions =
+    // The catalog concatenates the historical passes below with the
+    // per-domain full-coverage files (CategoryCharacteristics.<Domain>.cs),
+    // one file per domain, every category and subcategory defined. Composed
+    // lazily: static field initialization order across partial files is not
+    // guaranteed, so eager spreading would read uninitialized domain arrays.
+    private static IReadOnlyList<CategoryCharacteristicsDefinition>? _definitions;
+
+    public static IReadOnlyList<CategoryCharacteristicsDefinition> Definitions =>
+        _definitions ??= [.. CoreDefinitions, .. HousingSubcategoryDefinitions];
+
+    private static readonly IReadOnlyList<CategoryCharacteristicsDefinition> CoreDefinitions =
     [
         // Food & Dining > Groceries
         new(
