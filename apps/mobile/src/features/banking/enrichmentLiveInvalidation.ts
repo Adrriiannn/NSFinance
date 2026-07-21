@@ -11,3 +11,13 @@ export function shouldRunEnrichmentCompletionInvalidation(
 ): boolean {
   return previousHasActiveWork && !currentHasActiveWork;
 }
+
+// Every query root the interval loop refreshes while enrichment runs must
+// also converge at completion, or that root inherits the same last-tick
+// staleness the transactions fix closed: account transaction lists and the
+// dashboard's recent strip read categorization results too.
+export const enrichmentCompletionInvalidationRoots: readonly (readonly string[])[] = [
+  ["transactions"],
+  ["accounts"],
+  ["dashboard"]
+];

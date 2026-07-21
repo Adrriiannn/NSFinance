@@ -15,8 +15,10 @@ import {
   getEnrichmentDialState,
   setEnrichmentDialState
 } from "../../features/banking/enrichmentDial.storage";
-import { shouldRunEnrichmentCompletionInvalidation } from "../../features/banking/enrichmentLiveInvalidation";
-import { queryKeys } from "../../lib/api/queryKeys";
+import {
+  enrichmentCompletionInvalidationRoots,
+  shouldRunEnrichmentCompletionInvalidation
+} from "../../features/banking/enrichmentLiveInvalidation";
 import { showFlashMessage } from "../../lib/flashMessage";
 import {
   useBankEnrichmentProgressQuery,
@@ -569,9 +571,14 @@ export function GlobalEnrichmentProgressDial() {
 
     // Rows categorized between the last interval tick (or a tick skipped
     // mid-scroll) and completion are never pulled by the loop above; one final
-    // invalidation converges every cached transactions query. Ungated on feed
-    // interaction — the Activity feed's own commit gate defers re-rendering.
-    void queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
+    // pass converges every root that loop refreshes - transactions, accounts,
+    // and dashboard. Ungated on feed interaction — the Activity feed's own
+    // commit gate defers re-rendering.
+    void Promise.all(
+      enrichmentCompletionInvalidationRoots.map((root) =>
+        queryClient.invalidateQueries({ queryKey: root })
+      )
+    );
   }, [hasActiveWork, queryClient]);
 
   useEffect(() => {

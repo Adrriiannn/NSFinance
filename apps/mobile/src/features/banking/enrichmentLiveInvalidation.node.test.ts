@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { shouldRunEnrichmentCompletionInvalidation } from "./enrichmentLiveInvalidation";
+import {
+  enrichmentCompletionInvalidationRoots,
+  shouldRunEnrichmentCompletionInvalidation
+} from "./enrichmentLiveInvalidation";
 
 const mobileRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -18,7 +21,15 @@ test("completion invalidation fires only on the active-to-idle transition", () =
   assert.equal(shouldRunEnrichmentCompletionInvalidation(false, false), false);
 });
 
-test("the enrichment dial converges transactions queries when work completes", () => {
+test("completion converges every root the interval loop refreshes", () => {
+  // The interval loop touches transactions, accounts, and dashboard; a root
+  // it refreshes but completion does not would inherit the last-tick
+  // staleness bug on that surface (account lists, the Home recent strip).
+  const roots = enrichmentCompletionInvalidationRoots.map((root) => root[0]);
+  assert.deepEqual([...roots].sort(), ["accounts", "dashboard", "transactions"]);
+});
+
+test("the enrichment dial converges the shared roots when work completes", () => {
   const dialSource = readMobileSource(
     "src",
     "components",
@@ -29,7 +40,7 @@ test("the enrichment dial converges transactions queries when work completes", (
   assert.match(dialSource, /shouldRunEnrichmentCompletionInvalidation\(/);
   assert.match(
     dialSource,
-    /invalidateQueries\(\{ queryKey: queryKeys\.transactions\.all \}\)/
+    /enrichmentCompletionInvalidationRoots\.map\(\(root\) =>\s*queryClient\.invalidateQueries\(\{ queryKey: root \}\)/
   );
 });
 
