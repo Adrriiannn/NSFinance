@@ -40,7 +40,14 @@ public sealed class SavingsRoutingPolicy
         var contextualSupport = feature.NearbyMerchantOutflowCount > 0
                                 && feature.AbsoluteAmount <= 25m
                                 && !feature.HasTransferKeyword;
+        // Provider reference tokens (e.g. AIB's IE references) ride on nearly
+        // every SEPA row, so without savings language they must never create
+        // structural support on their own - that path claimed a telecom
+        // direct debit as a savings transfer in production. Savings language
+        // is the gate; the marker then corroborates.
+        var hasAnySavingsLanguage = feature.HasSavingsKeyword || feature.HasStrongSavingsKeyword;
         var providerStructuralSupport = feature.HasProviderTransferHint
+                                        && hasAnySavingsLanguage
                                         && (feature.HasStrongSavingsKeyword
                                             || feature.HasProviderSpecificTransferMarker);
         var providerProductSupport = providerStructuralSupport

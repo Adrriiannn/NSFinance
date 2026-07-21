@@ -169,6 +169,33 @@ public sealed class MerchantCategorizationBackfillTests
     }
 
     [Fact]
+    public async Task Backfill_SharedSavingsSignal_SeedsAsEitherDirection_AndMatchesInflows()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        // The savings-transfer pair shares signals across its outflow and
+        // inflow definitions; the merged seed must match both directions.
+        var arrival = CreateTransaction(seeded.AccountId, "*MOBI SAVINGS-109 *MOBI MAIN-026", 150m, now);
+        var departure = CreateTransaction(seeded.AccountId, "*MOBI SAVINGS-109 *MOBI MAIN-026", -150m, now);
+        dbContext.Transactions.AddRange(arrival, departure);
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var savingsSeed = await dbContext.MerchantKnowledge
+            .SingleAsync(x => x.NormalizedPattern == "MOBI SAVINGS");
+        Assert.Equal("either", savingsSeed.DirectionExpectation);
+
+        var reloadedArrival = await dbContext.Transactions.SingleAsync(x => x.Id == arrival.Id);
+        Assert.Equal(180102, reloadedArrival.TaxonomySubcategoryId);
+
+        var reloadedDeparture = await dbContext.Transactions.SingleAsync(x => x.Id == departure.Id);
+        Assert.Equal(180102, reloadedDeparture.TaxonomySubcategoryId);
+    }
+
+    [Fact]
     public async Task Backfill_VersionBump_RetargetsMovedSeedRows_AndLeavesOtherSourcesAlone()
     {
         await using var dbContext = CreateDbContext();

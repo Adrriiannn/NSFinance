@@ -45,7 +45,11 @@ public static class CategoryCharacteristicsCatalog
     // Electronics, Software & Digital Tools, Web Services - written directly
     // from the first live growth run, whose judge verified those merchants
     // and honestly abstained for lack of matching definitions.
-    public const int Version = 3;
+    // Version 4 (2026-07-21): no definition changes - bumped so seeding's
+    // merged direction semantics propagate: signals shared by the
+    // outflow/inflow savings pair retarget to direction "either" (the earlier
+    // collapse left savings arrivals uncategorized in production).
+    public const int Version = 4;
 
     public static readonly IReadOnlyList<CategoryCharacteristicsDefinition> Definitions =
     [

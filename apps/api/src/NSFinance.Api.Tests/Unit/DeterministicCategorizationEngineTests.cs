@@ -755,6 +755,57 @@ public class DeterministicCategorizationEngineTests
     }
 
     [Fact]
+    public void SavingsClassifier_ProviderReferenceWithoutSavingsLanguage_NeverClaims()
+    {
+        // Regression: "D/D THREE IRELAND IE26071330501328" - an AIB telecom
+        // direct debit whose IE reference token created both the provider
+        // hint and the provider marker, and was claimed as a savings
+        // transfer in production. Without savings language, provider
+        // structure alone must never claim a row.
+        var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
+        var source = CreateFeature(
+            signedAmount: -41.99m,
+            hasSavingsKeyword: false,
+            hasStrongSavingsKeyword: false,
+            hasProviderTransferHint: true,
+            hasProviderSpecificTransferMarker: true,
+            repeatedSmallAuxiliaryOutflowPatternCount: 2,
+            tokens: ["d/d", "ireland"]);
+
+        var decision = policy.Evaluate(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, decision, hasLegacySavingsMarker: false);
+
+        Assert.False(decision.ProviderStructuralSupport);
+        Assert.False(decision.ShouldEvaluate);
+        Assert.Null(outcome);
+    }
+
+    [Fact]
+    public void SavingsClassifier_ProviderReferenceWithSavingsKeyword_StillClaims()
+    {
+        // The counterpart guarantee: "*MOBI SAVINGS-109*" style descriptors
+        // keep the structural path - savings language plus the provider
+        // reference is exactly what the tier exists for.
+        var classifier = new SavingsTransferClassifier();
+        var policy = new SavingsRoutingPolicy();
+        var source = CreateFeature(
+            signedAmount: -150m,
+            hasSavingsKeyword: true,
+            hasStrongSavingsKeyword: false,
+            hasProviderTransferHint: true,
+            hasProviderSpecificTransferMarker: true,
+            tokens: ["mobi", "savings"]);
+
+        var decision = policy.Evaluate(source, hasLegacySavingsMarker: false);
+        var outcome = classifier.Classify(source, decision, hasLegacySavingsMarker: false);
+
+        Assert.True(decision.ProviderStructuralSupport);
+        Assert.NotNull(outcome);
+        Assert.Equal(DeterministicClassificationStatus.ClassifiedMatchedRule, outcome!.Status);
+    }
+
+    [Fact]
     public void SavingsClassifier_ContextualSavings_NotBlockedByMainSpendPostingAfterCandidate()
     {
         var classifier = new SavingsTransferClassifier();
