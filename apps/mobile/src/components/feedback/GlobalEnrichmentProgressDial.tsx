@@ -15,6 +15,8 @@ import {
   getEnrichmentDialState,
   setEnrichmentDialState
 } from "../../features/banking/enrichmentDial.storage";
+import { shouldRunEnrichmentCompletionInvalidation } from "../../features/banking/enrichmentLiveInvalidation";
+import { queryKeys } from "../../lib/api/queryKeys";
 import { showFlashMessage } from "../../lib/flashMessage";
 import {
   useBankEnrichmentProgressQuery,
@@ -186,6 +188,7 @@ export function GlobalEnrichmentProgressDial() {
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completionAutoDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousHasActiveWorkRef = useRef(false);
+  const previousInvalidationWorkRef = useRef(false);
   const runTotalRef = useRef<number | null>(null);
   const didHydrateRef = useRef(false);
   const announcedCompletionSignatureRef = useRef<string | null>(null);
@@ -555,6 +558,20 @@ export function GlobalEnrichmentProgressDial() {
     return () => {
       clearInterval(intervalId);
     };
+  }, [hasActiveWork, queryClient]);
+
+  useEffect(() => {
+    const hadActiveWork = previousInvalidationWorkRef.current;
+    previousInvalidationWorkRef.current = hasActiveWork;
+    if (!shouldRunEnrichmentCompletionInvalidation(hadActiveWork, hasActiveWork)) {
+      return;
+    }
+
+    // Rows categorized between the last interval tick (or a tick skipped
+    // mid-scroll) and completion are never pulled by the loop above; one final
+    // invalidation converges every cached transactions query. Ungated on feed
+    // interaction — the Activity feed's own commit gate defers re-rendering.
+    void queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all });
   }, [hasActiveWork, queryClient]);
 
   useEffect(() => {
