@@ -70,6 +70,31 @@ public sealed class MerchantCategorizationBackfillTests
     }
 
     [Fact]
+    public async Task Backfill_StampsUsageAccounting_OnMatchedKnowledge()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+        dbContext.Transactions.AddRange(
+            CreateTransaction(seeded.AccountId, "VDC-TESCO STORES 3", -33.75m, now),
+            CreateTransaction(seeded.AccountId, "VDC-TESCO STORES 9", -12.10m, now));
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var tescoKnowledge = await dbContext.MerchantKnowledge
+            .SingleAsync(k => k.UserId == null && k.NormalizedPattern == "TESCO");
+        Assert.Equal(2, tescoKnowledge.MatchCount);
+        Assert.NotNull(tescoKnowledge.LastMatchedUtc);
+
+        // A second run has nothing left to categorize: usage stays put.
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+        var reloaded = await dbContext.MerchantKnowledge
+            .SingleAsync(k => k.UserId == null && k.NormalizedPattern == "TESCO");
+        Assert.Equal(2, reloaded.MatchCount);
+    }
+
+    [Fact]
     public async Task Backfill_ResolvesSubcategoryTriplesAndScopesToUser()
     {
         await using var dbContext = CreateDbContext();
@@ -362,6 +387,10 @@ public sealed class MerchantCategorizationBackfillTests
             dbContext,
             growthService,
             referenceLane,
+            new MerchantKnowledgeCurationService(
+                dbContext,
+                Options.Create(new MerchantCurationOptions()),
+                NullLogger<MerchantKnowledgeCurationService>.Instance),
             Options.Create(new MerchantCategorizationOptions
             {
                 BackfillOnGlobalSyncEnabled = true,

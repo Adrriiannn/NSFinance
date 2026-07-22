@@ -40,6 +40,12 @@ public class MerchantKnowledge
 
     public bool IsActive { get; set; } = true;
 
+    // Usage accounting (phase-two curation): how often and how recently this
+    // pattern actually matched. Dead patterns become prune candidates;
+    // hot patterns earn re-verification priority.
+    public long MatchCount { get; set; }
+    public DateTime? LastMatchedUtc { get; set; }
+
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 }

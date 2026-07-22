@@ -301,6 +301,10 @@ public sealed class MerchantKnowledgeGrowthTests
                 new NeverCalledReferenceJudge(),
                 Options.Create(new ReferenceLaneOptions { Enabled = false }),
                 NullLogger<ReferenceLaneAssignmentService>.Instance),
+            new MerchantKnowledgeCurationService(
+                dbContext,
+                Options.Create(new MerchantCurationOptions()),
+                NullLogger<MerchantKnowledgeCurationService>.Instance),
             Options.Create(new MerchantCategorizationOptions
             {
                 BackfillOnGlobalSyncEnabled = true,

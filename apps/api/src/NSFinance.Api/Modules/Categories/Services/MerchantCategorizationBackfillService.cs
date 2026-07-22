@@ -34,6 +34,7 @@ public sealed class MerchantCategorizationBackfillService(
     AppDbContext dbContext,
     MerchantKnowledgeGrowthService growthService,
     ReferenceLaneAssignmentService referenceLaneService,
+    MerchantKnowledgeCurationService curationService,
     IOptions<MerchantCategorizationOptions> options,
     ILogger<MerchantCategorizationBackfillService> logger)
 {
@@ -67,9 +68,13 @@ public sealed class MerchantCategorizationBackfillService(
 
         var categorized = 0;
         var unmatched = new List<Transaction>();
+        // Usage accounting (phase-two curation): which knowledge rows earned
+        // their keep this run.
+        var matchedCounts = new Dictionary<Guid, int>();
 
         void ApplyMatch(Transaction transaction, MerchantKnowledge match)
         {
+            matchedCounts[match.Id] = matchedCounts.GetValueOrDefault(match.Id) + 1;
             transaction.TaxonomyDomainId = match.TaxonomyDomainId;
             transaction.TaxonomyCategoryId = match.TaxonomyCategoryId;
             transaction.TaxonomySubcategoryId = match.TaxonomySubcategoryId;
@@ -137,9 +142,30 @@ public sealed class MerchantCategorizationBackfillService(
             referenceLaneSummary = await referenceLaneService.AssignAsync(userId, stillUncategorized, cancellationToken);
         }
 
+        if (matchedCounts.Count > 0)
+        {
+            var matchedIds = matchedCounts.Keys.ToList();
+            var usageUtc = DateTime.UtcNow;
+            var matchedRows = await dbContext.MerchantKnowledge
+                .Where(k => matchedIds.Contains(k.Id))
+                .ToListAsync(cancellationToken);
+            foreach (var row in matchedRows)
+            {
+                row.MatchCount += matchedCounts[row.Id];
+                row.LastMatchedUtc = usageUtc;
+            }
+        }
+
         if (categorized > 0)
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        // Phase-two curation checks ride the same run, each behind its own
+        // kill-switch.
+        if (curationService.IsConflictDetectionEnabled)
+        {
+            await curationService.DetectCorrectionConflictsAsync(cancellationToken);
         }
 
         var summary = new MerchantBackfillSummary(

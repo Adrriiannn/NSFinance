@@ -209,6 +209,10 @@ public sealed class ReferenceLaneAssignmentTests
             dbContext,
             DisabledGrowth(dbContext),
             CreateLane(dbContext, new FakeReferenceJudge(Assign("sub:900202", 0.8))),
+            new MerchantKnowledgeCurationService(
+                dbContext,
+                Options.Create(new MerchantCurationOptions()),
+                NullLogger<MerchantKnowledgeCurationService>.Instance),
             Options.Create(new MerchantCategorizationOptions
             {
                 BackfillOnGlobalSyncEnabled = true,
