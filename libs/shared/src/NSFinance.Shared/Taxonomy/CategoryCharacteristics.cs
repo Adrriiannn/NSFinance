@@ -76,7 +76,9 @@ public static partial class CategoryCharacteristicsCatalog
             .. InsuranceSubcategoryDefinitions,
             .. HealthcareSubcategoryDefinitions,
             .. UtilitiesPersonalFamilyDefinitions,
-            .. DebtSavingsTransfersDefinitions
+            .. DebtSavingsTransfersDefinitions,
+            .. EntertainmentTravelDefinitions,
+            .. ShoppingGiftsPetsDefinitions
         ];
 
     private static readonly IReadOnlyList<CategoryCharacteristicsDefinition> CoreDefinitions =
