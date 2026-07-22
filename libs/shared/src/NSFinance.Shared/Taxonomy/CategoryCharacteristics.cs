@@ -74,7 +74,9 @@ public static partial class CategoryCharacteristicsCatalog
             .. TransportationSubcategoryDefinitions,
             .. FoodDiningSubcategoryDefinitions,
             .. InsuranceSubcategoryDefinitions,
-            .. HealthcareSubcategoryDefinitions
+            .. HealthcareSubcategoryDefinitions,
+            .. UtilitiesPersonalFamilyDefinitions,
+            .. DebtSavingsTransfersDefinitions
         ];
 
     private static readonly IReadOnlyList<CategoryCharacteristicsDefinition> CoreDefinitions =
@@ -297,14 +299,13 @@ public static partial class CategoryCharacteristicsCatalog
                 "Dual-fuel gas charges belong to Gas when itemized separately",
                 "EV charging networks belong to Fuel & Charging"
             ],
+            // Prepay brands now live on the Prepay Electricity subcategory.
             MerchantSignals:
             [
                 "ELECTRIC IRELAND",
                 "SSE AIRTRICITY",
                 "BORD GAIS ENERGY",
-                "ENERGIA",
-                "PINERGY",
-                "PREPAYPOWER"
+                "ENERGIA"
             ],
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
