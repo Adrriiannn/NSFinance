@@ -220,6 +220,11 @@ public sealed class MerchantKnowledgeGrowthTests
         var backfill = new MerchantCategorizationBackfillService(
             dbContext,
             growthService,
+            new ReferenceLaneAssignmentService(
+                dbContext,
+                new NeverCalledReferenceJudge(),
+                Options.Create(new ReferenceLaneOptions { Enabled = false }),
+                NullLogger<ReferenceLaneAssignmentService>.Instance),
             Options.Create(new MerchantCategorizationOptions
             {
                 BackfillOnGlobalSyncEnabled = true,
@@ -322,6 +327,16 @@ public sealed class MerchantKnowledgeGrowthTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(judgment);
+        }
+    }
+
+    private sealed class NeverCalledReferenceJudge : IReferenceRowJudge
+    {
+        public Task<MerchantCategoryJudgment> JudgeAsync(
+            ReferenceRowJudgmentInput input,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("Reference judgment must not run when the lane is disabled.");
         }
     }
 

@@ -545,6 +545,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMerchantCategoryJudge, MerchantCategoryJudgmentService>();
         services.Configure<MerchantKnowledgeGrowthOptions>(
             configuration.GetSection(MerchantKnowledgeGrowthOptions.SectionName));
+        services.AddScoped<ReferenceLaneAssignmentService>();
+        services.AddScoped<IReferenceRowJudge, ReferenceRowJudgmentService>();
+        services.Configure<ReferenceLaneOptions>(
+            configuration.GetSection(ReferenceLaneOptions.SectionName));
         services.AddScoped<ExpenseTaxonomyService>();
         services.AddScoped<ExpenseTrackerService>();
         services.AddScoped<ExpensePlanService>();

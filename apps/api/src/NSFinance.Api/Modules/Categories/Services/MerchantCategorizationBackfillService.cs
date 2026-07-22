@@ -22,7 +22,8 @@ public sealed record MerchantBackfillSummary(
     int RowsExamined,
     int RowsCategorized,
     int RowsUnmatched,
-    MerchantGrowthRunSummary? Growth = null);
+    MerchantGrowthRunSummary? Growth = null,
+    ReferenceLaneRunSummary? ReferenceLane = null);
 
 // Deterministic merchant categorization backfill (CAT-001). Strictly additive:
 // only rows with no taxonomy at all are considered, rows claimed by the
@@ -32,6 +33,7 @@ public sealed record MerchantBackfillSummary(
 public sealed class MerchantCategorizationBackfillService(
     AppDbContext dbContext,
     MerchantKnowledgeGrowthService growthService,
+    ReferenceLaneAssignmentService referenceLaneService,
     IOptions<MerchantCategorizationOptions> options,
     ILogger<MerchantCategorizationBackfillService> logger)
 {
@@ -125,6 +127,16 @@ public sealed class MerchantCategorizationBackfillService(
             }
         }
 
+        // The reference lane: rows still uncategorized after the merchant
+        // passes that ride P2P rails get a per-row constrained judgment.
+        // The lane persists its own writes and ledger rows.
+        ReferenceLaneRunSummary? referenceLaneSummary = null;
+        var stillUncategorized = unmatched.Where(x => x.TaxonomyCategoryId == null).ToList();
+        if (referenceLaneService.IsEnabled && stillUncategorized.Count > 0)
+        {
+            referenceLaneSummary = await referenceLaneService.AssignAsync(userId, stillUncategorized, cancellationToken);
+        }
+
         if (categorized > 0)
         {
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -132,9 +144,10 @@ public sealed class MerchantCategorizationBackfillService(
 
         var summary = new MerchantBackfillSummary(
             RowsExamined: candidates.Count,
-            RowsCategorized: categorized,
-            RowsUnmatched: candidates.Count - categorized,
-            Growth: growthSummary);
+            RowsCategorized: categorized + (referenceLaneSummary?.Assigned ?? 0),
+            RowsUnmatched: candidates.Count - categorized - (referenceLaneSummary?.Assigned ?? 0),
+            Growth: growthSummary,
+            ReferenceLane: referenceLaneSummary);
 
         logger.LogInformation(
             "Merchant categorization backfill userId={UserId} rowsExamined={RowsExamined} rowsCategorized={RowsCategorized} rowsUnmatched={RowsUnmatched} characteristicsVersion={Version}",

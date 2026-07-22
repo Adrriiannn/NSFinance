@@ -351,15 +351,33 @@ public sealed class MerchantCategorizationBackfillTests
             Options.Create(new MerchantKnowledgeGrowthOptions { Enabled = false }),
             NullLogger<MerchantKnowledgeGrowthService>.Instance);
 
+        // The reference lane stays disabled here; it has its own test suite.
+        var referenceLane = new ReferenceLaneAssignmentService(
+            dbContext,
+            new ThrowingReferenceJudge(),
+            Options.Create(new ReferenceLaneOptions { Enabled = false }),
+            NullLogger<ReferenceLaneAssignmentService>.Instance);
+
         return new MerchantCategorizationBackfillService(
             dbContext,
             growthService,
+            referenceLane,
             Options.Create(new MerchantCategorizationOptions
             {
                 BackfillOnGlobalSyncEnabled = true,
                 MaxRowsPerRun = 500
             }),
             NullLogger<MerchantCategorizationBackfillService>.Instance);
+    }
+
+    private sealed class ThrowingReferenceJudge : IReferenceRowJudge
+    {
+        public Task<MerchantCategoryJudgment> JudgeAsync(
+            ReferenceRowJudgmentInput input,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("Reference judgment must not run when the lane is disabled.");
+        }
     }
 
     private sealed class ThrowingInvestigationService : IMerchantInvestigationService
