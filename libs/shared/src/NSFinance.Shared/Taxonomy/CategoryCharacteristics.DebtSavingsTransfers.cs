@@ -205,6 +205,11 @@ public static partial class CategoryCharacteristicsCatalog
             [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.5),
 
         // -- 17080 Other Debt & Loans (real activities + catch-all) --
+        new(17080, null, "Debt costs that fit nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable debt expense"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
         new(null, 170801, "Debt consolidation payments when the target is not linked.",
             ["Consolidation loan payment"],
             ["Payment services a consolidation loan", "Direction is outflow"],
@@ -393,6 +398,11 @@ public static partial class CategoryCharacteristicsCatalog
             [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.NeutralTransfer, 0.6),
 
         // -- 18060 Other Savings & Investments --
+        new(18060, null, "Savings moves that fit nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable savings movement"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.NeutralTransfer, null),
         new(null, 180601, "Gold and precious metals as investment.",
             ["Bullion purchase"],
             ["Purchase is investment metals", "Direction is outflow",

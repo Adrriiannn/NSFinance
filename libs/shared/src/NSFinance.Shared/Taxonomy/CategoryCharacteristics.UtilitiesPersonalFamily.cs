@@ -174,6 +174,11 @@ public static partial class CategoryCharacteristicsCatalog
             ["Only deterministic rules or the user may assign this catch-all"],
             [],
             [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
+        new(null, 140702, "Your share of a utility bill someone else holds.",
+            ["Paying a housemate your share of the broadband"],
+            ["Payment contributes to a shared utility bill", "Direction is outflow"],
+            ["Housemates paying you back is a shared expense repayment inflow"],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.5),
 
         // -- 190 Personal Care: categories 19020-19050 + all subs --
         new(19020, null, "Everyday hygiene: toiletries and personal upkeep goods.",
@@ -326,6 +331,11 @@ public static partial class CategoryCharacteristicsCatalog
             ["HEADSPACE", "CALM.COM"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.65),
 
         // 19050 Other Personal Care (real activities + catch-all)
+        new(19050, null, "Personal care that fits nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable personal care expense"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
         new(null, 190501, "Fragrances.",
             ["Perfume purchase"],
             ["Purchase is fragrance", "Direction is outflow"],

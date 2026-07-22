@@ -401,6 +401,11 @@ public static partial class CategoryCharacteristicsCatalog
             [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.5),
 
         // -- 16100 Other Medical Expenses (real activities; no pure catch-all) --
+        new(16100, null, "Medical costs that fit nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable medical expense"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
         new(null, 161001, "Over-the-counter medicines.",
             ["Paracetamol and cold remedies"],
             ["Purchase is OTC medicine", "Direction is outflow"],

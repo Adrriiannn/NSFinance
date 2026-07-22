@@ -252,6 +252,11 @@ public static partial class CategoryCharacteristicsCatalog
             ["BINGO"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.7),
 
         // -- 21070 Other Entertainment & Hobbies (real + catch-all) --
+        new(21070, null, "Entertainment that fits nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable entertainment expense"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
         new(null, 210701, "Hobby classes for adults.",
             ["Evening pottery class"],
             ["Charge is a hobby class", "Direction is outflow"],
@@ -441,6 +446,11 @@ public static partial class CategoryCharacteristicsCatalog
             [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.5),
 
         // -- 22060 Other Travel (real + catch-all) --
+        new(22060, null, "Travel costs that fit nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable travel expense"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
         new(null, 220601, "Souvenirs.",
             ["Souvenir shop"],
             ["Purchase is souvenirs", "Direction is outflow"],

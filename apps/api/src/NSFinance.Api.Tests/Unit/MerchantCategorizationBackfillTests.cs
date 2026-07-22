@@ -47,9 +47,13 @@ public sealed class MerchantCategorizationBackfillTests
         Assert.NotNull(reloadedTesco.CategorizationCharacteristicsVersion);
         Assert.NotNull(reloadedTesco.CategorizedUtc);
 
-        // The inflow refund must stay uncategorized (direction enforcement).
+        // Direction enforcement keeps the grocery seed off the inflow; the
+        // Refunds category seed claims it instead.
         var reloadedRefund = await dbContext.Transactions.SingleAsync(x => x.Id == refund.Id);
-        Assert.Null(reloadedRefund.TaxonomyCategoryId);
+        Assert.Equal(900, reloadedRefund.TaxonomyDomainId);
+        Assert.Equal(90010, reloadedRefund.TaxonomyCategoryId);
+        Assert.Null(reloadedRefund.TaxonomySubcategoryId);
+        Assert.Equal("REFUND", reloadedRefund.CategorizationSignal);
 
         var reloadedExisting = await dbContext.Transactions.SingleAsync(x => x.Id == alreadyCategorized.Id);
         Assert.Equal(13020, reloadedExisting.TaxonomyCategoryId);
@@ -61,8 +65,8 @@ public sealed class MerchantCategorizationBackfillTests
         Assert.Null(reloadedBalanceOnly.TaxonomyCategoryId);
 
         Assert.Equal(3, summary.RowsExamined);
-        Assert.Equal(1, summary.RowsCategorized);
-        Assert.Equal(2, summary.RowsUnmatched);
+        Assert.Equal(2, summary.RowsCategorized);
+        Assert.Equal(1, summary.RowsUnmatched);
     }
 
     [Fact]

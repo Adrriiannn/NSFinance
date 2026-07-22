@@ -78,7 +78,10 @@ public static partial class CategoryCharacteristicsCatalog
             .. UtilitiesPersonalFamilyDefinitions,
             .. DebtSavingsTransfersDefinitions,
             .. EntertainmentTravelDefinitions,
-            .. ShoppingGiftsPetsDefinitions
+            .. ShoppingGiftsPetsDefinitions,
+            .. EducationTaxesDefinitions,
+            .. SubscriptionsBusinessDefinitions,
+            .. GivingLegalIncomeDefinitions
         ];
 
     private static readonly IReadOnlyList<CategoryCharacteristicsDefinition> CoreDefinitions =
@@ -337,12 +340,6 @@ public static partial class CategoryCharacteristicsCatalog
             ],
             MerchantSignals:
             [
-                "NETFLIX",
-                "SPOTIFY",
-                "DISNEY",
-                "PRIME VIDEO",
-                "YOUTUBE PREMIUM",
-                "NOW TV",
                 "APPLE.COM/BILL"
             ],
             DirectionExpectation: CharacteristicsDirection.Outflow,
@@ -1069,8 +1066,6 @@ public static partial class CategoryCharacteristicsCatalog
             ],
             MerchantSignals:
             [
-                "MICROSOFT",
-                "ADOBE",
                 "OPENAI",
                 "CHATGPT",
                 "GITHUB",
@@ -1101,14 +1096,7 @@ public static partial class CategoryCharacteristicsCatalog
             [
                 "General productivity software belongs to Software & Digital Tools"
             ],
-            MerchantSignals:
-            [
-                "GODADDY",
-                "BLACKNIGHT",
-                "NAMECHEAP",
-                "SQUARESPACE",
-                "WIX.COM"
-            ],
+            MerchantSignals: [],
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
             ConfidenceFloor: 0.7,

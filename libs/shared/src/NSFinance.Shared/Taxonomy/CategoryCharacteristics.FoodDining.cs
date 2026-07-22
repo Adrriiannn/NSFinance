@@ -215,6 +215,11 @@ public static partial class CategoryCharacteristicsCatalog
             [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.55),
 
         // -- 13060 Other Food & Dining (real activities + one catch-all) --
+        new(13060, null, "Food costs that fit nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable food expense"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
         new(null, 130601, "Tips and gratuities paid separately.",
             ["Card tip after the meal"],
             ["Payment is a tip", "Direction is outflow"],

@@ -165,6 +165,11 @@ public static partial class CategoryCharacteristicsCatalog
             [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.5),
 
         // -- 15070 Other Insurance (real cost shapes + catch-all) --
+        new(15070, null, "Insurance costs that fit nowhere else; a human choice, never an AI guess.",
+            ["Genuinely unclassifiable insurance expense"],
+            ["Only deterministic rules or the user may assign this catch-all"],
+            [],
+            [], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, null),
         new(null, 150701, "Insurance deductibles and excesses you pay on a claim.",
             ["Policy excess on a claim"],
             ["Payment is a claim excess", "Direction is outflow"],
