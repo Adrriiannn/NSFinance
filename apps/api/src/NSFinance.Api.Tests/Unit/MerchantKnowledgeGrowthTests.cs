@@ -52,6 +52,82 @@ public sealed class MerchantKnowledgeGrowthTests
     }
 
     [Fact]
+    public async Task Growth_DepositsExtensiveFinding_OnPromotion()
+    {
+        await using var dbContext = CreateDbContext();
+        var transactions = new[] { CreateTransaction("VDP-NEWCAFE DUNDRUM 12", -6.4m) };
+
+        var judge = new FakeJudge(new MerchantCategoryJudgment(
+            Assigned: true,
+            DefinitionKey: "cat:13020",
+            Confidence: 0.9,
+            Rationale: "Cafe.",
+            AbstainReason: null));
+        var service = CreateService(
+            dbContext,
+            new CountingInvestigationService(StrongResult("NewCafe Dundrum")),
+            judge,
+            AcceptAll());
+        await service.GrowAsync(transactions, CancellationToken.None);
+
+        var knowledge = await dbContext.MerchantKnowledge.SingleAsync();
+        var candidate = await dbContext.MerchantKnowledgeCandidates.SingleAsync();
+        var finding = await dbContext.MerchantKnowledgeFindings.SingleAsync();
+
+        Assert.Equal(candidate.Id, finding.CandidateId);
+        Assert.Equal(knowledge.Id, finding.KnowledgeId);
+        Assert.Equal("promoted", finding.OutcomeCode);
+        Assert.Equal("NewCafe Dundrum", finding.CanonicalName);
+        Assert.Equal(1, finding.FindingVersion);
+        // The extensive record carries fields the trimmed summary never had.
+        Assert.Contains("whyItMayMatch", finding.FindingsJson);
+        Assert.Contains("sourceTrust", finding.FindingsJson);
+        Assert.Contains("aliasCandidates", finding.FindingsJson);
+        Assert.Contains("rationale", finding.FindingsJson);
+    }
+
+    [Fact]
+    public async Task Growth_DepositsFinding_EveryInvestigation_WithIncrementingVersions()
+    {
+        await using var dbContext = CreateDbContext();
+        var transactions = new[] { CreateTransaction("SHADY UNKNOWN 99", -10m) };
+
+        var rejectingPolicy = new FakeAcceptancePolicy(new MerchantAcceptanceDecision(
+            MerchantAcceptanceDecisionType.Unresolved,
+            0.4,
+            null,
+            ["weak_source_trust_profile"]));
+        var service = CreateService(
+            dbContext,
+            new CountingInvestigationService(StrongResult("Shady Unknown")),
+            new FakeJudge(null!),
+            rejectingPolicy);
+
+        await service.GrowAsync(transactions, CancellationToken.None);
+
+        var first = await dbContext.MerchantKnowledgeFindings.SingleAsync();
+        Assert.Equal("identity_unresolved", first.OutcomeCode);
+        Assert.Null(first.KnowledgeId);
+        Assert.Null(first.CanonicalName);
+        Assert.Equal(1, first.FindingVersion);
+
+        // Clear the cooldown and re-investigate: the archive keeps both
+        // records, versioned.
+        var candidate = await dbContext.MerchantKnowledgeCandidates.SingleAsync();
+        candidate.NextEligibleUtc = null;
+        await dbContext.SaveChangesAsync();
+
+        await service.GrowAsync(transactions, CancellationToken.None);
+
+        var versions = await dbContext.MerchantKnowledgeFindings
+            .Where(f => f.CandidateId == candidate.Id)
+            .Select(f => f.FindingVersion)
+            .OrderBy(v => v)
+            .ToListAsync();
+        Assert.Equal([1, 2], versions);
+    }
+
+    [Fact]
     public async Task Growth_JudgeAbstains_ParksForReview_NeverWritesKnowledge()
     {
         await using var dbContext = CreateDbContext();

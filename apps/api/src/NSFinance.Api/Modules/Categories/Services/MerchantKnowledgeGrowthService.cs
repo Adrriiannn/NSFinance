@@ -125,12 +125,31 @@ public sealed class MerchantKnowledgeGrowthService(
                 cancellationToken);
 
             var acceptance = acceptancePolicy.Evaluate(investigation);
+
+            // Every investigation deposits its complete findings record -
+            // the extensive, global archive the curation jobs mine. The
+            // candidate ledger keeps only its trimmed working summary.
+            var finding = new MerchantKnowledgeFinding
+            {
+                Id = Guid.NewGuid(),
+                CandidateId = candidate.Id,
+                AcceptanceDecision = acceptance.DecisionType.ToString(),
+                CharacteristicsVersion = CategoryCharacteristicsCatalog.Version,
+                FindingVersion = await dbContext.MerchantKnowledgeFindings
+                    .CountAsync(f => f.CandidateId == candidate.Id, cancellationToken) + 1,
+                CreatedUtc = nowUtc
+            };
+            dbContext.MerchantKnowledgeFindings.Add(finding);
+
             if (acceptance.DecisionType is not (MerchantAcceptanceDecisionType.AcceptedTrusted
                 or MerchantAcceptanceDecisionType.AcceptedCautious)
                 || acceptance.SelectedCandidate is null)
             {
-                ApplyFailureCooldown(candidate, nowUtc, $"identity_{acceptance.DecisionType.ToString().ToLowerInvariant()}");
+                var identityCode = $"identity_{acceptance.DecisionType.ToString().ToLowerInvariant()}";
+                ApplyFailureCooldown(candidate, nowUtc, identityCode);
                 candidate.InvestigationSummaryJson = BuildSummaryJson(investigation, acceptance, judgment: null);
+                finding.OutcomeCode = Clamp(identityCode, 120);
+                finding.FindingsJson = BuildFindingsJson(investigation, acceptance, judgment: null);
                 logger.LogInformation(
                     "Merchant growth identity not accepted candidateId={CandidateId} decision={Decision} reasons={Reasons}",
                     candidate.Id,
@@ -155,6 +174,8 @@ public sealed class MerchantKnowledgeGrowthService(
                 cancellationToken);
 
             candidate.InvestigationSummaryJson = BuildSummaryJson(investigation, acceptance, judgment);
+            finding.CanonicalName = Clamp(identity.CanonicalName, 200);
+            finding.FindingsJson = BuildFindingsJson(investigation, acceptance, judgment);
 
             if (!judgment.Assigned
                 || judgment.DefinitionKey is null
@@ -163,6 +184,7 @@ public sealed class MerchantKnowledgeGrowthService(
                 // Stable code only - the model's free-text reason lives in
                 // the summary JSON. A future catalog version re-opens these.
                 ParkForReview(candidate, nowUtc, "judgment_abstained");
+                finding.OutcomeCode = "judgment_abstained";
                 sentToReview += 1;
                 continue;
             }
@@ -170,6 +192,7 @@ public sealed class MerchantKnowledgeGrowthService(
             if (definition.ConfidenceFloor is not { } floor || judgment.Confidence < floor)
             {
                 ParkForReview(candidate, nowUtc, "below_confidence_floor");
+                finding.OutcomeCode = "below_confidence_floor";
                 sentToReview += 1;
                 continue;
             }
@@ -177,6 +200,7 @@ public sealed class MerchantKnowledgeGrowthService(
             if (!DirectionCompatible(definition.DirectionExpectation, group.Direction))
             {
                 ParkForReview(candidate, nowUtc, "direction_mismatch");
+                finding.OutcomeCode = "direction_mismatch";
                 sentToReview += 1;
                 continue;
             }
@@ -184,6 +208,7 @@ public sealed class MerchantKnowledgeGrowthService(
             if (!CharacteristicsTaxonomyResolver.TryResolve(definition, out var domainId, out var categoryId, out var subcategoryId))
             {
                 ParkForReview(candidate, nowUtc, "taxonomy_resolution_failed");
+                finding.OutcomeCode = "taxonomy_resolution_failed";
                 sentToReview += 1;
                 continue;
             }
@@ -196,6 +221,7 @@ public sealed class MerchantKnowledgeGrowthService(
             {
                 candidate.Status = MerchantKnowledgeCandidateStatuses.Promoted;
                 candidate.LastOutcomeCode = "pattern_already_known";
+                finding.OutcomeCode = "pattern_already_known";
                 continue;
             }
 
@@ -227,6 +253,8 @@ public sealed class MerchantKnowledgeGrowthService(
 
             candidate.Status = MerchantKnowledgeCandidateStatuses.Promoted;
             candidate.LastOutcomeCode = "promoted";
+            finding.OutcomeCode = "promoted";
+            finding.KnowledgeId = knowledge.Id;
             candidate.ProposedTaxonomyDomainId = domainId;
             candidate.ProposedTaxonomyCategoryId = categoryId;
             candidate.ProposedTaxonomySubcategoryId = subcategoryId;
@@ -352,6 +380,99 @@ public sealed class MerchantKnowledgeGrowthService(
                     abstainReason = judgment.AbstainReason
                 }
         });
+    }
+
+    // The extensive record: nothing trimmed, every candidate identity with
+    // its for/against reasoning and risk flags, the complete evidence list
+    // with sources and trust tiers, alias suggestions, and the judgment
+    // rationale. This is what the global dictionary actually learned.
+    private static string BuildFindingsJson(
+        MerchantInvestigationResult investigation,
+        MerchantAcceptanceDecision acceptance,
+        MerchantCategoryJudgment? judgment)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            investigation = new
+            {
+                succeeded = investigation.Succeeded,
+                insufficientEvidence = investigation.InsufficientEvidence,
+                failureReason = investigation.FailureReason,
+                recommendation = investigation.Recommendation.ToString(),
+                overallConfidence = investigation.OverallConfidence,
+                ambiguityLevel = investigation.AmbiguityLevel,
+                reasonCodes = investigation.InvestigationReasonCodes,
+                candidates = investigation.Candidates.Select(c => new
+                {
+                    canonicalName = c.CanonicalName,
+                    displayName = c.DisplayName,
+                    merchantType = c.MerchantType.ToString(),
+                    merchantUsageType = c.MerchantUsageType.ToString(),
+                    primaryCountryCode = c.PrimaryCountryCode,
+                    confidence = c.Confidence,
+                    ambiguityScore = c.AmbiguityScore,
+                    mixedUseRisk = c.MixedUseRisk,
+                    hasContradictions = c.HasContradictions,
+                    officialWebsite = c.OfficialWebsite,
+                    descriptionSummary = c.DescriptionSummary,
+                    aliasCandidates = c.AliasCandidates,
+                    whyItMayMatch = c.WhyItMayMatch,
+                    whyItMayBeWrong = c.WhyItMayBeWrong,
+                    descriptorMatchStrength = c.DescriptorMatchStrength,
+                    entityMatchStrength = c.EntityMatchStrength,
+                    domainNameMismatchRisk = c.DomainNameMismatchRisk,
+                    weakSourceRisk = c.WeakSourceRisk,
+                    suspiciousIdentityRisk = c.SuspiciousIdentityRisk,
+                    evidenceItems = c.EvidenceItems?.Select(SerializeEvidence),
+                    aliasSuggestions = c.AliasSuggestions?.Select(SerializeAlias)
+                }),
+                evidence = investigation.Evidence.Select(SerializeEvidence),
+                aliasSuggestions = investigation.AliasSuggestions?.Select(SerializeAlias)
+            },
+            acceptance = new
+            {
+                decision = acceptance.DecisionType.ToString(),
+                confidence = acceptance.Confidence,
+                reasonCodes = acceptance.ReasonCodes,
+                selectedCanonicalName = acceptance.SelectedCandidate?.CanonicalName
+            },
+            judgment = judgment is null
+                ? null
+                : new
+                {
+                    assigned = judgment.Assigned,
+                    definitionKey = judgment.DefinitionKey,
+                    confidence = judgment.Confidence,
+                    rationale = judgment.Rationale,
+                    abstainReason = judgment.AbstainReason
+                }
+        });
+    }
+
+    private static object SerializeEvidence(MerchantInvestigationEvidence evidence)
+    {
+        return new
+        {
+            type = evidence.EvidenceType.ToString(),
+            summary = evidence.EvidenceSummary,
+            confidence = evidence.Confidence,
+            sourceReference = evidence.SourceReference,
+            sourceClass = evidence.SourceClass,
+            relevance = evidence.Relevance,
+            sourceTrust = evidence.SourceTrustLevel.ToString()
+        };
+    }
+
+    private static object SerializeAlias(MerchantInvestigationAliasSuggestion alias)
+    {
+        return new
+        {
+            aliasText = alias.AliasText,
+            aliasType = alias.AliasType,
+            confidence = alias.Confidence,
+            notes = alias.Notes,
+            isPreferred = alias.IsPreferred
+        };
     }
 
     private static string Clamp(string value, int maxLength)
