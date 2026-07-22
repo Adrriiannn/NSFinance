@@ -66,7 +66,16 @@ public static partial class CategoryCharacteristicsCatalog
     private static IReadOnlyList<CategoryCharacteristicsDefinition>? _definitions;
 
     public static IReadOnlyList<CategoryCharacteristicsDefinition> Definitions =>
-        _definitions ??= [.. CoreDefinitions, .. HousingSubcategoryDefinitions];
+        _definitions ??=
+        [
+            .. CoreDefinitions,
+            .. HousingSubcategoryDefinitions,
+            .. HomeGardenSubcategoryDefinitions,
+            .. TransportationSubcategoryDefinitions,
+            .. FoodDiningSubcategoryDefinitions,
+            .. InsuranceSubcategoryDefinitions,
+            .. HealthcareSubcategoryDefinitions
+        ];
 
     private static readonly IReadOnlyList<CategoryCharacteristicsDefinition> CoreDefinitions =
     [
@@ -217,14 +226,14 @@ public static partial class CategoryCharacteristicsCatalog
                 "Forecourt purchases with small amounts and food signals belong to Groceries or Dining",
                 "Tolls and parking belong to their transport categories"
             ],
+            // EV charging networks now live on the EV Charging subcategory;
+            // the category keeps the forecourt brands.
             MerchantSignals:
             [
                 "CIRCLE K",
                 "APPLEGREEN",
                 "MAXOL",
-                "TEXACO",
-                "ESB ECARS",
-                "IONITY"
+                "TEXACO"
             ],
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
@@ -424,16 +433,11 @@ public static partial class CategoryCharacteristicsCatalog
                 "Taxis and ride-hailing belong to their own transport category",
                 "Fuel belongs to Fuel & Charging"
             ],
+            // Mode-specific operators now live on the subcategory
+            // definitions; the category keeps only multi-modal signals.
             MerchantSignals:
             [
-                "LEAP",
-                "TFI",
-                "IRISH RAIL",
-                "IARNROD EIREANN",
-                "DUBLIN BUS",
-                "BUS EIREANN",
-                "LUAS",
-                "GO-AHEAD"
+                "TFI"
             ],
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
