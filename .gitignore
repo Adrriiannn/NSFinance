@@ -28,3 +28,4 @@ local-builds/
 # Obsidian community plugin runtimes are machine-managed and synced by OneDrive
 NSFinance/.obsidian/plugins/
 NSFinance/.obsidian/workspace-mobile.json
+TestResults/
