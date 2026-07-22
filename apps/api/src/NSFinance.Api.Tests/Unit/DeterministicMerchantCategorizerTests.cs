@@ -18,9 +18,11 @@ public sealed class DeterministicMerchantCategorizerTests
         Assert.NotNull(fuel);
         Assert.Equal(12020, fuel.TaxonomyCategoryId);
 
+        // Full-coverage rebalance: LEAP is owned by the Transit Passes
+        // subcategory now, which is the more precise assignment.
         var leap = DeterministicMerchantCategorizer.Match("POS TFI LEAP TOPUP", -20m);
         Assert.NotNull(leap);
-        Assert.Equal(12010, leap.TaxonomyCategoryId);
+        Assert.Equal(120106, leap.TaxonomySubcategoryId);
     }
 
     [Fact]
