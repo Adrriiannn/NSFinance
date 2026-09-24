@@ -39,3 +39,4 @@ This folder is organized by canonical topic. Each topic should describe the prod
 - Azure deployment checklist: `deployment/azure-production.md`
 - Mobile Android build guide: `deployment/mobile-android-build.md`
 - Database migration workflow: `deployment/database-migrations.md`
+- Merchant knowledge seed rollout: `deployment/merchant-knowledge-seed-rollout.md`

@@ -36,6 +36,9 @@ public static class DeterministicMerchantCategorizer
             return null;
         }
 
+        // Same boundary semantics as the knowledge matcher: padded text, so
+        // " BAR " matches the word BAR at either edge.
+        var haystack = " " + normalized + " ";
         DeterministicCategoryMatch? best = null;
         var bestSignalLength = 0;
 
@@ -63,7 +66,7 @@ public static class DeterministicMerchantCategorizer
             foreach (var signal in definition.MerchantSignals)
             {
                 var normalizedSignal = signal.ToUpperInvariant();
-                if (!normalized.Contains(normalizedSignal, StringComparison.Ordinal))
+                if (!haystack.Contains(normalizedSignal, StringComparison.Ordinal))
                 {
                     continue;
                 }

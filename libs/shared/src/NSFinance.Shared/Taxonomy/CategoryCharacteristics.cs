@@ -56,7 +56,17 @@ public static partial class CategoryCharacteristicsCatalog
     // Definitions without merchant signals are AI-lane only: no seeds, but
     // the judge may assign them (services whose merchants are too varied to
     // enumerate).
-    public const int Version = 5;
+    // Version 6 (2026-09-24): ships the signals added and rebalanced under
+    // v5 after it first deployed (48db1133) - 558 new patterns, 24
+    // category-to-subcategory refinements - through the seed-run ledger and
+    // the SeedApply modes (Off, DryRun, Pilot, Apply, Revert). Signal
+    // hygiene: boundary spaces are now honoured by seeding and matching
+    // (" BAR " is the word BAR), collision-prone brand tokens are padded
+    // (" MACE " no longer matches PHARMACEUTICAL), and generic concept words
+    // are qualified (CHILD MAINTENANCE, MISSIONARY, RETREAT HOUSE). Seeds
+    // dropped from the plan are deactivated. The seed-plan hash is pinned per
+    // version, so a signal change without a bump fails the build.
+    public const int Version = 6;
 
     // The catalog concatenates the historical passes below with the
     // per-domain full-coverage files (CategoryCharacteristics.<Domain>.cs),
@@ -1536,7 +1546,7 @@ public static partial class CategoryCharacteristicsCatalog
             [
                 "BLEEPERBIKE",
                 "MOBY BIKES",
-                "TIER",
+                " TIER ",
                 "DUBLINBIKES"
             ],
             DirectionExpectation: CharacteristicsDirection.Outflow,

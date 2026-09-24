@@ -17,7 +17,7 @@ public static partial class CategoryCharacteristicsCatalog
             ["Milk and bread from the corner shop"],
             ["Merchant is a convenience store", "Direction is outflow"],
             [],
-            ["DAYBREAK", "GALA", "MACE", "COSTCUTTER", "LONDIS"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.7),
+            ["DAYBREAK", " GALA ", " MACE ", "COSTCUTTER", "LONDIS"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.7),
         new(null, 130103, "Greengrocers and fresh produce.",
             ["Fruit and veg stall"],
             ["Merchant sells fresh produce", "Direction is outflow"],

@@ -32,6 +32,7 @@ public sealed record MerchantBackfillSummary(
 // catalog. Every assignment logs its rule evidence without statement text.
 public sealed class MerchantCategorizationBackfillService(
     AppDbContext dbContext,
+    MerchantKnowledgeSeedService seedService,
     MerchantKnowledgeGrowthService growthService,
     ReferenceLaneAssignmentService referenceLaneService,
     MerchantKnowledgeCurationService curationService,
@@ -46,12 +47,15 @@ public sealed class MerchantCategorizationBackfillService(
     {
         var maxRows = Math.Clamp(options.Value.MaxRowsPerRun, 1, 2000);
 
-        await EnsureSeedKnowledgeAsync(cancellationToken);
+        // Seeds the knowledge base from the catalog as far as the seed mode
+        // allows; a pilot user gets the pending version as an overlay.
+        var overlay = await seedService.PrepareAsync(userId, cancellationToken);
 
-        var knowledge = await dbContext.MerchantKnowledge
+        var liveKnowledge = await dbContext.MerchantKnowledge
             .AsNoTracking()
             .Where(x => x.IsActive && (x.UserId == null || x.UserId == userId))
             .ToListAsync(cancellationToken);
+        var knowledge = overlay is null ? liveKnowledge : overlay.ApplyTo(liveKnowledge);
 
         var candidates = await dbContext.Transactions
             .Where(x =>
@@ -186,195 +190,19 @@ public sealed class MerchantCategorizationBackfillService(
         return summary;
     }
 
-    // Seeds the knowledge base once per characteristics version from the
-    // catalog's bootstrap signals, so the system starts knowing what the
-    // contract's worked examples knew. All later growth comes from AI
-    // investigation and user corrections, never from code changes.
-    private async Task EnsureSeedKnowledgeAsync(CancellationToken cancellationToken)
-    {
-        var version = CategoryCharacteristicsCatalog.Version;
-        var seedExists = await dbContext.MerchantKnowledge.AnyAsync(
-            x => x.Source == MerchantKnowledgeSources.Seed && x.CharacteristicsVersion == version,
-            cancellationToken);
-
-        if (seedExists)
-        {
-            return;
-        }
-
-        // Global rows only: a user's personal override must never block or
-        // be rewritten by the global seed.
-        var globalRows = await dbContext.MerchantKnowledge
-            .Where(x => x.UserId == null)
-            .ToListAsync(cancellationToken);
-        var byPattern = globalRows.ToDictionary(x => x.NormalizedPattern, StringComparer.Ordinal);
-        var now = DateTime.UtcNow;
-
-        foreach (var seed in BuildSeedPlan(logger))
-        {
-            if (byPattern.TryGetValue(seed.Pattern, out var existing))
-            {
-                // Catalog evolution: when a version bump moves a seed signal
-                // to a different node or direction, retarget that seed row
-                // once. AI-researched and correction-derived rows are never
-                // rewritten by the catalog.
-                if (existing.Source == MerchantKnowledgeSources.Seed
-                    && (existing.TaxonomyDomainId != seed.DomainId
-                        || existing.TaxonomyCategoryId != seed.CategoryId
-                        || existing.TaxonomySubcategoryId != seed.SubcategoryId
-                        || existing.DirectionExpectation != seed.Direction))
-                {
-                    existing.TaxonomyDomainId = seed.DomainId;
-                    existing.TaxonomyCategoryId = seed.CategoryId;
-                    existing.TaxonomySubcategoryId = seed.SubcategoryId;
-                    existing.DirectionExpectation = seed.Direction;
-                    existing.CharacteristicsVersion = version;
-                    existing.UpdatedUtc = now;
-                    logger.LogInformation(
-                        "Merchant knowledge seed retargeted pattern={Pattern} characteristicsVersion={Version} domainId={DomainId} categoryId={CategoryId} subcategoryId={SubcategoryId} direction={Direction}",
-                        seed.Pattern,
-                        version,
-                        seed.DomainId,
-                        seed.CategoryId,
-                        seed.SubcategoryId,
-                        seed.Direction);
-                }
-
-                continue;
-            }
-
-            var row = new MerchantKnowledge
-            {
-                Id = Guid.NewGuid(),
-                NormalizedPattern = seed.Pattern,
-                DisplayName = seed.DisplayName,
-                TaxonomyDomainId = seed.DomainId,
-                TaxonomyCategoryId = seed.CategoryId,
-                TaxonomySubcategoryId = seed.SubcategoryId,
-                DirectionExpectation = seed.Direction,
-                Source = MerchantKnowledgeSources.Seed,
-                Confidence = 1.0,
-                CharacteristicsVersion = version,
-                IsActive = true,
-                CreatedUtc = now,
-                UpdatedUtc = now
-            };
-            dbContext.MerchantKnowledge.Add(row);
-            byPattern.Add(seed.Pattern, row);
-        }
-
-        // A new catalog version can supply the definition a parked candidate
-        // was waiting for - re-open the review queue for another judgment.
-        // Runs only on the version's first seeding pass, so re-opening
-        // happens exactly once per catalog change.
-        var reopened = await dbContext.MerchantKnowledgeCandidates
-            .Where(x => x.Status == MerchantKnowledgeCandidateStatuses.NeedsReview)
-            .ToListAsync(cancellationToken);
-        foreach (var candidate in reopened)
-        {
-            candidate.Status = MerchantKnowledgeCandidateStatuses.Pending;
-            candidate.NextEligibleUtc = null;
-            candidate.LastOutcomeCode = "reopened_by_catalog_version";
-            candidate.UpdatedUtc = now;
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-        logger.LogInformation(
-            "Merchant knowledge seeded characteristicsVersion={Version} reopenedCandidates={ReopenedCandidates}",
-            version,
-            reopened.Count);
-    }
-
-    private sealed record SeedPlanEntry(
-        string Pattern,
-        string DisplayName,
-        int DomainId,
-        int CategoryId,
-        int? SubcategoryId,
-        string Direction);
-
-    // Collapses the catalog's signals into one seed row per pattern. When the
-    // same signal serves an outflow and an inflow definition of the same
-    // taxonomy node (the savings-transfer pair), the merged row is
-    // direction "either" - dropping one side silently left savings arrivals
-    // uncategorized in production. Signals claimed by definitions with
-    // different nodes keep the first and log the conflict.
-    private static IReadOnlyList<SeedPlanEntry> BuildSeedPlan(ILogger logger)
-    {
-        var plan = new Dictionary<string, SeedPlanEntry>(StringComparer.Ordinal);
-
-        foreach (var definition in CategoryCharacteristicsCatalog.Definitions)
-        {
-            if (!CharacteristicsTaxonomyResolver.TryResolve(
-                    definition,
-                    out var domainId,
-                    out var categoryId,
-                    out var subcategoryId))
-            {
-                continue;
-            }
-
-            var direction = definition.DirectionExpectation switch
-            {
-                CharacteristicsDirection.Outflow => "outflow",
-                CharacteristicsDirection.Inflow => "inflow",
-                _ => "either"
-            };
-
-            foreach (var signal in definition.MerchantSignals)
-            {
-                var pattern = signal.Trim().ToUpperInvariant();
-                if (pattern.Length < 2)
-                {
-                    continue;
-                }
-
-                if (!plan.TryGetValue(pattern, out var existing))
-                {
-                    plan.Add(pattern, new SeedPlanEntry(
-                        pattern,
-                        signal.Trim(),
-                        domainId,
-                        categoryId,
-                        subcategoryId,
-                        direction));
-                    continue;
-                }
-
-                if (existing.DomainId == domainId
-                    && existing.CategoryId == categoryId
-                    && existing.SubcategoryId == subcategoryId)
-                {
-                    if (existing.Direction != direction)
-                    {
-                        plan[pattern] = existing with { Direction = "either" };
-                    }
-
-                    continue;
-                }
-
-                logger.LogWarning(
-                    "Merchant knowledge seed conflict pattern={Pattern} keeps categoryId={KeptCategoryId} over categoryId={DroppedCategoryId}",
-                    pattern,
-                    existing.CategoryId,
-                    categoryId);
-            }
-        }
-
-        return plan.Values.ToList();
-    }
-
     private static MerchantKnowledge? MatchAgainstKnowledge(
         IReadOnlyList<MerchantKnowledge> knowledge,
         string rawDescription,
         decimal amount)
     {
-        var normalized = DeterministicMerchantCategorizer.NormalizeStatementText(rawDescription);
-        if (normalized.Length < 2)
+        if (DeterministicMerchantCategorizer.NormalizeStatementText(rawDescription).Length < 2)
         {
             return null;
         }
 
+        // Padded so a boundary pattern like " BAR " matches the word BAR at
+        // either edge; unpadded patterns match exactly as before.
+        var haystack = MerchantKnowledgeSeedPlan.MatchHaystack(rawDescription);
         MerchantKnowledge? best = null;
 
         foreach (var entry in knowledge)
@@ -387,7 +215,7 @@ public sealed class MerchantCategorizationBackfillService(
             };
 
             if (!directionSatisfied
-                || !normalized.Contains(entry.NormalizedPattern, StringComparison.Ordinal))
+                || !haystack.Contains(entry.NormalizedPattern, StringComparison.Ordinal))
             {
                 continue;
             }

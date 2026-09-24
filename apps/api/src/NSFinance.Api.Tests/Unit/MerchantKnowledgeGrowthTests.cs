@@ -295,6 +295,10 @@ public sealed class MerchantKnowledgeGrowthTests
             NullLogger<MerchantKnowledgeGrowthService>.Instance);
         var backfill = new MerchantCategorizationBackfillService(
             dbContext,
+            new MerchantKnowledgeSeedService(
+                dbContext,
+                Options.Create(new MerchantKnowledgeSeedOptions { Mode = MerchantKnowledgeSeedMode.Apply }),
+                NullLogger<MerchantKnowledgeSeedService>.Instance),
             growthService,
             new ReferenceLaneAssignmentService(
                 dbContext,

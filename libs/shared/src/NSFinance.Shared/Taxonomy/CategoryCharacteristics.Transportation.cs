@@ -279,7 +279,7 @@ public static partial class CategoryCharacteristicsCatalog
             ["Hire car for the week"],
             ["Charge is car rental", "Direction is outflow"],
             ["Moving-van hire belongs to Moving & Temporary Housing"],
-            ["HERTZ", "ENTERPRISE RENT", "SIXT", "EUROPCAR"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.75),
+            ["HERTZ", "ENTERPRISE RENT", " SIXT ", "EUROPCAR"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.75),
         new(null, 120805, "Airport transfers: shuttles and dedicated services.",
             ["Airport shuttle bus"],
             ["Journey is an airport transfer", "Direction is outflow"],
