@@ -207,6 +207,10 @@ public sealed class ReferenceLaneAssignmentTests
 
         var backfill = new MerchantCategorizationBackfillService(
             dbContext,
+            new MerchantKnowledgeSeedService(
+                dbContext,
+                Options.Create(new MerchantKnowledgeSeedOptions { Mode = MerchantKnowledgeSeedMode.Apply }),
+                NullLogger<MerchantKnowledgeSeedService>.Instance),
             DisabledGrowth(dbContext),
             CreateLane(dbContext, new FakeReferenceJudge(Assign("sub:900202", 0.8))),
             new MerchantKnowledgeCurationService(

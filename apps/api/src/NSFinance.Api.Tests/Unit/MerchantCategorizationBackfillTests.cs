@@ -365,7 +365,367 @@ public sealed class MerchantCategorizationBackfillTests
             row => Assert.Equal(MerchantKnowledgeSources.Seed, row.Source));
     }
 
-    private static MerchantCategorizationBackfillService CreateService(AppDbContext dbContext)
+    // Catalog version-bump behavior (CAT-001 v6 impact analysis). Each test
+    // stages the knowledge base as the previous version left it, then runs
+    // the first backfill under the current version.
+
+    [Fact]
+    public async Task VersionBump_RetargetsMovedBrands_InsertsNewSignals_AndNeverReclassifiesCategorizedRows()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+        var earlier = now.AddDays(-10);
+        var priorVersion = CategoryCharacteristicsCatalog.Version - 1;
+
+        // Brand signals as the previous version seeded them: category level,
+        // before the rebalance moved them down to their subcategories.
+        dbContext.MerchantKnowledge.AddRange(
+            PriorVersionSeed("NETFLIX", 280, 28010, null),
+            PriorVersionSeed("PINERGY", 140, 14010, null));
+
+        var categorizedNetflix = CreateTransaction(seeded.AccountId, "NETFLIX.COM", -12.99m, earlier);
+        categorizedNetflix.TaxonomyDomainId = 280;
+        categorizedNetflix.TaxonomyCategoryId = 28010;
+        categorizedNetflix.CategorizationRuleKey = "merchant_knowledge";
+        categorizedNetflix.CategorizationSignal = "NETFLIX";
+        categorizedNetflix.CategorizationCharacteristicsVersion = priorVersion;
+        categorizedNetflix.CategorizedUtc = earlier;
+
+        var newNetflix = CreateTransaction(seeded.AccountId, "NETFLIX.COM", -12.99m, now);
+        var pinergy = CreateTransaction(seeded.AccountId, "PINERGY 0871", -30m, now);
+        var tuition = CreateTransaction(seeded.AccountId, "UCD TUITION", -3000m, now);
+        dbContext.Transactions.AddRange(categorizedNetflix, newNetflix, pinergy, tuition);
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var netflixSeed = await dbContext.MerchantKnowledge.SingleAsync(x => x.NormalizedPattern == "NETFLIX");
+        Assert.Equal(28010, netflixSeed.TaxonomyCategoryId);
+        Assert.Equal(280101, netflixSeed.TaxonomySubcategoryId);
+        Assert.Equal(CategoryCharacteristicsCatalog.Version, netflixSeed.CharacteristicsVersion);
+
+        var pinergySeed = await dbContext.MerchantKnowledge.SingleAsync(x => x.NormalizedPattern == "PINERGY");
+        Assert.Equal(140102, pinergySeed.TaxonomySubcategoryId);
+
+        var tuitionSeed = await dbContext.MerchantKnowledge.SingleAsync(x => x.NormalizedPattern == "TUITION");
+        Assert.Equal(MerchantKnowledgeSources.Seed, tuitionSeed.Source);
+        Assert.Equal(CategoryCharacteristicsCatalog.Version, tuitionSeed.CharacteristicsVersion);
+        Assert.True(await dbContext.MerchantKnowledge.AnyAsync(x => x.NormalizedPattern == "EXAM FEE"));
+
+        // The bump never reclassifies: the row categorized under the
+        // previous version keeps its category-level triple and evidence.
+        var reloadedCategorized = await dbContext.Transactions.SingleAsync(x => x.Id == categorizedNetflix.Id);
+        Assert.Equal(28010, reloadedCategorized.TaxonomyCategoryId);
+        Assert.Null(reloadedCategorized.TaxonomySubcategoryId);
+        Assert.Equal(priorVersion, reloadedCategorized.CategorizationCharacteristicsVersion);
+        Assert.Equal(earlier, reloadedCategorized.CategorizedUtc);
+
+        // Only uncategorized rows pick up the retargeted and new knowledge.
+        var reloadedNewNetflix = await dbContext.Transactions.SingleAsync(x => x.Id == newNetflix.Id);
+        Assert.Equal(280101, reloadedNewNetflix.TaxonomySubcategoryId);
+        Assert.Equal(CategoryCharacteristicsCatalog.Version, reloadedNewNetflix.CategorizationCharacteristicsVersion);
+
+        var reloadedPinergy = await dbContext.Transactions.SingleAsync(x => x.Id == pinergy.Id);
+        Assert.Equal(140102, reloadedPinergy.TaxonomySubcategoryId);
+
+        var reloadedTuition = await dbContext.Transactions.SingleAsync(x => x.Id == tuition.Id);
+        Assert.Equal(260, reloadedTuition.TaxonomyDomainId);
+        Assert.Equal(26010, reloadedTuition.TaxonomyCategoryId);
+        Assert.Equal("TUITION", reloadedTuition.CategorizationSignal);
+    }
+
+    [Fact]
+    public async Task VersionBump_NeverRewritesManualChoices_OrUserScopedKnowledge()
+    {
+        await using var dbContext = CreateDbContext();
+        var owner = await SeedUserWithAccountAsync(dbContext);
+        var other = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+        var earlier = now.AddDays(-10);
+        var priorVersion = CategoryCharacteristicsCatalog.Version - 1;
+
+        // The owner files Spotify as a business software expense.
+        dbContext.MerchantKnowledge.AddRange(
+            PriorVersionSeed("SPOTIFY", 280, 28010, null),
+            new MerchantKnowledge
+            {
+                Id = Guid.NewGuid(),
+                UserId = owner.UserId,
+                NormalizedPattern = "SPOTIFY",
+                DisplayName = "Spotify (business)",
+                TaxonomyDomainId = 290,
+                TaxonomyCategoryId = 29030,
+                DirectionExpectation = "outflow",
+                Source = MerchantKnowledgeSources.UserCorrection,
+                Confidence = 1.0,
+                CharacteristicsVersion = priorVersion,
+                IsActive = true,
+                CreatedUtc = earlier,
+                UpdatedUtc = earlier
+            });
+
+        var manual = CreateTransaction(owner.AccountId, "SPOTIFY 4471", -10.99m, earlier);
+        manual.TaxonomyDomainId = 290;
+        manual.TaxonomyCategoryId = 29030;
+        manual.CategorizationRuleKey = "user_correction";
+        manual.CategorizationCharacteristicsVersion = priorVersion;
+        manual.CategorizedUtc = earlier;
+
+        var ownerNew = CreateTransaction(owner.AccountId, "SPOTIFY 4471", -10.99m, now);
+        var otherNew = CreateTransaction(other.AccountId, "SPOTIFY 4471", -10.99m, now);
+        dbContext.Transactions.AddRange(manual, ownerNew, otherNew);
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(owner.UserId, CancellationToken.None);
+        await CreateService(dbContext).BackfillAsync(other.UserId, CancellationToken.None);
+
+        var globalSeed = await dbContext.MerchantKnowledge.SingleAsync(x => x.UserId == null && x.NormalizedPattern == "SPOTIFY");
+        Assert.Equal(280102, globalSeed.TaxonomySubcategoryId);
+
+        var userRow = await dbContext.MerchantKnowledge.SingleAsync(x => x.UserId == owner.UserId);
+        Assert.Equal(29030, userRow.TaxonomyCategoryId);
+        Assert.Equal(MerchantKnowledgeSources.UserCorrection, userRow.Source);
+        Assert.Equal(priorVersion, userRow.CharacteristicsVersion);
+
+        var reloadedManual = await dbContext.Transactions.SingleAsync(x => x.Id == manual.Id);
+        Assert.Equal(29030, reloadedManual.TaxonomyCategoryId);
+        Assert.Equal("user_correction", reloadedManual.CategorizationRuleKey);
+        Assert.Equal(earlier, reloadedManual.CategorizedUtc);
+
+        // The owner's own rule still wins; everyone else gets the refined seed.
+        var reloadedOwnerNew = await dbContext.Transactions.SingleAsync(x => x.Id == ownerNew.Id);
+        Assert.Equal(29030, reloadedOwnerNew.TaxonomyCategoryId);
+
+        var reloadedOtherNew = await dbContext.Transactions.SingleAsync(x => x.Id == otherNew.Id);
+        Assert.Equal(280102, reloadedOtherNew.TaxonomySubcategoryId);
+    }
+
+    [Fact]
+    public async Task VersionBump_Assignments_AreSelectableForExactRollback_WithoutCatchingUserTaughtRows()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        dbContext.MerchantKnowledge.AddRange(
+            PriorVersionSeed("NETFLIX", 280, 28010, null),
+            PriorVersionSeed("TESCO", 130, 13010, null));
+
+        var corrected = CreateTransaction(seeded.AccountId, "NETFLIX", -12.99m, now);
+        var sibling = CreateTransaction(seeded.AccountId, "NETFLIX", -12.99m, now.AddDays(-1));
+        var tuition = CreateTransaction(seeded.AccountId, "UCD TUITION", -3000m, now);
+        var tesco = CreateTransaction(seeded.AccountId, "VDC-TESCO STORES 3", -20m, now);
+        dbContext.Transactions.AddRange(corrected, sibling, tuition, tesco);
+        await dbContext.SaveChangesAsync();
+
+        var applyUtc = DateTime.UtcNow;
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        // Unchanged seed rows keep their old version, so business-as-usual
+        // matches after the bump are not attributed to it.
+        var reloadedTesco = await dbContext.Transactions.SingleAsync(x => x.Id == tesco.Id);
+        Assert.Equal(13010, reloadedTesco.TaxonomyCategoryId);
+        Assert.Equal(CategoryCharacteristicsCatalog.Version - 1, reloadedTesco.CategorizationCharacteristicsVersion);
+
+        // After the bump the user recategorizes one Netflix row and asks to
+        // always use it; LearnMerchant retargets the sibling with the same
+        // rule key and version stamp a bump assignment carries.
+        corrected.TaxonomyDomainId = 290;
+        corrected.TaxonomyCategoryId = 29030;
+        corrected.TaxonomySubcategoryId = null;
+        corrected.CategorizationRuleKey = "user_correction";
+        await new MerchantCorrectionLearningService(dbContext, NullLogger<MerchantCorrectionLearningService>.Instance)
+            .LearnFromCorrectionAsync(seeded.UserId, corrected, 290, 29030, null, CancellationToken.None);
+        await dbContext.SaveChangesAsync();
+
+        var stampedByVersion = await dbContext.Transactions
+            .Where(x =>
+                x.CategorizationRuleKey == "merchant_knowledge"
+                && x.CategorizationCharacteristicsVersion == CategoryCharacteristicsCatalog.Version
+                && x.CategorizedUtc >= applyUtc)
+            .ToListAsync();
+
+        // Version and time alone would also revert the user-taught sibling.
+        Assert.Equal(
+            new[] { sibling.Id, tuition.Id }.OrderBy(x => x),
+            stampedByVersion.Select(x => x.Id).OrderBy(x => x));
+
+        // The rollback selector must exclude patterns the user has taught.
+        var userTaught = await dbContext.MerchantKnowledge
+            .Where(x => x.UserId == seeded.UserId)
+            .Select(x => x.NormalizedPattern)
+            .ToListAsync();
+        var rollbackSet = stampedByVersion
+            .Where(x => !userTaught.Contains(x.CategorizationSignal!))
+            .Select(x => x.Id)
+            .ToList();
+        Assert.Equal(new[] { tuition.Id }, rollbackSet);
+
+        // Every bump assignment started from an all-null row, so resetting
+        // the triple and evidence restores the exact pre-bump state.
+        var reloadedTuition = await dbContext.Transactions.SingleAsync(x => x.Id == tuition.Id);
+        Assert.Equal(26010, reloadedTuition.TaxonomyCategoryId);
+        Assert.Equal("TUITION", reloadedTuition.CategorizationSignal);
+    }
+
+    [Fact]
+    public async Task VersionBump_SeedRowsDroppedFromTheCatalog_AreDeactivated_AndStopMatching()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        // Dropping a signal from the catalog is how a bad live seed is
+        // retired: the row is kept for evidence but stops matching. The
+        // v5-era bare MAINTENANCE seed is the real case.
+        dbContext.MerchantKnowledge.AddRange(
+            PriorVersionSeed("ZZQ LEGACY PATTERN", 130, 13020, null),
+            PriorVersionSeed("MAINTENANCE", 200, 20040, 200407));
+        var legacy = CreateTransaction(seeded.AccountId, "ZZQ LEGACY PATTERN 12", -9m, now);
+        var garden = CreateTransaction(seeded.AccountId, "GARDEN MAINTENANCE LTD", -80m, now);
+        dbContext.Transactions.AddRange(legacy, garden);
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var orphan = await dbContext.MerchantKnowledge.SingleAsync(x => x.NormalizedPattern == "ZZQ LEGACY PATTERN");
+        Assert.False(orphan.IsActive);
+        Assert.Equal(13020, orphan.TaxonomyCategoryId);
+        Assert.Equal(CategoryCharacteristicsCatalog.Version - 1, orphan.CharacteristicsVersion);
+
+        var maintenance = await dbContext.MerchantKnowledge.SingleAsync(x => x.NormalizedPattern == "MAINTENANCE");
+        Assert.False(maintenance.IsActive);
+
+        Assert.Null((await dbContext.Transactions.SingleAsync(x => x.Id == legacy.Id)).TaxonomyCategoryId);
+        Assert.Null((await dbContext.Transactions.SingleAsync(x => x.Id == garden.Id)).TaxonomyCategoryId);
+
+        var run = await dbContext.MerchantKnowledgeSeedRuns.SingleAsync();
+        Assert.Equal(2, run.DeactivatedCount);
+    }
+
+    [Fact]
+    public async Task VersionBump_WithNoPlanChanges_RecordsTheVersion_AndReopensCandidatesOnce()
+    {
+        // Before the seed-run ledger, "already seeded" was inferred from a
+        // seed row carrying the current version, so a bump that inserted and
+        // retargeted nothing re-ran seeding and re-opened parked candidates
+        // on every sync. The ledger records the version even when the plan
+        // changes nothing.
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var past = DateTime.UtcNow.AddHours(-2);
+
+        // The identical plan seeded under the previous version, pre-ledger.
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+        foreach (var seed in await dbContext.MerchantKnowledge.ToListAsync())
+        {
+            seed.CharacteristicsVersion = CategoryCharacteristicsCatalog.Version - 1;
+        }
+
+        dbContext.MerchantKnowledgeSeedRuns.RemoveRange(await dbContext.MerchantKnowledgeSeedRuns.ToListAsync());
+
+        var candidate = new MerchantKnowledgeCandidate
+        {
+            Id = Guid.NewGuid(),
+            NormalizedDescriptor = "TEBEX",
+            RawDescriptorSample = "TEBEX.ORG",
+            Status = MerchantKnowledgeCandidateStatuses.NeedsReview,
+            ObservedOccurrences = 2,
+            ObservedSpendAbs = 60m,
+            ObservedDirection = "outflow",
+            AttemptCount = 3,
+            LastOutcomeCode = "judgment_abstained",
+            CreatedUtc = past,
+            UpdatedUtc = past
+        };
+        dbContext.MerchantKnowledgeCandidates.Add(candidate);
+        await dbContext.SaveChangesAsync();
+        var seedCount = await dbContext.MerchantKnowledge.CountAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var reopened = await dbContext.MerchantKnowledgeCandidates.SingleAsync();
+        Assert.Equal(MerchantKnowledgeCandidateStatuses.Pending, reopened.Status);
+        Assert.Equal("reopened_by_catalog_version", reopened.LastOutcomeCode);
+
+        var run = await dbContext.MerchantKnowledgeSeedRuns.SingleAsync();
+        Assert.Equal(CategoryCharacteristicsCatalog.Version, run.CharacteristicsVersion);
+        Assert.Equal(0, run.InsertedCount);
+        Assert.Equal(0, run.RetargetedCount);
+        Assert.Equal(1, run.ReopenedCount);
+
+        // Parked again by a later judgment: the next sync leaves it alone.
+        reopened.Status = MerchantKnowledgeCandidateStatuses.NeedsReview;
+        reopened.LastOutcomeCode = "judgment_abstained";
+        await dbContext.SaveChangesAsync();
+
+        await CreateService(dbContext).BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        var untouched = await dbContext.MerchantKnowledgeCandidates.SingleAsync();
+        Assert.Equal(MerchantKnowledgeCandidateStatuses.NeedsReview, untouched.Status);
+        Assert.Equal(seedCount, await dbContext.MerchantKnowledge.CountAsync());
+        Assert.Single(await dbContext.MerchantKnowledgeSeedRuns.ToListAsync());
+    }
+
+    [Fact]
+    public async Task VersionBump_ReachesOnlyTheNewestUncategorizedWindow_PerRun()
+    {
+        await using var dbContext = CreateDbContext();
+        var seeded = await SeedUserWithAccountAsync(dbContext);
+        var now = DateTime.UtcNow;
+
+        // Newer rows no signal will ever match fill the per-run window, so
+        // an older row the bump could categorize is never examined.
+        dbContext.Transactions.AddRange(
+            CreateTransaction(seeded.AccountId, "QQX 4471", -5m, now),
+            CreateTransaction(seeded.AccountId, "ZZQ 9920", -5m, now.AddDays(-1)));
+        var olderTuition = CreateTransaction(seeded.AccountId, "UCD TUITION", -3000m, now.AddDays(-30));
+        dbContext.Transactions.Add(olderTuition);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext, maxRowsPerRun: 2);
+        var first = await service.BackfillAsync(seeded.UserId, CancellationToken.None);
+        var second = await service.BackfillAsync(seeded.UserId, CancellationToken.None);
+
+        Assert.Equal(2, first.RowsExamined);
+        Assert.Equal(0, first.RowsCategorized);
+        Assert.Equal(0, second.RowsCategorized);
+
+        var reloaded = await dbContext.Transactions.SingleAsync(x => x.Id == olderTuition.Id);
+        Assert.Null(reloaded.TaxonomyCategoryId);
+    }
+
+    internal static MerchantKnowledge PriorVersionSeed(
+        string pattern,
+        int domainId,
+        int categoryId,
+        int? subcategoryId)
+    {
+        var past = DateTime.UtcNow.AddDays(-30);
+        return new MerchantKnowledge
+        {
+            Id = Guid.NewGuid(),
+            NormalizedPattern = pattern,
+            DisplayName = pattern,
+            TaxonomyDomainId = domainId,
+            TaxonomyCategoryId = categoryId,
+            TaxonomySubcategoryId = subcategoryId,
+            DirectionExpectation = "outflow",
+            Source = MerchantKnowledgeSources.Seed,
+            Confidence = 1.0,
+            CharacteristicsVersion = CategoryCharacteristicsCatalog.Version - 1,
+            IsActive = true,
+            CreatedUtc = past,
+            UpdatedUtc = past
+        };
+    }
+
+    internal static MerchantCategorizationBackfillService CreateService(
+        AppDbContext dbContext,
+        int maxRowsPerRun = 500,
+        MerchantKnowledgeSeedMode seedMode = MerchantKnowledgeSeedMode.Apply,
+        IEnumerable<Guid>? pilotUserIds = null)
     {
         // Growth stays disabled here; the growth loop has its own test suite.
         var growthService = new MerchantKnowledgeGrowthService(
@@ -383,8 +743,18 @@ public sealed class MerchantCategorizationBackfillTests
             Options.Create(new ReferenceLaneOptions { Enabled = false }),
             NullLogger<ReferenceLaneAssignmentService>.Instance);
 
+        var seedService = new MerchantKnowledgeSeedService(
+            dbContext,
+            Options.Create(new MerchantKnowledgeSeedOptions
+            {
+                Mode = seedMode,
+                PilotUserIds = pilotUserIds?.ToList() ?? []
+            }),
+            NullLogger<MerchantKnowledgeSeedService>.Instance);
+
         return new MerchantCategorizationBackfillService(
             dbContext,
+            seedService,
             growthService,
             referenceLane,
             new MerchantKnowledgeCurationService(
@@ -394,7 +764,7 @@ public sealed class MerchantCategorizationBackfillTests
             Options.Create(new MerchantCategorizationOptions
             {
                 BackfillOnGlobalSyncEnabled = true,
-                MaxRowsPerRun = 500
+                MaxRowsPerRun = maxRowsPerRun
             }),
             NullLogger<MerchantCategorizationBackfillService>.Instance);
     }
@@ -429,7 +799,7 @@ public sealed class MerchantCategorizationBackfillTests
         }
     }
 
-    private static Transaction CreateTransaction(
+    internal static Transaction CreateTransaction(
         Guid accountId,
         string description,
         decimal amount,
@@ -449,7 +819,7 @@ public sealed class MerchantCategorizationBackfillTests
         };
     }
 
-    private static AppDbContext CreateDbContext()
+    internal static AppDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase($"merchant-backfill-{Guid.NewGuid()}")
@@ -458,7 +828,7 @@ public sealed class MerchantCategorizationBackfillTests
         return new AppDbContext(options);
     }
 
-    private static async Task<(Guid UserId, Guid AccountId)> SeedUserWithAccountAsync(AppDbContext dbContext)
+    internal static async Task<(Guid UserId, Guid AccountId)> SeedUserWithAccountAsync(AppDbContext dbContext)
     {
         var userId = Guid.NewGuid();
         var email = $"backfill-{userId:N}@example.test";

@@ -241,7 +241,7 @@ public static partial class CategoryCharacteristicsCatalog
             ["Monthly bookkeeping software"],
             ["Charge is accounting software", "Direction is outflow"],
             [],
-            ["XERO", "QUICKBOOKS", "SAGE"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.75),
+            ["XERO", "QUICKBOOKS", " SAGE UK", " SAGE SOFTWARE", " SAGE GLOBAL"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.75),
         new(null, 290302, "CRM.",
             ["Monthly CRM seat"],
             ["Charge is CRM software", "Direction is outflow"],

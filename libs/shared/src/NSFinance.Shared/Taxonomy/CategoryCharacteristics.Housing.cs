@@ -465,7 +465,7 @@ public static partial class CategoryCharacteristicsCatalog
             UseCases: ["Living-room rug"],
             InclusionRules: ["Item is a rug or carpet", "Direction is outflow"],
             ExclusionRules: ["Fitted carpet installation belongs to Flooring"],
-            MerchantSignals: ["RUGS", "CARPET"],
+            MerchantSignals: [" RUGS ", "CARPET"],
             DirectionExpectation: CharacteristicsDirection.Outflow,
             AnalyticsTreatment: CharacteristicsAnalyticsTreatment.Expense,
             ConfidenceFloor: 0.65),

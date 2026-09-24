@@ -525,7 +525,7 @@ public static partial class CategoryCharacteristicsCatalog
             ["Monthly maintenance payment"],
             ["Payment is family maintenance or child support", "Direction is outflow"],
             ["Money received is Maintenance & Child Support Received"],
-            ["MAINTENANCE"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.55),
+            ["CHILD MAINTENANCE"], CharacteristicsDirection.Outflow, CharacteristicsAnalyticsTreatment.Expense, 0.55),
 
         // 20050 subs
         new(null, 200501, "Family celebrations you fund.",
