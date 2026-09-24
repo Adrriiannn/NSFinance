@@ -138,7 +138,7 @@ public static class ServiceCollectionExtensions
 
             if (options.DurableJobPollMilliseconds <= 0)
             {
-                options.DurableJobPollMilliseconds = 500;
+                options.DurableJobPollMilliseconds = 15000;
             }
 
             if (options.SyncExecutionLeaseSeconds <= 0)
@@ -483,9 +483,11 @@ public static class ServiceCollectionExtensions
             options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
         });
 
-        services.AddDbContext<AppDbContext>(options =>
+        services.AddSingleton<SlowDbCommandInterceptor>();
+        services.AddDbContext<AppDbContext>((serviceProvider, options) =>
         {
             options.UseNpgsql(GetConnectionString(configuration));
+            options.AddInterceptors(serviceProvider.GetRequiredService<SlowDbCommandInterceptor>());
         });
 
         services.AddScoped<IPasswordHasher, Pbkdf2PasswordHasher>();

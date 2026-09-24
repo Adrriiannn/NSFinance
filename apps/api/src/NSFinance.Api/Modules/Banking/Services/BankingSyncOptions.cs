@@ -10,7 +10,8 @@ public sealed class BankingSyncOptions
     public int ProviderRateLimitBackoffMinutes { get; set; } = 30;
     public int DurableJobMaxAttempts { get; set; } = 5;
     public int DurableJobLeaseSeconds { get; set; } = 120;
-    public int DurableJobPollMilliseconds { get; set; } = 500;
+    // Idle safety-net poll only; in-process enqueues wake the workers immediately.
+    public int DurableJobPollMilliseconds { get; set; } = 15000;
     public int SyncExecutionLeaseSeconds { get; set; } = 120;
     public bool UnattendedSyncEnabled { get; set; } = true;
     public int UnattendedSyncIntervalMinutes { get; set; } = 720;

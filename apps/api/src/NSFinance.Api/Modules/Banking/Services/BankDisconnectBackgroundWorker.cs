@@ -19,6 +19,7 @@ public sealed class BankDisconnectBackgroundWorker(
     private const int BatchSize = 16;
     private readonly TimeSpan _pollDelay = TimeSpan.FromMilliseconds(
         Math.Clamp(options.Value.DurableJobPollMilliseconds, 100, 30_000));
+    private readonly DurableJobWakeSignal _wakeSignal = new();
 
     public async ValueTask QueueDisconnectCleanupAsync(
         Guid userId,
@@ -37,6 +38,7 @@ public sealed class BankDisconnectBackgroundWorker(
             throw new InvalidOperationException("Bank disconnect connection was not found.");
         }
 
+        _wakeSignal.Wake();
         logger.LogInformation(
             "Persisted bank disconnect cleanup request connectionId={ConnectionId} userId={UserId}",
             connectionId,
@@ -85,7 +87,7 @@ public sealed class BankDisconnectBackgroundWorker(
 
             if (!processedAny)
             {
-                await Task.Delay(_pollDelay, stoppingToken);
+                await _wakeSignal.WaitAsync(_pollDelay, stoppingToken);
             }
         }
     }
