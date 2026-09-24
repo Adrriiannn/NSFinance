@@ -22,6 +22,7 @@ public sealed class TrueLayerSyncBackgroundWorker(
     private const int BatchSize = 16;
     private readonly TimeSpan _pollDelay = TimeSpan.FromMilliseconds(
         Math.Clamp(options.Value.DurableJobPollMilliseconds, 100, 30_000));
+    private readonly DurableJobWakeSignal _wakeSignal = new();
     private readonly TimeSpan _syncPendingStaleAfter = TimeSpan.FromMinutes(
         Math.Clamp(options.Value.StaleSyncPendingRecoveryMinutes, 1, 24 * 60));
     private readonly bool _unattendedSyncEnabled = options.Value.UnattendedSyncEnabled;
@@ -47,6 +48,7 @@ public sealed class TrueLayerSyncBackgroundWorker(
             throw new InvalidOperationException("Initial bank sync connection was not found.");
         }
 
+        _wakeSignal.Wake();
         logger.LogInformation(
             "Persisted initial bank sync request connectionId={ConnectionId} userId={UserId}",
             connectionId,
@@ -123,7 +125,7 @@ public sealed class TrueLayerSyncBackgroundWorker(
 
             if (!processedAny)
             {
-                await Task.Delay(_pollDelay, stoppingToken);
+                await _wakeSignal.WaitAsync(_pollDelay, stoppingToken);
             }
         }
     }
